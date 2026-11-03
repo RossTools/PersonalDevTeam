@@ -66,11 +66,11 @@ describe('ticket attempt', () => {
     const section = await screen.findByRole('region', { name: 'Attempt' });
     expect(within(section).getByText('pdt/ALP-1-fix-login')).toBeInTheDocument();
     expect(within(section).getByText('Active')).toBeInTheDocument();
-    const list = within(section).getByRole('list', { name: 'Sessions' });
-    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual([
+    const list = within(section).getByRole('grid', { name: 'Sessions' });
+    expect(within(list).getAllByRole('row').map((b) => b.textContent)).toEqual([
       expect.stringContaining('Claude · ALP-1'), expect.stringContaining('Codex · ALP-1'),
     ]);
-    await userEvent.click(within(list).getByRole('button', { name: /Claude · ALP-1/ }));
+    await userEvent.click(within(list).getByRole('row', { name: /Claude · ALP-1/ }));
     expect(onSession).toHaveBeenCalledWith({ id: 's1', projectId: project.id });
     expect(screen.queryByRole('button', { name: 'Start' })).not.toBeInTheDocument();
   });
@@ -81,7 +81,7 @@ describe('ticket attempt', () => {
     const onSession = vi.fn();
     view({ onSession });
     const section = await screen.findByRole('region', { name: 'Sessions' });
-    await userEvent.click(within(section).getByRole('button', { name: /Refiner · ALP-1/ }));
+    await userEvent.click(within(section).getByRole('row', { name: /Refiner · ALP-1/ }));
     expect(onSession).toHaveBeenCalledWith({ id: 's7', projectId: project.id });
     expect(screen.queryByRole('region', { name: 'Attempt' })).not.toBeInTheDocument();
   });

@@ -37,11 +37,23 @@ describe('List and ListRow', () => {
     expect(within(row).getByText('fix login').className).toContain('font-semibold');
   });
 
-  it('marks the current row with the accent fill', () => {
+  it('shows details under the title, wrapped rather than cut', () => {
+    render(
+      <List aria-label="Notes">
+        <ListRow id="n" title="Release" textValue="Release" details={<span>Cut it on Friday</span>} />
+      </List>,
+    );
+    const details = screen.getByText('Cut it on Friday').parentElement!;
+    expect(details).toHaveAttribute('data-slot', 'list-details');
+    expect(details.className).not.toContain('truncate');
+  });
+
+  it('marks the current row with the accent fill and the bar', () => {
     render(<Three />);
     const row = screen.getByRole('row', { name: 'Beta' });
     expect(row).toHaveAttribute('data-current');
     expect(row.className).toContain('data-current:bg-accent');
+    expect(row.className).toContain('data-current:before:bg-primary');
     expect(screen.getByRole('row', { name: 'Alpha' })).not.toHaveAttribute('data-current');
   });
 

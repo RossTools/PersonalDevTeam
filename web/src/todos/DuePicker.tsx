@@ -2,9 +2,9 @@
 // parsed like quick add), picks one quickly or from a month; its footer opens panel B (time slots) and panel C
 // (repeat presets). Each change is handed out at once (`onChange`); a quick pick or a calendar day closes it.
 import { useState, type ReactNode, type RefObject } from 'react';
-import { Ban, Check, ChevronLeft, CircleArrowRight, Clock, Repeat, Search, Sofa, Sun, Sunrise, X } from 'lucide-react';
+import { Ban, ChevronLeft, CircleArrowRight, Clock, Repeat, Search, Sofa, Sun, Sunrise, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Calendar, ChoiceCard, IconButton, Input, Popover, Select } from '@ui';
+import { Calendar, ChoiceCard, IconButton, Input, MenuList, Popover, Select, type MenuEntry } from '@ui';
 import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { TodoPatch } from '../api/gen/TodoPatch';
@@ -332,33 +332,20 @@ function RepeatPanel({ day, current, onBack, onRepeat, onCustom }: {
   const [from, setFrom] = useState<RepeatFrom>(current?.from ?? 'due');
   const presets = repeatPresets(day);
   const isPreset = !!current && presets.some((p) => sameRule(p.rule, current.rule));
-  const tick = <Check aria-label="Chosen" className="size-3.5 text-link" />;
+  const entries: MenuEntry[] = [
+    { label: 'Doesn’t repeat', checked: !current, onSelect: () => onRepeat(null) },
+    ...presets.map((p): MenuEntry => {
+      const on = !!current && sameRule(p.rule, current.rule);
+      return { label: p.label, detail: p.detail, checked: on, onSelect: () => onRepeat({ rule: p.rule, from }) };
+    }),
+    ...(current && !isPreset ? [{ label: repeatText(current), checked: true, onSelect: () => onRepeat(current) }] : []),
+    { separator: true },
+    { label: 'Custom…', onSelect: onCustom },
+  ];
   return (
     <div className="flex flex-col">
       <PanelHeading onBack={onBack}>Repeat</PanelHeading>
-      <div className="flex flex-col p-1.5">
-        <button type="button" className={option} aria-pressed={!current} onClick={() => onRepeat(null)}>
-          <span className="flex-1">Doesn’t repeat</span>
-          {!current && tick}
-        </button>
-        {presets.map((p) => {
-          const on = !!current && sameRule(p.rule, current.rule);
-          return (
-            <button key={p.label} type="button" className={cn(option, on && 'bg-surface-2')} aria-pressed={on} onClick={() => onRepeat({ rule: p.rule, from })}>
-              <span className="flex-1">{p.label}</span>
-              {on ? tick : <span className="text-xs text-muted-foreground">{p.detail}</span>}
-            </button>
-          );
-        })}
-        {current && !isPreset && (
-          <button type="button" className={cn(option, 'bg-surface-2')} aria-pressed onClick={() => onRepeat(current)}>
-            <span className="flex-1">{repeatText(current)}</span>
-            {tick}
-          </button>
-        )}
-        <div className="my-1 h-px bg-border" />
-        <button type="button" className={option} onClick={onCustom}>Custom…</button>
-      </div>
+      <MenuList label="Repeat" entries={entries} className="p-1.5" />
       <div className="flex items-center gap-2 border-t border-border px-2.5 py-2 text-xs text-muted-foreground">
         Next one counts from
         <Select<RepeatFrom>

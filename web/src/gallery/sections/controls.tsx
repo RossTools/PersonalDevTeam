@@ -267,6 +267,9 @@ function render() {
         <Link href="https://github.com/example-org/PersonalDevTeam" external>
           GitHub
         </Link>
+        <span className="text-sm text-muted-foreground">
+          quiet: by <Link tone="quiet" onClick={() => {}}>Coder · PDT-34</Link>
+        </span>
       </Row>
       <Row label="Spinner">
         <Spinner />
