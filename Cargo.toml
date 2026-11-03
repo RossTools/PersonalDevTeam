@@ -38,7 +38,9 @@ tower-http = { version = "0.7.1", features = ["fs", "trace", "compression-gzip",
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-ts-rs = "12.0.1"
+# no-serde-warnings: ts-rs ignores the serde attributes it has no TS meaning for (alias,
+# deserialize_with, deny_unknown_fields) and would print a warning for each on every build.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 thiserror = "2.0.21"
 anyhow = "1.0.104"
 tracing = "0.1.44"
