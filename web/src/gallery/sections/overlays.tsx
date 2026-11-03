@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Copy, FolderGit2, GitBranch, PanelLeft, Pencil, Plus, Terminal, X } from 'lucide-react';
 import { Button } from '@ui/Button';
-import { ContextMenu, MenuButton, useMenuAt, type MenuEntry } from '@ui/Menu';
+import { ContextMenu, MenuButton, MenuList, useMenuAt, type MenuEntry } from '@ui/Menu';
 import { List, ListRow } from '@ui/List';
 import { StatusDot } from '@ui/StatusDot';
 import { Popover } from '@ui/Popover';
@@ -69,6 +69,31 @@ function MenusDemo() {
         <Button variant="secondary">Run ▾</Button>
       </MenuButton>
       <span className="text-meta text-muted-foreground">Last: {last}</span>
+    </Row>
+  );
+}
+
+function MenuListDemo() {
+  const [chosen, setChosen] = useState('week');
+  const options = [
+    { id: 'none', label: 'Doesn’t repeat' },
+    { id: 'day', label: 'Every day' },
+    { id: 'week', label: 'Every week', detail: 'on Fri' },
+    { id: 'month', label: 'Every month', detail: 'on the 23rd' },
+  ];
+  return (
+    <Row label="MenuList (a menu in place, in a popover's panel: arrow keys, Enter, a tick on the chosen one)">
+      <div className="w-64 rounded-md border border-border">
+        <MenuList
+          label="Repeat"
+          className="p-1.5"
+          entries={[
+            ...options.map((o): MenuEntry => ({ label: o.label, detail: o.detail, checked: o.id === chosen, onSelect: () => setChosen(o.id) })),
+            { separator: true },
+            { label: 'Custom…', onSelect: () => {} },
+          ]}
+        />
+      </div>
     </Row>
   );
 }
@@ -185,6 +210,7 @@ export const section = {
   render: () => (
     <>
       <MenusDemo />
+      <MenuListDemo />
       <MenuAtDemo />
       <PopoverDemo />
       <HoverCardDemo />

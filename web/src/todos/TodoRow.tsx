@@ -5,7 +5,7 @@
 import { useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { CalendarDays, Clock, GripVertical, NotebookText, Repeat } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Checkbox, dragData, IconButton, MenuButton, parseDragData, type MenuEntry } from '@ui';
+import { Checkbox, dragData, IconButton, Link, MenuButton, parseDragData, type MenuEntry } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Todo } from '../api/gen/Todo';
 import type { TodoPatch } from '../api/gen/TodoPatch';
@@ -196,14 +196,14 @@ export function TodoRow({ todo: t, now, group, showProject, projects, highlighte
               </Meta>
             )}
             {ticket && (
-              <button
-                type="button"
+              <Link
+                tone="quiet"
                 title={t.ticketTitle ?? undefined}
                 onClick={() => onOpenTicket({ id: t.ticketId!, projectId: t.projectId! })}
-                className="rounded-sm font-mono text-meta text-foreground/80 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                className="font-mono text-meta text-foreground/80"
               >
                 {ticket}
-              </button>
+              </Link>
             )}
             {project && <ProjectKey projectKey={project} />}
             {hasNotes && <Meta icon={<NotebookText aria-hidden className="size-3" />} title="Has notes">{null}</Meta>}

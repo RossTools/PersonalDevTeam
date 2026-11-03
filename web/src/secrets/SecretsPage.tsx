@@ -4,7 +4,7 @@
 // Service, PDT-197) a file in the data folder.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea } from '@ui';
+import { Alert, Badge, Button, CheckboxPicks, Dialog, DialogActions, EmptyState, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Secret } from '../api/gen/Secret';
 import { QueryStatus } from '../common/QueryStatus';
@@ -165,7 +165,7 @@ export function SecretsPage() {
         >
           {items.length
             ? items.map((s) => <Row key={s.id} s={s} names={names} onEdit={() => setEditing({ secret: s })} onDelete={() => void remove.ask(s)} />)
-            : <p className="text-sm text-muted-foreground">None yet.</p>}
+            : <EmptyState size="inline">None yet.</EmptyState>}
         </Section>
       )}</QueryStatus>
       {remove.error && <Alert tone="error">{remove.error.message}</Alert>}

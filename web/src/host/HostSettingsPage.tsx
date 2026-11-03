@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Disclosure, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
+import { Alert, Badge, Button, Disclosure, EmptyState, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
@@ -906,7 +906,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
   return (
     <Section label="Danger zone" danger description="These always ask first.">
       {!v.tokenPresent ? (
-        <p className="text-xs text-muted-foreground">Nothing to remove: no GitHub token is stored.</p>
+        <EmptyState size="inline">Nothing to remove: no GitHub token is stored.</EmptyState>
       ) : <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Updates go on without it.">
         <Button size="sm" variant="danger" pending={removingToken} onClick={() => void removeToken()}>Remove token…</Button>
       </SettingsRow>}

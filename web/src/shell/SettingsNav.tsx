@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Plus, Search } from 'lucide-react';
-import { Badge, Disclosure, IconButton, Input, ListHeading } from '@ui';
+import { Badge, Disclosure, EmptyState, IconButton, Input, ListHeading } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Project } from '../api/gen/Project';
 import { ProjectKey } from '../common/BranchChip';
@@ -81,7 +81,7 @@ export function SettingsNav({ projects, page, phone, onGo, onAddProject, heading
           onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
         />
       </div>
-      {nothing && <p className="px-3 py-2 text-xs text-muted-foreground">No settings match “{query.trim()}”.</p>}
+      {nothing && <EmptyState size="inline" className="px-3 py-2">No settings match “{query.trim()}”.</EmptyState>}
       {hostShown.length > 0 && (
         <Group label="This host" expanded={isOpen(HOST)} onToggle={() => toggle(HOST)}>
           {hostShown.map((s) => {

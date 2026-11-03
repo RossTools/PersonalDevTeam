@@ -204,7 +204,7 @@ describe('settings page', () => {
     await userEvent.click(within(nav).getByRole('button', { name: 'Plugins' }));
     const main = screen.getByRole('main');
     expect(here()).toBe('/settings/plugins');
-    await userEvent.click(await within(main).findByRole('button', { name: 'Discord' }));
+    await userEvent.click(await within(main).findByRole('link', { name: 'Discord' }));
     expect(here()).toBe('/settings/plugins/discord');
     expect(await within(main).findByRole('region', { name: 'Connections' })).toBeInTheDocument();
     await userEvent.click(within(nav).getByRole('button', { name: 'All connections' }));

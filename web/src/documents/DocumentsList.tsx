@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { FileDown, Search, SquarePen, X } from 'lucide-react';
-import { Button, Dialog, EmptyState, IconButton, Input, RelativeTime, Select, Skeleton } from '@ui';
-import { cn } from '@ui/lib/utils';
+import { Button, Dialog, EmptyState, IconButton, Input, List, ListRow, RelativeTime, Select, Skeleton } from '@ui';
 import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
 import type { DocumentKind } from '../api/gen/DocumentKind';
@@ -56,30 +55,25 @@ function filterOf(f: DocumentsFilters): DocumentFilter {
   };
 }
 
-function DocumentItem({ doc, provider, selected, onOpen }: { doc: Document; provider: string; selected: boolean; onOpen: (id: string) => void }) {
+function DocumentItem({ doc, provider, current }: { doc: Document; provider: string; current: boolean }) {
   return (
-    <button
-      type="button"
-      aria-current={selected ? 'true' : undefined}
-      onClick={() => onOpen(doc.id)}
-      className={cn(
-        'relative flex w-full flex-col gap-0.5 overflow-hidden rounded-md px-2.5 pt-2 pb-2.5 text-left outline-none',
-        'hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
-        selected && 'bg-accent before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-primary',
-      )}
-    >
-      <span className="flex min-w-0 items-center gap-1.5">
-        <KindIcon kind={doc.kind} />
-        <span className="truncate text-sm font-medium">{doc.title}</span>
-      </span>
-      <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
-        {doc.projects.map((p) => <ProjectKey key={p.id} projectKey={p.key} />)}
-        {doc.tickets.slice(0, 3).map((t) => <TicketKey key={t.id} ticketKey={t.key} />)}
-        <span>{provider}</span>
-        <span aria-hidden>·</span>
-        <RelativeTime time={doc.updatedAt} />
-      </span>
-    </button>
+    <ListRow
+      id={doc.id}
+      textValue={doc.title}
+      leading={<KindIcon kind={doc.kind} />}
+      title={<span className="font-medium">{doc.title}</span>}
+      current={current}
+      className="px-2.5 pt-2 pb-2.5"
+      details={
+        <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta">
+          {doc.projects.map((p) => <ProjectKey key={p.id} projectKey={p.key} />)}
+          {doc.tickets.slice(0, 3).map((t) => <TicketKey key={t.id} ticketKey={t.key} />)}
+          <span>{provider}</span>
+          <span aria-hidden>·</span>
+          <RelativeTime time={doc.updatedAt} />
+        </span>
+      }
+    />
   );
 }
 
@@ -184,13 +178,11 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
         </EmptyState>
       )}
       {list.length > 0 && (
-        <ul aria-label="Documents" className="mt-2 flex flex-col gap-px px-1">
+        <List aria-label="Documents" onAction={onOpen} className="mt-2 gap-px px-1">
           {list.map((d) => (
-            <li key={d.id}>
-              <DocumentItem doc={d} provider={providerLabel(providers.data?.providers, d.provider)} selected={d.id === selectedId} onOpen={onOpen} />
-            </li>
+            <DocumentItem key={d.id} doc={d} provider={providerLabel(providers.data?.providers, d.provider)} current={d.id === selectedId} />
           ))}
-        </ul>
+        </List>
       )}
       {page.hasMore(list.length) && (
         <Button variant="ghost" size="sm" className="mx-2 mt-2" pending={docs.isPlaceholderData} onClick={page.more}>Show more</Button>

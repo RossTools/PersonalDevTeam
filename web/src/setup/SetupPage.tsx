@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, Minus } from 'lucide-react';
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, ChoiceCardGroup, Input, Link, Select, Skeleton } from '@ui';
+import { Check, Minus } from 'lucide-react';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { Alert, Badge, Button, ChoiceCardGroup, Disclosure, Input, Link, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -156,27 +156,30 @@ interface StepProps {
 }
 
 function Step({ id, state, open, onToggle, title, summary, tag, children }: StepProps & { title: string; summary: ReactNode; tag?: string; children: ReactNode }) {
-  const bodyId = useId();
   const label = state === 'done' ? 'done' : state === 'skipped' ? 'skipped' : 'to do';
   return (
-    <section aria-label={title} data-step={id} className={cn('overflow-hidden rounded-lg border border-border bg-card', open && 'border-primary')}>
-      <button type="button" aria-expanded={open} aria-controls={bodyId} onClick={onToggle}
-        className="flex w-full items-center gap-3 px-3.5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span role="img" aria-label={label} className={cn(
-          'grid size-5.5 shrink-0 place-items-center rounded-full border-2 border-border',
-          state === 'done' && 'border-running bg-running text-background',
-          state === 'skipped' && 'border-dashed text-muted-foreground',
-        )}>
-          {state === 'done' ? <Check className="size-3.5" strokeWidth={3} /> : state === 'skipped' ? <Minus className="size-3.5" /> : null}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <b className="font-semibold">{title}</b>
-          <span className="text-xs text-muted-foreground wrap-anywhere">{summary}</span>
-        </span>
-        {tag && <Badge>{tag}</Badge>}
-        <ChevronDown aria-hidden className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', open && 'rotate-180')} />
-      </button>
-      {open && <div id={bodyId} className="flex flex-col gap-3 px-3.5 pb-3.5 sm:pl-12">{children}</div>}
+    <section aria-label={title} data-step={id}>
+      <Disclosure
+        variant="card"
+        open={open}
+        onOpenChange={onToggle}
+        className={cn(open && 'border-primary')}
+        panelClassName="flex flex-col gap-3 sm:pl-12"
+        title={title}
+        summary={summary}
+        trailing={tag && <Badge>{tag}</Badge>}
+        leading={
+          <span role="img" aria-label={label} className={cn(
+            'grid size-5.5 shrink-0 place-items-center rounded-full border-2 border-border',
+            state === 'done' && 'border-running bg-running text-background',
+            state === 'skipped' && 'border-dashed text-muted-foreground',
+          )}>
+            {state === 'done' ? <Check className="size-3.5" strokeWidth={3} /> : state === 'skipped' ? <Minus className="size-3.5" /> : null}
+          </span>
+        }
+      >
+        {children}
+      </Disclosure>
     </section>
   );
 }
