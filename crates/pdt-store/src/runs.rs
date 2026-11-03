@@ -75,6 +75,25 @@ impl Store {
         rows.iter().map(to_run).collect()
     }
 
+    /// A project's runs for a list that stays small however many have finished: every active one, every one a tab
+    /// holds, and the `ended` most recently finished others; oldest first.
+    pub async fn list_recent_runs(&self, project_id: &str, ended: i64) -> Result<Vec<Run>, StoreError> {
+        let sql = format!(
+            "SELECT {COLUMNS} FROM runs WHERE project_id = ? AND (state IN {ACTIVE} \
+             OR id IN (SELECT run_id FROM workspace_tabs WHERE run_id IS NOT NULL) \
+             OR id IN (SELECT id FROM runs WHERE project_id = ? AND state NOT IN {ACTIVE} \
+             ORDER BY updated_at DESC, id DESC LIMIT ?)) \
+             ORDER BY created_at, id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .bind(project_id)
+            .bind(project_id)
+            .bind(ended.max(0))
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(to_run).collect()
+    }
+
     /// Every active run on this host, oldest first.
     pub async fn list_active_runs(&self) -> Result<Vec<Run>, StoreError> {
         let sql = format!("SELECT {COLUMNS} FROM runs WHERE state IN {ACTIVE} ORDER BY created_at, id");
@@ -214,5 +233,32 @@ mod tests {
         assert!(store.insert_run(&run("b", Some(8401), 2)).await.is_err());
         store.finish_run("a", RunState::Stopped, None, None, 3).await.unwrap();
         store.insert_run(&run("b", Some(8401), 2)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recent_runs_keep_active_tabbed_and_latest_finished() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        for (id, at) in [("old", 1), ("tabbed", 2), ("mid", 3), ("live", 4), ("new", 5)] {
+            store.insert_run(&run(id, None, at)).await.unwrap();
+        }
+        for (id, at) in [("tabbed", 10), ("mid", 11), ("new", 12), ("old", 13)] {
+            store.finish_run(id, RunState::Stopped, None, None, at).await.unwrap();
+        }
+        let ws = pdt_core::workspace::Workspace {
+            id: "w".into(),
+            name: "W".into(),
+            project_id: None,
+            position: 0,
+            created_at: 1,
+            tabs: vec![],
+            ticket: None,
+        };
+        store.insert_workspace(&ws).await.unwrap();
+        store.open_tab("t", "w", &pdt_core::workspace::TabItem::Run("tabbed".into()), None, 1).await.unwrap();
+        let ids = |v: Vec<Run>| v.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(store.list_recent_runs("p", 2).await.unwrap()), ["old", "tabbed", "live", "new"]);
+        assert_eq!(ids(store.list_recent_runs("p", 0).await.unwrap()), ["tabbed", "live"]);
+        assert_eq!(ids(store.list_recent_runs("p", 10).await.unwrap()).len(), 5);
     }
 }

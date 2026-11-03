@@ -84,6 +84,19 @@ runs:
       shell: bash
     # The macOS app is built once per CPU, each in its own job (with its own cache), under target/<target>; the
     # universal app is made from the two by .github/actions/bundle-macos. The others stay under target/release.
+    # A release build (a release, a nightly, the release PR) warns, naming it, when any of the Google values is empty:
+    # the build would ship without that part of PDT's own Google sign-in (scripts/google-build-values.sh).
+    - name: Google build values
+      if: inputs.release == 'true'
+      shell: bash
+      env:
+        PDT_GOOGLE_CLIENT_ID: ${{ inputs.google-client-id }}
+        PDT_GOOGLE_CLIENT_SECRET: ${{ inputs.google-client-secret }}
+        PDT_GOOGLE_AGENT_CLIENT_ID: ${{ inputs.google-agent-client-id }}
+        PDT_GOOGLE_AGENT_CLIENT_SECRET: ${{ inputs.google-agent-client-secret }}
+        PDT_GOOGLE_PICKER_KEY: ${{ inputs.google-picker-key }}
+        PDT_GOOGLE_PROJECT_NUMBER: ${{ inputs.google-project-number }}
+      run: scripts/google-build-values.sh
     # PDT's own Google sign-in is built into pdtd (option_env!, crates/pdt-int-google/src/builtin.rs).
     - name: Build pdtd and pdt-host
       shell: bash

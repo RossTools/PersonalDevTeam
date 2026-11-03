@@ -114,6 +114,9 @@ impl Store {
             qb.push(" AND d.title LIKE ").push_bind(format!("%{escaped}%")).push(" ESCAPE '\\'");
         }
         qb.push(" ORDER BY d.updated_at DESC, d.id DESC");
+        if let Some(n) = f.limit {
+            qb.push(" LIMIT ").push_bind(i64::from(n));
+        }
         let rows = qb.build().fetch_all(&self.pool).await?;
         let mut out = rows.iter().map(to_document).collect::<Result<Vec<_>, _>>()?;
         self.fill_links(&mut out).await?;
@@ -596,6 +599,7 @@ mod tests {
         assert_eq!(f(DocumentFilter { provider: Some("google".into()), ..Default::default() }).await, ["d2"]);
         assert_eq!(f(DocumentFilter { q: Some("bud".into()), ..Default::default() }).await, ["d2"]);
         assert!(f(DocumentFilter { q: Some("%".into()), ..Default::default() }).await == ["d1"]);
+        assert_eq!(f(DocumentFilter { limit: Some(1), ..Default::default() }).await, ["d1"]);
 
         assert!(store.unlink_document("d1", &DocumentLink::Ticket("t1".into())).await.unwrap());
         assert!(!store.unlink_document("d1", &DocumentLink::Ticket("t1".into())).await.unwrap());

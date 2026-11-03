@@ -180,6 +180,7 @@ jobs:
       - run: scripts/version.test.sh
       - run: scripts/release-tag.test.sh
       - run: scripts/nightly-tag.test.sh
+      - run: scripts/google-build-values.test.sh
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
       - name: The pull request adds a changelog fragment

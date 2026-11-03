@@ -182,7 +182,12 @@ your client's details, then **Sign in**.
 
 In **Import a document**, choose **Google** and click **Pick from Google Drive**: Google's own picker searches your
 whole Drive. The Docs and Sheets you pick become documents, and PDT can open them from then on. The list under the
-button shows the files PDT already has access to.
+button shows the files PDT already has access to: only those PDT made or you opened in PDT, so a search there won't
+find the rest of your Drive.
+
+No **Pick from Google Drive** button? With your own OAuth client, the dialog says so and **Add to** opens the account,
+where you fill in the picker's API key and project number. With PDT's own sign-in there is nothing to set: that copy of
+PDT was built without Google's picker, and you can still open the files PDT already has access to.
 
 New Google documents are made in the first signed-in account (by connection name), in its folder.
 
