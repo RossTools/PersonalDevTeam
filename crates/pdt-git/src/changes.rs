@@ -19,7 +19,10 @@ fn nul_list(out: &str) -> impl Iterator<Item = &str> {
 pub fn changed_files(worktree: &Path, base: &str, fallback: &str) -> Result<Vec<String>, GitError> {
     let mb = crate::merge_base(worktree, "HEAD", base).unwrap_or_else(|| fallback.to_string());
     let mut files = BTreeSet::new();
-    let diff = run(worktree, &["-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", "-z", &mb, "--"])?;
+    let diff = run(
+        worktree,
+        &["-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", "-z", "--end-of-options", &mb, "--"],
+    )?;
     files.extend(nul_list(&diff).map(String::from));
     let untracked = run(worktree, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     files.extend(nul_list(&untracked).map(String::from));

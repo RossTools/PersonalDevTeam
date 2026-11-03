@@ -98,6 +98,18 @@ async fn base_branch_defaults_to_the_default_branch_and_can_be_changed() {
     let (s, p) =
         call(&env.app, "POST", "/api/projects", Some(json!({"name": "c", "repoPath": clone.to_string_lossy()}))).await;
     assert_eq!((s, p["baseBranch"].as_str()), (StatusCode::CREATED, Some("main")), "{p}");
+    // A base given when the project is added is checked as a change is.
+    let other = env.tmp.path().join("other");
+    git(env.tmp.path(), &["clone", "-q", &env.repo.to_string_lossy(), &other.to_string_lossy()]);
+    git(&other, &["branch", "-q", "trunk"]);
+    for (base, code) in [("nope", "unknown_branch"), ("-x", "invalid_branch"), ("--output=x", "invalid_branch")] {
+        let body = json!({"name": "r", "repoPath": other.to_string_lossy(), "baseBranch": base});
+        let (s, v) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some(code)), "{base} {v}");
+    }
+    let body = json!({"name": "r", "repoPath": other.to_string_lossy(), "baseBranch": " trunk "});
+    let (s, v) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+    assert_eq!((s, v["baseBranch"].as_str()), (StatusCode::CREATED, Some("trunk")), "{v}");
 
     // Any local branch or one only on origin; nothing else.
     git(&env.repo, &["branch", "release"]);
