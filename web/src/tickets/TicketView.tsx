@@ -215,7 +215,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
         diff={diff}
         overview={
           <TabPanel id="overview" ref={overview.ref} onScroll={overview.onScroll} className="block overflow-auto">
-            <div className="mx-auto grid max-w-6xl gap-6 p-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="mx-auto grid max-w-6xl gap-6 p-gutter md:grid-cols-[minmax(0,1fr)_18rem]">
               <div className="flex min-w-0 flex-col divide-y divide-border *:py-5 *:first:pt-0">
                 <TicketDescription key={t.id} ticket={t} />
                 <PartsSection ticket={t} />

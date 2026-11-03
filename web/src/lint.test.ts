@@ -46,6 +46,10 @@ describe('design system rules', () => {
     expect(offenders(/(?<![\w-])z-\d+\b/, (p) => !p.startsWith('ui/primitives/'))).toEqual([]);
   });
 
+  it('keeps to the type scale: text-heading and text-title, never text-lg or larger', () => {
+    expect(offenders(/(?<![\w-])text-(lg|[2-9]?xl)(?![\w-])/, (p) => !p.startsWith('ui/primitives/'))).toEqual([]);
+  });
+
   it('confirms with useConfirm, never window.confirm', () => {
     expect(offenders(/\bwindow\.confirm\(|\bconfirm\(\s*['"`]/)).toEqual([]);
   });

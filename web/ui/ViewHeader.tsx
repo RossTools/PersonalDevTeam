@@ -26,7 +26,7 @@ export function ViewHeader({ title, titleTooltip, leading, meta, actions, classN
     <header
       {...rest}
       className={cn(
-        'flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-3 py-1.5 text-sm',
+        'flex min-h-10 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-gutter py-1.5 text-sm',
         className,
       )}
     >

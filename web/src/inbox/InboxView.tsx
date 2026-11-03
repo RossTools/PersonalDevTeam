@@ -123,13 +123,13 @@ export function UpdateView({ update, onOpenTarget, onCleared }: {
       <ViewHeader
         title={update.title}
         titleTooltip={update.title}
-        meta={<span className="text-meta text-muted-foreground">{meta}</span>}
+        meta={meta}
         actions={<>
           {open && <Button variant="ghost" size="sm" onClick={open}>Open</Button>}
           <Button variant="ghost" size="sm" onClick={() => { clear.mutate(update.id); onCleared?.(); }}>Clear</Button>
         </>}
       />
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-gutter">
         {update.body && <p className="text-sm whitespace-pre-wrap">{update.body}</p>}
         {open && <div><Button variant="primary" onClick={open}>Open</Button></div>}
       </div>
