@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { TopBarActionsContext, type TopBarActions } from '../shell/PhoneTopBar';
-import { OpenSessionContext } from '../tickets/actions';
+import { OpenSessionContext } from '../common/open';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
 import { DryRunDialog } from './DryRunDialog';
 import { RunsView } from './RunsView';

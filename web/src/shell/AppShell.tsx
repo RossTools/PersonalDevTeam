@@ -27,9 +27,9 @@ import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsS
 import { SettingsNav } from './SettingsNav';
 import { settingsPageScreen, settingsPageTitle, type SettingsPageContext } from './settingsPages';
 import { WorkflowsList, type WorkflowTarget } from '../workflows/WorkflowsList';
-import { OpenSessionContext, OpenTicketContext, StartTicketContext, startNextPart } from '../tickets/actions';
+import { OpenSessionContext, OpenTicketContext, OpenChangesContext, type OpenChangesOptions, openExternal, openPlugin, openSettings } from '../common/open';
+import { StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets, ticketByKey, ticketKeys, useProjectForge, useTicketSearch } from '../tickets/queries';
-import { OpenChangesContext, type OpenChangesOptions } from '../review/open';
 import type { StartResult } from '../api/gen/StartResult';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
@@ -155,7 +155,6 @@ export function AppShell() {
   const workflowTarget: WorkflowTarget = route.view === 'workflows' ? route.target : null;
   const setWorkflowTarget = useCallback((target: WorkflowTarget) => go({ view: 'workflows', target }), []);
   const settingsPage: SettingsPage = route.view === 'settings' ? route.page : { kind: 'index' };
-  const openPlugin = useCallback((id: string) => go({ view: 'settings', page: { kind: 'plugins', id } }), []);
   // A plugin page's name, for a phone's top bar.
   const shownPlugins = usePlugins({ enabled: settingsPage.kind === 'plugins' && settingsPage.id !== null });
   const pluginTitle = (id: string) => shownPlugins.data?.find((p) => p.id === id)?.label ?? 'Plugin';
@@ -550,8 +549,8 @@ export function AppShell() {
       case 'ticket_key': openTicketByKey(t.key); break;
       case 'inbox': go({ view: 'inbox', itemId: t.id }); break;
       case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
-      case 'url': if (isWebUrl(t.url)) window.open(t.url, '_blank', 'noopener'); break;
-      case 'connections': go({ view: 'settings', page: { kind: 'connections' } }); break;
+      case 'url': if (isWebUrl(t.url)) openExternal(t.url); break;
+      case 'connections': openSettings({ kind: 'connections' }); break;
       case 'todo':
         if (phone) setTodosSheetOpen(true);
         else setRightOpen(true);
