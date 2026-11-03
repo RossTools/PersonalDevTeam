@@ -8,7 +8,8 @@ instructions**, which PDT adds to every agent session it starts there.
 
 PDT's instructions for this session name its API, `http://127.0.0.1:<port>/api`, the session id and the project's
 id. Terminal sessions also have `PDT_HOOK_PORT` (the port) and `PDT_SESSION_ID`. The API is local, takes and returns
-JSON, needs no authentication, and reports errors as `{code, message}`.
+JSON (send bodies with `Content-Type: application/json`), needs no authentication, and reports errors as
+`{code, message}`.
 
 | Call | Gives |
 |---|---|
