@@ -1,7 +1,7 @@
 //! The Inbox API: what waits on the user. Stored items (questions, gates, stalled steps, loop
 //! limits) plus the open permission requests of live conversations (approvals), most urgent first.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -292,12 +292,12 @@ pub(crate) async fn proposals(st: &AppState, project: Option<&str>) -> Result<Ve
 /// Accept or Discard on a workflow proposal's item (PDT-320): the same as the workflow's Versions tab.
 async fn answer_proposal(st: &AppState, id: &str, choice: Option<&str>) -> Result<Json<Value>, ApiError> {
     use crate::workflow::routes;
-    let (workflow, version) = inbox::parse_proposal_id(id).ok_or_else(|| ApiError::not_found("inbox item"))?;
+    let (workflow, version) = inbox::parse_proposal_id(id).or_404("inbox item")?;
     let path = Path((workflow.to_string(), version));
     let Json(d) = match choice {
         Some(inbox::ACCEPT) => routes::accept(State(st.clone()), path).await?,
         Some(inbox::DISCARD) => routes::discard(State(st.clone()), path).await?,
-        _ => return Err(bad("choose Accept or Discard")),
+        _ => return Err(ApiError::conflict(codes::CANNOT_ANSWER, "choose Accept or Discard")),
     };
     crate::notifications::kick(st);
     Ok(Json(json!({"workflowId": workflow, "version": d.workflow.version, "accepted": choice == Some(inbox::ACCEPT)})))
@@ -372,14 +372,10 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
     Ok(out)
 }
 
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, "cannot_answer", m)
-}
-
 async fn load(st: &AppState, id: &str) -> Result<InboxItem, ApiError> {
-    let item = st.store.get_inbox_item(id).await?.ok_or_else(|| ApiError::not_found("inbox item"))?;
+    let item = st.store.get_inbox_item(id).await?.or_404("inbox item")?;
     if item.status != InboxStatus::Open {
-        return Err(bad("this item was already answered"));
+        return Err(ApiError::conflict(codes::CANNOT_ANSWER, "this item was already answered"));
     }
     Ok(item)
 }
@@ -393,10 +389,10 @@ pub(crate) async fn answer(
 ) -> Result<Json<Value>, ApiError> {
     let Json(a) = payload?;
     if id.starts_with("approval:") {
-        return Err(bad("answer a permission request in its session"));
+        return Err(ApiError::conflict(codes::CANNOT_ANSWER, "answer a permission request in its session"));
     }
     if id.starts_with("session:") {
-        return Err(bad("answer the session in its tab"));
+        return Err(ApiError::conflict(codes::CANNOT_ANSWER, "answer the session in its tab"));
     }
     let by = if crate::untrusted::from_ui(&st, &headers)? { "user" } else { "agent" };
     if id.starts_with("proposal:") {
@@ -412,31 +408,38 @@ pub(crate) async fn answer(
         && item.kind != InboxKind::Question
         && !item.choices.iter().any(|x| &x.id == c)
     {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_input",
-            format!("{c} is not a choice of this item"),
-        ));
+        return Err(ApiError::invalid(format!("{c} is not a choice of this item")));
     }
     let r = match (item.kind, a.choice.as_deref()) {
         (InboxKind::Admit, Some(c)) => {
             let from_ui = crate::untrusted::from_ui(&st, &headers)?;
-            crate::workflow::nodes::inbox_admit::answer(&st, &item, c, from_ui).await.map_err(bad)?
+            crate::workflow::nodes::inbox_admit::answer(&st, &item, c, from_ui)
+                .await
+                .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?
         }
-        (InboxKind::Admit, None) => return Err(bad("choose Approve or Reject")),
+        (InboxKind::Admit, None) => return Err(ApiError::conflict(codes::CANNOT_ANSWER, "choose Approve or Reject")),
         (InboxKind::TicketProposal, _) => {
             let from_ui = crate::untrusted::from_ui(&st, &headers)?;
-            crate::workflow::nodes::ticket_proposal::answer(&st, &item, &a, from_ui).await.map_err(bad)?
+            crate::workflow::nodes::ticket_proposal::answer(&st, &item, &a, from_ui)
+                .await
+                .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?
         }
         // An agent can't allow its own call (PDT-256): only the user's click in PDT does.
         (InboxKind::Confirm, Some(c)) => {
             if c == inbox::ALLOW && !crate::untrusted::from_ui(&st, &headers)? {
-                return Err(bad("only the user can allow this call, from PDT's Inbox"));
+                return Err(ApiError::conflict(
+                    codes::CANNOT_ANSWER,
+                    "only the user can allow this call, from PDT's Inbox",
+                ));
             }
-            crate::workflow::agent::answer_confirm(&st, &item, c, a.rows.as_deref()).await.map_err(bad)?
+            crate::workflow::agent::answer_confirm(&st, &item, c, a.rows.as_deref())
+                .await
+                .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?
         }
-        (InboxKind::Confirm, None) => return Err(bad("choose Allow or Deny")),
-        _ => crate::workflow::agent::answer_item(&st, &item, &a).await.map_err(bad)?,
+        (InboxKind::Confirm, None) => return Err(ApiError::conflict(codes::CANNOT_ANSWER, "choose Allow or Deny")),
+        _ => crate::workflow::agent::answer_item(&st, &item, &a)
+            .await
+            .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?,
     };
     // What was written (never a secret's value).
     let text = a.text.clone().or_else(|| a.answers.as_ref().map(|all| all.join("\n")));
@@ -450,7 +453,8 @@ pub(crate) async fn answer(
 pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let item = load(&st, &id).await?;
     if !matches!(item.kind, InboxKind::Question | InboxKind::Secret | InboxKind::Stalled | InboxKind::Notice) {
-        return Err(bad(
+        return Err(ApiError::conflict(
+            codes::CANNOT_ANSWER,
             "only questions, secret requests, stalled steps and notices can be dismissed; answer this one",
         ));
     }

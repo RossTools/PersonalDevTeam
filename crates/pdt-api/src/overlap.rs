@@ -29,7 +29,7 @@ pub(crate) async fn project_areas(st: &AppState, project: &Project) -> ProjectAr
 
 /// `GET /api/projects/{id}/areas`.
 pub(crate) async fn areas(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<ProjectAreas>, ApiError> {
-    let project = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&id).await?;
     Ok(Json(project_areas(&st, &project).await))
 }
 
@@ -115,6 +115,12 @@ async fn index_of(st: &AppState, rows: &[OverlapRow]) -> Result<OverlapIndex, Ap
         }
     }
     Ok(OverlapIndex { by_ticket })
+}
+
+/// The ticket `id` with its overlaps.
+pub(crate) async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiError> {
+    let t = st.ticket(id).await?;
+    decorate(st, t).await
 }
 
 /// The ticket with its overlap fields filled in.

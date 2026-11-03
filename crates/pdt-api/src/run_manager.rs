@@ -8,10 +8,9 @@
 //! port itself, and it never unmaps a port it did not map. The machine's other instance (stable or dev) may own any
 //! port a stored row mentions.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
-use axum::http::StatusCode;
 use pdt_agents::SpawnSpec;
 use pdt_agents::detached::{self, DetachedSpec};
 use pdt_core::host::CredentialPolicy;
@@ -216,7 +215,7 @@ pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result
 }
 
 pub(crate) fn no_free_port() -> ApiError {
-    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "no_free_port", "no free port in the host's run port range")
+    ApiError::unavailable(codes::NO_FREE_PORT, "no free port in the host's run port range")
 }
 
 fn vars(st: &AppState, run: &Run) -> RunVars {

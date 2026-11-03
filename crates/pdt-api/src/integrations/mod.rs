@@ -22,6 +22,7 @@ mod http;
 mod mcp;
 mod webhook;
 
+use crate::error::{OrNotFound, codes};
 use crate::mcp::tools::Cx;
 use crate::routes::AppState;
 use crate::workflow::builtins::Builtin;
@@ -1088,7 +1089,6 @@ pub(crate) async fn put(
     payload: Result<axum::Json<EnableIntegrations>, axum::extract::rejection::JsonRejection>,
 ) -> Result<axum::Json<Vec<IntegrationInfo>>, crate::error::ApiError> {
     let axum::Json(input) = payload?;
-    let invalid = |m: String| crate::error::ApiError::new(axum::http::StatusCode::UNPROCESSABLE_ENTITY, "invalid", m);
     let mut ids: Vec<String> = vec![];
     for id in input.enabled {
         // PDT's own are on unless `off` names them.
@@ -1102,7 +1102,7 @@ pub(crate) async fn put(
                 }
                 None => format!("there is no integration {id}"),
             };
-            return Err(invalid(what));
+            return Err(crate::error::ApiError::invalid(what));
         }
         if !ids.contains(&id) {
             ids.push(id);
@@ -1128,8 +1128,15 @@ pub(crate) async fn put(
                             out.push(id);
                         }
                     }
-                    Some(i) => return Err(invalid(format!("{} is part of PDT: it can't be turned off", i.label()))),
-                    None => return Err(invalid(format!("{id} is not one of PDT's own plugins"))),
+                    Some(i) => {
+                        return Err(crate::error::ApiError::invalid(format!(
+                            "{} is part of PDT: it can't be turned off",
+                            i.label()
+                        )));
+                    }
+                    None => {
+                        return Err(crate::error::ApiError::invalid(format!("{id} is not one of PDT's own plugins")));
+                    }
                 }
             }
             out
@@ -1156,9 +1163,8 @@ async fn turn_off_check(st: &AppState, i: &dyn Integration) -> Result<(), crate:
         return Ok(());
     }
     let label = i.label();
-    Err(crate::error::ApiError::new(
-        axum::http::StatusCode::CONFLICT,
-        "in_use",
+    Err(crate::error::ApiError::conflict(
+        codes::IN_USE,
         format!(
             "{label} is the forge of {}: give {} another forge (`forge` in .pdt/project.toml: \"local\" or \"none\") \
              before turning {label} off",
@@ -1240,13 +1246,13 @@ pub(crate) async fn import_by_key(
 ) -> Result<(axum::http::StatusCode, axum::Json<TicketImportResult>), crate::error::ApiError> {
     use crate::error::ApiError;
     let axum::Json(input) = payload?;
-    st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&project_id).await?;
     let registry = st.registry();
     let Some((int, _)) = registry.project_settings_of(&integration).filter(|(_, s)| s.import.is_some()) else {
         return Err(ApiError::not_found("import"));
     };
     let r = int.import_by_key(&st, &project_id, input.key.trim()).await?;
-    let ticket = st.store.get_ticket(&r.ticket_id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let ticket = st.ticket(&r.ticket_id).await?;
     let ticket = crate::overlap::decorate(&st, ticket).await?;
     let status = if r.existed { axum::http::StatusCode::OK } else { axum::http::StatusCode::CREATED };
     Ok((status, axum::Json(TicketImportResult { ticket, existed: r.existed })))
@@ -1258,7 +1264,7 @@ pub(crate) async fn connection_status(
     State(st): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<axum::Json<Option<ConnectionStatus>>, crate::error::ApiError> {
-    let c = st.store.get_connection(&id).await?.ok_or_else(|| crate::error::ApiError::not_found("connection"))?;
+    let c = st.store.get_connection(&id).await?.or_404("connection")?;
     let registry = st.registry();
     let status = match registry.owner_of_connection(&c.kind) {
         Some(int) => int.connection_status(&st, &c).await,

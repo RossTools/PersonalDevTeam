@@ -3,7 +3,7 @@
 //! event; workflows run on the engine's next tick. The identity guard lets these through (the senders are machines on
 //! the tailnet with no user identity), never over Funnel; the secret is what lets them in.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::webhook::WEBHOOK_CONNECTION;
 use axum::Json;
@@ -83,13 +83,12 @@ pub(crate) async fn receive(
     let Some(hook) = hook else { return Err(ApiError::not_found("webhook")) };
     let secret = crate::workflow::routes::connection_with_secret(&st, &hook.name)
         .await
-        .map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, "keychain_failed", e))?
+        .map_err(ApiError::keychain)?
         .1
         .filter(|s| !s.is_empty());
     let Some(secret) = secret else {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "webhook_no_secret",
+        return Err(ApiError::conflict(
+            codes::WEBHOOK_NO_SECRET,
             format!("the webhook {name} has no secret yet: set one on its connection"),
         ));
     };
@@ -97,7 +96,7 @@ pub(crate) async fn receive(
         tracing::warn!(hook = %name, "refused a webhook request without its secret");
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
-            "bad_signature",
+            codes::BAD_SIGNATURE,
             "send the hook's secret as Authorization: Bearer <secret> or an X-Hub-Signature-256",
         ));
     }

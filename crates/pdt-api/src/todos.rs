@@ -1,7 +1,7 @@
 //! The user's todo list (PDT-125): `GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`. The PM reads it with the
 //! `list_todos` tool. Checking off a repeating todo (PDT-141) makes the next one.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -11,19 +11,15 @@ use pdt_core::todo::{self, NewTodo, Todo, TodoPatch};
 use pdt_store::TodoFilter;
 use serde::Deserialize;
 
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 /// A project id or key the user gave, as an id.
 async fn project(st: &AppState, given: &str) -> Result<String, ApiError> {
-    crate::pm::project_id(st, given).await.map_err(bad)
+    crate::pm::project_id(st, given).await.map_err(ApiError::invalid)
 }
 
 /// A ticket id or key the user gave: its id and its project's.
 async fn ticket(st: &AppState, given: &str) -> Result<(String, String), ApiError> {
-    let id = crate::mcp::tools::resolve_ticket(st, given, None).await.map_err(bad)?;
-    let t = st.store.get_ticket(&id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let id = crate::mcp::tools::resolve_ticket(st, given, None).await.map_err(ApiError::invalid)?;
+    let t = st.ticket(&id).await?;
     Ok((id, t.summary.project_id))
 }
 
@@ -58,8 +54,8 @@ pub(crate) async fn create(
     payload: Result<Json<NewTodo>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Todo>), ApiError> {
     let Json(input) = payload?;
-    let title = todo::valid_title(&input.title).map_err(bad)?;
-    let body = todo::valid_body(input.body.as_deref().unwrap_or_default()).map_err(bad)?;
+    let title = todo::valid_title(&input.title).map_err(ApiError::invalid)?;
+    let body = todo::valid_body(input.body.as_deref().unwrap_or_default()).map_err(ApiError::invalid)?;
     let (mut ticket_id, mut project_id) = (None, None);
     if let Some(t) = input.ticket.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
         let (t, p) = ticket(&st, t).await?;
@@ -69,10 +65,10 @@ pub(crate) async fn create(
     if let Some(p) = input.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         project_id = Some(project(&st, p).await?);
     }
-    let due_on = todo::valid_due_on(input.due_on.as_deref().unwrap_or_default()).map_err(bad)?;
-    let due_time = todo::valid_due_time(input.due_time.as_deref().unwrap_or_default()).map_err(bad)?;
-    let (due_on, due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
-    let recurrence = todo::valid_recurrence(input.recurrence, due_on.as_deref()).map_err(bad)?;
+    let due_on = todo::valid_due_on(input.due_on.as_deref().unwrap_or_default()).map_err(ApiError::invalid)?;
+    let due_time = todo::valid_due_time(input.due_time.as_deref().unwrap_or_default()).map_err(ApiError::invalid)?;
+    let (due_on, due_time) = todo::valid_due(due_on, due_time).map_err(ApiError::invalid)?;
+    let recurrence = todo::valid_recurrence(input.recurrence, due_on.as_deref()).map_err(ApiError::invalid)?;
     let now = now_ms();
     let position = st.store.first_todo_position().await?.map_or(0.0, |p| p - 1.0);
     let id = uuid::Uuid::now_v7().to_string();
@@ -98,7 +94,7 @@ pub(crate) async fn create(
         .await?;
     // A todo added already due reminds at once.
     crate::notifications::kick(&st);
-    let made = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
+    let made = st.store.get_todo(&id).await?.or_404("todo")?;
     Ok((StatusCode::CREATED, Json(made)))
 }
 
@@ -111,21 +107,21 @@ pub(crate) async fn patch(
     payload: Result<Json<TodoPatch>, JsonRejection>,
 ) -> Result<Json<Todo>, ApiError> {
     let Json(p) = payload?;
-    let mut t = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
+    let mut t = st.store.get_todo(&id).await?.or_404("todo")?;
     let was_done = t.done;
     let now = now_ms();
     if let Some(title) = &p.title {
-        t.title = todo::valid_title(title).map_err(bad)?;
+        t.title = todo::valid_title(title).map_err(ApiError::invalid)?;
     }
     if let Some(body) = &p.body {
-        t.body = todo::valid_body(body).map_err(bad)?;
+        t.body = todo::valid_body(body).map_err(ApiError::invalid)?;
     }
     if let Some(done) = p.done {
         t.done_at = todo::done_at(t.done_at, done, now);
         t.done = done;
     }
     if let Some(position) = p.position {
-        t.position = todo::valid_position(position).map_err(bad)?;
+        t.position = todo::valid_position(position).map_err(ApiError::invalid)?;
     }
     if let Some(given) = &p.ticket {
         t.ticket_id = match given.trim() {
@@ -154,15 +150,15 @@ pub(crate) async fn patch(
         let mut due_on = t.due_on.clone();
         let mut due_time = t.due_time.clone();
         if let Some(d) = &p.due_on {
-            due_on = todo::valid_due_on(d).map_err(bad)?;
+            due_on = todo::valid_due_on(d).map_err(ApiError::invalid)?;
             if due_on.is_none() {
                 due_time = None;
             }
         }
         if let Some(d) = &p.due_time {
-            due_time = todo::valid_due_time(d).map_err(bad)?;
+            due_time = todo::valid_due_time(d).map_err(ApiError::invalid)?;
         }
-        (t.due_on, t.due_time) = todo::valid_due(due_on, due_time).map_err(bad)?;
+        (t.due_on, t.due_time) = todo::valid_due(due_on, due_time).map_err(ApiError::invalid)?;
         // No date, no repeating.
         if t.due_on.is_none() {
             t.recurrence = None;
@@ -171,7 +167,7 @@ pub(crate) async fn patch(
     if let Some(r) = p.recurrence.clone() {
         t.recurrence = r;
     }
-    t.recurrence = todo::valid_recurrence(t.recurrence.take(), t.due_on.as_deref()).map_err(bad)?;
+    t.recurrence = todo::valid_recurrence(t.recurrence.take(), t.due_on.as_deref()).map_err(ApiError::invalid)?;
     t.updated_at = now;
     let next = if t.done && !was_done { next_todo(&t, now) } else { None };
     let saved = match &next {
@@ -183,7 +179,7 @@ pub(crate) async fn patch(
     }
     // Done or re-dated: its reminder clears (or a new one comes) now rather than on the next pass.
     crate::notifications::kick(&st);
-    Ok(Json(st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?))
+    Ok(Json(st.store.get_todo(&id).await?.or_404("todo")?))
 }
 
 /// The todo a repeating one makes when it is checked off (or skipped) now: due on the rule's next day, with the same
@@ -218,9 +214,9 @@ pub(crate) async fn delete(
     let stop = match q.series.as_deref().unwrap_or("only") {
         "only" => false,
         "series" => true,
-        other => return Err(bad(format!("series is \"only\" or \"series\", not {other:?}"))),
+        other => return Err(ApiError::invalid(format!("series is \"only\" or \"series\", not {other:?}"))),
     };
-    let t = st.store.get_todo(&id).await?.ok_or_else(|| ApiError::not_found("todo"))?;
+    let t = st.store.get_todo(&id).await?.or_404("todo")?;
     let next = if stop || t.done { None } else { next_todo(&t, now_ms()) };
     if !st.store.delete_todo_keeping(&id, next.as_ref()).await? {
         return Err(ApiError::not_found("todo"));

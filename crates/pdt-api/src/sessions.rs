@@ -1,4 +1,4 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::path::{Path as FsPath, PathBuf};
 
 pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Session>>, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     Ok(Json(st.store.list_sessions(&id).await?))
 }
 
@@ -26,7 +26,7 @@ pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) 
 }
 
 async fn load(st: &AppState, id: &str) -> Result<Session, ApiError> {
-    st.store.get_session(id).await?.ok_or_else(|| ApiError::not_found("session"))
+    st.session(id).await
 }
 
 pub(crate) async fn create(
@@ -73,21 +73,24 @@ pub(crate) struct CreateSession {
 /// first prompt, if any), activity tracking and, if asked, its tab. Nothing is left behind if the process can't start.
 pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<Session, ApiError> {
     let valid = req.valid;
-    let project = st.store.get_project(&valid.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&valid.project_id).await?;
     if let Some(agent) = valid.agent {
         if agent.is_acp() {
             crate::conversations::acp_agent(st, agent).await?;
         }
         // A switched-off agent starts nothing new (PDT-270); its sessions already running carry on.
         if let Some(why) = st.store.get_host_settings().await?.agent_off(agent) {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "agent_off", why));
+            return Err(ApiError::bad_request(codes::AGENT_OFF, why));
         }
     }
     let (worktree_id, mut cwd, place) = match &valid.worktree_id {
         Some(wid) => {
-            let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).ok_or_else(|| {
-                ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "worktree does not belong to this project")
-            })?;
+            let wt = st
+                .store
+                .get_worktree(wid)
+                .await?
+                .filter(|w| w.project_id == project.id)
+                .ok_or_else(|| ApiError::invalid("worktree does not belong to this project"))?;
             (Some(wt.id), wt.path, wt.branch)
         }
         None => (None, project.repo_path.clone(), project.name.clone()),
@@ -204,12 +207,12 @@ pub(crate) async fn agent_instructions(
     if s.kind != SessionKind::AgentTui {
         return Ok(None);
     }
-    let project = st.store.get_project(&s.project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&s.project_id).await?;
     if project.is_host() {
         // The PM (PDT-81): its own context and briefing, nothing about a project or checkout.
         let text = with_mcp_note(crate::pm::instructions(st, s).await?, st, s).await;
         let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
-            .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
+            .map_err(|e| ApiError::io("writing the session's instructions", e))?;
         return Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }));
     }
     let branch = match &s.worktree_id {
@@ -269,7 +272,7 @@ pub(crate) async fn agent_instructions(
         _ => ours,
     };
     let file = pdt_agents::instructions::write_instructions(&session_data_dir(st, &s.id), &text)
-        .map_err(|e| ApiError::internal(format!("writing the session's instructions: {e}")))?;
+        .map_err(|e| ApiError::io("writing the session's instructions", e))?;
     Ok(Some(pdt_agents::adapter::SessionInstructions { text, file }))
 }
 
@@ -639,23 +642,21 @@ pub(crate) async fn update(
     let Json(body) = payload?;
     let session = load(&st, &id).await?;
     if let Some(title) = &body.title {
-        let title = clean_title(title).ok_or_else(|| {
-            ApiError::new(StatusCode::BAD_REQUEST, "invalid_title", "title must be 1 to 100 characters")
-        })?;
+        let title = clean_title(title)
+            .ok_or_else(|| ApiError::bad_request(codes::INVALID_TITLE, "title must be 1 to 100 characters"))?;
         st.store.rename_session(&id, &title).await?;
     }
     if body.model.is_some() || body.permission_mode.is_some() {
         if session.mode != SessionMode::Conversation {
-            return Err(ApiError::new(
-                StatusCode::CONFLICT,
-                "not_conversation",
+            return Err(ApiError::conflict(
+                codes::NOT_CONVERSATION,
                 "the model and permission mode are set on conversations",
             ));
         }
         let model = match body.model {
             Some(m) => match m.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
                 Some(m) if !pdt_core::conversation::valid_model(m) => {
-                    return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "invalid model name"));
+                    return Err(ApiError::invalid("invalid model name"));
                 }
                 m => Some(m.map(String::from)),
             },
@@ -708,7 +709,7 @@ pub(crate) async fn restart(
         return Ok(Json(load(&st, &id).await?));
     }
     if st.ptys.is_running(&id) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "already_running", "this session is already running"));
+        return Err(ApiError::conflict(codes::ALREADY_RUNNING, "this session is already running"));
     }
     restart_locked(&st, &id, size, None).await?;
     Ok(Json(load(&st, &id).await?))
@@ -906,7 +907,7 @@ pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiEr
         })
         .await;
         if exited.is_err() {
-            return Err(ApiError::new(StatusCode::CONFLICT, "session_running", "the session did not stop in time"));
+            return Err(ApiError::conflict(codes::SESSION_RUNNING, "the session did not stop in time"));
         }
     }
     remove_locked(st, id).await

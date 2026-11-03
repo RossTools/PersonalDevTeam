@@ -1,6 +1,6 @@
 //! Run routes. The lifecycle itself lives in `run_manager`.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use crate::run_manager;
 use axum::Json;
@@ -29,11 +29,7 @@ pub struct Branch {
 }
 
 async fn load(st: &AppState, id: &str) -> Result<Run, ApiError> {
-    st.store.get_run(id).await?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "unknown_run", "run not found"))
-}
-
-fn conflict(code: &'static str, msg: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, msg)
+    st.store.get_run(id).await?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, "run not found"))
 }
 
 /// The definition named by `run` in the configuration of its own checkout. Err is a message for the run's error.
@@ -49,7 +45,7 @@ pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, S
 }
 
 pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Run>>, ApiError> {
-    st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&id).await?;
     Ok(Json(st.store.list_runs(&id).await?))
 }
 
@@ -65,7 +61,7 @@ pub(crate) async fn branches(
     State(st): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<Branch>>, ApiError> {
-    let p = st.store.get_project(&id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let p = st.project(&id).await?;
     if !p.has_repo() {
         return Ok(Json(vec![]));
     }
@@ -149,8 +145,8 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
         return Ok(wt.id);
     }
     if path.exists() || existing.iter().any(|w| w.path == path_str) {
-        return Err(conflict(
-            "worktree_path_taken",
+        return Err(ApiError::conflict(
+            codes::WORKTREE_PATH_TAKEN,
             format!("the worktree folder {path_str} is already in use (by another branch with a similar name)"),
         ));
     }
@@ -175,7 +171,7 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
 }
 
 fn still_stopping() -> ApiError {
-    conflict("run_stopping", "the run has not stopped yet; try again in a moment")
+    ApiError::conflict(codes::RUN_STOPPING, "the run has not stopped yet; try again in a moment")
 }
 
 /// Makes room for one more run under the host's maximum, stopping `stop_run_id` when the user confirmed that.
@@ -191,8 +187,8 @@ async fn check_run_limit(st: &AppState, stop_run_id: Option<&str>) -> Result<(),
         Some(_) => Err(still_stopping()),
         None => {
             let oldest = &active[0];
-            Err(conflict(
-                "too_many_runs",
+            Err(ApiError::conflict(
+                codes::TOO_MANY_RUNS,
                 format!(
                     "{} runs are active (the maximum is {}). Stop \"{} · {}\" to start this one?",
                     active.len(),
@@ -234,7 +230,7 @@ pub(crate) async fn create(
     payload: Result<Json<NewRun>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Run>), ApiError> {
     let Json(input) = payload?;
-    let project = st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    let project = st.project(&project_id).await?;
     crate::projects::needs_repo(&project, "runs or tests")?;
     // Everything that can refuse the start comes before anything is created.
     crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
@@ -242,7 +238,7 @@ pub(crate) async fn create(
     let cfg = config_for(&st, &project, &place).await?;
     let list = if input.kind == RunKind::Test { &cfg.tests } else { &cfg.runs };
     let def = list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
-        ApiError::new(StatusCode::NOT_FOUND, "unknown_run", format!("the configuration has no \"{}\"", input.name))
+        ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, format!("the configuration has no \"{}\"", input.name))
     })?;
     // A command the user hasn't approved (a branch's or an agent-edited worktree's config, a new clone) waits for them.
     let commands = vec![pdt_core::command_trust::of_run(&def, input.kind == RunKind::Test)];
@@ -329,14 +325,12 @@ pub(crate) async fn restart(
     let input: RestartRun = if body.iter().all(u8::is_ascii_whitespace) {
         RestartRun::default()
     } else {
-        serde_json::from_slice(&body)
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
+        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
     };
     let run = load(&st, &id).await?;
     let was_active = run.state.is_active();
     // A command the user hasn't approved refuses the restart before the running one is stopped.
-    let def =
-        definition_for(&st, &run).await.map_err(|m| ApiError::new(StatusCode::BAD_REQUEST, "invalid_run_config", m))?;
+    let def = definition_for(&st, &run).await.map_err(|m| ApiError::bad_request(codes::INVALID_RUN_CONFIG, m))?;
     crate::command_trust::check_run(&st, &run.project_id, &def, run.kind == RunKind::Test).await?;
     if was_active && !run_manager::stop(&st, &id, None).await {
         return Err(still_stopping());
@@ -347,7 +341,7 @@ pub(crate) async fn restart(
     let _start = st.run_start_lock.lock().await;
     let run = load(&st, &id).await?;
     if run.state.is_active() {
-        return Err(conflict("run_active", "the run was started again meanwhile"));
+        return Err(ApiError::conflict(codes::RUN_ACTIVE, "the run was started again meanwhile"));
     }
     // A restarted run counts toward the limit like a new one.
     if run.kind == RunKind::Run {
@@ -359,7 +353,7 @@ pub(crate) async fn restart(
 pub(crate) async fn reset_data(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let run = load(&st, &id).await?;
     if run.state.is_active() {
-        return Err(conflict("run_active", "stop the run before resetting its data"));
+        return Err(ApiError::conflict(codes::RUN_ACTIVE, "stop the run before resetting its data"));
     }
     if let Some(dir) = run.data_dir.map(PathBuf::from) {
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
@@ -394,7 +388,7 @@ pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let run = load(&st, &id).await?;
     if run.state.is_active() {
-        return Err(conflict("run_active", "stop the run before removing it"));
+        return Err(ApiError::conflict(codes::RUN_ACTIVE, "stop the run before removing it"));
     }
     delete(&st, &id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -426,7 +420,7 @@ pub(crate) async fn pty(
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     load(&st, &id).await?;
-    let step = RunStep::parse(&step).ok_or_else(|| ApiError::not_found("run step"))?;
+    let step = RunStep::parse(&step).or_404("run step")?;
     crate::pty_ws::upgrade(st, pty_id(&id, step), params.gzip_replay(), ws)
 }
 

@@ -5,7 +5,7 @@
 //! [`AccountStore`] keyed `<kind>:<host>`); each signs in the plugin's forge for its host ([`ForgeLogin::set_account`]),
 //! which a project on that host uses. The single GitHub login from before PDT-244 is copied in on the first read.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -123,14 +123,10 @@ pub struct ForgeTokenCheck {
     pub scopes: Vec<String>,
 }
 
-fn bad(code: &'static str, m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, code, m)
-}
-
 /// The plugin of `kind`, when it has a login.
 fn plugin(st: &AppState, kind: &str) -> Result<Arc<dyn ForgePlugin>, ApiError> {
     ForgeKind::new(kind).and_then(|k| st.forges.get(&k).cloned()).filter(|p| p.login().is_some()).ok_or_else(|| {
-        ApiError::new(StatusCode::NOT_FOUND, "unknown_forge", format!("PDT has no forge {kind} to sign in to"))
+        ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_FORGE, format!("PDT has no forge {kind} to sign in to"))
     })
 }
 
@@ -198,11 +194,6 @@ pub(crate) fn connected(st: &AppState, kind: &ForgeKind) -> bool {
     st.forges.get(kind).and_then(|p| p.login().map(|l| !l.accounts().is_empty())).unwrap_or(false)
 }
 
-fn keychain_error(e: crate::secrets::SecretError) -> ApiError {
-    tracing::warn!(error = %e, "keychain call failed");
-    ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "keychain_unavailable", e.to_string())
-}
-
 /// The stored accounts. Without any yet, the GitHub login from before PDT-244 (`legacy`) becomes the account of its
 /// host, and is written so; the old entry stays, for an older PDT rolled back to. Blocking.
 fn read_store(
@@ -260,11 +251,11 @@ async fn store_account(
         {
             secrets.delete(&legacy)?;
         }
-        Ok(())
+        Ok::<_, crate::secrets::SecretError>(())
     })
     .await
     .map_err(ApiError::internal)?
-    .map_err(keychain_error)
+    .map_err(ApiError::keychain)
 }
 
 /// Has every forge store the accounts it renews itself (PDT-260), as soon as it has: the old refresh token no longer
@@ -462,7 +453,7 @@ impl TokenBody {
     fn parts(&self, l: &dyn ForgeLogin) -> Result<(String, String), ApiError> {
         let token = self.token.trim().to_string();
         if token.is_empty() {
-            return Err(bad("invalid_token", "the token is empty"));
+            return Err(ApiError::bad_request(codes::INVALID_TOKEN, "the token is empty"));
         }
         let api = l.api_url(self.api_url.as_deref().unwrap_or_default());
         Ok((token, api))
@@ -479,7 +470,7 @@ pub(crate) async fn test_token(
     let Json(b) = payload?;
     let l = login_of(p.as_ref());
     let (token, api) = b.parts(l)?;
-    let who = whoami(&p, &api, &token).await.map_err(|e| bad("invalid_token", e))?;
+    let who = whoami(&p, &api, &token).await.map_err(|e| ApiError::bad_request(codes::INVALID_TOKEN, e))?;
     Ok(Json(ForgeTokenCheck {
         host: l.host_of(&api),
         web_url: l.web_url(&api),
@@ -501,7 +492,7 @@ pub(crate) async fn put_token(
     let (token, api) = b.parts(login_of(p.as_ref()))?;
     sign_in(&st, &p, TokenGrant { token, ..TokenGrant::default() }, api, How::Pasted)
         .await
-        .map_err(|e| bad("invalid_token", e))?;
+        .map_err(|e| ApiError::bad_request(codes::INVALID_TOKEN, e))?;
     cancel(&st, &p.kind());
     Ok(Json(view(&st, p.as_ref())))
 }
@@ -535,7 +526,10 @@ pub(crate) async fn start_device(
     let Json(b) = payload?;
     let l = login_of(p.as_ref());
     if !l.spec().device_flow {
-        return Err(bad("no_device_flow", format!("{} has no device flow: paste a token instead", p.label())));
+        return Err(ApiError::bad_request(
+            codes::NO_DEVICE_FLOW,
+            format!("{} has no device flow: paste a token instead", p.label()),
+        ));
     }
     let api = l.api_url(b.api_url.as_deref().unwrap_or_default());
     let client_id = b
@@ -544,13 +538,13 @@ pub(crate) async fn start_device(
         .filter(|c| !c.is_empty())
         .unwrap_or_else(|| client_id(&st, &p.kind()));
     if client_id.is_empty() {
-        return Err(bad("no_client_id", "no OAuth App client ID is set: paste a token instead"));
+        return Err(ApiError::bad_request(codes::NO_CLIENT_ID, "no OAuth App client ID is set: paste a token instead"));
     }
     let (pp, a, c) = (p.clone(), api.clone(), client_id.clone());
     let code = tokio::task::spawn_blocking(move || login_of(pp.as_ref()).start_device_flow(&a, &c))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| bad("device_flow_failed", e))?;
+        .map_err(|e| ApiError::bad_request(codes::DEVICE_FLOW_FAILED, e))?;
     let flow = {
         let mut f = flows(&st);
         let s = f.entry(p.kind().to_string()).or_default();
@@ -640,7 +634,7 @@ pub(crate) async fn disconnect(
     if !login_of(p.as_ref()).accounts().iter().any(|a| a.host == host) {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
-            "no_account",
+            codes::NO_ACCOUNT,
             format!("{} has no account on {host}", p.label()),
         ));
     }

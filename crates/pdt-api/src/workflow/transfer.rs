@@ -2,8 +2,8 @@
 //! same text copied or downloaded; importing checks it against this host, applies the user's mapping and creates the
 //! workflows disabled. The pure part is pdt-core `workflow::transfer`.
 
-use super::routes::{body, checked, conflict, create_workflow, invalid, load, validate_with_tools};
-use crate::error::ApiError;
+use super::routes::{body, checked, create_workflow, load, validate_with_tools};
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -73,15 +73,14 @@ async fn local(st: &AppState) -> Result<Local, ApiError> {
 /// The export of these workflows' current versions.
 pub(crate) async fn export(st: &AppState, ids: &[String]) -> Result<WorkflowExport, ApiError> {
     if ids.is_empty() {
-        return Err(invalid("name the workflows to export (ids)"));
+        return Err(ApiError::invalid("name the workflows to export (ids)"));
     }
     let here = local(st).await?;
     let keys: HashMap<String, String> = here.projects.iter().map(|p| (p.id.clone(), p.key.clone())).collect();
     let mut workflows = vec![];
     for id in ids {
         let w = load(st, id).await?;
-        let mut doc =
-            st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))?;
+        let mut doc = st.store.workflow_doc(&w.id, w.version).await?.or_404("workflow version")?;
         to_placeholders(&mut doc, &keys);
         let project = w.project_id.as_ref().and_then(|p| keys.get(p)).cloned();
         workflows.push(ExportedWorkflow { name: w.name, description: w.description, scope: w.scope, project, doc });
@@ -167,7 +166,7 @@ fn same_name(all: &[Workflow], name: &str) -> Vec<ExistingWorkflow> {
 }
 
 fn parsed(text: &str) -> Result<WorkflowExport, ApiError> {
-    parse_import(text).map_err(|m| ApiError::new(axum::http::StatusCode::BAD_REQUEST, "invalid_export", m))
+    parse_import(text).map_err(|m| ApiError::bad_request(codes::INVALID_EXPORT, m))
 }
 
 /// `{text, check: true}`: what the text holds and how what it needs stands here.
@@ -215,7 +214,7 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
     let e = parsed(&r.text)?;
     let here = local(st).await?;
     let requires = requires_of(&e.workflows, &|k: &str| ref_fields(&st.registry(), k), &tool_of, &e.requires);
-    let resolved = resolve(&requires, &r.mapping, &here).map_err(|m| conflict("needs_mapping", m))?;
+    let resolved = resolve(&requires, &r.mapping, &here).map_err(|m| ApiError::conflict(codes::NEEDS_MAPPING, m))?;
     let all = st.store.list_workflows(None).await?;
     let mut taken: Vec<String> = all.iter().map(|w| w.name.to_lowercase()).collect();
     let mut planned = vec![];
@@ -233,8 +232,8 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
             Some(id) => {
                 let existing = load(st, id).await?;
                 if existing.source == Source::Repo {
-                    return Err(conflict(
-                        "workflow_in_repo",
+                    return Err(ApiError::conflict(
+                        codes::WORKFLOW_IN_REPO,
                         format!("{} lives in the repo: import as a copy instead", existing.name),
                     ));
                 }
@@ -245,8 +244,8 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
         if version_of.is_none() {
             if taken.contains(&doc.name.to_lowercase()) {
                 if !t.copy {
-                    return Err(conflict(
-                        "workflow_exists",
+                    return Err(ApiError::conflict(
+                        codes::WORKFLOW_EXISTS,
                         format!("a workflow is already called {}: import it as a copy or as a new version", doc.name),
                     ));
                 }
@@ -260,7 +259,7 @@ pub(crate) async fn import(st: &AppState, r: &ImportRequest, author: Author) -> 
         planned.push(Planned { doc, scope, project_id, version_of });
     }
     if planned.is_empty() {
-        return Err(invalid("every workflow is skipped: nothing to import"));
+        return Err(ApiError::invalid("every workflow is skipped: nothing to import"));
     }
     let from = match e.pdt_version.as_str() {
         "" => "imported".to_string(),
@@ -301,7 +300,7 @@ fn target_scope(
     let from_export = w.project.as_ref().and_then(|k| projects.get(k)).map(String::as_str);
     match given.or(from_export).and_then(|p| here.project(p)) {
         Some(p) => Ok((scope, Some(p.id.clone()))),
-        None => Err(invalid(format!("{}: pick the project it applies to (projectId)", w.name))),
+        None => Err(ApiError::invalid(format!("{}: pick the project it applies to (projectId)", w.name))),
     }
 }
 

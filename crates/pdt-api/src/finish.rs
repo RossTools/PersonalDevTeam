@@ -3,7 +3,7 @@
 //! lost; otherwise it moves the ticket to Done, stops and removes what ran in its worktree and workspace, removes the
 //! worktree (and the branch when asked), deletes the workspace Start made and pulls the base branch.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
@@ -303,7 +303,7 @@ async fn finish_alone(
     req: &FinishRequest,
     by: Option<&By>,
 ) -> Result<FinishResult, ApiError> {
-    let ticket = st.store.get_ticket_summary(ticket_id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let ticket = st.store.get_ticket_summary(ticket_id).await?.or_404("ticket")?;
     let info = match &ticket.attempt {
         Some(a) => st.store.get_attempt(&a.id).await?,
         None => None,
@@ -394,7 +394,7 @@ pub(crate) async fn clean_up(
     }
     for id in &p.remove {
         if let Err(e) = crate::sessions::stop_and_remove(st, id).await
-            && e.code() != "not_found"
+            && e.code() != codes::NOT_FOUND
         {
             tracing::warn!(ticket = %key, session = %id, error = %e.message(), "could not remove the session");
         }
@@ -409,16 +409,16 @@ pub(crate) async fn clean_up(
         let mut tries = 0;
         loop {
             match crate::worktrees::remove_worktree(st, id, discard, delete_branch).await {
-                Err(e) if e.code() == "worktree_busy" && tries < 20 => {
+                Err(e) if e.code() == codes::WORKTREE_BUSY && tries < 20 => {
                     tries += 1;
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 }
-                Err(e) if e.code() == "branch_not_deleted" => {
+                Err(e) if e.code() == codes::BRANCH_NOT_DELETED => {
                     out.worktree_removed = true;
                     out.branch_note = Some(e.message().to_string());
                     break;
                 }
-                Err(e) if e.code() != "not_found" => {
+                Err(e) if e.code() != codes::NOT_FOUND => {
                     tracing::warn!(ticket = %key, error = %e.message(), "could not remove the worktree");
                     break;
                 }

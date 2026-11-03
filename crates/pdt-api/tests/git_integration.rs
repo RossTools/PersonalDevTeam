@@ -195,7 +195,7 @@ async fn clone_by_url_adds_the_project() {
         Some(json!({"url": env.repo.to_string_lossy(), "parentDir": typo.to_string_lossy()})),
     )
     .await;
-    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("folder_missing")), "{v}");
+    assert_eq!((s, v["code"].as_str()), (StatusCode::NOT_FOUND, Some("folder_missing")), "{v}");
     assert!(!typo.exists(), "a mistyped folder is not created");
     let (s, v) = call(
         &env.app,

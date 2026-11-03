@@ -1,8 +1,8 @@
 //! Workflow templates: the ones PDT ships (`builtin:<id>`, read-only) and the user's own, with
 //! parameters. Instantiating one makes an ordinary workflow, disabled until the user enables it.
 
-use super::routes::{body, checked, conflict, create_workflow, invalid};
-use crate::error::ApiError;
+use super::routes::{body, checked, create_workflow};
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -321,15 +321,15 @@ async fn find(st: &AppState, id: &str) -> Result<Template, ApiError> {
         }
         return Err(
             match off_templates(st).into_iter().find(|(t, _)| t.id == id).and_then(|(t, _)| plugin_of(&t.doc)) {
-                Some((_, label)) => conflict(
-                    "integration_disabled",
+                Some((_, label)) => ApiError::conflict(
+                    codes::INTEGRATION_DISABLED,
                     format!("this template needs the {label} plugin: turn it on in Settings → Plugins first"),
                 ),
                 None => ApiError::not_found("template"),
             },
         );
     }
-    st.store.get_template(id).await?.ok_or_else(|| ApiError::not_found("template"))
+    st.store.get_template(id).await?.or_404("template")
 }
 
 /// The integration a template needs, as the gallery shows it.
@@ -442,11 +442,11 @@ fn checked_input(
 ) -> Result<(String, String, Vec<TemplateParam>, WorkflowDoc), ApiError> {
     let name = t.name.as_deref().map(str::trim).unwrap_or_default().to_string();
     if name.is_empty() || name.len() > 120 {
-        return Err(invalid("a template needs a name of at most 120 characters"));
+        return Err(ApiError::invalid("a template needs a name of at most 120 characters"));
     }
-    let doc = t.doc.ok_or_else(|| invalid("doc is required"))?;
-    check_params(&t.params).map_err(invalid)?;
-    let filled = fill(&doc, &placeholder_values(&t.params)).map_err(invalid)?;
+    let doc = t.doc.ok_or_else(|| ApiError::invalid("doc is required"))?;
+    check_params(&t.params).map_err(ApiError::invalid)?;
+    let filled = fill(&doc, &placeholder_values(&t.params)).map_err(ApiError::invalid)?;
     checked(st, &filled)?;
     Ok((name, t.description.trim().to_string(), t.params, doc))
 }
@@ -473,7 +473,7 @@ pub(crate) async fn create(
 }
 
 fn read_only(t: &Template) -> ApiError {
-    conflict("builtin_template", format!("{} ships with PDT: save a copy instead", t.name))
+    ApiError::conflict(codes::BUILTIN_TEMPLATE, format!("{} ships with PDT: save a copy instead", t.name))
 }
 
 pub(crate) async fn save(
@@ -522,8 +522,8 @@ pub(crate) async fn instantiate(
 ) -> Result<(StatusCode, Json<WorkflowDetail>), ApiError> {
     let i = body(payload)?;
     let t = find(&st, &id).await?;
-    let values = param_values(&t.params, &i.params).map_err(invalid)?;
-    let mut doc = filled(&t, &values).map_err(invalid)?;
+    let values = param_values(&t.params, &i.params).map_err(ApiError::invalid)?;
+    let mut doc = filled(&t, &values).map_err(ApiError::invalid)?;
     if let Some(n) = i.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
         doc.name = n.to_string();
     }

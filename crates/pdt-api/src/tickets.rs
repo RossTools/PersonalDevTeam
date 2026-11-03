@@ -1,7 +1,7 @@
 //! Ticket routes: the backlog query, create/get/edit/delete, rank moves, bulk actions, links, the
 //! timeline and comments, and a project's labels.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
@@ -15,15 +15,11 @@ use pdt_core::ticket::{
 use pdt_core::workflow::api::{NewLogEvent, RunStatus};
 use pdt_store::{DeleteTicket, TicketError};
 
-fn unknown_ticket() -> ApiError {
-    ApiError::not_found("ticket")
-}
-
 pub(crate) async fn list(
     State(st): State<AppState>,
     query: Result<Query<TicketQuery>, QueryRejection>,
 ) -> Result<Json<TicketPage>, ApiError> {
-    let Query(q) = query.map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.body_text()))?;
+    let Query(q) = query.map_err(|e| ApiError::invalid(e.body_text()))?;
     let mut filter = q.validate()?;
     let idx = crate::overlap::index(&st, filter.project.as_deref()).await?;
     match filter.conflicts {
@@ -113,7 +109,7 @@ pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) 
             None => None,
         },
     };
-    reply(&st, ticket.ok_or_else(unknown_ticket)?).await
+    reply(&st, ticket.or_404("ticket")?).await
 }
 
 pub(crate) async fn update(
@@ -135,13 +131,13 @@ pub(crate) async fn update(
         crate::untrusted::decides_proposal(&t, &patch)?;
     }
     let since = now_ms();
-    let t = st.store.patch_ticket(&id, &patch, since).await?.ok_or_else(unknown_ticket)?;
+    let t = st.store.patch_ticket(&id, &patch, since).await?.or_404("ticket")?;
     // Closing a ticket ends its attempt, once the close went through; moving it back before work
     // stops its work (PDT-159).
     match patch.stage {
         Some(stage) if stage.is_closed() => {
             crate::start::close_attempt(&st, &id, stage, since, Actor::User, None).await?;
-            reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+            reply(&st, st.ticket(&id).await?).await
         }
         Some(stage) if stage.is_before_work() && t.attempts.iter().any(|a| a.state == AttemptState::Active) => {
             let task = tokio::spawn({
@@ -149,7 +145,7 @@ pub(crate) async fn update(
                 async move { crate::stop::after_move(&st, &id, stage, since, Actor::User).await }
             });
             task.await.map_err(ApiError::internal)?;
-            reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+            reply(&st, st.ticket(&id).await?).await
         }
         _ => reply(&st, t).await,
     }
@@ -161,7 +157,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
             crate::ticket_attachments::prune(&st).await;
             Ok(StatusCode::NO_CONTENT)
         }
-        DeleteTicket::NotFound => Err(unknown_ticket()),
+        DeleteTicket::NotFound => Err(ApiError::not_found("ticket")),
         DeleteTicket::Active => {
             let key = st.store.get_ticket_summary(&id).await?.map(|t| t.key).unwrap_or(id);
             Err(TicketError::Active(key).into())
@@ -182,7 +178,7 @@ pub(crate) async fn rank(
     let nonblank = |v: &Option<String>| v.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     let (before, after) = (nonblank(&m.before), nonblank(&m.after));
     let t = st.store.move_ticket(&id, before.as_deref(), after.as_deref(), m.to).await?;
-    reply(&st, t.ok_or_else(unknown_ticket)?).await
+    reply(&st, t.or_404("ticket")?).await
 }
 
 pub(crate) async fn bulk(
@@ -247,7 +243,7 @@ pub(crate) async fn add_link(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(link) = payload?;
     let t = st.store.add_link(&id, link.to.trim(), link.kind, now_ms()).await?;
-    reply(&st, t.ok_or_else(unknown_ticket)?).await
+    reply(&st, t.or_404("ticket")?).await
 }
 
 pub(crate) async fn remove_link(
@@ -257,7 +253,7 @@ pub(crate) async fn remove_link(
 ) -> Result<Json<Ticket>, ApiError> {
     let Json(link) = payload?;
     let t = st.store.remove_link(&id, link.to.trim(), link.kind, now_ms()).await?;
-    reply(&st, t.ok_or_else(unknown_ticket)?).await
+    reply(&st, t.or_404("ticket")?).await
 }
 
 pub(crate) async fn events(
@@ -265,11 +261,11 @@ pub(crate) async fn events(
     Path(id): Path<String>,
     query: Result<Query<EventQuery>, QueryRejection>,
 ) -> Result<Json<EventPage>, ApiError> {
-    let Query(q) = query.map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.body_text()))?;
+    let Query(q) = query.map_err(|e| ApiError::invalid(e.body_text()))?;
     let limit = q.limit.unwrap_or(pdt_core::ticket::DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let cursor = q.cursor.as_deref().map(str::trim).filter(|c| !c.is_empty());
     let page = st.store.list_events(&id, cursor, limit, q.newest_first.unwrap_or(false)).await?;
-    Ok(Json(page.ok_or_else(unknown_ticket)?))
+    Ok(Json(page.or_404("ticket")?))
 }
 
 pub(crate) async fn comment(
@@ -283,10 +279,10 @@ pub(crate) async fn comment(
         Some(Actor::User) => Actor::User,
         None | Some(Actor::Agent) => Actor::Agent,
         Some(Actor::System) => {
-            return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", "only PDT writes system comments"));
+            return Err(ApiError::invalid("only PDT writes system comments"));
         }
     };
-    let event = st.store.add_comment_by(&id, &body, actor, None, now_ms()).await?.ok_or_else(unknown_ticket)?;
+    let event = st.store.add_comment_by(&id, &body, actor, None, now_ms()).await?.or_404("ticket")?;
     Ok((StatusCode::CREATED, Json(event)))
 }
 
@@ -300,21 +296,21 @@ pub(crate) async fn refine(
     let by = if body.iter().all(u8::is_ascii_whitespace) {
         None
     } else {
-        serde_json::from_slice::<NewRefine>(&body)
-            .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", e.to_string()))?
-            .by
+        serde_json::from_slice::<NewRefine>(&body).map_err(|e| ApiError::invalid(e.to_string()))?.by
     };
     let actor = if by == Some(Actor::User) { Actor::User } else { Actor::Agent };
-    let t = st.store.get_ticket_summary(&id).await?.ok_or_else(unknown_ticket)?;
-    let conflict = |code: &'static str, m: String| ApiError::new(StatusCode::CONFLICT, code, m);
+    let t = st.store.get_ticket_summary(&id).await?.or_404("ticket")?;
     if !matches!(t.stage, TicketStage::Draft | TicketStage::Ready) {
-        return Err(conflict("ticket_not_refinable", format!("{} is not a Draft or Ready ticket", t.key)));
+        return Err(ApiError::conflict(
+            codes::TICKET_NOT_REFINABLE,
+            format!("{} is not a Draft or Ready ticket", t.key),
+        ));
     }
     let kind = pdt_core::workflow::events::TICKET_REFINE_REQUESTED;
     if !crate::scheduler::workflow_listens(&st, &t.project_id, kind).await {
-        return Err(conflict(
-            "no_refine_workflow",
-            "no enabled workflow refines this project's tickets; enable the Pipeline in Workflows".into(),
+        return Err(ApiError::conflict(
+            codes::NO_REFINE_WORKFLOW,
+            "no enabled workflow refines this project's tickets; enable the Pipeline in Workflows",
         ));
     }
     if t.pipeline_stage == Some(PipelineStage::Refine) {
@@ -322,7 +318,7 @@ pub(crate) async fn refine(
             let f =
                 pdt_store::RunFilter { workflow_id: None, ticket_id: Some(id.clone()), status: Some(status), limit: 1 };
             if !st.store.list_workflow_runs(&f).await?.is_empty() {
-                return Err(conflict("refine_running", format!("{} is being refined already", t.key)));
+                return Err(ApiError::conflict(codes::REFINE_RUNNING, format!("{} is being refined already", t.key)));
             }
         }
     }
@@ -337,7 +333,7 @@ pub(crate) async fn refine(
     };
     let key = format!("{}:{}", t.id, uuid::Uuid::now_v7());
     st.store.emit_event(&NewLogEvent::new(kind, key, "ticket", payload), now_ms()).await?;
-    reply(&st, st.store.get_ticket(&id).await?.ok_or_else(unknown_ticket)?).await
+    reply(&st, st.ticket(&id).await?).await
 }
 
 /// `POST /api/tickets/{id}/refine`'s optional body.
@@ -352,7 +348,7 @@ pub(crate) async fn labels(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    st.store.get_project(&project_id).await?.ok_or_else(|| ApiError::not_found("project"))?;
+    st.project(&project_id).await?;
     Ok(Json(st.store.project_labels(&project_id).await?))
 }
 

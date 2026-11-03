@@ -4,11 +4,11 @@
 //! agent sessions (`session.outside_input`, on the ticket's timeline), and what outsiders wrote kept out of them.
 //! Prompts fence outside text in the engine (`engine::fence_input`).
 
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use pdt_core::session::Session;
 use pdt_core::ticket::{TicketSource, TicketSummary};
 use pdt_core::workflow::api::{LogEvent, NewLogEvent, Run};
@@ -90,7 +90,7 @@ pub(crate) async fn ui_token(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if headers.get("sec-fetch-site").is_none_or(|v| v.as_bytes() != b"same-origin") {
-        return Err(ApiError::new(StatusCode::FORBIDDEN, "not_the_ui", "only PDT's web app gets its UI token"));
+        return Err(ApiError::forbidden(codes::NOT_THE_UI, "only PDT's web app gets its UI token"));
     }
     Ok(Json(serde_json::json!({ "token": &*st.ui_token.0 })))
 }
@@ -101,16 +101,15 @@ pub fn from_ui(st: &AppState, headers: &HeaderMap) -> Result<bool, ApiError> {
     match headers.get(UI_TOKEN_HEADER) {
         None => Ok(false),
         Some(v) if v.as_bytes() == st.ui_token.0.as_bytes() => Ok(true),
-        Some(_) => Err(ApiError::new(StatusCode::FORBIDDEN, "stale_ui_token", "the UI token is from an earlier start")),
+        Some(_) => Err(ApiError::forbidden(codes::STALE_UI_TOKEN, "the UI token is from an earlier start")),
     }
 }
 
 /// The refusal of a change only the user may make to `key`, asked for over the HTTP API but not from PDT's web client
 /// (PDT-204).
 pub(crate) fn refused(key: &str) -> ApiError {
-    ApiError::new(
-        StatusCode::FORBIDDEN,
-        "untrusted_ticket",
+    ApiError::forbidden(
+        codes::UNTRUSTED_TICKET,
         format!(
             "{key} came from outside PDT (an issue or a report), so only the user can put it in To do, start it or \
              label it {}, from PDT's board. Leave it where it is and tell the user why it should go ahead.",
@@ -135,7 +134,7 @@ pub(crate) fn decides_proposal(t: &TicketSummary, p: &pdt_core::ticket::ValidPat
     let boards = pdt_core::ticket::boards(Some(t.stage), p.stage, &t.labels, p.labels.as_deref());
     let moves = p.stage.is_some_and(|s| s != t.stage && !s.is_closed());
     pdt_core::ticket_proposal::agent_gate(t.proposed, pdt_core::ticket::Actor::Agent, boards || moves, &t.key)
-        .map_err(|m| ApiError::new(StatusCode::FORBIDDEN, "ticket_proposal", m))
+        .map_err(|m| ApiError::forbidden(codes::TICKET_PROPOSAL, m))
 }
 
 /// Whether a pdt-mcp call (`tool`, `input`) from a session is one PDT never answers for the user (PDT-201): the PM's

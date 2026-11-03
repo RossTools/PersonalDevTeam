@@ -1,7 +1,7 @@
 //! Personas: versioned agent setups agent steps run. Every save is a new version; built-ins
 //! (Refiner, Coder, Reviewer, QA) are installed on start and follow newer templates until the user edits them.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
@@ -13,16 +13,8 @@ use pdt_core::persona::{
 };
 use serde::Deserialize;
 
-fn invalid(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
-fn conflict(code: &'static str, m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::CONFLICT, code, m)
-}
-
 async fn load(st: &AppState, id: &str) -> Result<Persona, ApiError> {
-    st.store.get_persona(id).await?.ok_or_else(|| ApiError::not_found("persona"))
+    st.store.get_persona(id).await?.or_404("persona")
 }
 
 /// `GET /api/personas/tools` (PDT-110): every pdt-mcp tool a persona may pick, with what it does.
@@ -40,8 +32,8 @@ pub(crate) async fn create(
     payload: Result<Json<NewPersona>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Persona>), ApiError> {
     let Json(n) = payload?;
-    let name = valid_name(&n.name).map_err(invalid)?;
-    let setup = n.setup.validate(st.registry().tool_table()).map_err(invalid)?;
+    let name = valid_name(&n.name).map_err(ApiError::invalid)?;
+    let setup = n.setup.validate(st.registry().tool_table()).map_err(ApiError::invalid)?;
     known_agent(&st, setup.agent).await?;
     let now = now_ms();
     let p = Persona {
@@ -80,7 +72,7 @@ pub(crate) async fn save(
 ) -> Result<Json<Persona>, ApiError> {
     let Json(s) = payload?;
     let current = load(&st, &id).await?;
-    let setup = s.setup.validate(st.registry().tool_table()).map_err(invalid)?;
+    let setup = s.setup.validate(st.registry().tool_table()).map_err(ApiError::invalid)?;
     if setup.agent != current.setup.agent {
         known_agent(&st, setup.agent).await?;
     }
@@ -99,7 +91,7 @@ pub(crate) async fn patch(
     let Json(p) = payload?;
     let mut current = load(&st, &id).await?;
     if let Some(n) = p.name {
-        current.name = valid_name(&n).map_err(invalid)?;
+        current.name = valid_name(&n).map_err(ApiError::invalid)?;
     }
     if let Some(r) = p.role {
         current.role = r.trim().to_string();
@@ -135,12 +127,12 @@ async fn used_by(st: &AppState, p: &Persona) -> Result<Vec<String>, ApiError> {
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let p = load(&st, &id).await?;
     if p.builtin.is_some() {
-        return Err(conflict("builtin_persona", format!("{} is built in: archive it instead", p.name)));
+        return Err(ApiError::conflict(codes::BUILTIN_PERSONA, format!("{} is built in: archive it instead", p.name)));
     }
     let used = used_by(&st, &p).await?;
     if !used.is_empty() {
-        return Err(conflict(
-            "persona_in_use",
+        return Err(ApiError::conflict(
+            codes::PERSONA_IN_USE,
             format!("{} runs in {}: change those workflows first, or archive it", p.name, used.join(", ")),
         ));
     }
@@ -160,7 +152,7 @@ pub(crate) async fn version(
     State(st): State<AppState>,
     Path((id, v)): Path<(String, u32)>,
 ) -> Result<Json<PersonaVersion>, ApiError> {
-    st.store.get_persona_version(&id, v).await?.map(Json).ok_or_else(|| ApiError::not_found("persona version"))
+    st.store.get_persona_version(&id, v).await?.map(Json).or_404("persona version")
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -178,8 +170,8 @@ pub(crate) async fn diff(
     let p = load(&st, &id).await?;
     let to = q.to.unwrap_or(p.version);
     let from = q.from.unwrap_or(to.saturating_sub(1).max(1));
-    let a = st.store.get_persona_version(&id, from).await?.ok_or_else(|| ApiError::not_found("persona version"))?;
-    let b = st.store.get_persona_version(&id, to).await?.ok_or_else(|| ApiError::not_found("persona version"))?;
+    let a = st.store.get_persona_version(&id, from).await?.or_404("persona version")?;
+    let b = st.store.get_persona_version(&id, to).await?.or_404("persona version")?;
     Ok(Json(persona_diff(&a.setup, &b.setup, &format!("v{from}"), &format!("v{to}"), st.registry().tool_table())))
 }
 
@@ -190,7 +182,7 @@ pub(crate) async fn template(
 ) -> Result<Json<pdt_core::persona::PersonaTemplate>, ApiError> {
     let p = load(&st, &id).await?;
     let b = p.builtin.as_deref().and_then(pdt_core::persona::builtin_persona).ok_or_else(|| {
-        ApiError::new(StatusCode::NOT_FOUND, "not_builtin", format!("{} is not a built-in persona", p.name))
+        ApiError::new(StatusCode::NOT_FOUND, codes::NOT_BUILTIN, format!("{} is not a built-in persona", p.name))
     })?;
     let setup = b.setup(st.registry().tool_table());
     let diff = persona_diff(&p.setup, &setup, &format!("v{}", p.version), "PDT's template", st.registry().tool_table());

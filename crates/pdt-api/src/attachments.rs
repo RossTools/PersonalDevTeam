@@ -2,7 +2,7 @@
 //! `<data dir>/sessions/<id>/attachments/<attachment id>.<ext>` (removed with the session), and `@` file suggestions
 //! from the session's folder.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::body::Bytes;
@@ -36,22 +36,23 @@ pub struct Attachment {
     pub size: usize,
 }
 
-fn bad(code: &'static str, message: &str) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, code, message)
-}
-
 /// `POST /api/sessions/{id}/attachments`: the body is the image itself (PNG, JPEG, GIF or WebP, at most 10 MB).
 pub(crate) async fn upload(
     State(st): State<AppState>,
     Path(id): Path<String>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Attachment>), ApiError> {
-    st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    st.session(&id).await?;
     if body.len() > MAX_IMAGE_BYTES {
-        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "image_too_large", "an image may be at most 10 MB"));
+        return Err(ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            codes::IMAGE_TOO_LARGE,
+            "an image may be at most 10 MB",
+        ));
     }
-    let media_type = image_type(&body)
-        .ok_or_else(|| bad("unsupported_image", "only PNG, JPEG, GIF and WebP images can be attached"))?;
+    let media_type = image_type(&body).ok_or_else(|| {
+        ApiError::bad_request(codes::UNSUPPORTED_IMAGE, "only PNG, JPEG, GIF and WebP images can be attached")
+    })?;
     let aid = uuid::Uuid::now_v7().to_string();
     let file = dir(&st, &id).join(format!("{aid}.{}", image_extension(media_type)));
     let size = body.len();
@@ -61,7 +62,7 @@ pub(crate) async fn upload(
     })
     .await
     .map_err(|e| ApiError::internal(e.to_string()))?
-    .map_err(|e| ApiError::internal(format!("saving the image: {e}")))?;
+    .map_err(|e| ApiError::io("saving the image", e))?;
     Ok((StatusCode::CREATED, Json(Attachment { id: aid, media_type: media_type.into(), size })))
 }
 
@@ -79,11 +80,12 @@ fn find(st: &AppState, session_id: &str, aid: &str) -> Option<ImageFile> {
 /// The images a message names, all of which must belong to the session.
 pub(crate) fn resolve(st: &AppState, session_id: &str, ids: &[String]) -> Result<Vec<ImageFile>, ApiError> {
     if ids.len() > MAX_IMAGES {
-        return Err(bad("invalid_message", "a message may carry at most 10 images"));
+        return Err(ApiError::bad_request(codes::INVALID_MESSAGE, "a message may carry at most 10 images"));
     }
     ids.iter()
         .map(|aid| {
-            find(st, session_id, aid).ok_or_else(|| bad("unknown_attachment", "that image is not attached here"))
+            find(st, session_id, aid)
+                .ok_or_else(|| ApiError::bad_request(codes::UNKNOWN_ATTACHMENT, "that image is not attached here"))
         })
         .collect()
 }
@@ -93,7 +95,7 @@ pub(crate) async fn get(
     State(st): State<AppState>,
     Path((id, aid)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let img = find(&st, &id, &aid).ok_or_else(|| ApiError::not_found("attachment"))?;
+    let img = find(&st, &id, &aid).or_404("attachment")?;
     let bytes = tokio::fs::read(&img.path).await.map_err(|_| ApiError::not_found("attachment"))?;
     Ok((
         [
@@ -120,7 +122,7 @@ pub(crate) async fn files(
     Path(id): Path<String>,
     Query(q): Query<FilesQuery>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    let session = st.store.get_session(&id).await?.ok_or_else(|| ApiError::not_found("session"))?;
+    let session = st.session(&id).await?;
     let cwd = PathBuf::from(&session.cwd);
     let all = tokio::task::spawn_blocking(move || pdt_git::list_files(&cwd, ""))
         .await

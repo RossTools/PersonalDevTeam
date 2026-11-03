@@ -3,12 +3,12 @@
 //! changed beyond its inputs, or turned off, is only shown (with Reset to default). The host's update setting (off,
 //! notify, install when idle) and channel stay host settings: they decide what the checks find.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::integrations::NotificationChannel;
 use crate::routes::{AppState, now_ms};
 use crate::workflow::builtins::stuck_agents::SETTINGS_NOTE;
 use crate::workflow::builtins::{INSTALL_UPDATES, install_updates as install};
-use crate::workflow::routes::{body, checked, conflict, invalid};
+use crate::workflow::routes::{body, checked};
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::routing::{get, post};
@@ -60,11 +60,11 @@ async fn workflow(st: &AppState) -> Result<Workflow, ApiError> {
         let _engine = st.engine_lock.lock().await;
         crate::workflow::builtins::ensure_installed(st).await;
     }
-    st.store.workflow_by_builtin(INSTALL_UPDATES).await?.ok_or_else(|| ApiError::not_found("workflow"))
+    st.store.workflow_by_builtin(INSTALL_UPDATES).await?.or_404("workflow")
 }
 
 async fn current(st: &AppState, w: &Workflow) -> Result<pdt_core::workflow::doc::WorkflowDoc, ApiError> {
-    st.store.workflow_doc(&w.id, w.version).await?.ok_or_else(|| ApiError::not_found("workflow version"))
+    st.store.workflow_doc(&w.id, w.version).await?.or_404("workflow version")
 }
 
 async fn view_of(st: &AppState) -> Result<InstallUpdatesView, ApiError> {
@@ -99,19 +99,19 @@ async fn save(
         let w = workflow(&st).await?;
         let doc = current(&st, &w).await?;
         if install::customized(&doc) {
-            return Err(conflict(
-                "customized",
+            return Err(ApiError::conflict(
+                codes::CUSTOMIZED,
                 format!("{} was changed in the workflow editor: change it there, or reset it to the default", w.name),
             ));
         }
         let mut values = install::values_of(&doc);
         for (k, v) in input.values {
             if !values.contains_key(&k) {
-                return Err(invalid(format!("there is no input {k}")));
+                return Err(ApiError::invalid(format!("there is no input {k}")));
             }
             values.insert(k, v);
         }
-        let mut next = install::filled(&values).map_err(invalid)?;
+        let mut next = install::filled(&values).map_err(ApiError::invalid)?;
         (next.name, next.description) = (doc.name.clone(), doc.description.clone());
         checked(&st, &next)?;
         if next != doc {
@@ -127,7 +127,7 @@ async fn reset(State(st): State<AppState>) -> Result<Json<InstallUpdatesView>, A
         let _lock = st.settings_lock.lock().await;
         let w = workflow(&st).await?;
         let doc = current(&st, &w).await?;
-        let default = install::filled(&Map::new()).map_err(invalid)?;
+        let default = install::filled(&Map::new()).map_err(ApiError::invalid)?;
         if default != doc || st.store.current_version_author(&w.id).await? != Some(Author::Builtin) {
             st.store.save_workflow_version(&w.id, &default, Author::Builtin, "reset to default", now_ms()).await?;
         }

@@ -2,7 +2,7 @@
 //! project, the briefing pdtd writes into each new one, journal checkpoints and daily updates, closing with a journal
 //! entry, the notes routes, and the project policy that answers the PM's asking tools for the user.
 
-use crate::error::ApiError;
+use crate::error::{ApiError, OrNotFound, codes};
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
@@ -35,7 +35,7 @@ pub(crate) async fn host_project(st: &AppState) -> Result<Project, ApiError> {
         return Ok(p);
     }
     let dir = st.data_dir.join("pm");
-    std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("making the PM's folder: {e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| ApiError::io("making the PM's folder", e))?;
     let id = uuid::Uuid::now_v7().to_string();
     Ok(st.store.ensure_host_project(&id, &dir.to_string_lossy(), now_ms()).await?)
 }
@@ -134,7 +134,7 @@ pub(crate) async fn start(
     let Json(input) = payload?;
     let text = input.text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let title = match input.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-        Some(t) => clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?,
+        Some(t) => clean_title(t).ok_or_else(|| ApiError::invalid("a title is 1 to 100 characters"))?,
         None => pm::conversation_title(text.as_deref().unwrap_or("")),
     };
     Ok((StatusCode::CREATED, Json(new_session(&st, title, text, None).await?)))
@@ -157,7 +157,7 @@ pub async fn start_conversation(
 ) -> Result<Session, ApiError> {
     let text = text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let title = match title.map(str::trim).filter(|t| !t.is_empty()) {
-        Some(t) => clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?,
+        Some(t) => clean_title(t).ok_or_else(|| ApiError::invalid("a title is 1 to 100 characters"))?,
         None => pm::conversation_title(text.as_deref().unwrap_or("")),
     };
     new_session(st, title, text, Some(via)).await
@@ -175,7 +175,7 @@ pub async fn set_via(st: &AppState, id: &str, via: Option<&str>) -> Result<(), A
 pub async fn send_from_user(st: &AppState, id: &str, text: &str) -> Result<(), ApiError> {
     let (row, s) = pm_session(st, id).await?;
     if row.rotation != Rotation::None {
-        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is closed"));
+        return Err(ApiError::conflict(codes::PM_CLOSED, "that PM conversation is closed"));
     }
     crate::conversations::send_user_message(st, &s, text).await?;
     user_wrote(st, &s, text).await;
@@ -204,7 +204,7 @@ pub(crate) async fn patch(
     let Json(input) = payload?;
     let (_, mut s) = pm_session(&st, &id).await?;
     if let Some(t) = &input.title {
-        let title = clean_title(t).ok_or_else(|| bad("a title is 1 to 100 characters"))?;
+        let title = clean_title(t).ok_or_else(|| ApiError::invalid("a title is 1 to 100 characters"))?;
         st.store.rename_session(&id, &title).await?;
         s.title = title;
     }
@@ -243,7 +243,7 @@ pub(crate) async fn reset(State(st): State<AppState>, Path(id): Path<String>) ->
 /// own: a caller that goes away (a closed page, a dropped connection) doesn't stop it half-way.
 pub async fn reset_conversation(st: &AppState, id: &str) -> Result<Session, ApiError> {
     if !st.pm_resets.lock().map_err(|_| ApiError::internal("the PM's resets are poisoned"))?.insert(id.to_string()) {
-        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+        return Err(ApiError::conflict(codes::PM_CLOSED, "that PM conversation is already ending"));
     }
     let (st2, id2) = (st.clone(), id.to_string());
     let task = tokio::spawn(async move {
@@ -259,7 +259,7 @@ pub async fn reset_conversation(st: &AppState, id: &str) -> Result<Session, ApiE
 async fn run_reset(st: &AppState, id: &str) -> Result<Session, ApiError> {
     let (row, s) = pm_session(st, id).await?;
     if row.rotation != Rotation::None {
-        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+        return Err(ApiError::conflict(codes::PM_CLOSED, "that PM conversation is already ending"));
     }
     let listed_at = last_activity(st, id).await?;
     st.store.set_pm_listed_at(id, listed_at).await?;
@@ -281,7 +281,7 @@ async fn run_reset(st: &AppState, id: &str) -> Result<Session, ApiError> {
             wait_for_journal(st, &s).await;
         }
     } else {
-        return Err(ApiError::new(StatusCode::CONFLICT, "pm_closed", "that PM conversation is already ending"));
+        return Err(ApiError::conflict(codes::PM_CLOSED, "that PM conversation is already ending"));
     }
     // The journal turn is no reply for the user (PDT-205, PDT-207).
     let _ = st.store.mark_viewed(id, now_ms()).await;
@@ -321,9 +321,9 @@ async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_
     let text = pm::briefing(&briefing_data(st, &id, Some(&old.id)).await?);
     let path = st.data_dir.join("sessions").join(&id).join(BRIEFING_FILE);
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| ApiError::internal(format!("making the session's folder: {e}")))?;
+        std::fs::create_dir_all(dir).map_err(|e| ApiError::io("making the session's folder", e))?;
     }
-    std::fs::write(&path, text).map_err(|e| ApiError::internal(format!("writing the briefing: {e}")))?;
+    std::fs::write(&path, text).map_err(|e| ApiError::io("writing the briefing", e))?;
     let p = persona(st).await?;
     let req = crate::sessions::CreateSession {
         valid: ValidSession {
@@ -1014,31 +1014,27 @@ pub(crate) async fn list_notes(
     Query(q): Query<NotesQuery>,
 ) -> Result<Json<Vec<PmNote>>, ApiError> {
     let project_id = match q.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) => Some(project_id(&st, p).await.map_err(bad)?),
+        Some(p) => Some(project_id(&st, p).await.map_err(ApiError::invalid)?),
         None => None,
     };
     let kind = match q.kind.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
-        Some(k) => Some(NoteKind::parse(k).ok_or_else(|| bad(format!("{k} is not a note kind")))?),
+        Some(k) => Some(NoteKind::parse(k).ok_or_else(|| ApiError::invalid(format!("{k} is not a note kind")))?),
         None => None,
     };
     let f = NoteFilter { q: q.q, project_id, kind, pinned: None, limit: q.limit.unwrap_or(200) };
     Ok(Json(st.store.search_notes(&f).await?))
 }
 
-fn bad(m: impl Into<String>) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, "invalid_input", m)
-}
-
 /// A note made by the user or the PM: the PM's (`note`) unless it is the user's own (`user`).
 pub(crate) async fn add_note(st: &AppState, input: NewNote) -> Result<PmNote, ApiError> {
     let kind = match input.kind.unwrap_or_default() {
-        NoteKind::Journal => return Err(bad("journal entries are written by PM conversations")),
+        NoteKind::Journal => return Err(ApiError::invalid("journal entries are written by PM conversations")),
         k => k,
     };
-    let title = pm::valid_title(&input.title).map_err(bad)?;
-    let body = pm::valid_body(&input.body).map_err(bad)?;
+    let title = pm::valid_title(&input.title).map_err(ApiError::invalid)?;
+    let body = pm::valid_body(&input.body).map_err(ApiError::invalid)?;
     let project_id = match input.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
-        Some(p) => Some(project_id(st, p).await.map_err(bad)?),
+        Some(p) => Some(project_id(st, p).await.map_err(ApiError::invalid)?),
         None => None,
     };
     let now = now_ms();
@@ -1059,12 +1055,12 @@ pub(crate) async fn add_note(st: &AppState, input: NewNote) -> Result<PmNote, Ap
 
 /// Changes a note.
 pub(crate) async fn edit_note(st: &AppState, id: &str, p: NotePatch) -> Result<PmNote, ApiError> {
-    let mut n = st.store.get_note(id).await?.ok_or_else(|| ApiError::not_found("note"))?;
+    let mut n = st.store.get_note(id).await?.or_404("note")?;
     if let Some(t) = &p.title {
-        n.title = pm::valid_title(t).map_err(bad)?;
+        n.title = pm::valid_title(t).map_err(ApiError::invalid)?;
     }
     if let Some(b) = &p.body {
-        n.body = pm::valid_body(b).map_err(bad)?;
+        n.body = pm::valid_body(b).map_err(ApiError::invalid)?;
     }
     if let Some(pinned) = p.pinned {
         n.pinned = pinned;
@@ -1072,7 +1068,7 @@ pub(crate) async fn edit_note(st: &AppState, id: &str, p: NotePatch) -> Result<P
     if let Some(project) = &p.project {
         n.project_id = match project.trim() {
             "" => None,
-            given => Some(project_id(st, given).await.map_err(bad)?),
+            given => Some(project_id(st, given).await.map_err(ApiError::invalid)?),
         };
     }
     n.updated_at = now_ms();
@@ -1093,7 +1089,7 @@ pub(crate) async fn create_note(
 
 /// `GET /api/pm/notes/{id}`.
 pub(crate) async fn get_note(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<PmNote>, ApiError> {
-    Ok(Json(st.store.get_note(&id).await?.ok_or_else(|| ApiError::not_found("note"))?))
+    Ok(Json(st.store.get_note(&id).await?.or_404("note")?))
 }
 
 /// `PATCH /api/pm/notes/{id}`.

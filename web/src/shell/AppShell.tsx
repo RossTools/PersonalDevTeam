@@ -83,6 +83,7 @@ import { isDetail, isOldPath, parseLocation, routePath, upRoute, viewRoute, type
 import { currentLocation, goBack, navigate, useAppLinks, useLocation } from './router';
 import { PhoneDrawer } from './PhoneDrawer';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
+import { isWebUrl } from '../common/webUrl';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 import {
   BottomPanel, ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem,
@@ -549,7 +550,7 @@ export function AppShell() {
       case 'ticket_key': openTicketByKey(t.key); break;
       case 'inbox': go({ view: 'inbox', itemId: t.id }); break;
       case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
-      case 'url': window.open(t.url, '_blank', 'noopener'); break;
+      case 'url': if (isWebUrl(t.url)) window.open(t.url, '_blank', 'noopener'); break;
       case 'connections': go({ view: 'settings', page: { kind: 'connections' } }); break;
       case 'todo':
         if (phone) setTodosSheetOpen(true);

@@ -3,6 +3,7 @@
 //! `ticket.start` (Start, as auto-start).
 //! The built-in "Pick up tickets" chains them; a field left out takes the project's auto-start setting.
 
+use crate::error::codes;
 use crate::routes::AppState;
 use crate::start::Starter;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -592,10 +593,10 @@ impl NodeKind for Start {
                                             "attemptId": r.attempt.id}));
                     }
                     // Started meanwhile (by the user, say): not this ticket's failure.
-                    Err(e) if e.code() == "ticket_active" => skipped.push(note("already started")),
+                    Err(e) if e.code() == codes::TICKET_ACTIVE => skipped.push(note("already started")),
                     // Refused for now (an overlap, a blocker, the cap): it waits, and the next run tries it again
                     // (PDT-381). The Board says why, as for choose's overlaps.
-                    Err(e) if e.code() == "start_blocked" => {
+                    Err(e) if e.code() == codes::START_BLOCKED => {
                         let message = e.message().to_string();
                         let why = message.strip_prefix(&format!("{} ", t.key)).unwrap_or(&message).to_string();
                         let hold = crate::scheduler::PickupHold {

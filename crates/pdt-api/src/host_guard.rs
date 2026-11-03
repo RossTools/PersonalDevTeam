@@ -1,7 +1,7 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use axum::Router;
 use axum::extract::Request;
-use axum::http::{StatusCode, header};
+use axum::http::header;
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use std::sync::Arc;
@@ -53,23 +53,15 @@ pub fn with_host_guard(router: Router, allowed: impl Into<AllowedHosts>) -> Rout
             if let Some(host) = headers.get(header::HOST) {
                 let host = String::from_utf8_lossy(host.as_bytes()).into_owned();
                 if !allowed.contains(&host) {
-                    return ApiError::new(
-                        StatusCode::FORBIDDEN,
-                        "forbidden_host",
-                        format!("host {host} is not allowed"),
-                    )
-                    .into_response();
+                    return ApiError::forbidden(codes::FORBIDDEN_HOST, format!("host {host} is not allowed"))
+                        .into_response();
                 }
             }
             if let Some(origin) = headers.get(header::ORIGIN) {
                 let origin = String::from_utf8_lossy(origin.as_bytes()).into_owned();
                 if !origin_allowed(&origin, &allowed) {
-                    return ApiError::new(
-                        StatusCode::FORBIDDEN,
-                        "forbidden_origin",
-                        format!("origin {origin} is not allowed"),
-                    )
-                    .into_response();
+                    return ApiError::forbidden(codes::FORBIDDEN_ORIGIN, format!("origin {origin} is not allowed"))
+                        .into_response();
                 }
             }
             let res: Response = next.run(req).await;

@@ -71,8 +71,11 @@ and `backups/` (a copy taken before migrations).
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
 | `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), each plugin's label, its accounts' sign-in in the browser (`Integration::sign_in`, pdt-core `integration::SignIn`: the routes under its `api`, which the web's `AccountSignIn` calls), a document provider's own file picker (`DocumentProvider::picker`, `ProviderPicker`: an ES module the provider serves, which the import dialog loads and runs for an account) and a forge's name for a change request (`ForgeLoginView.changeRequestName`). |
 
-Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. API types derive ts-rs
-and are generated into `web/src/api/gen`.
+Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. Every code is a constant
+in `error::codes`, with one status each (the module's doc says which status means what), built with `ApiError`'s
+constructors (`invalid`, `conflict`, `upstream`, `keychain`, `io`, …); a test fails on a code spelled out in a route.
+A missing record is `.or_404("what")` (`error::OrNotFound`), and `st.project(id)`, `st.ticket(id)`, `st.session(id)`
+load one by id. API types derive ts-rs and are generated into `web/src/api/gen`.
 
 ## The model
 
