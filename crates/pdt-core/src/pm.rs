@@ -571,7 +571,8 @@ fn inbox_section(inbox: &[BriefInbox], out: &mut String) {
     if proposals > 0 {
         out.push_str(&format!(
             "{proposals} ticket proposal{} wait{} for the user's decision. When they ask you to sort them, propose \
-             the decisions with `inbox_decide` (one call for many); the user confirms them in the Inbox.\n\n",
+             the decisions with `inbox_decide` (one call for many); the user confirms them in this conversation \
+             (also in their Inbox).\n\n",
             if proposals == 1 { "" } else { "s" },
             if proposals == 1 { "s" } else { "" },
         ));
