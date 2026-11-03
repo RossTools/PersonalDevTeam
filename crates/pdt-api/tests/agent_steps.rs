@@ -84,6 +84,28 @@ async fn run(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1
 }
 
+/// A conversation's open request (PDT-490: an asking tool's card of PDT's own): its id, once it shows.
+async fn open_card(env: &Env, session: &str) -> String {
+    tick_until(env, "the card", || async {
+        let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+        let all = v.as_array().cloned().unwrap_or_default();
+        all.into_iter()
+            .find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open")
+            .map(|e| e["event"]["id"].clone())
+    })
+    .await
+    .as_str()
+    .unwrap()
+    .to_string()
+}
+
+/// Answers a conversation's request as the user's click.
+async fn answer_card(env: &Env, session: &str, request: &str, answer: Value) {
+    let url = format!("/api/sessions/{session}/requests/{request}");
+    let (s, v) = call_as_ui(&env.app, "POST", &url, Some(json!({"answer": answer}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+}
+
 async fn inbox(env: &Env) -> Vec<Value> {
     let (s, v) = call(&env.app, "GET", "/api/inbox", None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -364,10 +386,17 @@ async fn public_posting_tools_run_in_a_step_and_ask_outside_one() {
     .await;
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let plain = started["session"]["id"].as_str().unwrap().to_string();
-    let said = say(plain, comment).await;
-    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
-    assert_eq!(gh.issue_comments.lock().unwrap().len(), 1, "nothing posted before the user's yes");
-    assert!(inbox(&env).await.iter().any(|i| i["kind"] == "confirm" && i["body"]["tool"] == "issue_comment"));
+    let answered = say(plain.clone(), comment);
+    let asking = async {
+        let card = open_card(&env, &plain).await;
+        assert_eq!(gh.issue_comments.lock().unwrap().len(), 1, "nothing posted before the user's yes");
+        let items = inbox(&env).await;
+        assert!(items.iter().any(|i| i["kind"] == "approval" && i["body"]["tool"] == "mcp__pdt__issue_comment"));
+        answer_card(&env, &plain, &card, json!({"type": "deny"})).await;
+    };
+    let (said, ()) = tokio::join!(answered, asking);
+    assert!(said.contains("denied"), "{said}");
+    assert_eq!(gh.issue_comments.lock().unwrap().len(), 1, "nothing posted after a Deny");
 }
 
 /// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
@@ -380,7 +409,7 @@ async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket
     let mut tools: Vec<&str> = pdt_core::persona::DEFAULT_TOOLS.to_vec();
     tools.push("edit_ticket");
     coder["tools"] = json!(tools);
-    // edit_ticket asks first; Bypass never shows Claude's prompt, so PDT asks in its Inbox (PDT-414).
+    // edit_ticket asks first; Bypass never shows Claude's prompt, so PDT asks in the conversation (PDT-414, PDT-490).
     coder["permissionMode"] = json!("bypass");
     let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", coder["id"].as_str().unwrap()), Some(coder)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -410,15 +439,17 @@ async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket
         }
     };
     let edit = format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed", "stage": "ready"}}"#);
-    let said = say(edit.clone()).await;
-    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
-    let confirm = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm").expect("asked in the Inbox");
-    assert_eq!(confirm["body"]["tool"], "edit_ticket");
-    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
-    assert_eq!(o["title"], "Other", "nothing before the user's yes");
-    let answer = format!("/api/inbox/{}/answer", confirm["id"].as_str().unwrap());
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "deny"}))).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
+    let answered = say(edit.clone());
+    let asking = async {
+        let card = open_card(&env, &session).await;
+        let approval = inbox(&env).await.into_iter().find(|i| i["kind"] == "approval").expect("in the Inbox too");
+        assert_eq!(approval["body"]["tool"], "mcp__pdt__edit_ticket");
+        let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+        assert_eq!(o["title"], "Other", "nothing before the user's yes");
+        answer_card(&env, &session, &card, json!({"type": "deny"})).await;
+    };
+    let (said, ()) = tokio::join!(answered, asking);
+    assert!(said.contains("denied"), "{said}");
     // Where the project lets the PM act, it goes ahead, as another agent's would.
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;

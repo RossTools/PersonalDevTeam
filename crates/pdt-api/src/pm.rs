@@ -708,7 +708,9 @@ pub(crate) async fn request_opened(
         return;
     }
     tracing::info!(session = %session_id, tool, "the project lets the PM act: allowing without asking");
-    if let Err(e) = crate::conversations::answer_request(st, &s, request_id, &Answer::Approve { always: false }).await {
+    if let Err(e) =
+        crate::conversations::answer_request(st, &s, request_id, &Answer::Approve { always: false }, false).await
+    {
         tracing::warn!(session = %session_id, error = %e.message(), "could not answer the PM's request");
     }
 }

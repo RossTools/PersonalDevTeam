@@ -184,11 +184,15 @@ pub const CLAUDE_READ_TOOLS: &str = "Read,Grep,Glob";
 /// A locked-down session's Codex settings: no web search, and a read-only sandbox.
 pub const CODEX_LOCKED_CONFIG: [(&str, &str); 2] = [("web_search", "\"disabled\""), ("sandbox_mode", "\"read-only\"")];
 
+/// How long a Codex conversation waits for one of PDT's tools (`tool_timeout_sec`; Codex's own is a minute): an asking
+/// tool's call waits there for the user's answer in the conversation (PDT-490).
+pub const CODEX_PDT_TOOL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+
 /// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
 /// a session only gets the tools its persona allows. The PM also gets [`CODEX_PM_CONFIG`].
 pub fn codex_thread_config(m: &McpServer) -> Value {
     let server = json!({"url": m.url, "http_headers": {"Authorization": m.bearer()},
-                        "default_tools_approval_mode": "approve"});
+                        "default_tools_approval_mode": "approve", "tool_timeout_sec": CODEX_PDT_TOOL_TIMEOUT_SECS});
     let mut c = json!({format!("mcp_servers.{SERVER_NAME}"): server});
     for x in m.extra.iter().filter(|x| codex_takes(x)) {
         c[format!("mcp_servers.{}", x.name)] = codex_server(x, false);
@@ -670,6 +674,7 @@ mod tests {
         assert_eq!(a.len(), 8);
         assert_eq!(a[7], "shell_environment_policy.exclude=[\"PDT_MCP_*\"]", "its token stays out of shell commands");
         assert_eq!(c["mcp_servers.pdt"]["default_tools_approval_mode"], "approve");
+        assert_eq!(c["mcp_servers.pdt"]["tool_timeout_sec"], CODEX_PDT_TOOL_TIMEOUT_SECS);
         for kv in [&a[1], &a[3], &a[5]] {
             let t: toml::Table = toml::from_str(kv).unwrap();
             assert!(t.contains_key("mcp_servers"), "{kv}");

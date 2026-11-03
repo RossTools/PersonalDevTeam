@@ -107,31 +107,24 @@ async fn say(env: &Env, session: &str, text: &str) -> String {
     wait_said(env, session, before + 1).await
 }
 
-/// Sends a call to a public-posting tool, which asks in the Inbox outside a workflow step (PDT-414); the user allows
-/// it. Returns its result (or error) as the agent would have read it.
+/// Sends a call to a public-posting tool, which asks outside a workflow step (PDT-414) with a card in the conversation
+/// (PDT-490); the user allows it there. Returns what the agent said: the call's result (or error).
 async fn say_allowed(env: &Env, session: &str, text: &str) -> String {
-    let said = say(env, session, text).await;
-    assert!(said.contains("needs the user's yes") && said.contains("Inbox"), "{said}");
-    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
-    let item = inbox["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["kind"] == "confirm" && i["sessionId"] == session)
-        .unwrap_or_else(|| panic!("no confirm item: {inbox}"))
-        .clone();
-    let (s, v) = call_as_ui(
-        &env.app,
-        "POST",
-        &format!("/api/inbox/{}/answer", item["id"].as_str().unwrap()),
-        Some(json!({"choice": "allow"})),
-    )
+    let before = agent_says(env, session).await.len();
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let request = wait_until("the card", async || {
+        let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+        let open =
+            v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open");
+        open.map(|e| e["event"]["id"].as_str().unwrap().to_string()).ok_or(())
+    })
     .await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    match v.get("result") {
-        Some(r) => serde_json::to_string_pretty(r).unwrap(),
-        None => v["error"].as_str().unwrap_or_default().to_string(),
-    }
+    let url = format!("/api/sessions/{session}/requests/{request}");
+    let (s, v) = call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    wait_said(env, session, before + 1).await
 }
 
 fn run(id: u64, branch: &str, state: pdt_core::pr::CiState, at: &str) -> pdt_core::pr::CiRun {
