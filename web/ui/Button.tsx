@@ -5,7 +5,7 @@ import { Spinner } from './Spinner';
 import { Tooltip } from './Tooltip';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
-export type ButtonSize = 'sm' | 'md';
+export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const variantMap = {
   primary: 'default',
@@ -14,8 +14,8 @@ const variantMap = {
   danger: 'destructive',
 } as const;
 
-const sizeMap = { sm: 'sm', md: 'default' } as const;
-const iconSizeMap = { sm: 'icon-sm', md: 'icon' } as const;
+const sizeMap = { sm: 'sm', md: 'default', lg: 'lg' } as const;
+const iconSizeMap = { sm: 'icon-sm', md: 'icon', lg: 'icon-lg' } as const;
 
 /** Props shared by Button and IconButton: the familiar DOM-style names, mapped onto React Aria's. */
 export interface ButtonBaseProps extends AriaAttributes {
@@ -89,7 +89,10 @@ export function renderButton({
   return title ? <Tooltip content={title}>{button}</Tooltip> : button;
 }
 
-/** A labelled action. Variants primary | secondary (default) | ghost | danger; sizes sm (24px) | md (28px). */
+/**
+ * A labelled action. Variants primary | secondary (default) | ghost | danger; sizes sm (24px) | md (28px), both 44px on
+ * touch screens, and lg (48px everywhere: the big buttons along the bottom of a phone screen).
+ */
 export function Button(props: ButtonProps) {
   return renderButton(props);
 }

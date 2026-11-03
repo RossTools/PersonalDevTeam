@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Brain, Pin, Search, SquarePen } from 'lucide-react';
-import { Alert, EmptyState, IconButton, Input, Kbd, SegmentedControl, Select, Skeleton } from '@ui';
+import { Alert, EmptyState, IconButton, Input, Kbd, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
 import { useNotesList, useProjects, type NotesFilters } from './useNotes';
@@ -9,8 +9,6 @@ const WHOSE_OPTIONS = [
   { value: 'user' as const, label: 'Mine' },
   { value: 'note' as const, label: 'PM’s memory', icon: <Brain aria-hidden className="size-3" /> },
 ];
-
-const sectionHeading = 'flex items-center gap-1.5 px-3 pt-3.5 pb-1 text-2xs font-semibold tracking-wider text-muted-foreground uppercase';
 
 /** Typing in a field, where `/` is text rather than the search key. */
 const typing = (t: EventTarget | null) =>
@@ -112,10 +110,10 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
       )}
       {sections.map((s) => (
         <section key={s.id} aria-label={s.label}>
-          <h3 className={sectionHeading}>
+          <ListHeading as="h3" className="pt-3.5">
             {s.id === 'pinned' && <Pin aria-hidden className="size-3" />}
             {s.label}
-          </h3>
+          </ListHeading>
           <ul className="flex flex-col gap-px px-1">
             {s.notes.map((n) => (
               <li key={n.id}>

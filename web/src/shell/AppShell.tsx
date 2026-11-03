@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, FileText, NotebookPen, PanelBottom } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/forgeLinks';
-import { Button, EmptyState, IconButton, Link, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
+import { Button, EmptyState, IconButton, Link, ListHeading, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -106,8 +106,6 @@ const NOTIFICATIONS = 'notifications';
 const SECRETS = 'secrets';
 
 const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), opts);
-
-const listHeading = 'px-3 pt-3 pb-1 text-2xs uppercase tracking-wider text-muted-foreground';
 
 /** While a list loads: one empty list, so the views it is passed to see the same props. */
 const NONE: never[] = [];
@@ -670,7 +668,7 @@ export function AppShell() {
   ) : view === 'files' ? (
     phone ? <FolderList state={folder} dir="" /> : (
       <>
-        <h2 className={listHeading}>{label}</h2>
+        <ListHeading>{label}</ListHeading>
         <FolderTree state={folder} />
       </>
     )
@@ -679,7 +677,7 @@ export function AppShell() {
       projects={ws.projects}
       page={settingsPage}
       phone={phone}
-      heading={<h2 className={listHeading}>{label}</h2>}
+      heading={<ListHeading>{label}</ListHeading>}
       onGo={(page) => { go({ view: 'settings', page }); setSheetOpen(false); }}
       onAddProject={() => { setSheetOpen(false); setAddingProject(true); }}
     />

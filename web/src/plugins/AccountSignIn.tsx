@@ -5,7 +5,7 @@
 // account with the user's own OAuth client is under Advanced.
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Section, Skeleton } from '@ui';
+import { Alert, Badge, Button, Disclosure, Section, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { SignIn } from '../api/gen/SignIn';
 import type { SignInAccount } from '../api/gen/SignInAccount';
@@ -126,13 +126,10 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
       {waiting && <p role="status" className="text-xs text-muted-foreground">Finish signing in in the {s.service} window.</p>}
       {error && <Alert tone="error">{error}</Alert>}
       {builtIn && (
-        <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Advanced</summary>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1">{s.ownClient} {redirectNote}</span>
-            <Button size="sm" variant="secondary" onClick={() => setOwnClient(true)}>Use your own OAuth client</Button>
-          </div>
-        </details>
+        <Disclosure title="Advanced" panelClassName="mt-2 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1">{s.ownClient} {redirectNote}</span>
+          <Button size="sm" variant="secondary" onClick={() => setOwnClient(true)}>Use your own OAuth client</Button>
+        </Disclosure>
       )}
       {ownClient && <ConnectionDialog kind={s.kind} onClose={() => { setOwnClient(false); refresh(); }} />}
     </Section>

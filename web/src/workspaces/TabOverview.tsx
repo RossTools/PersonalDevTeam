@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { FileDiff, Ticket } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { ContextMenu, DiffStat } from '@ui';
+import { ChoiceCard, ContextMenu, DiffStat } from '@ui';
 import { api } from '../api/client';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -78,16 +78,7 @@ function Card({ ws, tab, info, current, inbox, onOpen, onRename }: {
   const state = info && (info.session || info.run) ? itemState(info) : null;
   return (
     <ContextMenu label={`Tab ${title}`} entries={() => tabMenu(ws, tab, onRename)}>
-      <button
-        type="button"
-        aria-current={current || undefined}
-        onClick={onOpen}
-        className={cn(
-          'flex min-h-24 min-w-0 flex-col gap-1 rounded-md border border-border bg-card p-2.5 text-left outline-none select-none',
-          'focus-visible:ring-2 focus-visible:ring-ring',
-          current && 'border-primary bg-accent',
-        )}
-      >
+      <ChoiceCard selection="current" selected={current} size="sm" onClick={onOpen} className="min-h-24 justify-start bg-card py-2.5">
         <span className="flex min-w-0 items-center gap-1.5 text-sm">
           {tab.ticketId ? <Ticket aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             : tab.worktreeId ? <FileDiff aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -102,7 +93,7 @@ function Card({ ws, tab, info, current, inbox, onOpen, onRename }: {
           {info?.worktreeId && (tab.worktreeId || info.session) && <Size worktreeId={info.worktreeId} />}
         </span>
         {info?.session && <SessionSnippet info={info} inbox={inbox} />}
-      </button>
+      </ChoiceCard>
     </ContextMenu>
   );
 }

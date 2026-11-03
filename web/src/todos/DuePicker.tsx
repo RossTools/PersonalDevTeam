@@ -4,7 +4,7 @@
 import { useState, type ReactNode, type RefObject } from 'react';
 import { Ban, Check, ChevronLeft, CircleArrowRight, Clock, Repeat, Search, Sofa, Sun, Sunrise, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Calendar, IconButton, Input, Popover, Select } from '@ui';
+import { Calendar, ChoiceCard, IconButton, Input, Popover, Select } from '@ui';
 import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { TodoPatch } from '../api/gen/TodoPatch';
@@ -270,22 +270,18 @@ function TimePanel({ day, time, now, onBack, onTime }: {
       <PanelHeading onBack={onBack}>Time · {formatDay(day, now)}</PanelHeading>
       <div role="group" aria-label="Times" className="grid grid-cols-2 gap-1.5 p-2.5">
         {SLOTS.map((s) => (
-          <button
+          <ChoiceCard
             key={s.time}
-            type="button"
-            aria-pressed={time === s.time}
+            size="sm"
+            selected={time === s.time}
             onClick={() => {
               setText(s.time);
               onTime(s.time);
             }}
-            className={cn(
-              'flex flex-col rounded-lg border px-2.5 py-2 text-left text-sm tabular-nums outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-ring',
-              time === s.time ? 'border-primary bg-accent' : 'border-border',
-            )}
-          >
-            {s.time}
-            <span className="text-meta text-muted-foreground">{s.label}</span>
-          </button>
+            title={<span className="tabular-nums">{s.time}</span>}
+            description={s.label}
+            className="gap-0"
+          />
         ))}
       </div>
       <div className="flex items-center gap-2 px-2.5 pb-2.5 text-xs text-muted-foreground">

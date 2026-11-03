@@ -1,7 +1,7 @@
 // The phone's top bar (PDT-112): ☰ or ←, the screen's title, 🔔 Needs you, ⌕ Search, ☑ Todos, ⋯ the screen's actions.
 import { createContext, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { ArrowLeft, Bell, ListChecks, Menu, Search } from 'lucide-react';
-import { Button, IconButton, MenuButton, type MenuEntry } from '@ui';
+import { Badge, Button, IconButton, MenuButton, type MenuEntry } from '@ui';
 import { InstanceBadge } from './InstanceBadge';
 
 /** A screen's ⋯ entries, built when the menu opens. */
@@ -77,33 +77,28 @@ export function PhoneTopBar({ detail, onMenu, menuOpen, onBack, title, needsYou,
   if (edit) {
     return (
       <header aria-label="Top bar" className="flex min-w-0 items-center gap-1 border-b border-border bg-card px-1.5 py-1">
-        <Button variant="ghost" className="h-11 pointer-coarse:h-11" disabled={edit.saving} onClick={edit.onCancel}>Cancel</Button>
+        <Button variant="ghost" className="h-control-touch pointer-coarse:h-control-touch" disabled={edit.saving} onClick={edit.onCancel}>Cancel</Button>
         <h1 className="flex min-w-0 flex-1 items-center text-sm font-medium">{typeof title === 'string' ? <span className="truncate px-1">{title}</span> : title}</h1>
-        <Button variant="primary" className="h-11 pointer-coarse:h-11" pending={edit.saving} disabled={!edit.canSave} onClick={edit.onSave}>Save</Button>
+        <Button variant="primary" className="h-control-touch pointer-coarse:h-control-touch" pending={edit.saving} disabled={!edit.canSave} onClick={edit.onSave}>Save</Button>
       </header>
     );
   }
-  const shown = needsYou > 99 ? '99+' : needsYou;
   return (
     <header aria-label="Top bar" className="flex min-w-0 items-center gap-1 border-b border-border bg-card px-1.5 py-1">
       {detail ? (
-        <IconButton label="Back" noTooltip onClick={onBack} className="size-11"><ArrowLeft aria-hidden /></IconButton>
+        <IconButton label="Back" noTooltip onClick={onBack} className="size-control-touch"><ArrowLeft aria-hidden /></IconButton>
       ) : (
-        <IconButton label="Menu" noTooltip aria-haspopup="dialog" aria-expanded={menuOpen} onClick={onMenu} className="size-11"><Menu aria-hidden /></IconButton>
+        <IconButton label="Menu" noTooltip aria-haspopup="dialog" aria-expanded={menuOpen} onClick={onMenu} className="size-control-touch"><Menu aria-hidden /></IconButton>
       )}
       <h1 className="flex min-w-0 flex-1 items-center text-sm font-medium">{typeof title === 'string' ? <span className="truncate px-1">{title}</span> : title}</h1>
       <InstanceBadge compact />
-      <IconButton label={needsYou > 0 ? `Needs you (${needsYou})` : 'Needs you'} noTooltip onClick={onInbox} className="relative size-11 text-muted-foreground">
+      <IconButton label={needsYou > 0 ? `Needs you (${needsYou})` : 'Needs you'} noTooltip onClick={onInbox} className="relative size-control-touch text-muted-foreground">
         <Bell aria-hidden />
-        {needsYou > 0 && (
-          <span aria-hidden className="absolute top-1 right-0.5 min-w-4 rounded-full bg-primary px-1 text-2xs leading-4 font-medium text-primary-foreground tabular-nums">
-            {shown}
-          </span>
-        )}
+        {needsYou > 0 && <Badge aria-hidden tone="solid" size="sm" count={needsYou} className="absolute top-1 right-0.5" />}
       </IconButton>
-      <IconButton label="Search" noTooltip onClick={onSearch} className="size-11 text-muted-foreground"><Search aria-hidden /></IconButton>
-      {onTodos && <IconButton label="Todos" noTooltip aria-haspopup="dialog" onClick={onTodos} className="size-11 text-muted-foreground"><ListChecks aria-hidden /></IconButton>}
-      {actions && <MenuButton label="Screen actions" entries={actions} className="size-11" />}
+      <IconButton label="Search" noTooltip onClick={onSearch} className="size-control-touch text-muted-foreground"><Search aria-hidden /></IconButton>
+      {onTodos && <IconButton label="Todos" noTooltip aria-haspopup="dialog" onClick={onTodos} className="size-control-touch text-muted-foreground"><ListChecks aria-hidden /></IconButton>}
+      {actions && <MenuButton label="Screen actions" entries={actions} className="size-control-touch" />}
     </header>
   );
 }
