@@ -18,7 +18,7 @@ pub mod sheets;
 
 use accounts::{KIND, Shared};
 use pdt_api::sdk::documents::DocumentProvider;
-use pdt_api::sdk::{AppState, Integration};
+use pdt_api::sdk::{AppState, Integration, WebSources};
 use pdt_core::integration::{ConfigField, ConnectionKind};
 use pdt_forge::transport::Transport;
 use serde_json::Value;
@@ -173,5 +173,12 @@ impl Integration for Google {
                 .route("/google/callback", get(routes::callback))
                 .layer(axum::Extension(self.shared.clone())),
         )
+    }
+
+    fn web_sources(&self) -> WebSources {
+        // What the page itself loads, measured under a report-only policy: Google's picker loads its scripts from
+        // apis.google.com and opens its frame on docs.google.com, where the live embed is too; the picker's own calls
+        // to Google's APIs are made from inside that frame.
+        WebSources { script: &["https://apis.google.com"], frame: &["https://docs.google.com"] }
     }
 }

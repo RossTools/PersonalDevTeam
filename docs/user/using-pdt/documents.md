@@ -194,6 +194,9 @@ No **Browse Drive…** button? With your own OAuth client, the dialog says so an
 where you fill in the picker's API key and project number. With PDT's own sign-in there is nothing to set: that copy of
 PDT was built without Google's picker, and you can still open the files PDT already has access to.
 
+Just turned the Google plugin on? Reload PDT before you pick: the page only loads Google's picker and editor while the
+plugin is on.
+
 New Google documents are made in the first signed-in account (by connection name), in its folder.
 
 ### Work on them live

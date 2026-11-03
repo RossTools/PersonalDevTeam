@@ -150,6 +150,31 @@ async fn a_codex_pm_asks_in_its_conversation() {
     the_pm_asks_in_its_conversation("codex", "ask").await;
 }
 
+/// PDT-497: a turn's end expires the cards it left when PDT sees it, not once it is stored. Here the end of a turn is
+/// stored only after the next message's call has asked (writes fail until then), and that card stays open.
+#[tokio::test]
+async fn a_card_asked_after_a_turn_ended_outlives_that_turns_late_write() {
+    let env = setup().await;
+    pm_on(&env, "claude", "bypass").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let db = env._tmp.path().join("pdt.db");
+    common::disk_full(&db, "session_events", Some("1")).await;
+    send(&env, &id, "hello").await;
+    common::conversation::wait_session(&env.app, &id, "activity", "idle").await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Late end"}"#).await;
+    common::conversation::wait_session(&env.app, &id, "activity", "needs_you").await;
+    // Stored now, in order: the turn's end before the card.
+    common::disk_full(&db, "session_events", None).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    answer(&env, &id, &rid, json!({"type": "approve"})).await;
+    let said = said_after(&env, &id, n, "mcp create_ticket").await;
+    assert!(said.contains("\"created\": true"), "{said}");
+    assert_eq!(card(&env, &id, &rid).await["state"], "answered");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
 /// Where the project lets the PM act, nothing is asked.
 #[tokio::test]
 async fn a_pm_that_may_act_asks_nothing() {
