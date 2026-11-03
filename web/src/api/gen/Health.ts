@@ -2,7 +2,11 @@
 import type { LoopHealth } from "./LoopHealth";
 import type { Profile } from "./Profile";
 
-export type Health = { status: string, name: string, version: string, profile: Profile, port: number, dev: boolean, 
+export type Health = { status: string, name: string, 
+/**
+ * The product's website (`brand::WEBSITE`), for links to its docs.
+ */
+website: string, version: string, profile: Profile, port: number, dev: boolean, 
 /**
  * A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
  * `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).

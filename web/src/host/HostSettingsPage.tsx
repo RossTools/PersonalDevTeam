@@ -21,6 +21,7 @@ import { SettingsScreens } from '../common/SettingsScreens';
 import { useAction } from '../common/useAction';
 import { DEFAULT_MODEL, modelChoices, PermissionModeSelect } from '../conversation/ConversationComposer';
 import { navigate } from '../shell/router';
+import { useInstance } from '../shell/useInstance';
 import { useAgents, useAgentsOff } from '../common/agents';
 import { AcpAgents } from './AcpAgents';
 import { agentsOff, AgentSwitch, offNote, switchBlocked } from './AgentSwitch';
@@ -358,21 +359,31 @@ function Updates({ v }: { v: HostSettingsView }) {
 function Runs({ v }: { v: HostSettingsView }) {
   const s = v.settings;
   const save = useSaveSettings();
+  const website = useInstance().data?.website;
   const port = (text: string) => {
     const n = Number(text);
     if (!/^\d+$/.test(text) || n > 65535) throw new Error('a port is a number up to 65535');
     return n;
   };
   return (
-    <Section label="Runs" description="Dev instances and other runs started from a branch.">
-      <SettingsRow label="Ports" description="Runs get a port from this range.">
+    <Section
+      label="Runs"
+      description={
+        <>
+          Commands PDT runs from a ticket's branch, such as your app's dev server or its tests. Each project defines its
+          runs in <code>.pdt/project.toml</code> or in the project's settings.{' '}
+          {website && <Link href={`${website}/docs/automation/run-configuration`} external>How runs are set up</Link>}
+        </>
+      }
+    >
+      <SettingsRow label="Ports" description="Each run that serves something gets a port from this range, for its link, and for its Tailscale link when remote access is on.">
         <AutoSaveText aria-label="First run port" inputMode="numeric" className="w-20" value={String(s.runPorts.start)}
           onSave={async (t) => save.saveText({ runPorts: { start: port(t), end: s.runPorts.end } })} />
         <span className="text-muted-foreground">–</span>
         <AutoSaveText aria-label="Last run port" inputMode="numeric" className="w-20" value={String(s.runPorts.end)}
           onSave={async (t) => save.saveText({ runPorts: { start: s.runPorts.start, end: port(t) } })} />
       </SettingsRow>
-      <SettingsRow label="Max concurrent runs">
+      <SettingsRow label="Max concurrent runs" description="How many runs may be going at once across all projects (tests don't count). Starting one more offers to stop the oldest.">
         <AutoSaveText aria-label="Max concurrent runs" type="number" min={1} max={32} className="w-20" value={String(s.maxConcurrentRuns)}
           onSave={async (t) => save.saveText({ maxConcurrentRuns: Number(t) })} />
       </SettingsRow>

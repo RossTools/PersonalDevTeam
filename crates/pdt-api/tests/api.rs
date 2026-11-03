@@ -40,6 +40,7 @@ async fn health_reports_product() {
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["status"], "ok");
     assert_eq!(v["name"], "Personal Dev Team");
+    assert_eq!(v["website"], pdt_core::brand::WEBSITE);
     // `AppState::new` is a dev instance on port 0.
     assert_eq!((v["profile"].as_str(), v["port"].as_u64(), v["dev"].as_bool()), (Some("dev"), Some(0), Some(true)));
 }
