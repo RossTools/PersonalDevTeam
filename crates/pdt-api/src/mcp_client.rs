@@ -248,7 +248,7 @@ async fn connect(
                     };
                     // Give its last words a moment to arrive.
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    let said: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+                    let said: Vec<String> = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
                     let said = if said.is_empty() { String::new() } else { format!(" ({})", said.join(" / ")) };
                     Err(format!("{}: {program} did not start as an MCP server: {why}{said}", conn.name))
                 }
@@ -293,7 +293,7 @@ async fn drain_stderr(server: String, stderr: tokio::process::ChildStderr, tail:
     let mut lines = tokio::io::BufReader::new(stderr).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         tracing::debug!(server = %server, "mcp server: {line}");
-        let mut t = tail.lock().unwrap();
+        let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
         if t.len() == STDERR_LINES {
             t.pop_front();
         }
@@ -330,7 +330,7 @@ impl McpPool {
         // One start at a time per server (others are not held up), with its settings read again under the lock: a
         // caller that read them before a change (a listing begun before the secret was saved) then finds the newer
         // client instead of replacing it while it is in use.
-        let gate = self.starting.lock().unwrap().entry(first.id.clone()).or_default().clone();
+        let gate = self.starting.lock().unwrap_or_else(|e| e.into_inner()).entry(first.id.clone()).or_default().clone();
         let _started = gate.lock().await;
         let (conn, secret) = crate::workflow::routes::connection_with_secret(st, name.trim()).await?;
         if conn.kind != MCP {
@@ -396,7 +396,7 @@ impl McpPool {
         }
         .await;
         let now = now_ms();
-        let mut cache = self.tools.lock().unwrap();
+        let mut cache = self.tools.lock().unwrap_or_else(|e| e.into_inner());
         let entry = cache.entry(name.to_string()).or_insert_with(|| McpTools {
             server: name.to_string(),
             tools: vec![],
@@ -484,24 +484,24 @@ impl McpPool {
 
     /// The cached tools of the server called `name`.
     pub fn cached(&self, name: &str) -> Option<McpTools> {
-        self.tools.lock().unwrap().get(name).cloned()
+        self.tools.lock().unwrap_or_else(|e| e.into_inner()).get(name).cloned()
     }
 
     /// Every server's cached tools, by name.
     pub fn all_cached(&self) -> Vec<McpTools> {
-        let mut all: Vec<McpTools> = self.tools.lock().unwrap().values().cloned().collect();
+        let mut all: Vec<McpTools> = self.tools.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
         all.sort_by(|a, b| a.server.cmp(&b.server));
         all
     }
 
     /// Drops what is cached for servers that are no longer `mcp` connections (deleted or renamed).
     pub fn keep_only(&self, names: &[String]) {
-        self.tools.lock().unwrap().retain(|n, _| names.contains(n));
+        self.tools.lock().unwrap_or_else(|e| e.into_inner()).retain(|n, _| names.contains(n));
     }
 
     /// Stops servers unused for `idle` (none with a call in flight), broken ones, and those whose connection is gone.
     pub async fn reap(&self, idle: Duration, ids: &[String]) {
-        self.starting.lock().unwrap().retain(|id, _| ids.contains(id));
+        self.starting.lock().unwrap_or_else(|e| e.into_inner()).retain(|id, _| ids.contains(id));
         let mut live = self.live.lock().await;
         let gone: Vec<String> = live
             .iter()
