@@ -24,7 +24,7 @@ function foreign(e: KeyboardEvent): boolean {
 }
 
 /**
- * The Inbox's work area (UX spec §8.4): the selected item in the one item layout (PDT-361). Triage keys: `j`/`k`
+ * The Inbox's work area: the selected item in the one item layout (PDT-361). Triage keys: `j`/`k`
  * move, Enter takes the primary action, `o` opens the ticket, `e` dismisses where that makes sense, number keys pick
  * a question's choices, `y`/`n` answer an approval; answering moves to the next item. An Update (PDT-108) shows what
  * it says and opens what it is about.

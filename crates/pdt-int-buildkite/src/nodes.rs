@@ -1,4 +1,4 @@
-//! Buildkite actions (Phase 7e spec §6.4): `buildkite.retry` (a build's failed jobs, else the whole build) and
+//! Buildkite actions: `buildkite.retry` (a build's failed jobs, else the whole build) and
 //! `buildkite.trigger` (a new build), through a `buildkite` connection (pdt-api `buildkite.rs`).
 
 use crate::ci::BuildkiteClient;

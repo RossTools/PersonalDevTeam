@@ -272,7 +272,7 @@ async fn links_comments_and_the_timeline() {
     assert_eq!(list(&app, &format!("project={pid}")).await["total"], 3);
 }
 
-/// Attempts arrive with Start (Phase 4b); the store can already record one.
+/// Attempts arrive with Start; the store can already record one.
 async fn sqlx_insert_attempt(st: &AppState, ticket_id: &str) {
     st.store.insert_attempt("at1", ticket_id, None, "pdt/PDT-1-a", "main", "abc123", 1).await.unwrap();
 }

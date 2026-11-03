@@ -1,4 +1,4 @@
-//! The Doctor-style checks the first-run checklist needs (spec §3.1 "Login check", §6 "First run").
+//! The Doctor-style checks the first-run checklist needs.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -127,7 +127,7 @@ async fn run(
 /// and pdtd checks at startup while it restarts every interrupted session.
 const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// `claude auth status` prints JSON with `loggedIn` (verified fact 3).
+/// `claude auth status` prints JSON with `loggedIn`.
 pub(crate) fn claude_logged_in(stdout: &str) -> Option<bool> {
     let start = stdout.find('{')?;
     serde_json::from_str::<serde_json::Value>(&stdout[start..]).ok()?.get("loggedIn")?.as_bool()

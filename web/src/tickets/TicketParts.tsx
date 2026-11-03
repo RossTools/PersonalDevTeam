@@ -493,7 +493,7 @@ function iconFor(e: TicketEvent) {
   return undefined;
 }
 
-/** What an agent step's outcome event carries (spec 7b §4). */
+/** What an agent step's outcome event carries. */
 interface OutcomeData {
   summary?: string;
   persona?: string;

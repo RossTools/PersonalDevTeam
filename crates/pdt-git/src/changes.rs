@@ -1,4 +1,4 @@
-//! The files an attempt changed (tickets spec §7, actual overlap): everything that differs from where the branch
+//! The files an attempt changed (actual overlap): everything that differs from where the branch
 //! left its base, committed or not, plus untracked files. Read-only.
 
 use crate::{GitError, git_with_env};

@@ -1,7 +1,7 @@
 import type { TicketAgent } from '../api/gen/TicketAgent';
 import type { AgentStateValue } from './AgentState';
 
-/** The card's line about who owns its workflow step now and in what state (Phase 7c). */
+/** The card's line about who owns its workflow step now and in what state. */
 export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue } {
   const dot = (kind: AgentStateValue['dot'], pulse = false): AgentStateValue =>
     ({ dot: kind, pulse, label: null, tone: kind === 'running' ? 'running' : kind === 'waiting' ? 'waiting' : kind === 'failed' ? 'failed' : 'muted', unseen: false });

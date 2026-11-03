@@ -1,4 +1,4 @@
-//! The built-in node kinds, one module each (Phase 7a spec §4.4).
+//! The built-in node kinds, one module each.
 
 pub mod agent;
 pub mod agent_stuck;

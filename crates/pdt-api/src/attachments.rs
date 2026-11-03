@@ -1,4 +1,4 @@
-//! What a conversation's composer adds to a message (structured agents spec §5, §7): images, stored in
+//! What a conversation's composer adds to a message: images, stored in
 //! `<data dir>/sessions/<id>/attachments/<attachment id>.<ext>` (removed with the session), and `@` file suggestions
 //! from the session's folder.
 

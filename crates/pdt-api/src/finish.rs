@@ -1,4 +1,4 @@
-//! `ticket.finish` (Phase 7a spec §5.1): one server command for the merged banner, Merge…'s "Move to Done and clean
+//! `ticket.finish`: one server command for the merged banner, Merge…'s "Move to Done and clean
 //! up", the API and the `ticket.finish` workflow node. It checks first and changes nothing when something would be
 //! lost; otherwise it moves the ticket to Done, stops and removes what ran in its worktree and workspace, removes the
 //! worktree (and the branch when asked), deletes the workspace Start made and pulls the base branch.

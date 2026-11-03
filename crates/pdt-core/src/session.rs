@@ -242,7 +242,7 @@ pub struct Session {
     pub model: Option<String>,
     /// Conversations: PDT's permission setting.
     pub permission_mode: Option<crate::conversation::PermissionMode>,
-    /// The persona and version the session runs, when a workflow's agent step started it (Phase 7b).
+    /// The persona and version the session runs, when a workflow's agent step started it.
     pub persona: Option<SessionPersona>,
     /// Conversations: the background tasks still running, as the agent last reported them (PDT-332). With the agent
     /// idle, its turn has ended while they run: the sidebar shows it as Background, not Done. Empty when none run.
@@ -598,7 +598,7 @@ pub fn clean_title(raw: &str) -> Option<String> {
 /// pdtd's own configuration lives in `PDT_*` variables; none is ever passed to a child, so a dev pdtd started inside a
 /// stable-hosted terminal cannot inherit the stable port, data dir or owner. PDT sets its own variables afterwards.
 const PDT_ENV_PREFIX: &str = "PDT_";
-/// Removed for agents under the subscription policy, so they bill the user's subscription (spec §5.5; remote-host §6).
+/// Removed for agents under the subscription policy, so they bill the user's subscription.
 const API_KEY_ENV_VARS: [&str; 2] = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"];
 /// Inherited from the shell that started pdtd (often Claude Code itself): they disable color or make `claude`
 /// believe it is nested. Never passed to any child. Only a running session's own `CLAUDE_CODE_*` variables are

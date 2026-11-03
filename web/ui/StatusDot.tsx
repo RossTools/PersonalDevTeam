@@ -16,7 +16,7 @@ const color: Record<Status, string> = {
 };
 
 /**
- * The state dot. `pulse` applies to `running` only (an agent working, spec §6.5); `background` always pulses, slowly.
+ * The state dot. `pulse` applies to `running` only (an agent working); `background` always pulses, slowly.
  * Neither pulses under reduced motion. `label` overrides the accessible name (defaults to the status).
  */
 export function StatusDot({

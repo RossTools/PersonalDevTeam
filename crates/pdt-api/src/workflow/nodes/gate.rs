@@ -1,5 +1,5 @@
 //! `gate`: a human gate. It takes the port of the user's choice: one made ahead of time (`ahead`, e.g. Merge…'s
-//! "finish once it merges", PDT-75) passes at once; otherwise it waits for an answer from the Inbox (Phase 7b) or the
+//! "finish once it merges", PDT-75) passes at once; otherwise it waits for an answer from the Inbox or the
 //! API, or takes `unanswered` at once.
 
 use crate::routes::now_ms;

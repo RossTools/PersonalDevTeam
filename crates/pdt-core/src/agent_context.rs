@@ -29,7 +29,7 @@ pub struct SessionContext<'a> {
     pub base_branch: &'a str,
     /// The ticket, when the session works on one (an active attempt's session).
     pub ticket: Option<TicketWork<'a>>,
-    /// A Personal project (Phase 7b spec §7): no repo, the checkout is a plain folder.
+    /// A Personal project: no repo, the checkout is a plain folder.
     pub personal: bool,
     /// The pdt-mcp tools the session has (empty: none, e.g. a Devin terminal).
     pub tools: &'a [String],

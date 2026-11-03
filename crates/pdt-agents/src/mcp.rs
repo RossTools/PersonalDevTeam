@@ -1,4 +1,4 @@
-//! How pdt-mcp (Phase 7b spec §2.3) reaches each agent, per launch and never through the user's own config: Claude
+//! How pdt-mcp reaches each agent, per launch and never through the user's own config: Claude
 //! gets `--mcp-config` (a file in the session's folder) and `--allowedTools` for PDT's tools; Codex a `mcp_servers.pdt`
 //! override (the app-server thread's `config`, the TUI's `-c` with the token in an environment variable); Devin's ACP
 //! session an `mcpServers` entry.

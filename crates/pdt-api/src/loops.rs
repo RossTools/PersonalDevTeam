@@ -186,9 +186,9 @@ where
 }
 
 /// One pass of the 60 s poll, in order: runs whose checkout is gone; attempts' pull requests and CI (PDT-25), then
-/// attempts whose branch was merged (tickets spec §6); new issues in repos workflows watch (Phase 7e) and new releases of projects they watch (PDT-365), and pull requests PDT didn't open (PDT-268); failed runs of watched CI workflows (PDT-292); the enabled
+/// attempts whose branch was merged; new issues in repos workflows watch and new releases of projects they watch (PDT-365), and pull requests PDT didn't open (PDT-268); failed runs of watched CI workflows (PDT-292); the enabled
 /// integrations' checks (their CI, their trackers' issues; PDT-173); workflows kept in repos, and pruning old events
-/// and runs (Phase 7a). Each member is contained and limited, so a hung or panicking one never holds up the rest.
+/// and runs. Each member is contained and limited, so a hung or panicking one never holds up the rest.
 pub async fn poll_pass(st: AppState) {
     part(&st, "the gone-runs sweep", |s| async move { crate::sweep_gone_runs(&s).await }).await;
     part(&st, "the PR check", |s| async move { crate::refresh_prs(&s).await }).await;

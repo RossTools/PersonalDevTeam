@@ -121,7 +121,7 @@ export interface DiffViewerProps {
 /**
  * A read-only unified diff: per-file headers with "+N −M", hunks with old/new line-number gutters and add/remove
  * shading. Long lines scroll sideways within their file, or wrap with `wrap`; either way the viewer never grows wider
- * than its container. (Phase 6 adds split view and comments.)
+ * than its container.
  */
 export function DiffViewer({ diff, hideHeaders = false, wrap = false, className }: DiffViewerProps) {
   const files = parseDiff(diff);

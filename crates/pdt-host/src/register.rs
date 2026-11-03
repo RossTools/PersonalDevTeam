@@ -1,5 +1,5 @@
-//! Starting pdt-host at login (spec §3.1): a per-user launchd LaunchAgent on macOS (RunAtLoad, KeepAlive), and a
-//! per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on Windows (decision 14; no admin needed),
+//! Starting pdt-host at login: a per-user launchd LaunchAgent on macOS (RunAtLoad, KeepAlive), and a
+//! per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value on Windows (no admin needed),
 //! and a systemd user service on Linux (`~/.config/systemd/user/pdt-host.service`, enabled; with linger it starts at
 //! boot, PDT-197).
 //! On Windows pdt-host runs from a copy in the data folder, so the installer can replace the install folder while it

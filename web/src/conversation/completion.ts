@@ -75,7 +75,7 @@ const at = (ms: number, now: number) => {
   return d.toLocaleString(undefined, sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 };
 
-/** The rate-limit window closest to its limit, once it is at 80 % or more (spec §7, §14). */
+/** The rate-limit window closest to its limit, once it is at 80 % or more. */
 export function limitWarning(windows: RateLimitWindow[], now: number): LimitWarning | null {
   const live = windows.filter((w) => w.resetsAt == null || w.resetsAt > now);
   const worst = live.reduce<RateLimitWindow | null>((a, w) => (!a || w.utilization > a.utilization ? w : a), null);

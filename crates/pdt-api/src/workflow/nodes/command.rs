@@ -1,4 +1,4 @@
-//! `command` (Phase 7e spec §3.1): runs a program (no shell) or a shell script (PDT-250) with JSON on stdin and reads
+//! `command`: runs a program (no shell) or a shell script (PDT-250) with JSON on stdin and reads
 //! JSON from stdout, in a scratch folder, the project's checkout or the attempt's worktree. A non-zero exit is an error
 //! (so retries and the error port apply); the node's time limit kills the whole process tree.
 

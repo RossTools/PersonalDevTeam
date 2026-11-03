@@ -211,7 +211,7 @@ pub(crate) async fn patch(
     Ok(Json(s))
 }
 
-/// `DELETE /api/pm/sessions/{id}`: closes a PM conversation, the only way one ends (spec §5.3). One that said anything
+/// `DELETE /api/pm/sessions/{id}`: closes a PM conversation, the only way one ends. One that said anything
 /// is asked for its journal first and ends when that turn does; one that never did ends at once. Closing one that is
 /// already ending does nothing.
 pub(crate) async fn close(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -448,7 +448,7 @@ pub(crate) async fn write_journal(st: &AppState, s: &Session, body: &str) -> Res
     Ok(n)
 }
 
-/// A PM session ended a turn (spec §5.3): one the user closed ends once the turn that was asked for its journal is
+/// A PM session ended a turn: one the user closed ends once the turn that was asked for its journal is
 /// over. One in use carries on: its daily update comes from the PM daily checkpoint workflow ([`send_updates`],
 /// PDT-372), and neither a full context nor age ends one: the agent compacts its own context ([`compacted`]).
 pub(crate) async fn turn_ended(st: &AppState, id: &str) {
@@ -497,7 +497,7 @@ pub(crate) struct Updates {
     pub nothing_new: Vec<String>,
 }
 
-/// Brings every open PM conversation due its daily update up to date (spec §5.3, PDT-211; the PM daily checkpoint
+/// Brings every open PM conversation due its daily update up to date (PDT-211; the PM daily checkpoint
 /// workflow's `pm.update` since PDT-372): `after` ms since its last update, and, with `in_use`, the user wrote to it
 /// since. Each gets what happened since then, through the outbox so it never goes into a running turn; one with
 /// nothing new is only listed. `dry_run` changes nothing.
@@ -554,7 +554,7 @@ pub(crate) async fn ask_checkpoints(
 }
 
 /// A PM conversation's agent compacted its context: it is asked for a journal checkpoint, through the outbox so the
-/// request waits for the turn to end (spec §5.3). The conversation carries on.
+/// request waits for the turn to end. The conversation carries on.
 pub(crate) async fn compacted(st: &AppState, id: &str) {
     let Ok(Some(row)) = st.store.get_pm_session(id).await else { return };
     if row.rotation != Rotation::None || checkpoint_waiting(st, id).await {
@@ -687,7 +687,7 @@ async fn ask_for_journal(st: &AppState, s: &Session, text: String, reopens: bool
 }
 
 /// A conversation opened a permission request: when it is a PM asking tool whose target project lets the PM act,
-/// PDT answers yes for the user (spec §4).
+/// PDT answers yes for the user.
 pub(crate) async fn request_opened(
     st: &AppState,
     session_id: &str,

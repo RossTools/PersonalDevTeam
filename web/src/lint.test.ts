@@ -1,5 +1,5 @@
 // @vitest-environment node
-// Guard rails for the design system (spec 2026-10-17-design-system-ux §5.1): colours come from tokens.css, sizes and
+// Guard rails for the design system: colours come from tokens.css, sizes and
 // layers from the theme, confirmations from useConfirm, and features build on '@ui' rather than the libraries under it.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';

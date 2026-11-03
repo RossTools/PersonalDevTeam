@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-//! The desktop app: an optional tray view of the host (remote-host spec §3.1). pdt-host keeps pdtd running; the tray
+//! The desktop app: an optional tray view of the host. pdt-host keeps pdtd running; the tray
 //! starts pdt-host when nothing answers, opens the web UI, shows the version and drives pdtd's update API.
 mod api;
 mod daemon;
@@ -233,7 +233,7 @@ fn on_menu_event(app: &AppHandle, event: MenuEvent) {
         "restart" => restart_daemon(app),
         "placement" => placement_clicked(app),
         "login" => login_clicked(app),
-        // Only the tray exits (decision 16): pdt-host keeps pdtd running.
+        // Only the tray exits: pdt-host keeps pdtd running.
         "quit" => app.exit(0),
         _ => {}
     }

@@ -1,4 +1,4 @@
-//! Ticket Start, attempts and merge detection (tickets spec §5, §6), with stand-in agents.
+//! Ticket Start, attempts and merge detection, with stand-in agents.
 
 use crate::common;
 
@@ -681,7 +681,7 @@ async fn new_sessions_take_an_initial_prompt() {
     env.state.ptys.shutdown().await;
 }
 
-// Areas and overlap (tickets spec §7).
+// Areas and overlap.
 
 const AREAS: &str = r#"
 [[area]]

@@ -1,6 +1,6 @@
 // A node's config form, generated from its kind's JSON Schema (schemars): text, numbers, switches, choices, lists of
 // text and of objects, optional fields and Tpl fields (a literal or a `{{reference}}`). What it can't draw is a JSON
-// field (Phase 7d spec §3.4), edited as code. A schema's `x-format` (PDT-250) picks the editor for long text:
+// field, edited as code. A schema's `x-format` (PDT-250) picks the editor for long text:
 // `markdown`, `code` (in `x-language`) or `multiline`.
 import { useEffect, useState } from 'react';
 import { Braces, Plus, Trash2 } from 'lucide-react';

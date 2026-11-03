@@ -27,7 +27,7 @@ export interface Present {
 }
 
 /**
- * What a new or updated row does on this page (PDT-108 §5.1): a toast while the page is visible (not for what is
+ * What a new or updated row does on this page (PDT-108): a toast while the page is visible (not for what is
  * already on screen), a desktop notification while it is hidden (only from the tab holding the lock, on a device that
  * allowed them), or nothing. Rows that arrive late show neither.
  */

@@ -1,4 +1,4 @@
-//! Schedules (Phase 7e spec §2.2): `every` intervals aligned to the Unix epoch and 5-field cron expressions in a zone,
+//! Schedules: `every` intervals aligned to the Unix epoch and 5-field cron expressions in a zone,
 //! the latest slot at or before a time, and the scheduler's rule for when a slot fires (no backlog).
 
 use chrono::{DateTime, Local, TimeZone, Utc};

@@ -1,4 +1,4 @@
-//! Drives run instances (spec §4.2): setup, command, readiness, Tailscale mapping, stop, resume after a restart.
+//! Drives run instances: setup, command, readiness, Tailscale mapping, stop, resume after a restart.
 //!
 //! A detached run (`detach = true`, PDT-32) starts its command outside PDT's terminals (`pdt_agents::detached`), so
 //! it keeps running when pdtd exits; the run's Output terminal follows its log. The next pdtd finds it again by the
@@ -627,7 +627,7 @@ async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bo
     }
 }
 
-/// Restarts the runs a previous pdtd left active (spec §4.2 "Restarts"). Returns how many started (or, for a
+/// Restarts the runs a previous pdtd left active. Returns how many started (or, for a
 /// detached run still running, were reattached). pdtd calls it after applying remote access (ruling F4), so links
 /// use the tailnet name; each run maps its port as it starts. Afterwards the run-port mappings this instance made
 /// before the restart (kept in its store) that no resumed run uses are removed: a run that moved to another port, failed
@@ -718,7 +718,7 @@ fn checkout_gone(repo: &Path, cwd: &Path, branch: &str) -> bool {
     !cwd.is_dir() || (cwd != repo && !pdt_git::branch_exists(repo, branch))
 }
 
-/// Stops active runs whose worktree folder or branch has gone (spec §4.2: merged or deleted branches). A run whose
+/// Stops active runs whose worktree folder or branch has gone (merged or deleted branches). A run whose
 /// project cannot be read is left alone (and logged): a failed lookup is not a gone branch.
 pub async fn sweep_gone_runs(st: &AppState) {
     let active = match st.store.list_active_runs().await {

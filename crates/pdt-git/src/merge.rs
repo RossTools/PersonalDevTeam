@@ -1,4 +1,4 @@
-//! Merge detection for ticket attempts (tickets spec §6): is a branch's work in the base branch, by a merge, a
+//! Merge detection for ticket attempts: is a branch's work in the base branch, by a merge, a
 //! fast-forward or a squash? Read-only: no refs are created and no working tree is touched (a squash check writes one
 //! unreferenced commit object, which `git gc` collects).
 

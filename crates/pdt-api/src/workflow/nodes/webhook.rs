@@ -1,4 +1,4 @@
-//! The `webhook` trigger (Phase 7e spec §2.5): fires for `webhook.received` events of its hook (a `webhook`
+//! The `webhook` trigger: fires for `webhook.received` events of its hook (a `webhook`
 //! connection), which `POST /api/hooks/<name>` records (pdt-api `hooks.rs`).
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of};

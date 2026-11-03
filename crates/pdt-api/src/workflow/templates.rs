@@ -1,4 +1,4 @@
-//! Workflow templates (Phase 7d spec §5): the ones PDT ships (`builtin:<id>`, read-only) and the user's own, with
+//! Workflow templates: the ones PDT ships (`builtin:<id>`, read-only) and the user's own, with
 //! parameters. Instantiating one makes an ordinary workflow, disabled until the user enables it.
 
 use super::routes::{body, checked, conflict, create_workflow, invalid};

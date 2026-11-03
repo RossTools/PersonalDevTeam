@@ -44,7 +44,7 @@ export function stoppedLine(tasks: { description: string }[]): string | null {
 }
 
 /**
- * An agent session shown as a conversation (spec §7): the message list over the composer. Sending also reopens a
+ * An agent session shown as a conversation: the message list over the composer. Sending also reopens a
  * parked, stopped or ended conversation, so there is no separate restart flow.
  */
 export function ConversationView({ session, socketFactory, className, banner, readOnly }: {
@@ -123,7 +123,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
   const searchFiles = useCallback((q: string) => api.sessionFiles(session.id, q), [session.id]);
   const upload = useCallback((file: File) => api.uploadAttachment(session.id, file), [session.id]);
   const imageUrl = useCallback((id: string) => api.attachmentUrl(session.id, id), [session.id]);
-  // Never automatic: a turn cut off by a restart or a crash waits for this click (spec §9, §14).
+  // Never automatic: a turn cut off by a restart or a crash waits for this click.
   const continueTurn = () => runAction(() => send(CONTINUE_PROMPT));
 
   return (

@@ -1,4 +1,4 @@
-//! Releases and updates (remote-host spec §3): versions, assets, checksums, token warnings. Pure.
+//! Releases and updates: versions, assets, checksums, token warnings. Pure.
 
 use crate::host::UpdateChannel;
 use serde::Serialize;
@@ -369,7 +369,7 @@ pub enum TokenState {
     Expired,
 }
 
-/// Warns `TOKEN_WARN_MS` (14 days) ahead of expiry (spec §3.2).
+/// Warns `TOKEN_WARN_MS` (14 days) ahead of expiry.
 pub fn token_state(present: bool, expires_at: Option<i64>, rejected: bool, now: i64) -> TokenState {
     match (present, expires_at) {
         (false, _) => TokenState::Missing,

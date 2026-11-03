@@ -1,4 +1,4 @@
-//! Areas and overlap (tickets spec §7): the project's configured areas, each active attempt's changed files (kept in
+//! Areas and overlap: the project's configured areas, each active attempt's changed files (kept in
 //! memory, refreshed every 30 s by pdtd), and the per-ticket overlaps every ticket response and the backlog carry.
 
 use crate::error::ApiError;

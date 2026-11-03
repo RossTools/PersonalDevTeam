@@ -135,7 +135,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
             ..session(&lib, None, Some(AgentKind::Claude), "Write the docs (no prompts)", 2 * HOUR)
         },
     ];
-    // A Claude conversation with a finished turn (structured agents, Phase 5), so the conversation view has something
+    // A Claude conversation with a finished turn (structured agents), so the conversation view has something
     // to show without running an agent.
     let conversation = Session {
         mode: pdt_core::conversation::SessionMode::Conversation,

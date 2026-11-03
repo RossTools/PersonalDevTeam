@@ -1,4 +1,4 @@
-//! `agent`: an agent step (Phase 7b spec §4). Runs a persona in a new or reused session with a declared outcome set;
+//! `agent`: an agent step. Runs a persona in a new or reused session with a declared outcome set;
 //! the outcome it submits through pdt-mcp picks the port. `workflow::agent` does the work.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
@@ -39,7 +39,7 @@ pub enum Owner {
     /// The persona, in a session.
     #[default]
     Agent,
-    /// The user (a manual stage, Phase 7c §3.4): no session; the Inbox asks them for the outcome.
+    /// The user (a manual stage): no session; the Inbox asks them for the outcome.
     User,
 }
 

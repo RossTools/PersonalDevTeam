@@ -1,4 +1,4 @@
-//! Workspace and tab routes (workspaces spec §5).
+//! Workspace and tab routes.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};

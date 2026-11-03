@@ -1,4 +1,4 @@
-//! Workflows kept in a project's repo (Phase 7a spec §3.3): each `.pdt/workflows/<name>.json` in the main checkout is
+//! Workflows kept in a project's repo: each `.pdt/workflows/<name>.json` in the main checkout is
 //! a workflow with `source: repo`, read-only in PDT. A changed file is a new version (author `repo`), proposed for the
 //! user to accept while the workflow is enabled; a new one starts disabled (enabling stays the user's choice on this
 //! host); a removed file removes its workflow.

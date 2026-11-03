@@ -379,9 +379,9 @@ pub enum NoticeKind {
     Merged,
     /// Behind its base while it waits to merge without a merge queue (PDT-24).
     Behind,
-    /// Someone commented on the pull request (Phase 7e).
+    /// Someone commented on the pull request.
     Commented,
-    /// Someone reviewed the pull request (Phase 7e).
+    /// Someone reviewed the pull request.
     Reviewed,
 }
 

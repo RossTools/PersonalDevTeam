@@ -143,7 +143,7 @@ export function groupTickets(items: TicketSummary[], by: Exclude<GroupBy, 'none'
 export const looksLikeKey = (q: string) => /^([A-Za-z][A-Za-z0-9]*-\d+|#?\d+)$/.test(q.trim());
 
 // ---------------------------------------------------------------------------------------------------------------
-// Saved filters (per browser, Phase 4)
+// Saved filters (per browser)
 
 export interface SavedFilter {
   id: string;

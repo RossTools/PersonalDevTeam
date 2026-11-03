@@ -1,4 +1,4 @@
-//! Conversations (structured agents spec §3, §5, §9): one runtime per conversation session that owns its live agent
+//! Conversations: one runtime per conversation session that owns its live agent
 //! process (opened on demand, parked when idle), appends the adapter's events to the store, fans them out to
 //! WebSocket viewers and derives the session's activity from them.
 
@@ -39,7 +39,7 @@ pub(crate) use state::{
 pub use state::{answer_as_user, conversation_live, is_working, subscribe_all};
 pub(crate) use terminal::terminal_conversation_moved;
 
-/// How long an idle conversation's process lives before it is parked (spec §3.2).
+/// How long an idle conversation's process lives before it is parked.
 pub const IDLE_PARK: Duration = Duration::from_secs(15 * 60);
 /// How long a message may sit unechoed while nothing happens in its conversation (`Conversations::pending_timeout`).
 pub const PENDING_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -160,7 +160,7 @@ struct ConvState {
     generation: u64,
     terminal_open: bool,
     billing: Option<String>,
-    /// A rate limit is hit until then (ms): nothing is sent on PDT's own (spec §14).
+    /// A rate limit is hit until then (ms): nothing is sent on PDT's own.
     limited_until: Option<i64>,
     /// The agent's background tasks still running: the process is not parked while there are any.
     background_tasks: Vec<BackgroundTask>,
@@ -610,7 +610,7 @@ pub async fn shutdown_conversations(st: &AppState) {
     }
 }
 
-/// After a pdtd restart: a turn that was running ends as interrupted and open requests expire (spec §9). Run before
+/// After a pdtd restart: a turn that was running ends as interrupted and open requests expire. Run before
 /// serving.
 pub async fn recover_conversations(st: &AppState) {
     // Every background task the previous pdtd's agents ran ended with them (PDT-311).
@@ -665,7 +665,7 @@ async fn recover_one(st: &AppState, id: &str) -> Result<(), pdt_store::StoreErro
         };
         let item = format!("turn-end:{turn}");
         let ne = NewEvent { ts: now_ms(), item_id: Some(&item), turn_id: Some(&turn), event: &e, raw: None };
-        // The web offers Continue on an interrupted last turn; nothing is sent without the user (spec §14).
+        // The web offers Continue on an interrupted last turn; nothing is sent without the user.
         st.store.upsert_session_event(id, ne).await?;
     }
     Ok(())

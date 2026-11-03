@@ -1,4 +1,4 @@
-//! Conversations (structured agents spec §4): the normalized events every agent adapter produces, the requests the
+//! Conversations: the normalized events every agent adapter produces, the requests the
 //! user answers, the WebSocket frames, and activity derived from events. Pure.
 
 pub mod acp;
@@ -51,7 +51,7 @@ impl SessionMode {
     }
 }
 
-/// PDT's permission setting for a session (spec §6.1), mapped to each agent's own.
+/// PDT's permission setting for a session, mapped to each agent's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -116,7 +116,7 @@ pub enum MessageSource {
     Terminal,
     /// Sent while a turn was running and taken into it.
     Steer,
-    /// Sent by PDT itself, not typed by the user: news about the attempt's pull request (spec §14).
+    /// Sent by PDT itself, not typed by the user: news about the attempt's pull request.
     Notice,
 }
 
@@ -214,7 +214,7 @@ pub struct RateLimitWindow {
 }
 
 /// Until when a hit limit stops the agent (ms; `i64::MAX` when the agent gave no reset time), or None when no window
-/// is at its limit. Nothing is sent automatically before then (spec §14).
+/// is at its limit. Nothing is sent automatically before then.
 pub fn limited_until(windows: &[RateLimitWindow], now: i64) -> Option<i64> {
     windows.iter().filter(|w| w.utilization >= 1.0).map(|w| w.resets_at.unwrap_or(i64::MAX)).filter(|&t| t > now).max()
 }
@@ -252,7 +252,7 @@ pub enum Answer {
     },
 }
 
-/// A normalized conversation event (spec §4.1).
+/// A normalized conversation event.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[ts(export)]
@@ -522,7 +522,7 @@ pub struct ConversationState {
     pub agent_version: Option<String>,
     /// Codex: the agent's own TUI is open on this conversation (live, beside it).
     pub terminal_open: bool,
-    /// Who pays: "Claude plan", "API key", "ChatGPT plan" (spec §14), once the agent has said.
+    /// Who pays: "Claude plan", "API key", "ChatGPT plan", once the agent has said.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub billing: Option<String>,
@@ -628,7 +628,7 @@ pub struct AgentCapabilities {
     pub version: Option<String>,
 }
 
-/// The facts activity is derived from (spec §4.3).
+/// The facts activity is derived from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ActivityFacts {
     pub turn_running: bool,

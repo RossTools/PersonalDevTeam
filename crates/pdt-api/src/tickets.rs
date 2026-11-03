@@ -1,4 +1,4 @@
-//! Ticket routes (tickets spec §4): the backlog query, create/get/edit/delete, rank moves, bulk actions, links, the
+//! Ticket routes: the backlog query, create/get/edit/delete, rank moves, bulk actions, links, the
 //! timeline and comments, and a project's labels.
 
 use crate::error::ApiError;
@@ -136,7 +136,7 @@ pub(crate) async fn update(
     }
     let since = now_ms();
     let t = st.store.patch_ticket(&id, &patch, since).await?.ok_or_else(unknown_ticket)?;
-    // Closing a ticket ends its attempt (tickets spec §6), once the close went through; moving it back before work
+    // Closing a ticket ends its attempt, once the close went through; moving it back before work
     // stops its work (PDT-159).
     match patch.stage {
         Some(stage) if stage.is_closed() => {
@@ -290,7 +290,7 @@ pub(crate) async fn comment(
     Ok((StatusCode::CREATED, Json(event)))
 }
 
-/// `POST /api/tickets/{id}/refine` (Phase 7c §3.3): asks the project's pipeline to refine a Draft or Ready ticket.
+/// `POST /api/tickets/{id}/refine`: asks the project's pipeline to refine a Draft or Ready ticket.
 /// Sets its pipeline stage to `refine` and logs `ticket.refine_requested`; an enabled workflow does the rest.
 pub(crate) async fn refine(
     State(st): State<AppState>,

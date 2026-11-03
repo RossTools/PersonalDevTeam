@@ -21,7 +21,7 @@ stopped?: string, agentVersion?: string,
  */
 terminalOpen: boolean, 
 /**
- * Who pays: "Claude plan", "API key", "ChatGPT plan" (spec §14), once the agent has said.
+ * Who pays: "Claude plan", "API key", "ChatGPT plan", once the agent has said.
  */
 billing?: string, 
 /**

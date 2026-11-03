@@ -1,4 +1,4 @@
-//! Built-in workflows (Phase 7a spec §8): the reactions that used to be hard-coded, installed host-wide when pdtd
+//! Built-in workflows: the reactions that used to be hard-coded, installed host-wide when pdtd
 //! starts. A built-in the user never edited follows newer templates; one the user edited is left alone. They can be
 //! disabled, not deleted.
 

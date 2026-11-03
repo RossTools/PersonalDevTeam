@@ -27,7 +27,7 @@ function truncatingText(children: ReactNode): ReactNode[] {
 }
 
 /**
- * A small label. Neutral by default; a tone only when it shows state (colour means state, spec §3).
+ * A small label. Neutral by default; a tone only when it shows state (colour means state).
  * `count` renders a round number badge (capped at `max`, 99 by default) instead of `children`.
  * A label is never wider than its container: its text truncates, so give a long one a `title` with the full text.
  */

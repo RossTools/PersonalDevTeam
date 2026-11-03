@@ -1,4 +1,4 @@
-//! Per-host settings (spec §6). Pure: pdt-store stores them, pdt-api edits them.
+//! Per-host settings. Pure: pdt-store stores them, pdt-api edits them.
 
 use crate::brand::Profile;
 use crate::conversation::{PermissionMode, SessionMode};
@@ -55,7 +55,7 @@ impl InstallWindow {
     }
 }
 
-/// Whether agent sessions get the host's API-key variables (spec §6 "Agent credentials").
+/// Whether agent sessions get the host's API-key variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -89,7 +89,7 @@ pub const DEFAULT_RUN_PORTS: PortRange = PortRange { start: 8400, end: 8499 };
 /// The dev instance's default, apart from the stable one's so their runs never compete for ports or mappings.
 pub const DEV_RUN_PORTS: PortRange = PortRange { start: 8500, end: 8599 };
 pub const DEFAULT_MAX_RUNS: u32 = 4;
-/// How many agents may run a turn at once for PDT's own work (structured agents spec §16); 0 is no cap.
+/// How many agents may run a turn at once for PDT's own work; 0 is no cap.
 pub const DEFAULT_MAX_AGENT_TURNS: u32 = 4;
 const MAX_AGENT_TURNS_LIMIT: u32 = 64;
 /// How many triage runs one author's issues start an hour (PDT-202); 0 is no cap.
@@ -130,7 +130,7 @@ pub struct HostSettings {
     /// Minutes between automatic update checks (unless the update policy is manual).
     pub update_check_minutes: u32,
     /// The most agents running a turn at once before PDT's own work (agent steps, workflow messages) waits for a
-    /// slot; 0: no cap. What the user does is never held (Phase 7c spec §6.2).
+    /// slot; 0: no cap. What the user does is never held.
     pub max_agent_turns: u32,
     /// The most triage runs (a workflow with an agent step started by a new issue or a webhook) one issue author
     /// starts an hour; more are skipped (PDT-202). 0: no cap.

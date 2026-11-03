@@ -295,7 +295,7 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Switches how an agent session is driven, with the transcript entry PDT's log ends at (spec §8.3; None once
+    /// Switches how an agent session is driven, with the transcript entry PDT's log ends at (None once
     /// imported).
     pub async fn switch_session_mode(
         &self,

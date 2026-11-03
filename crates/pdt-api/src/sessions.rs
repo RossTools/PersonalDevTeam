@@ -60,7 +60,7 @@ pub(crate) struct CreateSession {
     pub ticket: Option<SessionTicket>,
     /// Some: open the session's tab there (None inside: the end of its project's workspace). None: the caller opens it.
     pub tab: Option<Option<TabPlacement>>,
-    /// The persona (and agent step) the session runs (Phase 7b).
+    /// The persona (and agent step) the session runs.
     pub persona: Option<pdt_core::session::SessionPersona>,
     /// Where it runs instead of the worktree or main checkout (a Personal project's ticket folder).
     pub cwd: Option<String>,
@@ -540,7 +540,7 @@ fn start_pty(
     Ok(())
 }
 
-/// The agent's launch arguments plus its activity hooks (remote-host spec §5.1): Claude gets a per-session
+/// The agent's launch arguments plus its activity hooks: Claude gets a per-session
 /// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify, Devin a
 /// `--config` file copied from the user's own config with a `SessionStart` hook added (it names the conversation and
 /// prints `instructions` back as context). The user's own agent settings are never written. Limit: with a Windows `.cmd` shim (npm installs) the arguments pass through
@@ -825,7 +825,7 @@ impl ResumePlan {
 /// (see `plan_resume`), so sessions sharing a folder do not interfere.
 pub async fn plan_resume_interrupted(st: &AppState) -> ResumePlan {
     let sessions = match st.store.list_sessions_by_status(SessionStatus::Interrupted).await {
-        // Conversations reopen on the next message instead (spec §9).
+        // Conversations reopen on the next message instead.
         Ok(v) => v.into_iter().filter(|s| s.mode != SessionMode::Conversation).collect::<Vec<_>>(),
         Err(e) => {
             tracing::warn!(error = %e, "could not list interrupted sessions to resume");

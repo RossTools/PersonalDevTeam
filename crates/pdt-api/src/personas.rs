@@ -1,4 +1,4 @@
-//! Personas (Phase 7b spec §3): versioned agent setups agent steps run. Every save is a new version; built-ins
+//! Personas: versioned agent setups agent steps run. Every save is a new version; built-ins
 //! (Refiner, Coder, Reviewer, QA) are installed on start and follow newer templates until the user edits them.
 
 use crate::error::ApiError;

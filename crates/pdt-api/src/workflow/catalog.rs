@@ -1,4 +1,4 @@
-//! The node catalog (Phase 7a spec §4.5): every node kind is one module implementing [`NodeKind`], registered once in
+//! The node catalog: every node kind is one module implementing [`NodeKind`], registered once in
 //! [`catalog`]. The catalog serves `GET /api/workflows/catalog`, checks configs for validation, and runs nodes.
 
 use crate::routes::AppState;
@@ -26,7 +26,7 @@ pub enum Category {
     Gate,
     Wait,
     Flow,
-    /// An agent step (Phase 7b).
+    /// An agent step.
     Agent,
 }
 

@@ -1,4 +1,4 @@
-//! `session.send`: a message into an agent session, with the PR notices' delivery rule (Phase 7a spec §5.2). The
+//! `session.send`: a message into an agent session, with the PR notices' delivery rule. The
 //! step queues it in the outbox and waits; `workflow::outbox` delivers it and resumes the run.
 
 use crate::routes::now_ms;

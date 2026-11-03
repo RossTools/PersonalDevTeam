@@ -22,7 +22,7 @@ it to merge again: don't turn on auto-merge or merge it yourself.";
 const PUSH_PROMPT: &str = "The Reviewer approved your fix. Push it (run the checks first if anything changed since); \
 PDT then gets the pull request merging again.";
 
-/// The built-in PR notices (PDT-25, Phase 7a; PDT-104): each notice once to the attempt's agent; for a pull request
+/// The built-in PR notices (PDT-25; PDT-104): each notice once to the attempt's agent; for a pull request
 /// that was set to merge (or whose workflow merge was refused for a conflict, PDT-139), an agent step that fixes it (a
 /// Reviewer first when the agent calls the fix large), then auto-merge on again, up to [`FIX_TRIES`] times per
 /// attempt. A notice with no agent session to tell goes to the Inbox and the ticket's comments, once (PDT-139).

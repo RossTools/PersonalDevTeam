@@ -18,6 +18,6 @@ finishOnMerge?: boolean,
 deleteBranch?: boolean, 
 /**
  * `user`: a person merges (PDT's Merge… sends it). Absent or `agent`: an automated merge, which the project's
- * policy may refuse (Phase 7c §4).
+ * policy may refuse.
  */
 by?: string, };

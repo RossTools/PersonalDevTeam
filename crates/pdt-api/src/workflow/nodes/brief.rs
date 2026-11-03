@@ -1,4 +1,4 @@
-//! `brief.archive` and `brief.read` (Phase 7e spec §7.3): a brief's output kept as files, `<data dir>/briefs/<brief>/`
+//! `brief.archive` and `brief.read`: a brief's output kept as files, `<data dir>/briefs/<brief>/`
 //! with one Markdown file per day and an `index.jsonl` of what each entry covered, so a brief can look back and not
 //! repeat itself. Files, not tables: readable and greppable outside PDT.
 

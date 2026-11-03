@@ -15,11 +15,11 @@ pub fn start_background(state: &AppState) {
         Start::AfterOnePeriod,
         |st| async move { crate::forge_login::check(&st).await },
     ));
-    // Each active attempt's changed files and the overlaps they make, every 30 s (tickets spec §7).
+    // Each active attempt's changed files and the overlaps they make, every 30 s.
     tokio::spawn(run_every(state.clone(), "overlaps", Duration::from_secs(30), Start::Now, |st| async move {
         crate::refresh_overlaps(&st).await
     }));
-    // The workflow engine (Phase 7a): new events start runs, runs go on, messages wait for their agent session to be
+    // The workflow engine: new events start runs, runs go on, messages wait for their agent session to be
     // idle. Built-in workflows (PR notices, finishing merged tickets) are installed on the first tick.
     tokio::spawn(run_every(state.clone(), "engine", Duration::from_secs(2), Start::Now, |st| async move {
         crate::run_workflows(&st).await
@@ -38,11 +38,11 @@ pub fn start_background(state: &AppState) {
     });
     // What the integrations run for as long as pdtd does (PDT-304: the Discord bot's Gateway connection).
     crate::start_services(state);
-    // Auto-start of To do / Ready tickets, per project policy (Phase 7c).
+    // Auto-start of To do / Ready tickets, per project policy.
     tokio::spawn(crate::run_pickup_watch(state.clone()));
     // Worktrees' sizes, and the cleanup of finished tickets' build output (PDT-324).
     tokio::spawn(crate::run_storage(state.clone()));
-    // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as (spec §3.1).
+    // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as.
     {
         let st = state.clone();
         const STARTUP_CHECK_RETRIES: usize = 3;

@@ -13,7 +13,7 @@ import { Input } from './Input';
 
 export interface ConfirmOptions {
   title: ReactNode;
-  /** What is lost (spec §6.2). */
+  /** What is lost. */
   body?: ReactNode;
   /** The confirming button's label: names the action ("Remove worktree", never "OK"). */
   action: string;

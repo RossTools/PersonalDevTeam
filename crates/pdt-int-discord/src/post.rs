@@ -1,4 +1,4 @@
-//! `discord.post` (Phase 7e spec §3.3): posts to a Discord channel through a webhook (a `discord_webhook` connection
+//! `discord.post`: posts to a Discord channel through a webhook (a `discord_webhook` connection
 //! whose secret is the webhook URL). Long messages are split at line breaks; a rate limit waits and tries again. Each
 //! piece posted is recorded as it goes, so a restart or a retry posts only the rest.
 

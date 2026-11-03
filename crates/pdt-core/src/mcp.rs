@@ -1,4 +1,4 @@
-//! pdt-mcp's protocol (Phase 7b spec §2): JSON-RPC 2.0 messages, MCP's handshake and tool results, and the session
+//! pdt-mcp's protocol: JSON-RPC 2.0 messages, MCP's handshake and tool results, and the session
 //! tokens. Pure: pdt-api serves it at `/api/mcp`.
 
 use serde::{Deserialize, Serialize};

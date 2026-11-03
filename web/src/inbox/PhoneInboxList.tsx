@@ -1,4 +1,4 @@
-// The Inbox's list on a phone (PDT-117, design §6): Needs you | Updates, and Review all in the thumb's reach.
+// The Inbox's list on a phone (PDT-117): Needs you | Updates, and Review all in the thumb's reach.
 import { useState } from 'react';
 import { Button, SegmentedControl } from '@ui';
 import { cn } from '@ui/lib/utils';

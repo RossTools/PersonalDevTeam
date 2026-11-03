@@ -1,4 +1,4 @@
-//! New GitHub issues (Phase 7e spec §2.3). pdtd polls, every 60 s, each repo an enabled workflow's
+//! New GitHub issues. pdtd polls, every 60 s, each repo an enabled workflow's
 //! `github.issue.opened` trigger watches (its `repos`, else the GitHub repos of the projects in its scope) and logs
 //! `github.issue.opened` for each issue newer than the last one seen. The first look at a repo only records its newest
 //! issue (`sensor.github_issues.<repo>`), so turning a watcher on never replays a repo's history. Later looks read

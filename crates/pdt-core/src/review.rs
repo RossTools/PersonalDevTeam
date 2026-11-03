@@ -1,4 +1,4 @@
-//! Review (Phase 6): a worktree's changes, line comments, the
+//! Review: a worktree's changes, line comments, the
 //! feedback message sent to the coder session, and merging.
 
 use serde::{Deserialize, Serialize};
@@ -326,7 +326,7 @@ pub struct MergeRequest {
     #[ts(optional)]
     pub delete_branch: Option<bool>,
     /// `user`: a person merges (PDT's Merge… sends it). Absent or `agent`: an automated merge, which the project's
-    /// policy may refuse (Phase 7c §4).
+    /// policy may refuse.
     #[serde(default)]
     #[ts(optional)]
     pub by: Option<String>,

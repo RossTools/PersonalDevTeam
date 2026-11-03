@@ -1,4 +1,4 @@
-//! Jira (Phase 7e spec §6, PDT-85; Server / Data Center too, PDT-258). A project links to Jira in its host settings (a `jira` connection, a JQL
+//! Jira (PDT-85, Server / Data Center too, PDT-258). A project links to Jira in its host settings (a `jira` connection, a JQL
 //! scope and the done transition). Every 60 s pdtd reads the issues of each linked project updated since its last look
 //! and logs `jira.issue.created`, `.updated`, `.transitioned` and `.commented` (the first look only records the time,
 //! `sensor.jira.<project>`). Event keys name the project, so two projects whose scopes overlap on one connection each

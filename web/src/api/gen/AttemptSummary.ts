@@ -5,7 +5,7 @@ import type { MergeUpdateStatus } from "./MergeUpdateStatus";
 import type { PullRequestStatus } from "./PullRequestStatus";
 
 /**
- * A ticket's attempt (a branch + worktree + sessions working on it; Phase 4b creates them).
+ * A ticket's attempt (a branch + worktree + sessions working on it; Start creates them).
  */
 export type AttemptSummary = { id: string, branch: string, baseBranch: string, worktreeId: string | null, state: AttemptState, createdAt: number, endedAt: number | null, 
 /**

@@ -1,4 +1,4 @@
-//! `notify` (Phase 7e spec §3.4): a `workflow.notify` notification (PDT-108), shown as the user set that kind to show
+//! `notify`: a `workflow.notify` notification (PDT-108), shown as the user set that kind to show
 //! (a toast by default; Settings → Notifications), or as far as its `show` says. It can post to a chat service too
 //! (PDT-368: through the plugin that declares the connection's kind a `NotificationChannel`), and only while an Inbox
 //! item is still open (an escalation). It logs no event, so a workflow can't notify itself in a loop.
