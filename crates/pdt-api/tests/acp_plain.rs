@@ -4,13 +4,13 @@
 
 use pdt_agents::adapter::acp::{self, AcpProfile};
 use pdt_agents::adapter::{
-    AdapterError, AdapterOutput, EventSink, LiveConversation, OpenSpec, Outgoing, SessionChange,
+    AdapterError, AdapterOutput, EVENT_QUEUE, EventSink, EventStream, LiveConversation, OpenSpec, Outgoing,
+    SessionChange, event_channel,
 };
 use pdt_core::conversation::acp::PlainAcp;
 use pdt_core::conversation::{AgentEvent, Answer, Delivery, MessagePhase, PermissionMode, RequestKind};
 use pdt_core::session::AgentKind;
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 /// A plain ACP agent, with the `fake-agent` flag that says which modes it advertises (if any).
 struct Plain(Option<&'static str>);
@@ -63,10 +63,7 @@ fn spec(cwd: &std::path::Path, permission_mode: PermissionMode) -> OpenSpec {
 }
 
 /// Waits for an output `f` picks something from.
-async fn until<T>(
-    rx: &mut mpsc::UnboundedReceiver<AdapterOutput>,
-    mut f: impl FnMut(&AdapterOutput) -> Option<T>,
-) -> T {
+async fn until<T>(rx: &mut EventStream, mut f: impl FnMut(&AdapterOutput) -> Option<T>) -> T {
     tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             let o = rx.recv().await.expect("the adapter stopped reporting");
@@ -79,7 +76,7 @@ async fn until<T>(
     .expect("timed out")
 }
 
-async fn answer_text(rx: &mut mpsc::UnboundedReceiver<AdapterOutput>) -> String {
+async fn answer_text(rx: &mut EventStream) -> String {
     until(rx, |o| match o {
         AdapterOutput::Event {
             event: AgentEvent::AgentMessage { markdown, phase: MessagePhase::Final, .. }, ..
@@ -96,7 +93,7 @@ async fn say(live: &dyn LiveConversation, text: &str) {
 #[tokio::test]
 async fn a_plain_acp_agent_converses_asks_in_pdt_and_has_no_modes_or_resume_fallback() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    let (tx, mut rx): (EventSink, _) = event_channel(EVENT_QUEUE);
     let live = acp::open(Plain(None), spec(tmp.path(), PermissionMode::Ask), tx).await.unwrap();
     let session = until(&mut rx, |o| match o {
         AdapterOutput::ExternalId(id) => Some(id.clone()),
@@ -140,7 +137,7 @@ async fn a_plain_acp_agent_converses_asks_in_pdt_and_has_no_modes_or_resume_fall
     live.close().await;
 
     // Resuming a session the agent never saved fails: plain ACP has no fallback.
-    let (tx, _rx) = mpsc::unbounded_channel();
+    let (tx, _rx) = event_channel(EVENT_QUEUE);
     let mut s = spec(tmp.path(), PermissionMode::Ask);
     s.external_id = Some("never-saved".into());
     s.resume = true;
@@ -154,7 +151,7 @@ async fn a_plain_acp_agent_converses_asks_in_pdt_and_has_no_modes_or_resume_fall
 #[tokio::test]
 async fn an_agent_that_advertises_its_modes_has_them_set_and_gets_instructions_in_its_first_prompt() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    let (tx, mut rx): (EventSink, _) = event_channel(EVENT_QUEUE);
     let mut s = spec(tmp.path(), PermissionMode::Plan);
     let file = tmp.path().join("instructions.md");
     s.instructions = Some(pdt_agents::adapter::SessionInstructions { text: "PDT says hello".into(), file });
@@ -185,7 +182,7 @@ async fn an_agent_that_advertises_its_modes_has_them_set_and_gets_instructions_i
 #[tokio::test]
 async fn pdt_keeps_a_mode_the_agent_has_none_for_and_hands_the_ones_it_has_back() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    let (tx, mut rx): (EventSink, _) = event_channel(EVENT_QUEUE);
     // Only `plan` maps (OpenCode's build/plan): Bypass, a ticket's default, is PDT's to keep.
     let live = acp::open(Plain(Some("--partial-modes")), spec(tmp.path(), PermissionMode::Bypass), tx).await.unwrap();
     let caps = until(&mut rx, |o| match o {
@@ -269,7 +266,7 @@ impl AcpProfile for Mapped {
 #[tokio::test]
 async fn a_profile_mapping_only_plan_keeps_the_rest_in_its_base_mode_and_runs_ask_as_accept_edits() {
     let tmp = tempfile::tempdir().unwrap();
-    let (tx, mut rx): (EventSink, _) = mpsc::unbounded_channel();
+    let (tx, mut rx): (EventSink, _) = event_channel(EVENT_QUEUE);
     let live = acp::open(Mapped, spec(tmp.path(), PermissionMode::Plan), tx).await.unwrap();
     let caps = until(&mut rx, |o| match o {
         AdapterOutput::Capabilities(c) if !c.permission_modes.is_empty() => Some(c.clone()),

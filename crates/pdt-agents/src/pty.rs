@@ -64,6 +64,8 @@ pub enum PtyError {
     ShuttingDown,
     #[error("terminal I/O failed: {0}")]
     Io(String),
+    #[error("terminal session {0} is not reading its input")]
+    InputFull(String),
 }
 
 pub(crate) struct Scrollback {
@@ -119,6 +121,9 @@ const CURSOR_QUERY: &[u8] = b"\x1b[6n";
 /// Our answer to the query: row 1, column 1.
 const CURSOR_REPLY: &[u8] = b"\x1b[1;1R";
 
+/// Input waiting for a terminal that doesn't read it; past this, writes fail until it reads.
+const MAX_QUEUED_INPUT: usize = 8 * 1024 * 1024;
+
 /// ConPTY (opened by portable-pty with `PSEUDOCONSOLE_INHERIT_CURSOR`) starts every session with a cursor query
 /// and holds back all output until it is answered. A session must run with no client attached, and a query
 /// replayed from scrollback would make a later client answer it a second time, so the manager answers it itself
@@ -142,6 +147,8 @@ struct Handle {
 
 struct Proc {
     input: std_mpsc::Sender<Vec<u8>>,
+    /// Bytes sent to `input` and not written to the terminal yet (at most [`MAX_QUEUED_INPUT`]).
+    queued: std::sync::atomic::AtomicUsize,
     /// The child's side is gone (its output ended, or a write failed), though its exit may not be reported yet: input
     /// sent now would go nowhere (PDT-129).
     closed: std::sync::atomic::AtomicBool,
@@ -311,6 +318,7 @@ impl PtyManager {
             events,
             proc: Some(Proc {
                 input: input_tx,
+                queued: Default::default(),
                 closed: Default::default(),
                 master: Mutex::new(Some(pair.master)),
                 killer: Mutex::new(killer),
@@ -367,7 +375,11 @@ impl PtyManager {
         let h = handle.clone();
         std::thread::spawn(move || {
             while let Ok(bytes) = input_rx.recv() {
-                if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
+                let written = writer.write_all(&bytes).and_then(|_| writer.flush());
+                if let Some(p) = &h.proc {
+                    p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+                }
+                if written.is_err() {
                     if let Some(p) = &h.proc {
                         p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
@@ -420,7 +432,16 @@ impl PtyManager {
         else {
             return Err(PtyError::NotRunning(id.to_string()));
         };
-        p.input.send(bytes.to_vec()).map_err(|_| PtyError::NotRunning(id.to_string()))
+        // A process that doesn't read its input can't make pdtd hold any amount of it.
+        let queued = p.queued.fetch_add(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+        if queued > 0 && queued + bytes.len() > MAX_QUEUED_INPUT {
+            p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+            return Err(PtyError::InputFull(id.to_string()));
+        }
+        p.input.send(bytes.to_vec()).map_err(|_| {
+            p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+            PtyError::NotRunning(id.to_string())
+        })
     }
 
     /// A followed log has no size: resizing it does nothing.
