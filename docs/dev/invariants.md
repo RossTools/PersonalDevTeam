@@ -190,8 +190,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   too long) is a `StoreError::Write`, whose message starts with `WRITE_FAILED` ("PDT can't save changes"); text that
   carries it (`pdt_store::is_write_failure`) makes `fail_step` wait and retry the step without using up one of its
   retries, an event whose run could not start stay unprocessed, and a step's result that could not be written wait in
-  `UnsavedResults` (the body is not run again). Keep the store error's text in a node's error (`e.to_string()`, or
-  in a `format!`), never replace it with your own words. A route answers it with 503 `write_failed` and its message
+  `UnsavedResults` (the body is not run again). Pass the store error to a node's error through `workflow::err`
+  (whose text keeps `WRITE_FAILED`, and says when the disk is full), never replace it with your own words. A route
+  answers it with 503 `write_failed`, saying `WRITE_FAILED` and whether the disk is full, not SQLite's text
   (`ApiError::write_failed`: from a `StoreError::Write`, a full disk or read-only volume in `ApiError::io`, or
   `ApiError::from_text` given an engine error's text; `ApiError::internal` doesn't look at the text), and the router's `note_write_failures`
   records it, so the Inbox says so whoever wrote; a `BEGIN` that can't start (`Store::write_tx`) is recorded too.
@@ -269,6 +270,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, no referrer, and for the web UI a CSP with
   script only from PDT's own bundle. Keep the UI free of inline scripts and `eval`; a new kind of resource it loads
   (a worker, another frame source) needs the policy widened there. A response with its own CSP keeps it.
+- **An error's message never carries another program's raw text** (an API error's `message`, a step's error, an
+  Inbox item): the web shows it as it is, in screenshots and bug reports. A database, git, spawn, keychain or file
+  error goes through its `From` into `ApiError` (or `ApiError::io(doing, e)`), which logs the full text and says what
+  failed: git's failing line and a keychain's first line by `error::short_text` (absolute paths cut to their last
+  part), a database error `DB_UNREADABLE`, the rest `internal`. Workflow nodes use `workflow::err`, which does the
+  same (`workflow_errors_go_through_err` checks). Text that is the user's own input (a path they typed, a workflow's
+  bad input) and a forge's or agent's answer meant for them stay as they are.
 - **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
   `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a
   run started meanwhile never keeps the other setting's link.

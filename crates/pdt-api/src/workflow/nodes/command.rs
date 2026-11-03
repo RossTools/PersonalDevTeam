@@ -2,6 +2,7 @@
 //! JSON from stdout, in a scratch folder, the project's checkout or the attempt's worktree. A non-zero exit is an error
 //! (so retries and the error port apply); the node's time limit kills the whole process tree.
 
+use crate::error::ApiError;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, setup_error, spec};
 use pdt_core::secret::Redactor;
 use schemars::JsonSchema;
@@ -221,7 +222,9 @@ async fn working_dir(cx: &StepCx<'_>, cwd: &str) -> Result<PathBuf, String> {
     match cwd.trim() {
         "scratch" => {
             let d = scratch_dir(&st.data_dir, &cx.run.id);
-            tokio::fs::create_dir_all(&d).await.map_err(|e| format!("could not make {}: {e}", d.display()))?;
+            tokio::fs::create_dir_all(&d)
+                .await
+                .map_err(|e| ApiError::io("making the scratch folder", e).to_string())?;
             Ok(d)
         }
         "project" => {
@@ -230,13 +233,13 @@ async fn working_dir(cx: &StepCx<'_>, cwd: &str) -> Result<PathBuf, String> {
                 .store
                 .get_project(id)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::workflow::err)?
                 .ok_or_else(|| setup_error("the run's project is gone"))?;
             Ok(PathBuf::from(p.repo_path))
         }
         "attempt" => {
             let id = cx.run.attempt_id.as_deref().ok_or("the run has no attempt")?;
-            let a = st.store.get_attempt(id).await.map_err(|e| e.to_string())?.ok_or("the run's attempt is gone")?;
+            let a = st.store.get_attempt(id).await.map_err(crate::workflow::err)?.ok_or("the run's attempt is gone")?;
             a.worktree_path.map(PathBuf::from).ok_or_else(|| "the attempt has no worktree".into())
         }
         path => Ok(PathBuf::from(path)),
@@ -326,7 +329,7 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path, r: &Redactor) -> 
     let stderr = child.stderr.take().ok_or("no stderr")?;
     let (out, err, status) =
         tokio::join!(read_capped(stdout, OUTPUT_CAP), read_capped(stderr, 1024 * 1024), child.wait());
-    let status = status.map_err(|e| e.to_string())?;
+    let status = status.map_err(crate::workflow::err)?;
     guard.0 = None;
     let stdout = r.string_cut(&String::from_utf8_lossy(&out.0), out.1);
     let stderr = tail(&r.string_cut(&String::from_utf8_lossy(&err.0), err.1), OUTPUT_CAP);

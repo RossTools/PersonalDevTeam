@@ -151,7 +151,7 @@ async fn post(cx: &StepCx<'_>, connection: &str, c: &NotifyConfig) -> Result<Val
         .store
         .connection_by_name(connection)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::workflow::err)?
         .ok_or_else(|| format!("no connection is called {connection}"))?;
     let reg = cx.st.registry();
     let channel =

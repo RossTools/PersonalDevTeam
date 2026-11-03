@@ -90,7 +90,7 @@ impl NodeKind for InboxNotice {
             }
             let store = &cx.st.store;
             let info = match attempt {
-                Some(a) => Some(store.get_attempt(a).await.map_err(|e| e.to_string())?.ok_or("no such attempt")?),
+                Some(a) => Some(store.get_attempt(a).await.map_err(crate::workflow::err)?.ok_or("no such attempt")?),
                 None => None,
             };
             let item = InboxItem {
@@ -124,7 +124,7 @@ impl NodeKind for InboxNotice {
                 Some(i) => format!("notice:{}:{}", i.attempt.id, c.key),
                 None => format!("notice:workflow:{}:{}", cx.workflow.id, c.key),
             };
-            match store.add_inbox_item_once(&item, &key).await.map_err(|e| e.to_string())? {
+            match store.add_inbox_item_once(&item, &key).await.map_err(crate::workflow::err)? {
                 Some(i) => {
                     crate::notifications::kick(cx.st);
                     Ok(Outcome::next("added", json!({"itemId": i.id})))

@@ -284,17 +284,23 @@ impl ApiError {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, code, message)
     }
 
-    /// 503 `keychain_unavailable`: the OS keychain refused or failed a call.
+    /// 503 `keychain_unavailable`: the OS keychain refused or failed a call; logged in full, said in
+    /// [`short_text`].
     pub fn keychain(e: impl std::fmt::Display) -> Self {
         let msg = e.to_string();
         tracing::warn!(error = %msg, "keychain call failed");
-        Self::unavailable(codes::KEYCHAIN_UNAVAILABLE, msg)
+        Self::unavailable(codes::KEYCHAIN_UNAVAILABLE, short_text(&msg))
     }
 
     /// 500: logged with what it says, which the response doesn't carry.
     pub fn internal(err: impl std::fmt::Display) -> Self {
-        tracing::error!(error = %err, "internal error");
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, codes::INTERNAL, "internal error")
+        Self::internal_as("internal error", err)
+    }
+
+    /// 500 `internal` saying `message`, with `err`, which the response doesn't carry, logged.
+    pub fn internal_as(message: &str, err: impl std::fmt::Display) -> Self {
+        tracing::error!(error = %err, "{message}");
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, codes::INTERNAL, message)
     }
 
     /// An error known only by its text (the workflow engine's): a failed write when it says so
@@ -307,12 +313,13 @@ impl ApiError {
         Self::internal(msg)
     }
 
-    /// A write that could not be made (a full disk, PDT-323): 503 with what it said, which
-    /// [`note_write_failures`] records, so the Inbox says PDT can't save changes.
+    /// A write that could not be made (a full disk, PDT-323): 503, which [`note_write_failures`] records, so the
+    /// Inbox says PDT can't save changes. `msg` is logged; the response says [`pdt_store::WRITE_FAILED`] and whether
+    /// the disk is full, not the database's own text.
     pub fn write_failed(msg: impl Into<String>) -> Self {
         let msg = msg.into();
         tracing::error!(error = %msg, "a write failed");
-        Self::unavailable(codes::WRITE_FAILED, msg)
+        Self::unavailable(codes::WRITE_FAILED, write_failed_text(&msg))
     }
 
     /// A file operation's failure, `doing` saying what PDT was doing ("writing the briefing"): a missing file is 404,
@@ -326,7 +333,8 @@ impl ApiError {
             StorageFull | QuotaExceeded | ReadOnlyFilesystem => {
                 Self::write_failed(format!("{}: {}", pdt_store::WRITE_FAILED, says(&e)))
             }
-            _ => Self::internal(says(&e)),
+            _ if doing.is_empty() => Self::internal(e),
+            _ => Self::internal_as(&format!("{doing} failed (PDT's log says why)"), says(&e)),
         }
     }
 }
@@ -426,7 +434,14 @@ impl From<PtyError> for ApiError {
     fn from(e: PtyError) -> Self {
         match e {
             PtyError::ProgramNotFound(_) => Self::bad_request(codes::PROGRAM_NOT_FOUND, e.to_string()),
-            PtyError::Spawn(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, codes::SPAWN_FAILED, e.to_string()),
+            PtyError::Spawn(_) => {
+                tracing::error!(error = %e, "a terminal could not start");
+                Self::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    codes::SPAWN_FAILED,
+                    "the terminal could not start (PDT's log says why)",
+                )
+            }
             PtyError::NotFound(_) | PtyError::NotRunning(_) => {
                 Self::conflict(codes::NOT_RUNNING, "this session is not running")
             }
@@ -443,6 +458,25 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
+impl From<tokio::task::JoinError> for ApiError {
+    fn from(e: tokio::task::JoinError) -> Self {
+        Self::internal(e)
+    }
+}
+
+impl From<crate::secrets::SecretError> for ApiError {
+    fn from(e: crate::secrets::SecretError) -> Self {
+        Self::keychain(e)
+    }
+}
+
+/// JSON that does not fit what it should be (a step's input): it says where.
+impl From<serde_json::Error> for ApiError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::invalid(e.to_string())
+    }
+}
+
 impl From<JsonRejection> for ApiError {
     fn from(rej: JsonRejection) -> Self {
         Self::new(rej.status(), codes::INVALID_INPUT, rej.body_text())
@@ -455,7 +489,14 @@ impl From<GitError> for ApiError {
             GitError::PathNotFound(_) => Self::bad_request(codes::PATH_NOT_FOUND, e.to_string()),
             GitError::NotARepo(_) => Self::bad_request(codes::NOT_A_GIT_REPO, e.to_string()),
             GitError::GitMissing => Self::new(StatusCode::INTERNAL_SERVER_ERROR, codes::GIT_MISSING, e.to_string()),
-            GitError::Command(_) => Self::new(StatusCode::INTERNAL_SERVER_ERROR, codes::GIT_ERROR, e.to_string()),
+            GitError::Command(ref said) => {
+                tracing::warn!(error = %said, "git failed");
+                Self::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    codes::GIT_ERROR,
+                    format!("git failed: {}", short_text(said)),
+                )
+            }
             GitError::InvalidBranch(_) => Self::bad_request(codes::INVALID_BRANCH, e.to_string()),
             GitError::BranchExists(_) => Self::conflict(codes::BRANCH_EXISTS, e.to_string()),
             GitError::UnknownRef(_) => Self::bad_request(codes::UNKNOWN_REF, e.to_string()),
@@ -469,9 +510,60 @@ impl From<StoreError> for ApiError {
             StoreError::Conflict(_) => Self::conflict(codes::CONFLICT, "this record already exists"),
             e @ StoreError::Write(_) => Self::write_failed(e.to_string()),
             StoreError::Io(e) => Self::io("", e),
-            other => Self::internal(other),
+            other => Self::internal_as(DB_UNREADABLE, other),
         }
     }
+}
+
+/// What a database error other than a failed write says (its own text goes to the log).
+pub(crate) const DB_UNREADABLE: &str = "PDT could not read its database (its log says why)";
+
+/// How many characters of a foreign error [`short_text`] keeps.
+const SHORT_CHARS: usize = 200;
+
+/// What a failed write's response says for `raw`, the database's text: that PDT can't save changes
+/// ([`pdt_store::WRITE_FAILED`]) and, when it is so, that the disk is full ([`pdt_store::is_disk_full`]).
+fn write_failed_text(raw: &str) -> String {
+    if pdt_store::is_disk_full(raw) {
+        format!("{}: the database or disk is full", pdt_store::WRITE_FAILED)
+    } else {
+        format!("{} (PDT's log says why)", pdt_store::WRITE_FAILED)
+    }
+}
+
+/// What a foreign error's text (git's stderr, the OS's, a keychain's) shows the user, its full text being logged:
+/// the first line that says what failed (git's `fatal:` or `error:` line, without that, when it has one), each
+/// absolute path cut to its last part (no home folder or checkout in screenshots and bug reports), and at most
+/// [`SHORT_CHARS`] characters.
+pub fn short_text(raw: &str) -> String {
+    let lines = || raw.lines().map(str::trim).filter(|l| !l.is_empty());
+    let line = lines()
+        .find_map(|l| l.strip_prefix("fatal: ").or_else(|| l.strip_prefix("error: ")))
+        .or_else(|| lines().next())
+        .unwrap_or("");
+    let short = line.split(' ').map(without_path).collect::<Vec<_>>().join(" ");
+    match short.char_indices().nth(SHORT_CHARS) {
+        Some((at, _)) => format!("{}…", &short[..at]),
+        None => short,
+    }
+}
+
+/// `word`, an absolute path (`/…`, `~/…`, `C:\…`, `\\server\…`) cut to its last part, keeping the quotes and
+/// punctuation around it.
+fn without_path(word: &str) -> std::borrow::Cow<'_, str> {
+    const OPEN: &[char] = &['\'', '"', '`', '(', '[', '<'];
+    const CLOSE: &[char] = &['\'', '"', '`', ')', ']', '>', ',', '.', ';', ':'];
+    let rest = word.trim_start_matches(OPEN);
+    let core = rest.trim_end_matches(CLOSE);
+    let b = core.as_bytes();
+    let absolute = (b.len() > 1 && (b[0] == b'/' || b.starts_with(b"~/") || b.starts_with(b"\\\\")))
+        || (b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/'));
+    if !absolute {
+        return word.into();
+    }
+    let last = core.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or_default();
+    let lead = &word[..word.len() - rest.len()];
+    format!("{lead}{last}{}", &rest[core.len()..]).into()
 }
 
 #[cfg(test)]
@@ -479,11 +571,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn git_command_error_is_500_git_error_with_stderr() {
-        let e = ApiError::from(GitError::Command("boom".into()));
+    fn git_command_error_is_500_git_error_with_stderrs_failing_line_without_paths() {
+        let stderr = "hint: see git help\nfatal: '/Users/someone/work/repo/.worktrees/feat' already exists\n";
+        let e = ApiError::from(GitError::Command(stderr.into()));
         assert_eq!(e.status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(e.code, "git_error");
-        assert!(e.message.contains("boom"));
+        assert_eq!(e.message, "git failed: 'feat' already exists");
+    }
+
+    #[test]
+    fn short_text_keeps_the_failing_line_without_paths() {
+        assert_eq!(short_text("boom"), "boom");
+        assert_eq!(short_text("\n  error: pathspec 'src/x' did not match\nmore"), "pathspec 'src/x' did not match");
+        assert_eq!(short_text("could not create /home/me/p/notes: denied"), "could not create notes: denied");
+        assert_eq!(short_text(r"open (C:\Users\me\p\a.txt) failed"), "open (a.txt) failed");
+        assert_eq!(short_text("~/work/x/ is gone; origin/main and / stay"), "x is gone; origin/main and / stay");
+        let long = "x".repeat(300);
+        assert_eq!(short_text(&long).chars().count(), SHORT_CHARS + 1);
+    }
+
+    #[test]
+    fn store_errors_say_what_failed_not_the_databases_text() {
+        let db = sqlx::Error::Protocol("code: 13 secret detail".into());
+        let e = ApiError::from(StoreError::Db(db));
+        assert_eq!((e.code, e.message.as_str()), (codes::INTERNAL, DB_UNREADABLE));
+        let e = ApiError::write_failed(
+            "PDT can't save changes: error returned from database: (code: 13) database or disk is full",
+        );
+        assert_eq!(e.code, codes::WRITE_FAILED);
+        assert_eq!(e.message, "PDT can't save changes: the database or disk is full");
+        assert!(pdt_store::is_write_failure(&e.message) && pdt_store::is_disk_full(&e.message));
+        let e = ApiError::write_failed("PDT can't save changes: (code: 10) disk I/O error");
+        assert_eq!(e.message, "PDT can't save changes (PDT's log says why)");
+        assert!(!pdt_store::is_disk_full(&e.message));
     }
 
     #[test]
@@ -523,6 +643,26 @@ mod tests {
                 out.push(p);
             }
         }
+    }
+
+    /// The workflow says what failed through its one `err` ([`crate::workflow::err`]), never a database's or git's
+    /// own text: a step's error shows in the run view and in stuck Inbox items.
+    #[test]
+    fn workflow_errors_go_through_err() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workflow");
+        let mut files = vec![];
+        sources(&root, &mut files);
+        assert!(files.len() > 30, "{}", files.len());
+        let raw = files
+            .iter()
+            .filter(|f| {
+                let text = std::fs::read_to_string(f).unwrap();
+                text.contains(concat!("map_err(|e| e", ".to_string())"))
+                    || text.contains(concat!("fn err", "(")) && !f.ends_with("workflow/mod.rs")
+            })
+            .map(|f| f.display().to_string())
+            .collect::<Vec<_>>();
+        assert!(raw.is_empty(), "use crate::workflow::err (or say what failed):\n{}", raw.join("\n"));
     }
 
     /// Every code is in [`codes`], once, named after itself; no route spells one out (a typo would be a new code).

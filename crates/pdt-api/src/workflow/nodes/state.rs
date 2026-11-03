@@ -66,14 +66,14 @@ impl NodeKind for StateSet {
             let c: StateSetConfig = parse(&input)?;
             if let Some(by) = c.add {
                 let value = if cx.dry_run {
-                    let state = cx.st.store.workflow_state(&cx.workflow.id).await.map_err(|e| e.to_string())?;
+                    let state = cx.st.store.workflow_state(&cx.workflow.id).await.map_err(crate::workflow::err)?;
                     state.get(&c.key).and_then(Value::as_f64).unwrap_or(0.0) + by
                 } else {
                     cx.st
                         .store
                         .add_workflow_state(&cx.workflow.id, &c.key, by, now_ms())
                         .await
-                        .map_err(|e| e.to_string())?
+                        .map_err(crate::workflow::err)?
                 };
                 let value = number(value);
                 let mut out = json!({"value": value, "quiet": true});
@@ -91,7 +91,7 @@ impl NodeKind for StateSet {
                 .store
                 .set_workflow_state(&cx.workflow.id, &c.key, &c.value, c.if_missing.or(false), now_ms())
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::workflow::err)?;
             Ok(Outcome::next("out", json!({"written": written, "value": c.value, "quiet": true})))
         })
     }

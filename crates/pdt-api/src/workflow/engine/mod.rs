@@ -146,9 +146,7 @@ pub(crate) async fn enabled_with_docs(st: &AppState) -> Result<Vec<(Workflow, Ar
 
 type R<T> = Result<T, String>;
 
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
+use super::err;
 
 /// The trigger as runs see it (`{{trigger.…}}`): the payload with the event's type and id (and a comment's
 /// attachments' local paths, which only pdt-api knows).

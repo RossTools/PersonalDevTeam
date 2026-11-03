@@ -138,7 +138,7 @@ impl NodeKind for Candidates {
             let projects = covered_projects(cx, c.project.as_deref()).await?;
             let mut out = vec![];
             for p in projects {
-                let policy = cx.st.store.get_project_settings(&p.id).await.map_err(|e| e.to_string())?.policy;
+                let policy = cx.st.store.get_project_settings(&p.id).await.map_err(crate::workflow::err)?.policy;
                 let filter = c.filter(&policy);
                 if filter.stages.is_empty() {
                     continue;
@@ -156,9 +156,9 @@ impl NodeKind for Candidates {
                     limit: Some(200),
                     ..Default::default()
                 };
-                let q = q.validate().map_err(|e| e.to_string())?;
+                let q = q.validate().map_err(crate::workflow::err)?;
                 let idx = crate::overlap::index(cx.st, Some(&p.id)).await.map_err(|e| e.message().to_string())?;
-                let mut page = cx.st.store.query_tickets(&q).await.map_err(|e| e.to_string())?;
+                let mut page = cx.st.store.query_tickets(&q).await.map_err(crate::workflow::err)?;
                 for t in page.items.iter_mut() {
                     idx.apply_summary(t);
                 }
@@ -186,14 +186,14 @@ impl NodeKind for Candidates {
 /// The projects a step works on: the one named, else the workflow's own, else (a This host workflow) every project.
 async fn covered_projects(cx: &StepCx<'_>, named: Option<&str>) -> Result<Vec<pdt_core::project::Project>, String> {
     let get = |id: String| async move {
-        cx.st.store.get_project(&id).await.map_err(|e| e.to_string())?.ok_or_else(|| format!("no project {id}"))
+        cx.st.store.get_project(&id).await.map_err(crate::workflow::err)?.ok_or_else(|| format!("no project {id}"))
     };
     if let Some(id) = named.map(str::trim).filter(|s| !s.is_empty()) {
         return Ok(vec![get(id.to_string()).await?]);
     }
     match (cx.workflow.scope, &cx.workflow.project_id) {
         (Scope::Project, Some(id)) => Ok(vec![get(id.clone()).await?]),
-        (Scope::Host, _) => cx.st.store.list_projects().await.map_err(|e| e.to_string()),
+        (Scope::Host, _) => cx.st.store.list_projects().await.map_err(crate::workflow::err),
         _ => Ok(vec![]),
     }
 }
@@ -201,11 +201,11 @@ async fn covered_projects(cx: &StepCx<'_>, named: Option<&str>) -> Result<Vec<pd
 /// The project's tickets with an active attempt, with their labels and areas.
 async fn in_flight(st: &AppState, project_id: &str) -> Result<Vec<ActiveTicket>, String> {
     let mut out = vec![];
-    for a in st.store.list_active_attempts().await.map_err(|e| e.to_string())? {
+    for a in st.store.list_active_attempts().await.map_err(crate::workflow::err)? {
         if a.project_id != project_id {
             continue;
         }
-        let t = st.store.get_ticket_summary(&a.ticket_id).await.map_err(|e| e.to_string())?;
+        let t = st.store.get_ticket_summary(&a.ticket_id).await.map_err(crate::workflow::err)?;
         let (labels, areas) = t.map(|t| (t.labels, t.areas)).unwrap_or_default();
         out.push(ActiveTicket { id: a.ticket_id, key: a.ticket_key, labels, areas });
     }
@@ -495,7 +495,7 @@ impl NodeKind for Start {
                 let reason = format!("pickup is paused: {}", p.reason);
                 return Ok(Outcome::next("skipped", json!({"reason": reason, "quiet": true})));
             }
-            let host = cx.st.store.get_host_settings().await.map_err(|e| e.to_string())?;
+            let host = cx.st.store.get_host_settings().await.map_err(crate::workflow::err)?;
             let _held = cx.st.pickup_lock.lock().await;
             // Run again after a restart: the start it was making when PDT stopped counts if it got its attempt.
             let trying =
@@ -503,7 +503,7 @@ impl NodeKind for Start {
             let (mut started, mut skipped, mut failed) = (vec![], vec![], vec![]);
             let mut per: HashMap<String, u32> = HashMap::new();
             for (id, caps) in tickets {
-                let Some(t) = cx.st.store.get_ticket_summary(&id).await.map_err(|e| e.to_string())? else {
+                let Some(t) = cx.st.store.get_ticket_summary(&id).await.map_err(crate::workflow::err)? else {
                     skipped.push(json!({"ticketId": id, "reason": "no such ticket"}));
                     continue;
                 };
@@ -579,7 +579,7 @@ impl NodeKind for Start {
                     cols: None,
                     rows: None,
                 };
-                let mut v = input.validate().map_err(|e| e.to_string())?;
+                let mut v = input.validate().map_err(crate::workflow::err)?;
                 // Checked just now, with the caps and overlap rule it was chosen under: a step's cap above the
                 // project's running cap holds, and a ticket sharing an area choose allows starts (PDT-381). Start
                 // still refuses for blockers and conflicts.

@@ -23,9 +23,7 @@ use serde_json::{Value, json};
 
 type R<T> = Result<T, String>;
 
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
+use super::err;
 
 /// How long a step handed over waits for the workflow to start a run for it before PDT handles it itself.
 pub(crate) const START_GRACE_MS: i64 = 60_000;
