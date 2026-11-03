@@ -4,6 +4,7 @@ import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 import { remarkDocsLinks } from './src/remark-docs-links.mjs';
 import { docId, USER_SECTIONS } from './src/docs-pages.mjs';
+import { siteUrl } from './src/site-url.mjs';
 import { SHORT_NAME, SITE_NAME, TAGLINE } from './src/brand.mjs';
 
 // Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
@@ -15,8 +16,8 @@ const sections = USER_SECTIONS.map((s) => ({
 }));
 
 // The Pages workflow passes the deployed URL and path (actions/configure-pages); locally the site is served at /.
-// With a custom domain (site/public/CNAME) Pages serves it at the domain's root, and configure-pages says so.
-const site = process.env.SITE_URL || 'http://localhost:4321';
+// With a custom domain Pages serves it at the domain's root, and configure-pages says so. siteUrl() makes it https://.
+const site = siteUrl();
 const base = process.env.BASE_PATH || '/';
 
 export default defineConfig({

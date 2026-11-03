@@ -348,7 +348,7 @@ impl PtyManager {
                             && let Some(rest) = strip_cursor_query(chunk)
                         {
                             if let Some(p) = &h.proc {
-                                // Counted like any input: the writer takes it off `queued` once written.
+                                // Counted like any input: the writer takes every write it makes off `queued`.
                                 p.queued.fetch_add(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
                                 if p.input.send(CURSOR_REPLY.to_vec()).is_err() {
                                     p.queued.fetch_sub(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
@@ -443,7 +443,7 @@ impl PtyManager {
         };
         // A process that doesn't read its input can't make pdtd hold any amount of it.
         let queued = p.queued.fetch_add(bytes.len(), std::sync::atomic::Ordering::SeqCst);
-        if queued > 0 && queued.saturating_add(bytes.len()) > MAX_QUEUED_INPUT {
+        if queued > 0 && queued + bytes.len() > MAX_QUEUED_INPUT {
             p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
             return Err(PtyError::InputFull(id.to_string()));
         }
