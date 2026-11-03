@@ -19,6 +19,9 @@ use tokio::io::AsyncWriteExt;
 
 pub const GITHUB_API: &str = "https://api.github.com";
 const MAX_REDIRECTS: usize = 5;
+/// How long one API call (a release, a comparison, a page of releases) may take; downloads get
+/// [`pdt_core::outbound::DOWNLOAD_TIMEOUT`].
+const API_TIMEOUT: Duration = Duration::from_secs(30);
 /// Same-host API redirects followed before giving up (a rename, then a transfer, is two).
 pub const MAX_API_HOPS: usize = 3;
 /// Releases asked for per page, and the pages read at most, when listing the releases an update brings.
@@ -267,10 +270,10 @@ fn try_next(e: &UpdateError) -> bool {
 impl GitHubClient {
     pub fn new(api_base: &str, repo: &str) -> Self {
         let http = reqwest::Client::builder()
-            .user_agent(format!("{}-updater", pdt_core::brand::SLUG))
+            .user_agent(pdt_core::brand::user_agent("updater"))
             .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(15))
-            .timeout(Duration::from_secs(900))
+            .connect_timeout(pdt_core::outbound::CONNECT_TIMEOUT)
+            .timeout(pdt_core::outbound::DOWNLOAD_TIMEOUT)
             .build()
             .expect("an HTTP client");
         Self {
@@ -449,7 +452,7 @@ impl GitHubClient {
                 Some(token),
                 "application/vnd.github+json",
                 Some(&json),
-                Some(Duration::from_secs(30)),
+                Some(API_TIMEOUT),
                 false,
             )
             .await?;
@@ -489,7 +492,7 @@ impl GitHubClient {
             return self.latest(token).await;
         }
         let tail = format!("releases?per_page={RELEASES_PER_PAGE}");
-        let res = self.get(&tail, token, Some(Duration::from_secs(30))).await?;
+        let res = self.get(&tail, token, Some(API_TIMEOUT)).await?;
         let token_expires_at = expiry_of(&res);
         let text = res.text().await.map_err(net)?;
         let list: Vec<ReleaseJson> = serde_json::from_str(&text)
@@ -515,7 +518,7 @@ impl GitHubClient {
         let mut out: Vec<Release> = Vec::new();
         for page in 1..=MAX_RELEASE_PAGES {
             let tail = format!("releases?per_page={RELEASES_PER_PAGE}&page={page}");
-            let res = self.get(&tail, token, Some(Duration::from_secs(30))).await?;
+            let res = self.get(&tail, token, Some(API_TIMEOUT)).await?;
             let text = res.text().await.map_err(net)?;
             let list: Vec<ReleaseJson> = serde_json::from_str(&text)
                 .map_err(|e| UpdateError::Http(200, format!("an answer that is not a list of releases: {e}")))?;
@@ -540,7 +543,7 @@ impl GitHubClient {
     /// The commits after `base` up to `head` (tags or commits), newest first (PDT-169). GitHub sends the oldest 250
     /// of a longer range; `total` says how many there are.
     pub async fn compare(&self, token: Option<&str>, base: &str, head: &str) -> Result<Changes, UpdateError> {
-        let res = self.get(&format!("compare/{base}...{head}"), token, Some(Duration::from_secs(30))).await?;
+        let res = self.get(&format!("compare/{base}...{head}"), token, Some(API_TIMEOUT)).await?;
         let text = res.text().await.map_err(net)?;
         let c: CompareJson = serde_json::from_str(&text)
             .map_err(|e| UpdateError::Http(200, format!("an answer that is not a comparison: {e}")))?;

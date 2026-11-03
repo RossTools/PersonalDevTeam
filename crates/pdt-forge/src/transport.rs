@@ -69,9 +69,10 @@ impl ReqwestTransport {
             return Ok(c);
         }
         let c = reqwest::Client::builder()
+            .connect_timeout(pdt_core::outbound::CONNECT_TIMEOUT)
             .timeout(TIMEOUT)
             .redirect(redirect_policy())
-            .user_agent(pdt_core::brand::SLUG)
+            .user_agent(pdt_core::brand::user_agent(""))
             .build()
             .map_err(|e| e.to_string())?;
         Ok(self.client.get_or_init(|| c))

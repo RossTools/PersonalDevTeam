@@ -6,7 +6,7 @@
 use crate::core::{FIELDS, JIRA, JiraIssue, parse_issue, site};
 use crate::meta::{self, Deployment, FieldMeta, Mappings, Sprint, Transition};
 use pdt_api::sdk::AppState;
-use pdt_api::sdk::http::{client, read_body, send_error};
+use pdt_api::sdk::http::{CallAuth, CallOpts, call_json_with};
 use pdt_core::workflow::api::Connection;
 use reqwest::Method;
 use serde_json::{Map, Value, json};
@@ -16,6 +16,20 @@ pub(crate) const MAX_PAGES: usize = 5;
 pub(crate) const PAGE: usize = 100;
 
 const AGILE: &str = "/rest/agile/1.0";
+
+/// The most of one answer read.
+const ANSWER_CAP: usize = 8 * 1024 * 1024;
+
+/// Jira's message in an error's answer: its first `errorMessages`, else its field `errors`, else its `message`.
+fn error_message(v: &Value) -> Option<String> {
+    v["errorMessages"]
+        .as_array()
+        .and_then(|m| m.first())
+        .and_then(|m| m.as_str())
+        .map(String::from)
+        .or_else(|| v["errors"].as_object().filter(|o| !o.is_empty()).map(|o| Value::Object(o.clone()).to_string()))
+        .or_else(|| v["message"].as_str().map(String::from))
+}
 
 enum Auth {
     /// Cloud: the Atlassian account's email and an API token.
@@ -100,43 +114,23 @@ impl JiraClient {
 
     /// One REST call: the JSON answer (`Null` for an empty one), `Ok(None)` for a 404.
     pub(crate) async fn call(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Option<Value>, String> {
-        let url = format!("{}{path}", self.site());
-        let mut req = client().request(method.clone(), &url).header("accept", "application/json").timeout(self.timeout);
-        req = match &self.auth {
-            Auth::Basic { email, token } => req.basic_auth(email, Some(token)),
-            Auth::Bearer(token) => req.bearer_auth(token),
+        let auth = match &self.auth {
+            Auth::Basic { email, token } => CallAuth::Basic { user: email, password: token },
+            Auth::Bearer(token) => CallAuth::Bearer(token),
         };
-        if let Some(b) = body {
-            req = req.json(b);
-        }
-        let resp = req.send().await.map_err(|e| format!("Jira {method} {path}: {}", send_error(e)))?;
-        let status = resp.status().as_u16();
-        let bytes = read_body(resp, 8 * 1024 * 1024).await?;
-        if status == 404 {
-            return Ok(None);
-        }
-        let v: Value =
-            if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
-        if !(200..300).contains(&status) {
-            let mut msg = v["errorMessages"]
-                .as_array()
-                .and_then(|m| m.first())
-                .and_then(|m| m.as_str())
-                .map(String::from)
-                .or_else(|| {
-                    v["errors"].as_object().filter(|o| !o.is_empty()).map(|o| Value::Object(o.clone()).to_string())
-                })
-                .or_else(|| v["message"].as_str().map(String::from))
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).chars().take(300).collect());
-            if status == 401 {
-                msg.push_str(match self.deployment {
-                    Deployment::Cloud => " (check the connection's email and API token)",
-                    Deployment::Server => " (check the connection's personal access token)",
-                });
-            }
-            return Err(format!("Jira answered {status} to {method} {path}: {msg}"));
-        }
-        Ok(Some(v))
+        let opts = CallOpts {
+            timeout: Some(self.timeout),
+            cap: ANSWER_CAP,
+            auth,
+            error_msg: Some(error_message),
+            unauthorized_hint: Some(match self.deployment {
+                Deployment::Cloud => " (check the connection's email and API token)",
+                Deployment::Server => " (check the connection's personal access token)",
+            }),
+            not_found_ok: true,
+            ..CallOpts::new("Jira")
+        };
+        call_json_with(&opts, method, self.site(), path, &[], &[], body).await
     }
 
     async fn found(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value, String> {
