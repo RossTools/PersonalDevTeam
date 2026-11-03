@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Paperclip, Trash2, X } from 'lucide-react';
-import { Button, IconButton, useConfirm } from '@ui';
+import { Button, EmptyState, IconButton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { TicketAttachment } from '../api/gen/TicketAttachment';
 import { AttachmentImage, AttachmentLink } from '../common/AttachmentViews';
@@ -153,7 +153,7 @@ export function TicketAttachments({ ticketId }: { ticketId: string }) {
   return (
     <OverviewSection title="Attachments" actions={<AttachButton onFiles={(f) => void add(f)} />}>
       {list.length === 0 && uploads.length === 0 && (
-        <p className="text-xs text-muted-foreground">None. Paste or drop screenshots and logs into a comment or the description.</p>
+        <EmptyState size="inline">None. Paste or drop screenshots and logs into a comment or the description.</EmptyState>
       )}
       {list.length > 0 && (
         <ul className="flex flex-col gap-2">

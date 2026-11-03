@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Button } from './Button';
-import { ContextMenu, MenuAt, MenuButton, useMenuAt, type MenuEntry } from './Menu';
+import { ContextMenu, MenuAt, MenuButton, MenuList, useMenuAt, type MenuEntry } from './Menu';
 import { List, ListRow } from './List';
 
 function entries(spies: Record<string, () => void> = {}): MenuEntry[] {
@@ -110,6 +110,33 @@ describe('MenuButton', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Run ▾' }));
     expect(screen.getByRole('menu', { name: 'Run actions' })).toBeInTheDocument();
+  });
+});
+
+describe('MenuList', () => {
+  it('shows the entries in place, ticks the chosen one, moves with the arrow keys and selects with Enter', async () => {
+    const user = userEvent.setup();
+    const weekly = vi.fn();
+    render(
+      <MenuList
+        label="Repeat"
+        entries={[
+          { label: 'Daily', detail: 'every day', checked: true, onSelect: () => {} },
+          { label: 'Weekly', detail: 'on Fri', onSelect: weekly },
+        ]}
+      />,
+    );
+    const menu = screen.getByRole('menu', { name: 'Repeat' });
+    const [daily, week] = within(menu).getAllByRole('menuitem');
+    expect(within(daily).getByLabelText('Chosen')).toBeInTheDocument();
+    expect(daily).not.toHaveTextContent('every day');
+    expect(week).toHaveTextContent('on Fri');
+    act(() => daily.focus());
+    await user.keyboard('{ArrowDown}');
+    expect(week).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(weekly).toHaveBeenCalledTimes(1);
+    expect(menu).toBeInTheDocument();
   });
 });
 

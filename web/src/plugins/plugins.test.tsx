@@ -123,7 +123,8 @@ describe('plugins: Settings → Plugins', () => {
     const calls = stubApi({ 'GET /api/integrations': mixed(), 'PUT /api/integrations': mixed() });
     const onOpen = vi.fn();
     renderWithQuery(<PluginsPage onOpen={onOpen} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Discord' }));
+    await userEvent.click(await screen.findByRole('link', { name: 'Discord' }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen).toHaveBeenCalledWith('discord');
     onOpen.mockClear();
     await userEvent.click(screen.getByRole('switch', { name: 'Use Discord' }));

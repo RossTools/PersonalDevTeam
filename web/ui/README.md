@@ -62,7 +62,15 @@
   tabs, the documents beside a page) are a hand-built `role="tablist"`: `onKeyDown={tabListKeyDown}`, tabs with
   `tabIndexOf(…)` (Left/Right/Home/End, one Tab stop), and a `role="tabpanel"` labelled by the tab's id.
 - **Use the piece that exists.** Something folded away is a `Disclosure` (`inline`: a muted line such as "Show the
-  comments"; `row`: a folding section or nav group), never `<details>` or a hand-made chevron button. A card to pick is
+  comments"; `row`: a folding section or nav group; `card`: a bordered card whose header folds its body, with
+  `leading`, the summary under the title, and `visible` for what shows open or closed), never `<details>` or a
+  hand-made chevron button. A list of things to open (notes, documents, versions, runs, sessions) is a `List` of
+  `ListRow`s, never raw buttons: `current` marks the one on screen (the accent fill and a bar on its left edge),
+  `details` adds wrapping lines under the title. Anything that navigates (opens a page, a ticket, a session) is a
+  `Link`; `tone="quiet"` for a name or key inside a line of text. An empty list in a section or card is
+  `EmptyState size="inline"` ("None yet."), the page-sized `EmptyState` for an empty view. A menu inside a popover's
+  panel is a `MenuList` (the same entries as `MenuButton`'s; `checked` ticks the option in force, `detail` adds
+  muted text), never a column of buttons. A card to pick is
   a `ChoiceCard` (`selection="current"` for the card of what's on screen), one of a few options in a form a
   `ChoiceCardGroup`. The small uppercase label over a group is a `SectionLabel`, a side list's group heading a
   `ListHeading` (its ＋ button in `trailing`). A count is a `Badge count` (`tone="solid"` for what waits on the user,

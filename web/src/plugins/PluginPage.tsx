@@ -135,7 +135,7 @@ export function PluginPage({ id, onBack, phone = false }: PluginPageProps) {
         >
           <QueryStatus query={connections} what="Connections" skeleton="h-8">{() => (mine.length
             ? mine.map((c) => <ConnectionRow key={c.id} c={c} onEdit={() => setEditing({ connection: c })} onDelete={() => void remove.ask(c)} />)
-            : <p className="text-sm text-muted-foreground">None yet.</p>)}
+            : <EmptyState size="inline">None yet.</EmptyState>)}
           </QueryStatus>
         </Section>
       )}

@@ -4,7 +4,7 @@
 // `markdown`, `code` (in `x-language`) or `multiline`.
 import { useEffect, useState } from 'react';
 import { Braces, Plus, Trash2 } from 'lucide-react';
-import { Button, Field, IconButton, Input, MenuButton, Select, Switch, Textarea } from '@ui';
+import { Button, EmptyState, Field, IconButton, Input, MenuButton, Select, Switch, Textarea } from '@ui';
 import { deref } from './model';
 import { CodeField, MarkdownField } from './TextEditors';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
@@ -383,7 +383,7 @@ export function SchemaForm({ schema, root = schema, value, onChange, refs = [], 
     onChange(next);
   };
   const keys = Object.keys(props);
-  if (!keys.length) return <p className="text-meta text-muted-foreground">Nothing to set.</p>;
+  if (!keys.length) return <EmptyState size="inline">Nothing to set.</EmptyState>;
   return (
     <>
       {keys.map((k) => {

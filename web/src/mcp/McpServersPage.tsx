@@ -4,7 +4,7 @@
 // workflows call the same ones.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Checkbox, CheckboxPicks, Dialog, DialogActions, Field, Input, Page, Section, SegmentedControl, Select, Switch, Textarea, absoluteTime } from '@ui';
+import { absoluteTime, Alert, Badge, Button, Checkbox, CheckboxPicks, Dialog, DialogActions, EmptyState, Field, Input, Page, Section, SegmentedControl, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { AgentAccess } from '../api/gen/AgentAccess';
 import type { McpProbe } from '../api/gen/McpProbe';
@@ -367,7 +367,7 @@ export function McpServersPage() {
           >
             {servers.length
               ? servers.map((s) => <Row key={s.connection.id} server={s} onEdit={() => setEditing({ server: s })} onDelete={() => void remove.ask(s)} />)
-              : <p className="text-sm text-muted-foreground">None yet.</p>}
+              : <EmptyState size="inline">None yet.</EmptyState>}
           </Section>
           <Section label="Agents' own MCP servers" description="The MCP servers you added to each agent yourself keep loading beside these, unless you turn this on.">
             <Field

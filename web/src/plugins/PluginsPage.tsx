@@ -4,7 +4,7 @@
 // checks); its connections, project settings and workflows are kept for when it is on again.
 import { useState } from 'react';
 import { LayoutGrid, List as ListIcon } from 'lucide-react';
-import { Alert, Badge, Button, Input, Page, SectionLabel, SegmentedControl, Skeleton } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Link, Page, SectionLabel, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import {
   CATEGORIES, CATEGORY_LABEL, NO_FILTER, categoryCounts, filterPlugins, groupPlugins, loadLayout, needsAttention, storeLayout,
@@ -31,9 +31,9 @@ function Card({ p, pending, onOpen, onToggle }: ItemProps) {
     >
       <div className="flex items-center gap-2.5">
         <PluginIcon p={p} />
-        <button type="button" className="min-w-0 flex-1 truncate text-left text-sm font-semibold outline-none focus-visible:underline" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+        <Link tone="quiet" className="min-w-0 flex-1 truncate text-sm font-semibold" onClick={onOpen}>
           {p.label}
-        </button>
+        </Link>
         <PluginSwitch p={p} pending={pending} onChange={onToggle} />
       </div>
       <p className="flex-1 text-xs text-muted-foreground">{p.description || 'This PDT was built without it.'}</p>
@@ -46,9 +46,9 @@ function Row({ p, pending, onOpen, onToggle }: ItemProps) {
   return (
     <div role="group" aria-label={p.label} onClick={onOpen} className="flex cursor-pointer items-center gap-3 px-3.5 py-2.5 hover:bg-muted">
       <PluginIcon p={p} size="sm" />
-      <button type="button" className="w-36 shrink-0 truncate text-left text-sm font-semibold outline-none focus-visible:underline max-sm:flex-1" onClick={(e) => { e.stopPropagation(); onOpen(); }}>
+      <Link tone="quiet" className="w-36 shrink-0 truncate text-sm font-semibold max-sm:flex-1" onClick={onOpen}>
         {p.label}
-      </button>
+      </Link>
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground max-sm:hidden">{p.description}</span>
       <PluginStatusBadge p={p} />
       <PluginSwitch p={p} pending={pending} onChange={onToggle} />
@@ -122,7 +122,7 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
               </Button>
             ))}
           </div>
-          {shown.length === 0 && <p className="text-sm text-muted-foreground">No plugins match.</p>}
+          {shown.length === 0 && <EmptyState size="inline">No plugins match.</EmptyState>}
           {groupPlugins(shown).map(([c, ps]) => (
             <section key={c} aria-label={CATEGORY_LABEL[c]} className="flex flex-col gap-2">
               <SectionLabel className="mt-2">{CATEGORY_LABEL[c]}</SectionLabel>

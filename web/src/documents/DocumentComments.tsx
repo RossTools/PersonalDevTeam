@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus } from 'lucide-react';
-import { Button, CommentComposer, CommentThread, RelativeTime, SectionLabel, Select, Skeleton } from '@ui';
+import { Button, CommentComposer, CommentThread, EmptyState, Link, RelativeTime, SectionLabel, Select, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { CommentAnchor } from '../api/gen/CommentAnchor';
 import { Markdown } from '../common/Markdown';
@@ -111,12 +111,12 @@ export function DocumentComments({ id, headings, selection, onShow }: DocumentCo
       )}
       {comments.isPending && <Skeleton lines={2} label="Loading comments" />}
       <LoadError what="The comments" error={comments.error} />
-      {comments.data?.length === 0 && !adding && <p className="text-xs text-muted-foreground">No comments yet.</p>}
+      {comments.data?.length === 0 && !adding && <EmptyState size="inline">No comments yet.</EmptyState>}
       {comments.data?.map((c) => (
         <CommentThread
           key={c.id}
           title={c.anchor ? (
-            onShow ? <button type="button" className="hover:underline" onClick={() => onShow(c.anchor!)}>{anchorLabel(c.anchor)}</button> : anchorLabel(c.anchor)
+            onShow ? <Link tone="quiet" onClick={() => onShow(c.anchor!)}>{anchorLabel(c.anchor)}</Link> : anchorLabel(c.anchor)
           ) : c.quote ?? undefined}
           resolved={c.resolved}
           comments={[

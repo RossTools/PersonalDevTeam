@@ -4,7 +4,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
-import { Alert, Button, Disclosure, IconButton, Sheet, TabPanel, Textarea, useConfirm, type MenuEntry } from '@ui';
+import { Alert, Button, Disclosure, EmptyState, IconButton, Sheet, TabPanel, Textarea, useConfirm, type MenuEntry } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot } from '../common/AgentState';
@@ -199,7 +199,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
                 ) : t.description.trim() ? (
                   <Markdown breaks>{t.description}</Markdown>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No description.</p>
+                  <EmptyState size="inline">No description.</EmptyState>
                 )}
               </OverviewSection>
               <PartsSection ticket={t} />

@@ -3,7 +3,7 @@
 // enabled. PDT's built-in workflows sit in their own collapsed group at the end, to add one back (or copy it).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, ChoiceCard, Dialog, Disclosure, Field, Input, Link, SectionLabel, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Badge, Button, ChoiceCard, Dialog, Disclosure, EmptyState, Field, Input, Link, SectionLabel, Select, Sheet, Skeleton, Switch, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionPicker } from '../connections/ConnectionPicker';
@@ -236,7 +236,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
               )}
             </section>
           )}
-          {g.groups.length === 0 && !g.blank && g.builtins.length === 0 && <p className="py-5 text-sm text-muted-foreground">No templates here match.</p>}
+          {g.groups.length === 0 && !g.blank && g.builtins.length === 0 && <EmptyState size="inline" className="py-5">No templates here match.</EmptyState>}
         </>
       );
 

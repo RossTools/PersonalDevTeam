@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Alert, Badge, Button, Dialog, DialogActions, Field, Input, Section, SettingsRow, Textarea, useConfirm } from '@ui';
+import { Alert, Badge, Button, Dialog, DialogActions, EmptyState, Field, Input, Section, SettingsRow, Textarea, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { AcpAgentConfig } from '../api/gen/AcpAgentConfig';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
@@ -71,7 +71,7 @@ export function AcpAgents({ v }: { v: HostSettingsView }) {
       description="Other agents that speak the Agent Client Protocol (ACP). They run as conversations only."
       actions={<Button size="sm" onClick={() => setEditing('new')}>Add ACP agent</Button>}
     >
-      {v.acpAgents.length === 0 && <p className="text-sm text-muted-foreground">None yet.</p>}
+      {v.acpAgents.length === 0 && <EmptyState size="inline">None yet.</EmptyState>}
       {v.acpAgents.map((a) => (
         <SettingsRow
           key={a.id}

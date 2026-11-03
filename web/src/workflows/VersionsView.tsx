@@ -3,7 +3,7 @@
 // wraps rather than widening the pane (PDT-320).
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Alert, Badge, Button, DiffViewer, EmptyState, RelativeTime, Skeleton } from '@ui';
+import { Alert, Badge, Button, DiffViewer, EmptyState, List, ListRow, RelativeTime, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Author } from '../api/gen/Author';
@@ -69,22 +69,26 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col md:flex-row">
       <nav aria-label="Versions" className="max-h-56 shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0">
-        <ul className="flex flex-col p-1">
+        <List aria-label="Versions" onAction={(id) => setPicked(Number(id))} className="p-1">
           {list.map((x) => (
-            <li key={x.version}>
-              <button type="button" aria-current={x.version === current ? 'true' : undefined} onClick={() => setPicked(x.version)}
-                className={cn('flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-accent pointer-coarse:min-h-control-touch', x.version === current && 'bg-accent', x.status === 'discarded' && 'text-muted-foreground')}>
-                <span className="flex items-center gap-2 text-sm">
+            <ListRow
+              key={x.version}
+              id={String(x.version)}
+              textValue={`v${x.version}`}
+              current={x.version === current}
+              className={cn('py-1.5', x.status === 'discarded' && 'text-muted-foreground')}
+              title={
+                <span className="flex items-center gap-2">
                   <span className="font-medium tabular-nums">v{x.version}</span>
                   {x.version === w.version && <Badge tone="accent">Current</Badge>}
                   {x.status === 'proposed' && <Badge tone="waiting">Proposed</Badge>}
                   {x.status === 'discarded' && <Badge tone="neutral">Discarded</Badge>}
                 </span>
-                <span className="truncate text-meta text-muted-foreground">{author(x)} · <RelativeTime time={x.createdAt} />{x.note ? ` · ${x.note}` : ''}</span>
-              </button>
-            </li>
+              }
+              secondary={<>{author(x)} · <RelativeTime time={x.createdAt} />{x.note ? ` · ${x.note}` : ''}</>}
+            />
           ))}
-        </ul>
+        </List>
       </nav>
       <section aria-label="Version" className="flex min-h-0 min-w-0 flex-1 flex-col">
         {!v ? <EmptyState>No versions.</EmptyState> : (
@@ -120,7 +124,7 @@ export function VersionsView({ w, dirty, readOnly, onChanged, initial }: {
                   <>
                     <p className="text-meta text-muted-foreground">v{from} → v{to}</p>
                     <Summary d={diff.data} />
-                    {diff.data.unified ? <DiffViewer diff={diff.data.unified} hideHeaders wrap /> : <p className="text-sm text-muted-foreground">No differences.</p>}
+                    {diff.data.unified ? <DiffViewer diff={diff.data.unified} hideHeaders wrap /> : <EmptyState size="inline">No differences.</EmptyState>}
                   </>
                 ) : diff.error ? <Alert tone="error">{diff.error.message}</Alert> : <Skeleton lines={6} />}
             </div>

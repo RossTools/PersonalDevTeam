@@ -75,13 +75,13 @@ describe('notes: the list', () => {
     renderWithQuery(<NotesList filters={filters()} selectedId="a" onOpen={onOpen} onNew={() => {}} onWhose={() => {}} />);
     const pinned = await screen.findByRole('region', { name: 'Pinned' });
     expect(calls[0].path).toContain('kind=user');
-    expect(within(pinned).getByRole('button', { name: /Ideas for the board/ })).toHaveAttribute('aria-current', 'true');
+    expect(within(pinned).getByRole('row', { name: /Ideas for the board/ })).toHaveAttribute('data-current');
     expect(within(pinned).getByText('Swimlanes per area')).toBeInTheDocument();
     expect(within(pinned).getByText('Host-wide')).toBeInTheDocument();
     const week = screen.getByRole('region', { name: 'Last 7 days' });
     expect(await within(week).findByText(project.key)).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Earlier' })).getByText('Books to read')).toBeInTheDocument();
-    await userEvent.click(within(week).getByRole('button', { name: /Meeting with Alex/ }));
+    await userEvent.click(within(week).getByRole('row', { name: /Meeting with Alex/ }));
     expect(onOpen).toHaveBeenCalledWith('b');
   });
 

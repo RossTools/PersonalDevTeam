@@ -46,4 +46,22 @@ describe('Disclosure', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Alpha' }));
     expect(screen.getByRole('group', { name: 'Alpha' })).toHaveTextContent('Sections');
   });
+
+  it('a card: leading, title over its summary, chevron last; what is visible shows closed, the body only open', async () => {
+    render(
+      <Disclosure variant="card" title="Agents" summary="Found Claude Code." leading={<span>○</span>} trailing={<span>Optional</span>}
+        visible={<p>git is missing</p>}>
+        The table
+      </Disclosure>,
+    );
+    const trigger = screen.getByRole('button', { name: /Agents/ });
+    expect(trigger).toHaveTextContent('Found Claude Code.');
+    expect(trigger).toHaveTextContent('Optional');
+    expect(trigger.lastElementChild?.tagName.toLowerCase()).toBe('svg');
+    expect(screen.getByText('git is missing')).toBeVisible();
+    expect(screen.queryByText('The table')).toBeNull();
+    await userEvent.click(trigger);
+    expect(screen.getByText('The table')).toBeVisible();
+    expect(screen.getByText('git is missing')).toBeVisible();
+  });
 });

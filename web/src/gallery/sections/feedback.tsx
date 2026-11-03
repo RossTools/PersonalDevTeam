@@ -154,6 +154,13 @@ function render() {
           </div>
         </Row>
 
+        <Row label="EmptyState inline (a section's or card's empty list)">
+          <div className="flex w-full flex-col gap-2 rounded-lg border border-border p-3">
+            <EmptyState size="inline">None yet.</EmptyState>
+            <EmptyState size="inline" action={<Button size="sm" variant="secondary">Add secret</Button>}>No secrets yet.</EmptyState>
+          </div>
+        </Row>
+
         <Row label="Toast">
           <Button onClick={() => toast.success('Saved')}>Success</Button>
           <Button onClick={() => toast.error('Could not stop the run: process not found', { action: { label: 'Retry', onClick: () => toast.info('Retrying…') } })}>
