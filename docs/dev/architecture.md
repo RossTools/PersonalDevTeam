@@ -30,8 +30,13 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   database aside, swaps the install, health-checks the new pdtd and rolls back (database included; on Windows also the
   installer's registry keys, `nsis_registry.rs`) when it fails. It
   is registered to start at login: a LaunchAgent on macOS, an HKCU Run value on Windows, a systemd user unit on Linux.
+  `pdt-host stop` (`stop.rs`) stops pdt-host first (launchd bootout, `systemctl --user stop`, or killing the lock
+  holder) and then asks pdtd to shut down, leaving the registration. Settings → This host → Startup turns the
+  registration off and on (`login.rs`, through pdt-api's `StartAtLogin`, which only pdtd wires to the real one); off
+  leaves a `host-login-off` marker in the data folder that `install` and the tray's first-launch registration honour.
 - **The tray app** (`desktop/src-tauri`, Tauri v2) is optional and has no window of its own: it starts pdt-host when
-  pdtd doesn't answer, opens the UI in the browser and can restart the daemon. Quitting it leaves PDT running.
+  pdtd doesn't answer, opens the UI in the browser and can restart the daemon. "Quit tray" leaves PDT running;
+  "Stop PDT and quit" asks first when `/api/host/busy` lists something, then runs `pdt-host stop`.
 - **The web UI** (`web/`, React + Vite) talks only to pdtd's `/api`: JSON over HTTP, polled every 2 s, plus
   WebSockets for terminals and conversation events and an SSE stream for notifications. It reloads itself when pdtd
   reports a new build.

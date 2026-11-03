@@ -35,6 +35,26 @@ pub fn update_label(status: &serde_json::Value) -> (String, bool) {
     }
 }
 
+/// The tray's two ways out (PDT-489): only the tray, or PDT itself until the next login.
+pub const QUIT_TRAY: &str = "Quit tray (PDT keeps running)";
+pub const STOP_AND_QUIT: &str = "Stop PDT and quit";
+
+/// What stopping PDT would interrupt, from `/api/host/busy`.
+pub fn busy_reasons(v: &serde_json::Value) -> Vec<String> {
+    v["reasons"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(String::from)).collect()
+}
+
+/// The question "Stop PDT and quit" asks first, when stopping would interrupt something.
+pub fn stop_question(busy: &[String]) -> Option<String> {
+    if busy.is_empty() {
+        return None;
+    }
+    let list: String = busy.iter().map(|b| format!("\n• {b}")).collect();
+    Some(format!(
+        "Stopping PDT stops:{list}\n\nAgents resume when PDT starts again (at the next login, or when you open the app). Stop PDT now?"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,6 +70,21 @@ mod tests {
         assert!(!update_label(&json!({"state": "disabled"})).1);
         assert!(update_label(&json!({"state": "idle", "error": "x"})).1);
         assert_eq!(update_label(&json!({"state": "idle", "error": null})), ("Check for updates".into(), true));
+    }
+
+    #[test]
+    fn the_menu_says_what_each_way_out_does() {
+        assert!(QUIT_TRAY.contains("PDT keeps running"));
+        assert!(STOP_AND_QUIT.starts_with("Stop PDT"));
+    }
+
+    #[test]
+    fn stopping_asks_only_when_something_would_be_interrupted() {
+        assert_eq!(stop_question(&busy_reasons(&json!({"reasons": []}))), None);
+        assert_eq!(stop_question(&busy_reasons(&json!(null))), None);
+        let busy = busy_reasons(&json!({"reasons": ["Claude · PDT-1 is working", "an update is being installed"]}));
+        let q = stop_question(&busy).unwrap();
+        assert!(q.contains("\n• Claude · PDT-1 is working\n• an update is being installed\n"), "{q}");
     }
 
     #[test]

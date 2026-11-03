@@ -6,8 +6,11 @@ How PDT runs on your machine, starts at login, updates itself and how to remove 
 ## How PDT runs
 
 PDT is a small server on your machine that you use in your browser, at `http://127.0.0.1:7420`, or from your phone
-with [remote access](remote-access.md). A supervisor starts it at login, restarts it if it stops and installs
-updates. Agents and runs carry on when you close the browser, and resume where they were after PDT restarts.
+with [remote access](remote-access.md). A supervisor, `pdt-host`, runs it in the background: it starts PDT at login,
+restarts it if it stops and installs updates. Agents and runs carry on when you close the browser, and resume where
+they were after PDT restarts.
+
+The tray icon is a separate, optional app. Closing it leaves PDT running; stopping PDT is its own menu item.
 
 ## The tray app
 
@@ -19,12 +22,21 @@ On macOS, Windows and a Linux desktop, PDT has an icon in the menu bar or system
 - **Version**: the version you're running.
 - **Start at login** (macOS and Windows): whether the tray icon comes back when you log in. PDT itself starts
   either way.
-- **Quit**: closes the tray icon only. PDT and your agents keep running.
+- **Quit tray (PDT keeps running)**: closes the tray icon only. PDT and your agents keep running.
+- **Stop PDT and quit**: stops PDT and closes the tray icon. When agents are working, waiting on background tasks,
+  or an update is installing, it lists them and asks first. Agents are interrupted as by an update and resume when
+  PDT starts again: at your next login, or when you open the app.
 
 If the tray says the app is in the wrong place (on macOS, a disk image or your Downloads folder), move it to
 **Applications** and open it from there: PDT can't start at login or update itself from anywhere else.
 
 ## Starting at login
+
+PDT starts at login unless you turn off **Settings › This host › Startup › Start PDT at login**. Turning it off
+leaves PDT running until you stop it or log out; turning it on again doesn't restart it. The tray icon's own
+**Start at login** is separate.
+
+Where it's registered:
 
 - **macOS**: a login item, **Personal Dev Team**, in **System Settings › General › Login Items** under **Allow in the
   Background**.
@@ -32,6 +44,22 @@ If the tray says the app is in the wrong place (on macOS, a disk image or your D
 - **Linux**: a systemd user service, `pdt-host`. It stops when you log out unless you run
   `loginctl enable-linger "$USER"` once, which keeps it running from boot. `systemctl --user status pdt-host` shows
   whether it runs; `journalctl --user -u pdt-host` shows its output.
+
+## Stopping PDT
+
+**Stop PDT and quit** in the tray, or in a terminal:
+
+```sh
+# macOS
+"/Applications/Personal Dev Team.app/Contents/MacOS/pdt-host" stop
+# Linux (the tarball; for the AppImage, the app folder in PDT's data folder)
+~/.local/opt/pdt/pdt-host stop
+```
+
+On Windows: `"%LOCALAPPDATA%\pdt\host\pdt-host.exe" stop`.
+
+Stopping lasts until your next login (or until you open the app). To keep PDT from starting at login, turn off
+**Start PDT at login**; to remove it, [uninstall it](#uninstall).
 
 ## Updates
 
