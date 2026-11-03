@@ -178,7 +178,7 @@ pub(crate) async fn post_answer(
     // Its Inbox item, for `inbox.answered` (PDT-364).
     let item_id = format!("approval:{}:{request_id}", session.id);
     let item = crate::inbox::approvals(&st, Some(&session.project_id)).await?.into_iter().find(|i| i.id == item_id);
-    answer_request(&st, &session, &request_id, &body.answer).await?;
+    answer_request(&st, &session, &request_id, &body.answer, from_ui).await?;
     // The user's own answer: a yes to a call PDT held for them is good for that call (PDT-201), when it came from PDT's
     // web client and not an agent's curl (PDT-204).
     let approved = from_ui && matches!(body.answer, pdt_core::conversation::Answer::Approve { .. });
@@ -205,13 +205,18 @@ pub(crate) async fn post_answer(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Answers one of a live conversation's open requests.
+/// Answers one of a live conversation's open requests (or one of PDT's own, [`super::held`]). `by_user`: the user
+/// gave the answer.
 pub(crate) async fn answer_request(
     st: &AppState,
     session: &Session,
     request_id: &str,
     answer: &pdt_core::conversation::Answer,
+    by_user: bool,
 ) -> Result<(), ApiError> {
+    if super::held::is_held(request_id) {
+        return super::held::answer(st, &session.id, request_id, answer, by_user);
+    }
     let c = conv(st, session).await?;
     let live = c.current_live().await.ok_or_else(|| adapter_error(AdapterError::RequestClosed))?;
     live.answer(request_id, answer).await.map_err(adapter_error)?;

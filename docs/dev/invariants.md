@@ -83,8 +83,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
-  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, the Inbox unless
-  the project lets the PM act. A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent
+  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless the
+  project lets the PM act, a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
+  whose id starts `pdt-ask-`, which the Inbox lists as its approval item) and the tool call waits on it; a terminal gets
+  an Inbox `confirm` item. `answer_request` answers PDT's own requests itself, never the agent's process, and
+  `pm::request_opened` never answers them. Codex conversations get `tool_timeout_sec` for pdt-mcp so the wait outlives
+  Codex's one-minute default. A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent
   step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
 - **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
   list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
