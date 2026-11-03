@@ -19,6 +19,7 @@ import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnections } from '../connections/queries';
 import { useSignInAccounts } from '../plugins/AccountSignIn';
 import { pickFiles } from './picker';
+import { useMediaQuery } from '../common/useMediaQuery';
 import { useProjects } from '../projects/queries';
 import { KindIcon } from './LinkedDocuments';
 import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
@@ -214,6 +215,8 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const browseNote = picker && pickers.length > 0 ? `${picker.label} for the rest.` : null;
   // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);
+  // The keyboard hints, only where there is a keyboard: not on phones or touch screens.
+  const touch = useMediaQuery('(max-width: 639.98px), (pointer: coarse)');
   const found = files.data ?? [];
   const items: CommandItem[] = found.map((f) => {
     const onTicket = !!ticket && f.ticketIds.includes(ticket.id);
@@ -277,12 +280,12 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     </EmptyState>
   );
   const keys = (
-    <p className="mr-auto flex items-center gap-1 text-meta text-muted-foreground max-sm:hidden">
+    <p className="mr-auto flex items-center gap-1 text-meta text-muted-foreground">
       <Kbd>↑</Kbd> <Kbd>↓</Kbd> move · <Kbd>Enter</Kbd> import · <Kbd>Esc</Kbd> close
     </p>
   );
   return (
-    <Dialog onClose={onClose} title="Import a document" description={description || undefined} size="md" footer={keys}>
+    <Dialog onClose={onClose} title="Import a document" description={description || undefined} size="md" footer={touch ? undefined : keys}>
       <div className="flex flex-col gap-3" {...(hasLocal ? fileDrop.dropProps : {})}>
         {searchers.length > 1 && chosen && (
           <SegmentedControl
