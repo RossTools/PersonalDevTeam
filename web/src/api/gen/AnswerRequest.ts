@@ -4,4 +4,8 @@ import type { Answer } from "./Answer";
 /**
  * `POST /api/sessions/{id}/requests/{requestId}`.
  */
-export type AnswerRequest = { answer: Answer, };
+export type AnswerRequest = { answer: Answer, 
+/**
+ * An Approve of a request with rows: the rows the user kept (0-based; every row when absent).
+ */
+rows?: Array<number>, };

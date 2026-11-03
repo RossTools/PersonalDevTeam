@@ -544,6 +544,7 @@ impl<P: AcpExtensions> AcpMapper<P> {
                 tool_call_id: r.tool_call_id.clone(),
                 can_always: r.kind == RequestKind::Approval && r.can_always(),
                 diff: r.diff.clone(),
+                rows: None,
                 state,
                 answer,
             },

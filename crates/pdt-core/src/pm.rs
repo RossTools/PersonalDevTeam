@@ -1027,9 +1027,9 @@ pub fn instructions(ctx: &PmContext) -> String {
     }
     if !in_inbox.is_empty() {
         out.push_str(&format!(
-            "- These always wait for the user in {SHORT_NAME}'s Inbox, whatever the project lets you do: {in_inbox}. \
-             The call returns at once with nothing changed; the user confirms it there (unticking rows they don't \
-             want) and {SHORT_NAME} sends you the result.\n"
+            "- These always wait for the user's yes, whatever the project lets you do: {in_inbox}. The user sees \
+             the call as a table in this conversation (also in their Inbox), unticks the rows they don't want and \
+             confirms; the call waits for their answer and returns what it did.\n"
         ));
     }
     let role = match ctx.step {

@@ -15,6 +15,7 @@ import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
 import type { Streams } from './model';
+import { DecideCard } from './DecideCard';
 import { CreateTicketsCard, PdtToolCard, type PdtCall } from './PdtToolCard';
 import { PdtProposal } from './PdtProposal';
 import { isCardTool, pdtApprovalTitle } from './pdtTools';
@@ -50,8 +51,8 @@ export interface MessageListProps {
   streams: Streams;
   turnRunning: boolean;
   pending: PendingMessage[];
-  /** Answers an open request (`request` event `id`). */
-  onAnswer: (requestId: string, answer: ApprovalAnswer) => Promise<unknown>;
+  /** Answers an open request (`request` event `id`); `rows`: the rows an Allow of a card with rows keeps. */
+  onAnswer: (requestId: string, answer: ApprovalAnswer, rows?: number[]) => Promise<unknown>;
   /** Where a message's attached image is served (by attachment id). */
   imageUrl?: (attachmentId: string) => string;
   /** Which agent: Claude's plans can be approved straight into Accept edits. */
@@ -204,6 +205,9 @@ export const requestAnchor = (requestId: string) => `request-${requestId}`;
 
 function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: boolean; onAnswer: MessageListProps['onAnswer'] }) {
   const { agent } = useContext(ListCtx);
+  if (ev.state === 'open' && ev.rows) {
+    return <DecideCard id={requestAnchor(ev.id)} rows={ev.rows} keyboard={keyboard} onAnswer={(a, kept) => onAnswer(ev.id, a, kept)} />;
+  }
   if (ev.state === 'open') {
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
     const args = ev.requestKind === 'approval' && !ev.diff ? inputText(ev.tool, ev.input) : '';

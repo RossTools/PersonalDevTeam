@@ -1,7 +1,8 @@
 //! PDT's own requests in a conversation (PDT-490): an asking tool's call from an agent that can't ask in its own
 //! prompt (Codex, Devin, ACP agents, Claude in Bypass) shows as an approval card in the conversation, and the call
 //! waits for the answer. The card is also the Inbox's approval item (`inbox::approvals`), so answering either answers
-//! both.
+//! both. A batch call's card (the PM's `inbox_decide`, PDT-502) carries its rows: the user unticks the ones they don't
+//! want, and their Allow says which they kept.
 
 use super::Conv;
 use super::live::append;
@@ -9,6 +10,7 @@ use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use pdt_agents::adapter::AdapterError;
 use pdt_core::conversation::{AgentEvent, Answer, RequestKind, RequestState, SessionMode};
+use pdt_core::inbox_decide::DecideRow;
 use pdt_core::session::Session;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -19,14 +21,16 @@ use tokio::sync::oneshot;
 /// The ids of PDT's own requests start with it: the agent never sees them, and PDT never answers them for the user.
 const PREFIX: &str = "pdt-ask-";
 
-/// The answer, and whether the user gave it (PDT's web client, or their own account elsewhere).
-type Reply = (Answer, bool);
+/// The answer, whether the user gave it (PDT's web client, or their own account elsewhere), and the rows an Allow
+/// kept (a card with rows; every row when None).
+type Reply = (Answer, bool, Option<Vec<u32>>);
 
 /// Counts the requests PDT opened, so a turn's end can tell the ones opened before it from the next turn's ([`mark`]).
 static OPENED: AtomicU64 = AtomicU64::new(0);
 
-/// A request waiting for its answer: its place in [`OPENED`]'s count, and where the answer goes.
-type Waiting = (u64, oneshot::Sender<Reply>);
+/// A request waiting for its answer: its place in [`OPENED`]'s count, how many rows its card has (None: no rows), and
+/// where the answer goes.
+type Waiting = (u64, Option<usize>, oneshot::Sender<Reply>);
 
 /// PDT's requests waiting for an answer, by `(session, request)`, and the tools the user always allowed in a session.
 #[derive(Default)]
@@ -40,7 +44,7 @@ impl Held {
     /// without running.
     fn expire(&self, session_id: &str, before: Option<u64>) {
         let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
-        waiting.retain(|(s, _), (n, _)| s != session_id || before.is_some_and(|b| *n >= b));
+        waiting.retain(|(s, _), (n, _, _)| s != session_id || before.is_some_and(|b| *n >= b));
     }
 }
 
@@ -53,7 +57,8 @@ pub(crate) fn mark() -> u64 {
 /// How the user answered one of PDT's requests.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Asked {
-    Allowed,
+    /// With the rows the user kept, for a card with rows (0-based; every row when None).
+    Allowed(Option<Vec<u32>>),
     /// With the user's reason, if they gave one.
     Denied(Option<String>),
     /// The turn or the agent ended before the user answered.
@@ -73,8 +78,15 @@ pub(crate) fn allowed_always(st: &AppState, session_id: &str, tool: &str) -> boo
 
 /// Asks the user about an asking tool's call (`tool`, PDT's own name for it) in the session's conversation and waits
 /// for the answer. None when the session isn't a conversation loaded in this pdtd (a terminal): it can't ask there.
-/// `can_always`: whether "Always allow in this session" is offered.
-pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, can_always: bool) -> Option<Asked> {
+/// `can_always`: whether "Always allow in this session" is offered. `rows`: a batch call's rows the user can untick.
+pub(crate) async fn ask(
+    st: &AppState,
+    s: &Session,
+    tool: &str,
+    input: &Value,
+    can_always: bool,
+    rows: Option<Vec<DecideRow>>,
+) -> Option<Asked> {
     if s.mode != SessionMode::Conversation {
         return None;
     }
@@ -82,7 +94,13 @@ pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, c
     let id = format!("{PREFIX}{}", uuid::Uuid::now_v7());
     let (tx, rx) = oneshot::channel();
     let n = OPENED.fetch_add(1, Ordering::SeqCst);
-    st.conversations.held.waiting.lock().unwrap_or_else(|e| e.into_inner()).insert((s.id.clone(), id.clone()), (n, tx));
+    let count = rows.as_ref().map(Vec::len);
+    st.conversations
+        .held
+        .waiting
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert((s.id.clone(), id.clone()), (n, count, tx));
     let title = st
         .registry()
         .tool_infos()
@@ -110,8 +128,9 @@ pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, c
             description: None,
             input: st.store.redactor().json(input),
             tool_call_id: None,
-            can_always,
+            can_always: can_always && rows.is_none(),
             diff: None,
+            rows,
             state: RequestState::Open,
             answer: None,
         },
@@ -124,7 +143,7 @@ pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, c
     let reply = rx.await;
     open.done = true;
     let asked = match reply {
-        Ok((answer, by_user)) => {
+        Ok((answer, by_user, kept)) => {
             open.show(RequestState::Answered, Some(answer.clone())).await;
             match answer {
                 Answer::Approve { always } => {
@@ -137,7 +156,7 @@ pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, c
                         st.grants.hold(&s.id, &id, tool, input);
                         st.grants.answered(&s.id, &id, true);
                     }
-                    Asked::Allowed
+                    Asked::Allowed(kept)
                 }
                 Answer::Deny { message } => Asked::Denied(message),
                 _ => Asked::Denied(None),
@@ -152,13 +171,15 @@ pub(crate) async fn ask(st: &AppState, s: &Session, tool: &str, input: &Value, c
     Some(asked)
 }
 
-/// Answers one of PDT's requests in a session. `by_user`: the user gave the answer (not an agent's curl).
+/// Answers one of PDT's requests in a session. `by_user`: the user gave the answer (not an agent's curl). `rows`: the
+/// rows an Allow keeps, for a card with rows (every row when None).
 pub(crate) fn answer(
     st: &AppState,
     session_id: &str,
     request_id: &str,
     answer: &Answer,
     by_user: bool,
+    rows: Option<&[u32]>,
 ) -> Result<(), ApiError> {
     if !matches!(answer, Answer::Approve { .. } | Answer::Deny { .. }) {
         return Err(super::adapter_error(AdapterError::WrongAnswer));
@@ -167,15 +188,21 @@ pub(crate) fn answer(
     if matches!(answer, Answer::Approve { .. }) && !by_user {
         return Err(ApiError::conflict(codes::CANNOT_ANSWER, "only the user can allow this call"));
     }
-    let (_, tx) = st
-        .conversations
-        .held
-        .waiting
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&(session_id.to_string(), request_id.to_string()))
-        .ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?;
-    tx.send((answer.clone(), by_user)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
+    let key = (session_id.to_string(), request_id.to_string());
+    let mut waiting = st.conversations.held.waiting.lock().unwrap_or_else(|e| e.into_inner());
+    let count = waiting.get(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?.1;
+    // The kept rows are checked before the request is answered, so a wrong pick leaves the card open.
+    let kept = match (answer, count) {
+        (Answer::Approve { .. }, Some(n)) => {
+            let kept = pdt_core::inbox_decide::kept(n, rows).map_err(ApiError::invalid)?;
+            Some(kept.into_iter().map(|r| r as u32).collect())
+        }
+        _ if rows.is_some() => return Err(ApiError::invalid("only an Allow of a request with rows keeps rows")),
+        _ => None,
+    };
+    let (_, _, tx) = waiting.remove(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?;
+    drop(waiting);
+    tx.send((answer.clone(), by_user, kept)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
 }
 
 /// A session's agent ended: its open requests of PDT's expire, and their calls go on without running.
@@ -243,7 +270,7 @@ mod tests {
     fn wait(held: &Held, session: &str, request: &str) -> oneshot::Receiver<Reply> {
         let (tx, rx) = oneshot::channel();
         let n = OPENED.fetch_add(1, Ordering::SeqCst);
-        held.waiting.lock().unwrap().insert((session.into(), request.into()), (n, tx));
+        held.waiting.lock().unwrap().insert((session.into(), request.into()), (n, None, tx));
         rx
     }
 

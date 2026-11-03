@@ -1094,6 +1094,7 @@ async fn seed_pm_plan(
         tool_call_id: None,
         can_always: true,
         diff: None,
+        rows: None,
         state: RequestState::Open,
         answer: None,
     };

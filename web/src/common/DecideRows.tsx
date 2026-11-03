@@ -1,9 +1,10 @@
 // The PM's batch of Inbox decisions (PDT-475): one row per item with its ticket, the decision and why; the user
-// unticks the rows they don't want before Allow.
+// unticks the rows they don't want before Allow, in the Inbox or on the PM conversation's card (PDT-502).
+import { useState } from 'react';
 import { Checkbox } from '@ui';
 import type { DecideChoice } from '../api/gen/DecideChoice';
 import type { DecideRow } from '../api/gen/DecideRow';
-import { PRIORITY_LABEL } from '../common/PriorityIcon';
+import { PRIORITY_LABEL } from './PriorityIcon';
 
 const DECISION_LABEL: Record<DecideChoice, string> = {
   accept_todo: 'Accept to Todo',
@@ -62,3 +63,19 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
     </div>
   );
 }
+
+/** Which of `count` rows are ticked (all to start with): `kept` lists them, 0-based, for the Allow. */
+export function useKeptRows(count: number) {
+  const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
+  const isKept = (n: number) => !unticked.has(n);
+  const toggle = (n: number, on: boolean) => setUnticked((u) => {
+    const next = new Set(u);
+    if (on) next.delete(n); else next.add(n);
+    return next;
+  });
+  const kept = Array.from({ length: count }, (_, n) => n).filter(isKept);
+  return { kept, isKept, toggle };
+}
+
+/** The Allow button's title for `kept` of `count` rows. */
+export const allowRowsTitle = (kept: number, count: number) => (kept === count ? 'Allow' : `Allow ${kept} of ${count}`);

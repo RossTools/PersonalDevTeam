@@ -2110,9 +2110,10 @@ async fn ticket_proposals_wait_for_the_user() {
 }
 
 /// PDT-475: the PM proposes decisions on many ticket proposals in one `inbox_decide` call. Nothing changes until the
-/// user confirms: the call waits in the Inbox as one table (even where the project lets the PM act), an agent can't
-/// allow it, and the user's Allow with rows unticked resolves only the rows they kept, as their own decisions with the
-/// PM kept as the proposer; the waiting call returns what it did (PDT-492). Another persona given the tool is refused.
+/// user confirms: the call asks in the PM's conversation with a card of its rows, also in the Inbox (PDT-502), even
+/// where the project lets the PM act. An agent can't allow it, a Deny changes nothing, and the user's Allow with rows
+/// unticked (here from the Inbox) resolves only the rows they kept, as their own decisions with the PM kept as the
+/// proposer; the waiting call returns what it did in the same turn (PDT-492). Another persona given the tool is refused.
 #[tokio::test]
 async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
     let env = setup().await;
@@ -2206,29 +2207,42 @@ async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
     assert!(said.contains("failed") && said.contains("twice"), "{said}");
     assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "confirm"), "nothing asked");
 
-    // The PM's call waits for the user (PDT-492: in the same turn), with no prompt of Claude's and despite the
-    // project letting the PM act.
-    let n = agent_says(&env, &pm).await.len();
-    let text = format!("mcp: inbox_decide {call_}");
-    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{pm}/messages"), Some(json!({"text": text}))).await;
-    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    tick_until(&env, "the confirmation", || async {
-        inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm").map(|_| json!(true))
-    })
-    .await;
+    // The PM's call asks in its conversation with a rows card (PDT-502) and waits for the user in the same turn, with
+    // no prompt of Claude's and despite the project letting the PM act.
     let stage = |id: String| {
         let env = &env;
         async move { call(&env.app, "GET", &format!("/api/tickets/{id}"), None).await.1 }
     };
-    for (id, _) in &made {
-        assert_eq!(stage(id.clone()).await["stage"], "draft", "nothing before the user's yes");
-    }
-    assert!(!agent_says(&env, &pm).await.iter().skip(n).any(|m| m.starts_with("mcp ")), "the call is waiting");
-    let confirms: Vec<Value> = inbox(&env).await.into_iter().filter(|i| i["kind"] == "confirm").collect();
-    assert_eq!(confirms.len(), 1, "{confirms:?}");
-    let item = &confirms[0];
-    assert_eq!(item["body"]["tool"], "inbox_decide");
-    let rows = item["body"]["rows"].as_array().unwrap();
+    let open_card = || async {
+        tick_until(&env, "the card", || async {
+            let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{pm}/events?after=0"), None).await;
+            v.as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open")
+                .map(|e| e["event"].clone())
+        })
+        .await
+    };
+    let card_state = |rid: String| {
+        let env = &env;
+        let pm = pm.clone();
+        async move {
+            let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{pm}/events?after=0"), None).await;
+            v.as_array().unwrap().iter().find(|e| e["event"]["id"] == rid.as_str()).unwrap()["event"]["state"].clone()
+        }
+    };
+    let answer_url = |session: &str, rid: &str| format!("/api/sessions/{session}/requests/{rid}");
+    let text = format!("mcp: inbox_decide {call_}");
+
+    // Deny in the conversation: nothing changes, and the call hears it.
+    let n = agent_says(&env, &pm).await.len();
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{pm}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let card = open_card().await;
+    assert_eq!(card["tool"], "mcp__pdt__inbox_decide", "{card}");
+    assert_eq!(card["canAlways"], false, "never always: {card}");
+    let rows = card["rows"].as_array().unwrap();
     let keys: Vec<&str> = rows.iter().map(|r| r["ticketKey"].as_str().unwrap()).collect();
     assert_eq!(keys, [a.1.as_str(), b.1.as_str(), c.1.as_str()]);
     assert_eq!(
@@ -2236,18 +2250,48 @@ async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
         (Some("accept_todo"), Some("Flaky test"))
     );
     assert_eq!(rows[2]["note"], "Not worth it.");
+    let items = inbox(&env).await;
+    assert!(!items.iter().any(|i| i["kind"] == "confirm"), "no Inbox confirmation of its own: {items:#?}");
+    let item = items.iter().find(|i| i["kind"] == "approval").expect("the card is in the Inbox too");
+    assert_eq!(item["body"]["rows"], card["rows"], "the Inbox mirrors the card's rows");
+    for (id, _) in &made {
+        assert_eq!(stage(id.clone()).await["stage"], "draft", "nothing before the user's yes");
+    }
+    assert!(!agent_says(&env, &pm).await.iter().skip(n).any(|m| m.starts_with("mcp ")), "the call is waiting");
+    let rid = card["id"].as_str().unwrap().to_string();
+    let (s, v) = call_as_ui(&env.app, "POST", &answer_url(&pm, &rid), Some(json!({"answer": {"type": "deny"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let heard = tick_until(&env, "the PM's call returning", || async {
+        agent_says(&env, &pm).await.into_iter().skip(n).find(|m| m.starts_with("mcp inbox_decide")).map(|m| json!(m))
+    })
+    .await;
+    let heard = heard.as_str().unwrap();
+    assert!(heard.starts_with("mcp inbox_decide failed:") && heard.contains("denied"), "{heard}");
+    for (id, _) in &made {
+        assert_eq!(stage(id.clone()).await["stage"], "draft", "a Deny changes nothing");
+    }
+    assert_eq!(card_state(rid).await, "answered");
+    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "approval"), "answered in both");
 
-    // An agent can't allow it.
-    let answer = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
-    let (s, v) = call(&env.app, "POST", &answer, Some(json!({"choice": "allow"}))).await;
+    // Answered from the Inbox: the user unticks the duplicate and allows the rest.
+    let n = agent_says(&env, &pm).await.len();
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{pm}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let rid = open_card().await["id"].as_str().unwrap().to_string();
+    let item = inbox(&env).await.into_iter().find(|i| i["kind"] == "approval").expect("in the Inbox");
+    assert_eq!(item["body"]["requestId"].as_str(), Some(rid.as_str()));
+    let url = answer_url(item["sessionId"].as_str().unwrap(), &rid);
+    // An agent can't allow it, and the rows kept must be the card's.
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}, "rows": [0, 2]}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "allow", "rows": []}))).await;
-    assert_eq!(s, StatusCode::CONFLICT, "none kept: {v}");
-
-    // The user unticks the duplicate and allows the rest.
-    let (s, v) = call_as_ui(&env.app, "POST", &answer, Some(json!({"choice": "allow", "rows": [0, 2]}))).await;
-    assert_eq!(s, StatusCode::OK, "{v}");
-    assert_eq!(v["allowed"], true, "{v}");
+    for rows in [json!([]), json!([0, 3])] {
+        let (s, v) =
+            call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}, "rows": rows}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{rows}: {v}");
+    }
+    assert_eq!(card_state(rid.clone()).await, "open", "a wrong pick leaves the card open");
+    let (s, v) = call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}, "rows": [0, 2]}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
     // The PM's waiting call goes on and returns what it did.
     let heard = tick_until(&env, "the PM's call returning", || async {
         agent_says(&env, &pm).await.into_iter().skip(n).find(|m| m.starts_with("mcp inbox_decide")).map(|m| json!(m))
@@ -2256,6 +2300,7 @@ async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
     let heard = heard.as_str().unwrap();
     assert!(heard.contains("\"unticked\"") && heard.contains(b.1.as_str()) && heard.contains("\"decided\""), "{heard}");
     assert!(!agent_took(&env, &pm).await.iter().any(|m| m.contains("[PDT] The user allowed")), "no message of its own");
+    assert_eq!(card_state(rid).await, "answered", "the card is answered too");
     let t = stage(a.0.clone()).await;
     assert_eq!(
         (t["stage"].as_str(), t["priority"].as_str(), t["labels"].clone(), t["proposed"].as_bool()),
@@ -2286,8 +2331,6 @@ async fn the_pm_decides_ticket_proposals_in_a_batch_the_user_confirms() {
     assert!(moved["agent"].is_null(), "not an agent's move: {moved}");
     let proposal = env.state.store.open_inbox_items_of(pdt_core::inbox::InboxKind::TicketProposal).await.unwrap();
     assert_eq!(proposal.len(), 1, "only the unticked one is open");
-    let confirm = env.state.store.get_inbox_item(item["id"].as_str().unwrap()).await.unwrap().unwrap();
-    assert_eq!(confirm.resolution, json!({"choice": "allow", "rows": [0, 2]}));
     // The proposing agent hears the user's decision as usual.
     let heard = tick_until(&env, "the coder hearing it", || async {
         agent_took(&env, &coder)

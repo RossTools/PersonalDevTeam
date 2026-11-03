@@ -250,6 +250,7 @@ async fn seed_conversation(store: &Store, session_id: &str, at: i64) -> anyhow::
                 tool_call_id: Some("seed-edit".into()),
                 can_always: true,
                 diff: Some(diff.into()),
+                rows: None,
                 state: RequestState::Answered,
                 answer: Some(Answer::Approve { always: false }),
             },

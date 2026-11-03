@@ -78,8 +78,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   Lists hide a ticket only while that item is open, so a held ticket with no item is never out of the user's reach.
 - **The PM's `inbox_decide` never decides without the user's Allow** (pdt-api `mcp/tools/inbox.rs`): it is
   `asks_in_inbox` (pdt-core `ToolDecl::inbox_only`), so it is in Claude's `--allowedTools`, has no `ask_target` (no
-  project policy answers it) and always opens a `confirm` item with `body.rows`, which the call waits on; only that
-  item's Allow, which needs the UI token, applies it, narrowed to the rows the user kept. It refuses non-PM sessions even when a
+  project policy answers it) and always asks: in a conversation with a card of PDT's own (`conversations::held`) whose
+  `Request` event carries `rows` (the Inbox's approval item has them as `body.rows`), from a terminal with a `confirm`
+  item with `body.rows`; the call waits on either. Only the user's Allow (the UI token: `held::answer` refuses an
+  agent's yes) applies it, narrowed to the rows they kept (`AnswerRequest.rows` or `InboxAnswer.rows`, checked before
+  the request is answered, so a wrong pick leaves it open). It refuses non-PM sessions even when a
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt

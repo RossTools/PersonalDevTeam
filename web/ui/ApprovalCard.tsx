@@ -43,6 +43,9 @@ export interface ApprovalCardProps {
   plan?: ReactNode;
   /** `plan` cards: also offer "Approve, accept edits" (the agent then edits without asking). */
   planAcceptEdits?: boolean;
+  /** `approval` cards: the Allow button's text ("Allow 2 of 3"), and whether it is off (nothing left to allow). */
+  approveLabel?: string;
+  approveDisabled?: boolean;
   /** Called with the answer; the card shows it pending until the promise settles. Handle (toast) errors there. */
   onAnswer: (answer: ApprovalAnswer) => Promise<unknown> | void;
   /** `y` approves and `n` starts a denial, from anywhere on the page outside text fields. Give it to one card. */
@@ -78,6 +81,8 @@ export function ApprovalCard({
   questions = [],
   plan,
   planAcceptEdits = false,
+  approveLabel = 'Allow',
+  approveDisabled = false,
   onAnswer,
   keyboard = false,
   disabled = false,
@@ -105,8 +110,10 @@ export function ApprovalCard({
       setPending(null);
     }
   };
-  const approve = () =>
+  const approve = () => {
+    if (kind === 'approval' && approveDisabled) return;
     void answer('approve', kind === 'plan' ? { type: 'plan', approve: true } : { type: 'approve', always: false });
+  };
   const deny = () => {
     const text = reason.trim();
     void answer(
@@ -316,11 +323,11 @@ export function ApprovalCard({
               <Button
                 variant={kind === 'plan' && planAcceptEdits ? 'secondary' : 'primary'}
                 pending={pending === 'approve'}
-                disabled={busy}
+                disabled={busy || (kind === 'approval' && approveDisabled)}
                 onClick={approve}
                 className={cn('max-md:order-2', kind === 'plan' && 'max-md:col-span-2')}
               >
-                {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : 'Allow'}{hint('y')}
+                {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : approveLabel}{hint('y')}
               </Button>
               <Button variant="secondary" disabled={busy} onClick={() => setDenying(true)} className={cn('max-md:order-1', kind === 'plan' && 'max-md:col-span-2')}>
                 {kind === 'plan' ? 'Keep planning' : 'Deny'}{hint('n')}

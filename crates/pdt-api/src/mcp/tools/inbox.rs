@@ -1,10 +1,13 @@
-//! `inbox_decide` (PDT-475): the PM proposes decisions on Inbox items (ticket proposals), many in one call. The call
-//! always waits in the Inbox as one item listing every row, for every agent and whatever the project's policy; the
-//! user unticks the rows they don't want and allows the rest. The call waits for their answer (PDT-492), and their Allow
-//! (only from PDT's web client) resolves each kept row as the user's own decision, proposed by the PM. A call that gave
-//! up waiting runs again from the Allow (`cx.confirmed`), and the PM hears the result in a message.
+//! `inbox_decide` (PDT-475): the PM proposes decisions on Inbox items (ticket proposals), many in one call, and the user
+//! confirms them, for every agent and whatever the project's policy. In the PM's conversation the call asks there, with
+//! a card listing every row (PDT-502), which is also in the Inbox; elsewhere (a terminal) it asks with an Inbox item
+//! (PDT-492). Either way the user unticks the rows they don't want and allows the rest, and the call waits for their
+//! answer. Their Allow (only from PDT's web client) resolves each kept row as the user's own decision, proposed by the
+//! PM. A call that gave up waiting on its Inbox item runs again from the Allow (`cx.confirmed`), and the PM hears the
+//! result in a message.
 
 use super::*;
+use crate::conversations::Asked;
 use crate::workflow::agent::Confirmed;
 use pdt_core::inbox::{InboxItem, InboxKind, InboxStatus};
 use pdt_core::inbox_decide::{self as decide, DecideRow, InboxDecide, ItemDecision};
@@ -19,8 +22,8 @@ pub(super) fn defs() -> Vec<Tool> {
                       100): `accept_todo` or `accept_backlog` (with `agentic` and optional title, priority and \
                       labels), `duplicate` (with `duplicateOf`, the ticket it repeats) or `reject` (with the reason in \
                       `note`). Name each by its ticket's key. Nothing changes until the user confirms: the call always \
-                      waits in their Inbox as one table, even where the project lets you act, and they can untick \
-                      rows. Their Allow resolves the rows they kept as their own decisions, and the call returns \
+                      waits for them, even where the project lets you act, with one table in your conversation (also \
+                      in their Inbox) where they can untick rows. Their Allow resolves the rows they kept as their own decisions, and the call returns \
                       what it did (`decided`, `failed`, `unticked`); a Deny returns an error. The PM's only.",
         schema: schema::<InboxDecide>,
     }]
@@ -63,17 +66,15 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     }
     let rows: Vec<DecideRow> = found(st, &a).await.into_iter().map(|f| f.map(|(r, _)| r)).collect::<Result<_, _>>()?;
     decide::check_unique(&rows)?;
-    let item = crate::workflow::agent::ask_confirm_rows(st, cx.session, NAME, cx.input, json!(rows)).await?;
-    crate::notifications::kick(st);
-    // The call waits on the table (PDT-492): the user's Allow applies the rows they kept, in this same call.
-    let waited = crate::workflow::agent::wait_confirm(st, &item).await;
-    crate::notifications::kick(st);
-    let kept = match waited {
-        Confirmed::Allowed(kept) => decide::kept(rows.len(), kept.as_deref())?,
-        Confirmed::Denied => {
-            return Err(format!("The user denied this {NAME} call in the Inbox, so nothing changed."));
+    // The call waits on the table: the user's Allow applies the rows they kept, in this same call.
+    let kept = match crate::conversations::ask_inline(st, cx.session, NAME, cx.input, false, Some(rows.clone())).await {
+        Some(Asked::Allowed(kept)) => decide::kept(rows.len(), kept.as_deref())?,
+        Some(Asked::Denied(why)) => {
+            let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
+            return Err(format!("The user denied this {NAME} call, so nothing changed.{why}"));
         }
-        Confirmed::Ended => return Err(format!("{NAME} was not run: its Inbox item closed before the user answered.")),
+        Some(Asked::Ended) => return Err(format!("{NAME} was not run: the turn ended before the user answered.")),
+        None => in_inbox(cx, &rows).await?,
     };
     let unticked: Vec<&str> =
         rows.iter().enumerate().filter(|(n, _)| !kept.contains(n)).map(|(_, r)| r.ticket_key.as_str()).collect();
@@ -81,6 +82,21 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     let mut out = apply(cx, &a).await?;
     out["unticked"] = json!(unticked);
     Ok(out)
+}
+
+/// A session with no conversation to show the card in (a terminal) asks with an Inbox item and waits on it (PDT-492):
+/// the rows the user kept.
+async fn in_inbox(cx: &Cx<'_>, rows: &[DecideRow]) -> Result<Vec<usize>, String> {
+    let st = cx.st;
+    let item = crate::workflow::agent::ask_confirm_rows(st, cx.session, NAME, cx.input, json!(rows)).await?;
+    crate::notifications::kick(st);
+    let waited = crate::workflow::agent::wait_confirm(st, &item).await;
+    crate::notifications::kick(st);
+    match waited {
+        Confirmed::Allowed(kept) => decide::kept(rows.len(), kept.as_deref()),
+        Confirmed::Denied => Err(format!("The user denied this {NAME} call in the Inbox, so nothing changed.")),
+        Confirmed::Ended => Err(format!("{NAME} was not run: its Inbox item closed before the user answered.")),
+    }
 }
 
 /// Each decision's row and open item, or why it has none.
