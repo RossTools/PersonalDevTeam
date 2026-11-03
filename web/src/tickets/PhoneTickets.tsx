@@ -217,7 +217,7 @@ export function NewTicketFab({ onClick, disabled }: { onClick: () => void; disab
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'absolute right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] size-14 rounded-full shadow-lg',
+        'absolute right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] size-14 rounded-full shadow-popover',
         'pointer-coarse:size-14 [&_svg]:size-6',
       )}
     >

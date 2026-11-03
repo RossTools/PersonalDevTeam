@@ -55,7 +55,7 @@ export function ImageThumb({ src, alt, onRemove, pending = false, error, href, s
           type="button"
           aria-label={`Remove ${alt}`}
           onClick={onRemove}
-          className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-card text-foreground shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
+          className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-card text-foreground shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
         >
           <X aria-hidden className="size-3" />
         </button>

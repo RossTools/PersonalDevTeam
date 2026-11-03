@@ -99,7 +99,7 @@ export function PromptBox({
   const buttons = (
     <>
       {showStop && (
-        <IconButton label={stopLabel} variant="secondary" noTooltip={phone} onClick={onStop} className={cn('rounded-full', phone && 'size-11')}>
+        <IconButton label={stopLabel} variant="secondary" noTooltip={phone} onClick={onStop} className={cn('rounded-full', phone && 'size-control-touch')}>
           <Square aria-hidden className="size-3 fill-current" />
         </IconButton>
       )}
@@ -112,7 +112,7 @@ export function PromptBox({
           pending={pending}
           disabled={!sendable || disabled}
           onClick={onSend}
-          className={cn('rounded-full', phone && 'size-11')}
+          className={cn('rounded-full', phone && 'size-control-touch')}
         >
           <ArrowUp aria-hidden className="size-4" />
         </IconButton>
@@ -124,7 +124,7 @@ export function PromptBox({
       data-slot="prompt-box"
       data-dragging={dragging || undefined}
       className={cn(
-        'flex flex-col rounded-xl border border-input bg-card shadow-sm transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring motion-reduce:transition-none',
+        'flex flex-col rounded-xl border border-input bg-card shadow-card transition-colors focus-within:border-primary focus-within:ring-2 focus-within:ring-ring motion-reduce:transition-none',
         dragging && 'border-primary ring-2 ring-ring',
         disabled && 'opacity-50',
       )}
@@ -167,7 +167,7 @@ export function PromptBox({
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
         className={cn(
-          'min-h-11 resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 shadow-none focus-visible:border-0 focus-visible:ring-0',
+          'min-h-control-touch resize-none overflow-y-auto rounded-xl border-0 bg-transparent px-3 shadow-none focus-visible:border-0 focus-visible:ring-0',
           phone ? 'max-h-36 py-2.5' : 'max-h-60 pt-2.5 pb-1',
         )}
       />
