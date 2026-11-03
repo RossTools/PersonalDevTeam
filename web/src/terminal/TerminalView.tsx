@@ -33,9 +33,26 @@ const openLink = (e: MouseEvent, uri: string) => {
 const copyText = async (text: string) => {
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     // No permission (e.g. Safari without a recent click, or a non-https origin); nothing to fall back to.
+    return false;
   }
+};
+
+/** The start of what a program copied, on one line, for its toast. */
+const PREVIEW_CHARS = 80;
+const preview = (text: string) => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}…` : line;
+};
+
+/**
+ * A program setting the clipboard says so (PDT-421): otherwise `cat`ing a file with an OSC 52 in it would replace
+ * the clipboard unseen.
+ */
+const programCopied = async (text: string) => {
+  if (await copyText(text)) toast.info('The terminal set your clipboard', { description: preview(text) });
 };
 
 /** How long a still finger must stay down to start selecting text, and how far it may wander before that. */
@@ -50,7 +67,7 @@ export interface TerminalHandle {
 
 const clipboard: IClipboardProvider = {
   readText: () => '',
-  writeText: (_sel: ClipboardSelectionType, text: string) => copyText(text),
+  writeText: (_sel: ClipboardSelectionType, text: string) => programCopied(text),
 };
 
 /**

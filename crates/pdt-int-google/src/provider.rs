@@ -31,11 +31,13 @@ fn no_account(agent: bool) -> ProviderError {
     })
 }
 
-/// A reference's connection and file ids.
+/// A reference's connection and file ids. The file id is Drive's (letters, digits, `-` and `_`, as `folder_id`
+/// takes), so it can't reach another path when it goes into a URL (PDT-421).
 pub fn split_ref(reference: &str) -> ProviderResult<(&str, &str)> {
+    let id_char = |b: u8| b.is_ascii_alphanumeric() || b == b'-' || b == b'_';
     reference
         .split_once('/')
-        .filter(|(c, f)| !c.is_empty() && !f.is_empty())
+        .filter(|(c, f)| !c.is_empty() && !f.is_empty() && f.bytes().all(id_char))
         .ok_or_else(|| ProviderError::Invalid(format!("{reference} is not a Google document's reference")))
 }
 
@@ -191,5 +193,18 @@ impl DocumentProvider for GoogleDocs {
     fn embed_url(&self, reference: &str, kind: DocumentKind) -> Option<String> {
         let (conn, file) = split_ref(reference).ok()?;
         Some(drive::embed_url(file, kind, self.shared.email(conn).as_deref()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reference_names_a_connection_and_a_drive_id() {
+        assert_eq!(split_ref("c1/1aB-c_9").unwrap(), ("c1", "1aB-c_9"));
+        for bad in ["c1", "/f", "c1/", "c1/../../forms/x", "c1/a/b", "c1/a?x=1", "c1/a#b", "c1/a%2F"] {
+            assert!(matches!(split_ref(bad), Err(ProviderError::Invalid(_))), "{bad}");
+        }
     }
 }

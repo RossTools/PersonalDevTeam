@@ -54,6 +54,8 @@ not on the board or in the backlog, until you accept it. Opened from the Inbox, 
 
 Paste or drop a screenshot or text file (a log, a JSON response, a config) into a description or comment, or use the
 paperclip (**Attach files**). Images show inline and open full size; text files show as a chip that opens a viewer.
+An image from another site (in an issue's text, say) shows as a **Load image** button, so that site doesn't learn
+when you read it; click it to show the image.
 
 Limits: PNG, JPEG, GIF and WebP images up to 10 MB; plain-text files (`.txt`, `.log`, `.md`, `.json`, `.csv`,
 `.yaml`, `.toml` and similar) up to 1 MB; 50 per ticket. The ticket's **Attachments** list shows them all, with

@@ -72,6 +72,8 @@ Secrets that aren't a connection's (a password a command needs, a token for an a
   [GitHub and other forges](../your-machine/github.md).
 - **Incoming webhook**: an address another service can call to start a workflow (its row shows the address). Give it
   a secret (**Generate** makes one); callers send it as a bearer token, or sign with it as GitHub's webhooks do.
+  A call without the secret is refused the same way whatever the reason (no such webhook, no secret set yet, the
+  wrong secret). After ten refused calls in a minute, the address refuses every call until the minute is up.
 - **HTTP service**: any web service, by its address and token, for the **HTTP request** step.
 - **MCP server**: a program or address that speaks the Model Context Protocol. Its row lists the tools it offers, and
   each one becomes a workflow step.

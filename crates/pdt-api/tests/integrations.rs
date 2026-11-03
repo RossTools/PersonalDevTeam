@@ -472,17 +472,20 @@ async fn a_webhook_needs_its_secret_and_starts_its_workflows() {
     )
     .await;
     let json_ct = ("content-type", "application/json");
-    assert_eq!(post_hook(&env, "deploys", &[], "{}").await.0, StatusCode::NOT_FOUND, "no such hook yet");
+    // Every refusal looks the same, so a caller can't tell which hooks exist (PDT-421).
+    let refused = (StatusCode::UNAUTHORIZED, Some("bad_signature"));
+    let (s, e) = post_hook(&env, "deploys", &[], "{}").await;
+    assert_eq!((s, e["code"].as_str()), refused, "no such hook yet");
     connection(&env, "deploys", "webhook", "", json!({}), None).await;
     let (s, e) = post_hook(&env, "deploys", &[("authorization", "Bearer s3cret")], "{}").await;
-    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("webhook_no_secret")));
+    assert_eq!((s, e["code"].as_str()), refused, "no secret yet");
     let (_, list) = call(&env.app, "GET", "/api/connections", None).await;
     let id =
         list.as_array().unwrap().iter().find(|c| c["name"] == "deploys").unwrap()["id"].as_str().unwrap().to_string();
     call(&env.app, "PUT", &format!("/api/connections/{id}/secret"), Some(json!({"secret": "s3cret"}))).await;
 
     let (s, e) = post_hook(&env, "deploys", &[("authorization", "Bearer wrong"), json_ct], "{\"ok\":true}").await;
-    assert_eq!((s, e["code"].as_str()), (StatusCode::UNAUTHORIZED, Some("bad_signature")));
+    assert_eq!((s, e["code"].as_str()), refused, "the wrong secret");
     // From another machine on the tailnet (proxied, no user identity): the secret is enough.
     let good =
         [("authorization", "Bearer s3cret"), json_ct, ("x-forwarded-for", "100.64.0.9"), ("x-github-delivery", "d1")];
@@ -509,6 +512,14 @@ async fn a_webhook_needs_its_secret_and_starts_its_workflows() {
     assert_eq!(t["headers"]["x-github-delivery"], "d1");
     assert!(t["headers"].get("authorization").is_none());
     assert!(runs(&env, &other).await.is_empty(), "another hook's workflow");
+
+    // Guessing the secret: after ten refusals (three above) a name refuses even the right secret for the rest of the
+    // minute.
+    for _ in 0..7 {
+        assert_eq!(post_hook(&env, "deploys", &[("authorization", "Bearer guess")], "{}").await.0, refused.0);
+    }
+    let (s, e) = post_hook(&env, "deploys", &[("authorization", "Bearer s3cret")], "{}").await;
+    assert_eq!((s, e["code"].as_str()), (StatusCode::TOO_MANY_REQUESTS, Some("too_many_failures")));
 }
 
 // ---- GitHub issues ----

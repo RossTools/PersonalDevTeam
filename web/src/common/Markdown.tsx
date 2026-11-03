@@ -1,11 +1,11 @@
-import { createContext, memo, useContext, useMemo, type ComponentProps, type ComponentType, type ImgHTMLAttributes, type ReactNode } from 'react';
+import { createContext, memo, useContext, useMemo, useState, type ComponentProps, type ComponentType, type ImgHTMLAttributes, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown, { type Components, type ExtraProps } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeSanitize from 'rehype-sanitize';
-import { Check } from 'lucide-react';
-import { Badge } from '@ui';
+import { Check, Image as ImageIcon } from 'lucide-react';
+import { Badge, Button } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { fileHref, filePathOf, isSha, MarkdownRefsContext, prNumberOf, prUrl, statusTone, type MarkdownRefs } from './markdownRefs';
@@ -216,10 +216,33 @@ export const MarkdownImageContext = createContext<((src: string) => string) | nu
 
 const isRelative = (src: string) => !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src);
 
-function ResolvedImage({ src, ...p }: ImgHTMLAttributes<HTMLImageElement>) {
+const remoteHost = (src: string) => {
+  if (!/^https?:\/\//i.test(src)) return null;
+  try {
+    return new URL(src).host;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * An image on another site loads only when the user asks (PDT-421): fetching it would tell that site when the user
+ * read the text, and from where. Never with a referrer.
+ */
+function ResolvedImage({ src, alt, ...p }: ImgHTMLAttributes<HTMLImageElement>) {
   const resolve = useContext(MarkdownImageContext);
+  const host = typeof src === 'string' ? remoteHost(src) : null;
+  const [load, setLoad] = useState(false);
+  if (host && !load) {
+    return (
+      <Button variant="secondary" size="sm" className="my-1 max-w-full" title={src} onClick={() => setLoad(true)}>
+        <ImageIcon />
+        <span className="truncate">{alt ? `Load image “${alt}” from ${host}` : `Load image from ${host}`}</span>
+      </Button>
+    );
+  }
   const shown = typeof src === 'string' && resolve && isRelative(src) ? resolve(src) : src;
-  return <img {...p} src={shown} className="my-2 max-w-full rounded-md" />;
+  return <img {...p} alt={alt} src={shown} referrerPolicy="no-referrer" className="my-2 max-w-full rounded-md" />;
 }
 
 // A document to read (a note, PDT-143): roomier, with headings a step above the body and quieter list markers.

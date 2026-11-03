@@ -165,6 +165,12 @@ function useChangedCells(content: DocumentContent | undefined): Set<string> {
 }
 
 type View = 'live' | 'pdt';
+/**
+ * What a provider's live editor may do in its frame (PDT-421): run as its own site, open its links and dialogs in new
+ * windows, and download, but never navigate PDT's own page away.
+ */
+const EMBED_SANDBOX = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads';
+
 const VIEW_KEY = 'pdt.documents.view';
 
 /**
@@ -239,7 +245,7 @@ export function DocumentBody({ id, providerLabel, className, onSheet }: {
       />
       {live ? (
         <>
-          <iframe title={`${doc.data?.title ?? 'Document'} in ${providerLabel}`} src={embed} allow="clipboard-read; clipboard-write" className="min-h-96 w-full flex-1 rounded-md border border-border" />
+          <iframe title={`${doc.data?.title ?? 'Document'} in ${providerLabel}`} src={embed} allow="clipboard-read; clipboard-write" sandbox={EMBED_SANDBOX} className="min-h-96 w-full flex-1 rounded-md border border-border" />
           <p className="text-xs text-muted-foreground">
             Asks you to sign in, or stays blank? This browser keeps {providerLabel}’s sign-in out of pages inside PDT: switch to Read in PDT, or open it in {providerLabel}.
           </p>
