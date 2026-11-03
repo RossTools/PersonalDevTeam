@@ -1,9 +1,11 @@
 //! `inbox_decide` (PDT-475): the PM proposes decisions on Inbox items (ticket proposals), many in one call. The call
 //! always waits in the Inbox as one item listing every row, for every agent and whatever the project's policy; the
-//! user unticks the rows they don't want and allows the rest. Their Allow runs it here again (`cx.confirmed`, only
-//! from PDT's web client), and each kept row resolves as the user's own decision, proposed by the PM.
+//! user unticks the rows they don't want and allows the rest. The call waits for their answer (PDT-492), and their Allow
+//! (only from PDT's web client) resolves each kept row as the user's own decision, proposed by the PM. A call that gave
+//! up waiting runs again from the Allow (`cx.confirmed`), and the PM hears the result in a message.
 
 use super::*;
+use crate::workflow::agent::Confirmed;
 use pdt_core::inbox::{InboxItem, InboxKind, InboxStatus};
 use pdt_core::inbox_decide::{self as decide, DecideRow, InboxDecide, ItemDecision};
 
@@ -18,8 +20,8 @@ pub(super) fn defs() -> Vec<Tool> {
                       labels), `duplicate` (with `duplicateOf`, the ticket it repeats) or `reject` (with the reason in \
                       `note`). Name each by its ticket's key. Nothing changes until the user confirms: the call always \
                       waits in their Inbox as one table, even where the project lets you act, and they can untick \
-                      rows. Their Allow resolves the rows they kept as their own decisions; you get a message with \
-                      the result. The PM's only.",
+                      rows. Their Allow resolves the rows they kept as their own decisions, and the call returns \
+                      what it did (`decided`, `failed`, `unticked`); a Deny returns an error. The PM's only.",
         schema: schema::<InboxDecide>,
     }]
 }
@@ -49,49 +51,58 @@ async fn find(st: &AppState, open: &[InboxItem], d: &ItemDecision) -> Result<(De
     Ok((DecideRow::new(d, &item.id, &ticket_id, &t.key, &t.title), item))
 }
 
-async fn run(cx: &Cx<'_>, a: InboxDecide) -> Result<Value, String> {
+async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     let st = cx.st;
     // Only the PM: a Coder, QA, Reviewer or workflow agent never decides proposals, its own or anyone's.
     if !crate::pm::is_pm_session(st, cx.session).await {
         return Err(format!("{NAME} is the project manager's tool; this session can't decide Inbox items"));
     }
     decide::check(&a)?;
-    let open: Vec<InboxItem> = st
-        .store
-        .open_inbox_items_of(InboxKind::TicketProposal)
-        .await
-        .map_err(store)?
-        .into_iter()
-        .filter(|i| i.status == InboxStatus::Open)
-        .collect();
+    if cx.confirmed {
+        return apply(cx, &a).await;
+    }
+    let rows: Vec<DecideRow> = found(st, &a).await.into_iter().map(|f| f.map(|(r, _)| r)).collect::<Result<_, _>>()?;
+    decide::check_unique(&rows)?;
+    let item = crate::workflow::agent::ask_confirm_rows(st, cx.session, NAME, cx.input, json!(rows)).await?;
+    crate::notifications::kick(st);
+    // The call waits on the table (PDT-492): the user's Allow applies the rows they kept, in this same call.
+    let waited = crate::workflow::agent::wait_confirm(st, &item).await;
+    crate::notifications::kick(st);
+    let kept = match waited {
+        Confirmed::Allowed(kept) => decide::kept(rows.len(), kept.as_deref())?,
+        Confirmed::Denied => {
+            return Err(format!("The user denied this {NAME} call in the Inbox, so nothing changed."));
+        }
+        Confirmed::Ended => return Err(format!("{NAME} was not run: its Inbox item closed before the user answered.")),
+    };
+    let unticked: Vec<&str> =
+        rows.iter().enumerate().filter(|(n, _)| !kept.contains(n)).map(|(_, r)| r.ticket_key.as_str()).collect();
+    a.items = a.items.into_iter().enumerate().filter(|(n, _)| kept.contains(n)).map(|(_, d)| d).collect();
+    let mut out = apply(cx, &a).await?;
+    out["unticked"] = json!(unticked);
+    Ok(out)
+}
+
+/// Each decision's row and open item, or why it has none.
+async fn found(st: &AppState, a: &InboxDecide) -> Vec<Result<(DecideRow, InboxItem), String>> {
+    let open: Vec<InboxItem> = match st.store.open_inbox_items_of(InboxKind::TicketProposal).await {
+        Ok(all) => all.into_iter().filter(|i| i.status == InboxStatus::Open).collect(),
+        Err(e) => return vec![Err(store(e))],
+    };
     let mut found = vec![];
     for d in &a.items {
         found.push(find(st, &open, d).await.map_err(|e| format!("{}: {e}", d.item.trim())));
     }
-    if !cx.confirmed {
-        let rows: Vec<DecideRow> = found.into_iter().map(|f| f.map(|(r, _)| r)).collect::<Result<_, _>>()?;
-        decide::check_unique(&rows)?;
-        let n = rows.len();
-        let item = crate::workflow::agent::ask_confirm_rows(st, cx.session, NAME, cx.input, json!(rows)).await?;
-        crate::notifications::kick(st);
-        return Ok(json!({
-            "waiting": true,
-            "itemId": item.id,
-            "message": format!(
-                "Nothing has changed yet: PDT put the {n} decision{} in the user's Inbox (item {}) for them to confirm, \
-                 unticking any they don't want. Don't call {NAME} again for these: when they allow it, PDT applies \
-                 the rows they kept and sends you a message with the result; if they deny it, you hear that instead. \
-                 End your turn now.",
-                if n == 1 { "" } else { "s" },
-                item.id
-            ),
-        }));
-    }
-    // The user's Allow: each row they kept is their decision, proposed by the PM.
+    found
+}
+
+/// The user's Allow: each row they kept is their decision, proposed by the PM.
+async fn apply(cx: &Cx<'_>, a: &InboxDecide) -> Result<Value, String> {
+    let st = cx.st;
     let pm = agent_by(st, cx.session).await.agent.ok_or("the PM session is unknown")?;
     let by = By::user_via(pm);
     let (mut decided, mut failed) = (vec![], vec![]);
-    for f in found {
+    for f in found(st, a).await {
         let (row, item) = match f {
             Ok(x) => x,
             Err(e) => {

@@ -96,6 +96,8 @@ pub struct AppState {
     pub(crate) local_ci: std::sync::Arc<crate::local_forge::LocalCiState>,
     /// The user's yes to the PM's calls that may let an external ticket in (PDT-201).
     pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
+    /// Asking-tool calls waiting on their Inbox item for the user's answer (PDT-492).
+    pub(crate) confirm_waits: std::sync::Arc<crate::workflow::agent::ConfirmWaits>,
     /// This pdtd's UI token (PDT-204): PDT's web client sends it, an agent's curl doesn't.
     pub(crate) ui_token: crate::untrusted::UiToken,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
@@ -294,6 +296,7 @@ impl AppState {
             pr_watch: Default::default(),
             local_ci: Default::default(),
             grants: Default::default(),
+            confirm_waits: Default::default(),
             ui_token: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,

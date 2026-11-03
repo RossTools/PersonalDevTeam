@@ -109,7 +109,7 @@ When ticket proposals pile up, ask the PM to sort them. It proposes a decision f
 confirm: one item under **Approvals** in the Inbox lists every proposal with its ticket, the PM's decision (and any
 edits, such as a new priority or the `agentic` label) and its reason. Untick the rows you don't want, then **Allow**
 the rest, or **Deny** them all. This always waits for you in the Inbox, whatever the PM's agent and the project's
-setting.
+setting, and the PM carries on with what you decided once you answer.
 
 Each row you allow is decided exactly as if you had clicked it in the Inbox. The ticket's activity shows it as yours,
 **proposed by PM**. The rows you untick stay in the Inbox for you to decide. Only the PM can propose these decisions:

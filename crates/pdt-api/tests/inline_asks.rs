@@ -165,3 +165,60 @@ async fn a_pm_that_may_act_asks_nothing() {
     assert!(!events(&env, &id).await.iter().any(|e| e["event"]["kind"] == "request"), "no card");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-492: a terminal session has no conversation to show a card in, so its call waits on its Inbox item instead:
+/// the agent never ends its turn to wait. Deny and Allow both come back to the same call.
+#[tokio::test]
+async fn a_terminal_call_waits_on_its_inbox_item() {
+    let env = setup().await;
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "codex", "mode": "terminal",
+                      "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let bearer = format!("Bearer {}", pdt_api::mcp_token(&env.state, &id).unwrap());
+    let run = |n: u32| {
+        let (app, bearer) = (env.app.clone(), bearer.clone());
+        let rpc = json!({"jsonrpc": "2.0", "id": n, "method": "tools/call", "params": {"name": "run_with_secrets",
+                         "arguments": {"command": "echo hi", "env": {"KEY": "secret:pdt-492-none"}}}});
+        tokio::spawn(async move {
+            let (s, v) = common::call_with(&app, "POST", "/api/mcp", Some(rpc), &[("authorization", &bearer)]).await;
+            assert_eq!(s, StatusCode::OK, "{v}");
+            v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
+        })
+    };
+    let waiting_item = || async {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let found = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm" && i["sessionId"] == id.as_str());
+            if let Some(i) = found {
+                return i["id"].as_str().unwrap().to_string();
+            }
+            assert!(Instant::now() < deadline, "no Inbox item");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+
+    // Deny: the waiting call hears it.
+    let call_ = run(1);
+    let item = waiting_item().await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!call_.is_finished(), "the call waits for the answer");
+    let (s, v) =
+        call_as_ui(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "deny"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let said = call_.await.unwrap();
+    assert!(said.contains("denied") && !said.contains("End your turn"), "{said}");
+
+    // Allow: the same call goes on and runs (here it finds no such secret).
+    let call_ = run(2);
+    let item = waiting_item().await;
+    let (s, v) =
+        call_as_ui(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["waited"], true, "{v}");
+    let said = call_.await.unwrap();
+    assert!(said.contains("pdt-492-none") && !said.contains("Inbox"), "it ran: {said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    env.state.ptys.shutdown().await;
+}

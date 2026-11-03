@@ -437,8 +437,9 @@ the workflow never put in the Inbox (turned off, its conditions edited, its run 
 the ticket it came from.
 The PM's `inbox_decide` (pdt-api `mcp/tools/inbox.rs`, rules in pdt-core `inbox_decide.rs`) proposes decisions on
 many of them at once: it puts one `confirm` item in the Inbox whose `body.rows` the web shows as a table
-(`web/src/inbox/DecideRows.tsx`); the Allow sends the ticked rows (`InboxAnswer.rows`), `workflow::agent::answer_confirm`
-narrows the call to them and runs it, and each row is applied by `ticket_proposal::decide` as the user's, with the PM
+(`web/src/inbox/DecideRows.tsx`) and waits on it (`workflow::agent::confirm_wait`); the Allow sends the ticked rows
+(`InboxAnswer.rows`), `workflow::agent::answer_confirm` hands them to the waiting call, which narrows itself to them and
+goes on (a call no longer waiting is run again from the Allow), and each row is applied by `ticket_proposal::decide` as the user's, with the PM
 as `proposedBy` on the events and the item's resolution.
 
 **Secrets.** Values live in the OS keychain (or, on Linux without a Secret Service, a file only the user can read) and

@@ -103,6 +103,11 @@ pub use local_forge::run_local_ci_watch;
 pub async fn shutdown_mcp(st: &AppState) {
     st.mcp.shutdown().await;
 }
+/// A session's pdt-mcp bearer token, for tests that make a terminal agent's tool calls themselves.
+#[doc(hidden)]
+pub fn mcp_token(st: &AppState, session_id: &str) -> std::io::Result<String> {
+    mcp::token(st, session_id)
+}
 pub use host::HostEnv;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use integrations::{
