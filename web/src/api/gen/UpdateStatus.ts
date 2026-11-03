@@ -15,4 +15,13 @@ currentNightly: boolean,
 /**
  * The host's update channel (PDT-210).
  */
-channel: UpdateChannel, state: UpdateState, disabledReason: string | null, policy: UpdatePolicy, latest: ReleaseSummary | null, lastCheckedAt: number | null, error: string | null, token: TokenState, lastResult: UpdateResult | null, releaseRepo: ReleaseRepo, };
+channel: UpdateChannel, state: UpdateState, disabledReason: string | null, policy: UpdatePolicy, latest: ReleaseSummary | null, lastCheckedAt: number | null, error: string | null, 
+/**
+ * Something the last check wants the user to know that did not stop it: the saved token was rejected and
+ * ignored, or GitHub's rate limit was used up (PDT-484).
+ */
+notice: string | null, 
+/**
+ * When the rate limit resets: the hourly check waits for it (Unix ms).
+ */
+retryAt: number | null, token: TokenState, lastResult: UpdateResult | null, releaseRepo: ReleaseRepo, };

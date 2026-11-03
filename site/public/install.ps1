@@ -7,7 +7,7 @@
 #   $env:PDT_CHANNEL = 'nightly'   # the newest nightly build instead of the newest stable release
 #   $env:PDT_VERSION = '0.3.0'     # an exact release
 #   $env:PDT_FORCE = '1'           # install again over an existing install
-#   $env:GITHUB_TOKEN = '...'      # a GitHub token, for when the releases need one (a private repository)
+#   $env:GITHUB_TOKEN = '...'      # optional: only for a private fork, or when GitHub's rate limit is used up
 #
 # or, run as a script block, parameters: & ([scriptblock]::Create((irm https://pdt.dev/install.ps1))) -Channel nightly
 #
@@ -81,7 +81,7 @@ function Install-Pdt {
     $noReleases = if ($env:GITHUB_TOKEN) {
         "could not read $product's releases from GitHub with GITHUB_TOKEN: check that it can read $repo."
     } else {
-        "could not read $product's releases from GitHub. If the repository is private, set `$env:GITHUB_TOKEN to a token that can read $repo and run this again."
+        "could not read $product's releases from GitHub. Try again later; if GitHub's rate limit is used up or $repo is a private fork, set `$env:GITHUB_TOKEN to a token that can read it and run this again."
     }
 
     Write-Host 'Finding the release...'

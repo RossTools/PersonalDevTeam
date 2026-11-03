@@ -65,7 +65,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-forge` | The `Forge` trait (change requests, CI, merges, reviews, issues, with declared capabilities), `CiProvider`, the login store, the forges' shared HTTP `transport` (reqwest, `Offline`, recorded answers), their shared REST client (`rest.rs`: `RestClient<F: Flavor>`, rate limit, token renewal, refused logins, paging, ETags) and OAuth device flow and refresh (`oauth.rs`), and `FakeForge` (`testing.rs`). |
 | `pdt-github` | The GitHub forge over GitHub's REST and GraphQL APIs (nothing runs `gh`): pull requests, Actions, merges, issues, the OAuth device-flow login, rate limits. The `Forge` methods are in `forge.rs`. |
 | `pdt-tailscale` | The `tailscale` CLI (`serve`, `status`), and `fake-tailscale` for tests. |
-| `pdt-update` | The GitHub release client: finding a release, verified downloads. |
+| `pdt-update` | The GitHub release client: finding a release, verified downloads. Reads without a token unless one is saved; a rejected token falls back to anonymous, a rate limit is a "try later" (`UpdateStatus.retryAt`). |
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |

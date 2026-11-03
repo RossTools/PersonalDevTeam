@@ -1,5 +1,6 @@
 //! The GitHub REST client for updates (remote-host spec §3.2–3.3; verified fact 6) and bug reports (PDT-153: issues on
-//! the release repository, with the same token). The token goes only to the API host: API redirects are followed on
+//! the release repository, with the same token). Releases are read without a token unless one is given (PDT-484: the
+//! release repository is public; a token is for a private fork or a higher rate limit). A token goes only to the API host: API redirects are followed on
 //! that host alone (a renamed or moved repository, PDT-195), asset redirects to storage by hand, without it (decision
 //! 13). The repository is pinned by its numeric id when it has one, which survives renames and transfers.
 
@@ -100,6 +101,9 @@ pub struct Issue {
 pub enum UpdateError {
     #[error("the update token was rejected (expired or revoked)")]
     Unauthorized,
+    /// GitHub's rate limit is used up (403 or 429): try again at `reset_at` (Unix ms) when GitHub said.
+    #[error("GitHub's rate limit is used up for now")]
+    RateLimited { reset_at: Option<i64> },
     #[error("no release was found, or the token cannot see the release repository")]
     NotFound,
     #[error("could not reach GitHub: {0}")]
@@ -184,19 +188,35 @@ struct ApiMessage {
     message: String,
 }
 
+/// When a rate-limited request may be sent again (Unix ms): `retry-after` (seconds from now, a secondary limit),
+/// else `x-ratelimit-reset` (Unix seconds).
+fn reset_of(h: &reqwest::header::HeaderMap, now_ms: i64) -> Option<i64> {
+    let num = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<i64>().ok());
+    num("retry-after").map(|s| now_ms + s * 1000).or_else(|| num("x-ratelimit-reset").map(|s| s * 1000))
+}
+
 async fn check(res: reqwest::Response) -> Result<reqwest::Response, UpdateError> {
-    match res.status().as_u16() {
-        200..=299 => Ok(res),
-        code @ 300..=399 => Err(UpdateError::Redirected(code)),
-        401 => Err(UpdateError::Unauthorized),
-        404 => Err(UpdateError::NotFound),
-        // Only GitHub's own JSON `message` is kept: a storage host's error body can echo the signed URL.
-        code => {
-            let text = res.text().await.unwrap_or_default();
-            let message = serde_json::from_str::<ApiMessage>(&text).map(|m| m.message).unwrap_or_default();
-            Err(UpdateError::Http(code, message.chars().take(200).collect()))
-        }
+    let code = res.status().as_u16();
+    match code {
+        200..=299 => return Ok(res),
+        300..=399 => return Err(UpdateError::Redirected(code)),
+        401 => return Err(UpdateError::Unauthorized),
+        404 => return Err(UpdateError::NotFound),
+        _ => {}
     }
+    let h = res.headers().clone();
+    // Only GitHub's own JSON `message` is kept: a storage host's error body can echo the signed URL.
+    let text = res.text().await.unwrap_or_default();
+    let message = serde_json::from_str::<ApiMessage>(&text).map(|m| m.message).unwrap_or_default();
+    let lower = message.to_ascii_lowercase();
+    let used_up = h.get("x-ratelimit-remaining").is_some_and(|v| v.as_bytes() == b"0");
+    if matches!(code, 403 | 429) && (used_up || h.contains_key("retry-after") || lower.contains("rate limit")) {
+        return Err(UpdateError::RateLimited { reset_at: reset_of(&h, jiff::Timestamp::now().as_millisecond()) });
+    }
+    if code == 403 && lower.contains("bad credentials") {
+        return Err(UpdateError::Unauthorized);
+    }
+    Err(UpdateError::Http(code, message.chars().take(200).collect()))
 }
 
 /// Where the client finds the repository: its name, its numeric id when known, and where a permanent redirect last
@@ -321,7 +341,7 @@ impl GitHubClient {
         }
     }
 
-    /// Sends an API request with the token, following redirects that stay on the API host (with the token, at most
+    /// Sends an API request (with the token, when there is one), following redirects that stay on the API host (with the token, at most
     /// `MAX_API_HOPS`). A redirect elsewhere, or one more after that, is returned as it is: the token never leaves
     /// the API host. An asset request (`keep_redirect`) follows none: its redirect is the storage link, followed by
     /// hand without the token (a moved repository is reached through its id or the move a check saw).
@@ -330,7 +350,7 @@ impl GitHubClient {
         &self,
         method: reqwest::Method,
         url: &str,
-        token: &str,
+        token: Option<&str>,
         accept: &str,
         body: Option<&serde_json::Value>,
         timeout: Option<Duration>,
@@ -345,9 +365,11 @@ impl GitHubClient {
             let mut b = self
                 .http
                 .request(method.clone(), url.clone())
-                .bearer_auth(token)
                 .header(ACCEPT, accept)
                 .header("X-GitHub-Api-Version", "2022-11-28");
+            if let Some(t) = token {
+                b = b.bearer_auth(t);
+            }
             if let Some(t) = timeout {
                 b = b.timeout(t);
             }
@@ -382,7 +404,7 @@ impl GitHubClient {
         &self,
         method: reqwest::Method,
         tail: &str,
-        token: &str,
+        token: Option<&str>,
         accept: &str,
         body: Option<&serde_json::Value>,
         timeout: Option<Duration>,
@@ -424,7 +446,7 @@ impl GitHubClient {
             .repo_send(
                 reqwest::Method::POST,
                 "issues",
-                token,
+                Some(token),
                 "application/vnd.github+json",
                 Some(&json),
                 Some(Duration::from_secs(30)),
@@ -435,11 +457,17 @@ impl GitHubClient {
         serde_json::from_str(&text).map_err(|e| UpdateError::Http(200, format!("an answer that is not an issue: {e}")))
     }
 
-    async fn get(&self, tail: &str, token: &str, timeout: Option<Duration>) -> Result<reqwest::Response, UpdateError> {
+    async fn get(
+        &self,
+        tail: &str,
+        token: Option<&str>,
+        timeout: Option<Duration>,
+    ) -> Result<reqwest::Response, UpdateError> {
         self.repo_send(reqwest::Method::GET, tail, token, "application/vnd.github+json", None, timeout, false).await
     }
 
-    pub async fn latest(&self, token: &str) -> Result<Latest, UpdateError> {
+    /// `token`: None reads the releases anonymously (and so does every method below).
+    pub async fn latest(&self, token: Option<&str>) -> Result<Latest, UpdateError> {
         let res = self.get("releases/latest", token, None).await?;
         let token_expires_at = expiry_of(&res);
         let text = res.text().await.map_err(net)?;
@@ -456,7 +484,7 @@ impl GitHubClient {
     /// newest by SemVer among the full releases and the nightly pre-releases (`vX.Y.Z-nightly.YYYYMMDD`, and the
     /// older `vX.Y.Z-exp.N`) on the first page of releases (GitHub lists them newest first; the release workflow
     /// keeps 14 nightlies), so a stable `X.Y.Z` wins over its own nightlies.
-    pub async fn newest(&self, token: &str, channel: UpdateChannel) -> Result<Latest, UpdateError> {
+    pub async fn newest(&self, token: Option<&str>, channel: UpdateChannel) -> Result<Latest, UpdateError> {
         if channel == UpdateChannel::Stable {
             return self.latest(token).await;
         }
@@ -480,7 +508,7 @@ impl GitHubClient {
     /// first, so the pages stop at the first one with a release no newer than `after` (10 pages at most).
     pub async fn releases_between(
         &self,
-        token: &str,
+        token: Option<&str>,
         after: &Version,
         upto: &Version,
     ) -> Result<Vec<Release>, UpdateError> {
@@ -511,7 +539,7 @@ impl GitHubClient {
 
     /// The commits after `base` up to `head` (tags or commits), newest first (PDT-169). GitHub sends the oldest 250
     /// of a longer range; `total` says how many there are.
-    pub async fn compare(&self, token: &str, base: &str, head: &str) -> Result<Changes, UpdateError> {
+    pub async fn compare(&self, token: Option<&str>, base: &str, head: &str) -> Result<Changes, UpdateError> {
         let res = self.get(&format!("compare/{base}...{head}"), token, Some(Duration::from_secs(30))).await?;
         let text = res.text().await.map_err(net)?;
         let c: CompareJson = serde_json::from_str(&text)
@@ -522,11 +550,17 @@ impl GitHubClient {
 
     /// Streams an asset to `dest`, refusing more than its announced size. The API answers 200 or a redirect (fact 6);
     /// redirects off the API host are followed without the token. On failure `dest` is removed.
-    pub async fn download(&self, token: &str, asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
+    pub async fn download(&self, token: Option<&str>, asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
         self.download_capped(token, asset, dest, asset.size).await
     }
 
-    async fn download_capped(&self, token: &str, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
+    async fn download_capped(
+        &self,
+        token: Option<&str>,
+        asset: &Asset,
+        dest: &Path,
+        max: u64,
+    ) -> Result<(), UpdateError> {
         let result = self.stream_to(token, asset, dest, max).await;
         if result.is_err() {
             let _ = tokio::fs::remove_file(dest).await;
@@ -534,7 +568,7 @@ impl GitHubClient {
         result
     }
 
-    async fn stream_to(&self, token: &str, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
+    async fn stream_to(&self, token: Option<&str>, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
         let tail = format!("releases/assets/{}", asset.id);
         let mut res =
             self.repo_send(reqwest::Method::GET, &tail, token, "application/octet-stream", None, None, true).await?;
@@ -607,7 +641,7 @@ async fn sha256_of(path: &Path) -> Result<String, UpdateError> {
 /// SHA256SUMS is reused instead of downloaded again.
 pub async fn fetch_verified(
     client: &GitHubClient,
-    token: &str,
+    token: Option<&str>,
     release: &Release,
     os: HostOs,
     dir: &Path,

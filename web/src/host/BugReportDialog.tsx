@@ -104,7 +104,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
             action={p.route === 'off' || (p.route === 'github' && !p.tokenPresent) ? <Button size="sm" onClick={onOpenSettings}>Host settings</Button> : undefined}
           >
             {destination(p)}
-            {p.route === 'github' && !p.tokenPresent && ' This host has no update token yet: add one in Host settings first.'}
+            {p.route === 'github' && !p.tokenPresent && ' This host has no GitHub token yet: add one in Host settings, under Updates › Advanced.'}
           </Alert>
         )}
         <Field label="Title">

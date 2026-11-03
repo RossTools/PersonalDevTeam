@@ -154,6 +154,12 @@ pub struct UpdateStatus {
     #[ts(type = "number | null")]
     pub last_checked_at: Option<i64>,
     pub error: Option<String>,
+    /// Something the last check wants the user to know that did not stop it: the saved token was rejected and
+    /// ignored, or GitHub's rate limit was used up (PDT-484).
+    pub notice: Option<String>,
+    /// When the rate limit resets: the hourly check waits for it (Unix ms).
+    #[ts(type = "number | null")]
+    pub retry_at: Option<i64>,
     pub token: TokenState,
     pub last_result: Option<UpdateResult>,
     pub release_repo: ReleaseRepo,
@@ -179,10 +185,10 @@ pub enum CheckResult {
 pub enum CannotCheckReason {
     /// Updates are off on this pdtd (`disabled_reason`).
     Disabled,
-    /// No update token is saved.
-    NoToken,
-    /// GitHub rejected the saved token (expired or revoked).
+    /// GitHub rejected the saved token (expired or revoked), and the check without it failed too.
     TokenRejected,
+    /// GitHub's rate limit is used up: PDT tries again once it resets (`retryAt`).
+    RateLimited,
     /// The keychain could not be read.
     Keychain,
     /// GitHub could not be reached.
@@ -267,6 +273,8 @@ impl UpdateService {
                 latest: None,
                 last_checked_at: None,
                 error: None,
+                notice: None,
+                retry_at: None,
                 token: TokenState::Missing,
                 last_result: None,
                 release_repo: ReleaseRepo { repo: repo.to_string(), id: None, moved_to: None, overridden_by: None },
@@ -405,8 +413,37 @@ pub(crate) async fn refresh_settings(st: &AppState) -> UpdatePolicy {
     p
 }
 
-/// Asks GitHub for the latest release (only with a token). Never fails: problems land in `error` / `token`, and the
-/// result says what the check found. Runs in its own task, so a dropped request cannot leave `checking` behind.
+/// Says the saved token was rejected and the check went on without it.
+pub const TOKEN_IGNORED: &str = "the saved GitHub token was rejected and ignored: replace or remove it";
+/// Says the check found GitHub's rate limit used up.
+pub const RATE_LIMITED: &str = "GitHub's limit on update checks is used up for now; PDT checks again once it resets";
+
+/// The token to send: none when there is none, or when GitHub already rejected it (until a new one is saved).
+fn usable_token(svc: &UpdateService, tok: Option<String>) -> Option<String> {
+    tok.filter(|_| svc.snapshot().token != TokenState::Expired)
+}
+
+/// Asks GitHub for the newest release, with the saved token when there is one; a rejected token is dropped and the
+/// question asked again without it (PDT-484). Returns the answer, the token the later calls use, and whether the
+/// saved one was rejected.
+async fn newest_with_fallback(
+    svc: &UpdateService,
+    tok: Option<String>,
+    channel: UpdateChannel,
+) -> (Result<pdt_update::Latest, UpdateError>, Option<String>, bool) {
+    let first = svc.client.newest(tok.as_deref(), channel).await;
+    match first {
+        Err(UpdateError::Unauthorized) if tok.is_some() => {
+            tracing::warn!("GitHub rejected the saved update token; checking without it");
+            (svc.client.newest(None, channel).await, None, true)
+        }
+        r => (r, tok, false),
+    }
+}
+
+/// Asks GitHub for the latest release (without a token unless one is saved). Never fails: problems land in `error` /
+/// `token`, and the result says what the check found. Runs in its own task, so a dropped request cannot leave
+/// `checking` behind.
 pub(crate) async fn check(st: &AppState) -> (UpdateStatus, CheckResult) {
     let task = tokio::spawn({
         let st = st.clone();
@@ -426,23 +463,14 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
         let why = s.disabled_reason.clone().unwrap_or_else(|| "updates are off on this host".into());
         return (s, cannot(CannotCheckReason::Disabled, why));
     }
-    let tok = match read_token(st).await {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            let s = svc.edit(|s| {
-                s.token = TokenState::Missing;
-                if !in_progress(s.state) {
-                    s.state = UpdateState::Idle;
-                    s.error = None;
-                }
-            });
-            return (s, cannot(CannotCheckReason::NoToken, "no GitHub token is saved, so PDT can't read its releases"));
-        }
+    let saved = match read_token(st).await {
+        Ok(t) => t,
         Err(e) => {
             let msg = e.message().to_string();
             return (svc.edit(|s| s.error = Some(msg.clone())), cannot(CannotCheckReason::Keychain, msg));
         }
     };
+    let had_token = saved.is_some();
     let Some(current) = parse_version(&svc.current) else {
         let msg = format!("this build's version {:?} is not X.Y.Z, so no update is offered", svc.current);
         let s = svc.edit(|s| {
@@ -465,10 +493,14 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
     }
     // The channel the settings named when this check started (refresh_settings above).
     let channel = claimed.channel;
-    let result = svc.client.newest(&tok, channel).await;
+    // A token GitHub rejected before is not sent again; checking with it would only fail first.
+    let already_rejected = had_token && svc.snapshot().token == TokenState::Expired;
+    let (result, tok, rejected) = newest_with_fallback(svc, usable_token(svc, saved), channel).await;
+    let rejected = rejected || already_rejected;
+    let tok = tok.as_deref();
     let (changes, releases) = match &result {
         Ok(l) if l.release.version.is_newer_than(&current) => {
-            (release_changes(svc, &tok, &l.release).await, releases_since(svc, &tok, &current, &l.release).await)
+            (release_changes(svc, tok, &l.release).await, releases_since(svc, tok, &current, &l.release).await)
         }
         _ => (None, None),
     };
@@ -493,9 +525,16 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
         s.release_repo.moved_to = svc.client.moved_to();
         // An install that started while GitHub was answering keeps its state and release.
         let busy = in_progress(s.state);
+        s.retry_at = None;
+        s.notice = rejected.then(|| TOKEN_IGNORED.to_string());
+        if rejected {
+            s.token = TokenState::Expired;
+        }
         let found = match result {
             Ok(l) => {
-                s.token = token_state(true, l.token_expires_at, false, now);
+                if !rejected {
+                    s.token = token_state(had_token, l.token_expires_at, false, now);
+                }
                 if !busy {
                     set_found(&mut s, svc, &l.release, &current, changes, releases);
                 }
@@ -505,6 +544,16 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
                 } else {
                     CheckResult::UpToDate { version: current.to_string() }
                 }
+            }
+            // A soft "try later" (PDT-484): not an error, and the hourly check waits for the reset.
+            Err(UpdateError::RateLimited { reset_at }) => {
+                s.retry_at = reset_at;
+                s.notice = Some(RATE_LIMITED.to_string());
+                s.error = None;
+                if !busy {
+                    s.state = resting(&s);
+                }
+                cannot(CannotCheckReason::RateLimited, RATE_LIMITED)
             }
             Err(e) => {
                 let reason = match e {
@@ -642,7 +691,7 @@ async fn host_channel(st: &AppState) -> UpdateChannel {
 
 /// The commits from the installed version to `release`, from the cache when the pair was compared before. None when
 /// there is nothing to compare from or GitHub fails (the release's notes stand in).
-async fn release_changes(svc: &UpdateService, tok: &str, release: &Release) -> Option<ReleaseChanges> {
+async fn release_changes(svc: &UpdateService, tok: Option<&str>, release: &Release) -> Option<ReleaseChanges> {
     let base = compare_base(&svc.current)?;
     if let Some((b, h, c)) = &*svc.changes.lock().unwrap_or_else(|e| e.into_inner())
         && (b.as_str(), h.as_str()) == (base.as_str(), release.tag.as_str())
@@ -666,7 +715,7 @@ async fn release_changes(svc: &UpdateService, tok: &str, release: &Release) -> O
 /// listed before. None when GitHub fails (the commits, or the release's own notes, stand in).
 async fn releases_since(
     svc: &UpdateService,
-    tok: &str,
+    tok: Option<&str>,
     current: &Version,
     release: &Release,
 ) -> Option<Vec<ReleaseNotes>> {
@@ -862,7 +911,7 @@ pub(crate) async fn install(st: &AppState, force: bool, automatic: bool) -> Resu
             return Err(host_busy(&busy));
         }
     }
-    let tok = read_token(st).await?.ok_or_else(|| ApiError::conflict(codes::NO_TOKEN, "no update token is stored"))?;
+    let tok = usable_token(svc, read_token(st).await?);
     let started = svc.edit(|s| {
         if s.state != UpdateState::Installing {
             s.state = UpdateState::Downloading;
@@ -904,7 +953,7 @@ impl Drop for ResetOnDrop<'_> {
 async fn download_and_hand_off(
     st: &AppState,
     release: Release,
-    tok: String,
+    tok: Option<String>,
     force: bool,
     automatic: bool,
 ) -> Result<UpdateStatus, ApiError> {
@@ -919,11 +968,23 @@ async fn download_and_hand_off(
     };
     let version = release.version.to_string();
     let downloads = downloads_dir(&st.data_dir);
-    let asset =
-        fetch_verified(&svc.client, &tok, &release, this_host(), &downloads.join(&version)).await.map_err(|e| {
-            tracing::warn!(error = %e, "the update could not be downloaded");
-            fail(StatusCode::BAD_GATEWAY, codes::UPDATE_FAILED, crate::error::short_text(&e.to_string()))
-        })?;
+    let dir = downloads.join(&version);
+    let fetched = match fetch_verified(&svc.client, tok.as_deref(), &release, this_host(), &dir).await {
+        // A rejected token is dropped and the download tried again without it (PDT-484).
+        Err(UpdateError::Unauthorized) if tok.is_some() => {
+            tracing::warn!("GitHub rejected the saved update token; downloading without it");
+            svc.edit(|s| {
+                s.token = TokenState::Expired;
+                s.notice = Some(TOKEN_IGNORED.to_string());
+            });
+            fetch_verified(&svc.client, None, &release, this_host(), &dir).await
+        }
+        r => r,
+    };
+    let asset = fetched.map_err(|e| {
+        tracing::warn!(error = %e, "the update could not be downloaded");
+        fail(StatusCode::BAD_GATEWAY, codes::UPDATE_FAILED, crate::error::short_text(&e.to_string()))
+    })?;
     // The download can take minutes: ask again, keeping the verified file for the next attempt.
     if !force {
         let busy = busy_reasons(st).await;
@@ -985,13 +1046,18 @@ pub async fn run_update_loop(st: AppState) {
             return;
         }
         let interval = check_interval(&st).await;
-        let due = last_check.is_none_or(|t| t.elapsed() >= interval);
+        // After a rate limit the next check waits for its reset.
+        let limited = st.update.snapshot().retry_at.map(|t| t - now_ms()).filter(|ms| *ms > 0);
+        let due = last_check.is_none_or(|t| t.elapsed() >= interval) && limited.is_none();
         let policy = refresh_settings(&st).await;
         if due && policy != UpdatePolicy::Manual {
             last_check = Some(tokio::time::Instant::now());
             check(&st).await;
         }
-        let wait = last_check.map_or(interval, |t| interval.saturating_sub(t.elapsed()));
+        let wait = match st.update.snapshot().retry_at.map(|t| t - now_ms()).filter(|ms| *ms > 0) {
+            Some(ms) => Duration::from_millis(ms.unsigned_abs()),
+            None => last_check.map_or(interval, |t| interval.saturating_sub(t.elapsed())),
+        };
         tokio::time::sleep(wait.min(st.update.settings_poll)).await;
     }
 }
@@ -1072,7 +1138,7 @@ pub(crate) async fn put_token(
     if tok.is_empty() {
         return Err(ApiError::bad_request(codes::INVALID_TOKEN, "the token is empty"));
     }
-    let expires_at = match st.update.client.latest(&tok).await {
+    let expires_at = match st.update.client.latest(Some(&tok)).await {
         Err(UpdateError::Unauthorized) => {
             return Err(ApiError::bad_request(codes::INVALID_TOKEN, "GitHub rejected this token"));
         }
@@ -1080,20 +1146,23 @@ pub(crate) async fn put_token(
         Err(_) => None,
     };
     write_token(&st, Some(tok)).await?;
-    st.update.edit(|s| s.token = token_state(true, expires_at, false, now_ms()));
+    st.update.edit(|s| {
+        s.token = token_state(true, expires_at, false, now_ms());
+        s.notice = None;
+    });
     Ok(Json(link_tickets(&st, check(&st).await.0).await))
 }
 
 pub(crate) async fn delete_token(State(st): State<AppState>) -> Result<StatusCode, ApiError> {
     write_token(&st, None).await?;
     let svc = &st.update;
-    let mut s = svc.status.lock().unwrap_or_else(|e| e.into_inner());
-    s.token = TokenState::Missing;
-    if !in_progress(s.state) {
-        *svc.release.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        s.latest = None;
-        s.state = if svc.enabled { UpdateState::Idle } else { UpdateState::Disabled };
-    }
+    // Updates go on without it: what a check found stays on offer.
+    svc.edit(|s| {
+        s.token = TokenState::Missing;
+        if s.notice.as_deref() == Some(TOKEN_IGNORED) {
+            s.notice = None;
+        }
+    });
     Ok(StatusCode::NO_CONTENT)
 }
 
