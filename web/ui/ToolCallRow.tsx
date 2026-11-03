@@ -8,7 +8,7 @@ export type ToolCallStatus = 'running' | 'done' | 'failed' | 'declined';
 const STATUS_LABEL: Record<ToolCallStatus, string> = { running: 'Running', done: 'Done', failed: 'Failed', declined: 'Declined' };
 
 /** The status icon of a tool call: a spinner, ✓, ✗ (the only coloured one) or a "declined" mark, each named for screen readers. */
-export function ToolStatusIcon({ status, className }: { status: ToolCallStatus; className?: string }) {
+function ToolStatusIcon({ status, className }: { status: ToolCallStatus; className?: string }) {
   if (status === 'running') return <Spinner label={STATUS_LABEL.running} className={cn('size-3.5 text-muted-foreground', className)} />;
   const Icon = status === 'done' ? Check : status === 'failed' ? X : Ban;
   return (

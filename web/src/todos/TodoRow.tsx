@@ -15,7 +15,7 @@ import { useMediaQuery } from '../common/useMediaQuery';
 import { DuePicker, dayText } from './DuePicker';
 import { bodyPreview, formatDay, repeatText, type DueGroupId } from './model';
 
-export const TODO_DRAG_KIND = 'todo';
+const TODO_DRAG_KIND = 'todo';
 
 /** The meta line's due part, by the row's group: the day where the heading doesn't say it, and the time. */
 function dueMeta(t: Todo, group: DueGroupId | null, now: Date): { text: string; tone: 'overdue' | 'today' | null; time: boolean } | null {

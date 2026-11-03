@@ -12,11 +12,11 @@ import { STAGE_LABEL } from './StageStepper';
 import { agentLine } from './ticketAgent';
 
 /** A key or number in a pill: mono, a quiet fill and edge, the accent on hover. */
-export const PILL =
+const PILL =
   'inline-flex items-center rounded-md border border-border bg-muted px-1 font-mono text-meta leading-[1.45] text-foreground no-underline outline-none align-baseline hover:border-primary hover:text-link focus-visible:ring-2 focus-visible:ring-ring';
 
 /** The ticket a hover card shows, by key: fetched on the first hover, then kept a while (React Query). */
-export function useTicketCard(ticketKey: string, enabled: boolean) {
+function useTicketCard(ticketKey: string, enabled: boolean) {
   return useQuery({
     queryKey: ticketKeys.card(ticketKey),
     queryFn: () => api.getTicket(ticketKey),
@@ -27,7 +27,7 @@ export function useTicketCard(ticketKey: string, enabled: boolean) {
 }
 
 /** What a ticket's hover card says: title, stage, priority, labels, who has it, the branch and the PR with its CI. */
-export function TicketCard({ ticket: t }: { ticket: Ticket }) {
+function TicketCard({ ticket: t }: { ticket: Ticket }) {
   const agent = t.agent ? agentLine(t.agent) : null;
   const pr = t.attempt?.pr ?? null;
   const ci = pr?.ci ?? t.attempt?.ci ?? null;

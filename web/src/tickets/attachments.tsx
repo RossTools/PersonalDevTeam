@@ -12,7 +12,7 @@ import { OverviewSection } from './TicketParts';
 /** What the file pickers offer: the images and text files a ticket takes (pdtd decides by the bytes). */
 export const ATTACH_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,text/*,.txt,.log,.md,.json,.csv,.yaml,.yml,.toml';
 
-export const attachmentKeys = { of: (ticketId: string) => ['ticketAttachments', ticketId] as const };
+const attachmentKeys = { of: (ticketId: string) => ['ticketAttachments', ticketId] as const };
 
 export function useTicketAttachments(ticketId: string) {
   return useQuery({

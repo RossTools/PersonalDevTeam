@@ -20,11 +20,11 @@ import { TodoView } from './TodoView';
 import { useTodoActions, useTodos } from './useTodos';
 import { LoadError } from '../common/QueryStatus';
 
-export const TODO_FILTER_KEY = 'pdt.todos.filter';
+const TODO_FILTER_KEY = 'pdt.todos.filter';
 /** How long a todo opened from a notification keeps its ring. */
 const HIGHLIGHT_MS = 2500;
 /** How long a ticked todo stays in its place before it moves to Completed. */
-export const COMPLETE_LINGER_MS = 800;
+const COMPLETE_LINGER_MS = 800;
 
 function readFilter(): TodoFilter {
   try {
@@ -374,7 +374,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
 type Every = RepeatRule['every'];
 
 /** The Repeat… editor: a rule, what it counts from, and a first due date for a todo without one. */
-export function RepeatDialog({ title, initial, dueOn: givenDueOn, now, onSave, onClose }: {
+function RepeatDialog({ title, initial, dueOn: givenDueOn, now, onSave, onClose }: {
   title: string;
   initial: Recurrence;
   /** The todo's due date; without one the editor asks for it. */

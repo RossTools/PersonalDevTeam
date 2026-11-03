@@ -17,7 +17,7 @@ import { POLL } from '../common/poll';
 import { LoadError } from '../common/QueryStatus';
 
 // Under the connections' key, so saving or deleting a connection anywhere reads the accounts again (PDT-464).
-export const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
+const signInAccountsKey = (url: string) => [...connectionsKey, 'sign-in', url] as const;
 
 /** The accounts at `url` and their sign-in state; read again quickly while a sign-in is under way. */
 export function useSignInAccounts(url: string | null, waiting = false) {

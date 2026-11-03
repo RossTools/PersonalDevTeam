@@ -21,7 +21,7 @@ export function useWatches(of: WatchOf) {
 }
 
 /** The user's own watch among a target's (a PM's has a session). */
-export function ownWatch(watches: WatchInfo[] | undefined): WatchInfo | null {
+function ownWatch(watches: WatchInfo[] | undefined): WatchInfo | null {
   return watches?.find((w) => w.sessionId === null) ?? null;
 }
 

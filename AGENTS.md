@@ -86,7 +86,7 @@ plus at most one line in a central list (docs/dev/architecture.md "Adding to the
 - Integration tests: one binary per crate, `tests/main.rs` with a `mod` per `tests/*.rs` file (add new files there;
   `--test integration <file>::` runs one). Build output per worktree, sccache, and `scripts/clean-targets.sh` (removes
   build output cargo hasn't written for 7 days across worktrees): docs/dev/testing.md "Build output".
-- Web: `pnpm --dir web dev | test | typecheck | build`. `cargo test -p pdt-desktop` needs `pnpm --dir web build` first.
+- Web: `pnpm --dir web dev | test | typecheck | knip | build` (knip: unused exports, files and dependencies). `cargo test -p pdt-desktop` needs `pnpm --dir web build` first.
 - Component gallery: `pnpm --dir web dev`, then `/gallery.html`. PR screenshots for web/ui: `node web/scripts/ui-screenshots.mjs <out dir>`
   (needs `pnpm --dir web exec playwright-core install chromium` once).
 - Dev daemon (port 7421, data dir pdt-dev): `PDT_PROFILE=dev PDT_SEED=demo PDT_WEB_DIR=$PWD/web/dist cargo run -p pdtd`

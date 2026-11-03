@@ -22,7 +22,7 @@ import { POLL } from '../common/poll';
 // The document's editors and the Markdown libraries load when a document is first shown beside a conversation.
 const DocumentBody = lazy(() => import('./DocumentBody').then((m) => ({ default: m.DocumentBody })));
 
-export const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
+const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
 const STEP = 16;
 const DRAG_KIND = 'beside';
 
@@ -32,7 +32,7 @@ export const besideKey = (sessionId: string) => ['documents', 'beside', sessionI
  * The documents open beside a conversation, polled (an agent may open one at any time). Off (`enabled` false) for a
  * terminal: only a conversation has documents beside it.
  */
-export function useDocumentsBeside(sessionId: string, enabled = true) {
+function useDocumentsBeside(sessionId: string, enabled = true) {
   return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL.live, enabled });
 }
 

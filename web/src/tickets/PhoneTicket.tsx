@@ -5,7 +5,6 @@ import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
 import { Alert, Button, Disclosure, IconButton, Sheet, TabPanel, Textarea, useConfirm, type MenuEntry } from '@ui';
-import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot } from '../common/AgentState';
@@ -56,7 +55,7 @@ export function phoneTicketActions(t: Ticket, acceptOpen: boolean): PhoneTicketA
 }
 
 /** The ticket's Accept gate in the Inbox (under Ready to accept), if one waits. */
-export function acceptItem(items: InboxItem[], ticketId: string): InboxItem | null {
+function acceptItem(items: InboxItem[], ticketId: string): InboxItem | null {
   return items.find((i) => i.ticketId === ticketId && i.group === 'accept' && i.choices.some((c) => c.primary)) ?? null;
 }
 

@@ -17,8 +17,10 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   "Slow requests" step (and the job summary) and upload it as the `slow-requests-<os>-<partition>` artifact.
 - **Generated types:** `cargo test` writes the TypeScript types (ts-rs) into `web/src/api/gen`. Commit them with the
   Rust change, or CI's diff check fails.
-- **Web:** `pnpm --dir web test`, `typecheck`, `build`. `web/src/lint.test.ts` enforces the design-system rules
-  (`web/ui/README.md`). Helpers: `stubApi` and `renderWithQuery` in `web/src/test-utils.tsx`; a test that touches the
+- **Web:** `pnpm --dir web test`, `typecheck`, `knip`, `build`. `web/src/lint.test.ts` enforces the design-system rules
+  (`web/ui/README.md`); `web/src/gallery/coverage.test.ts` that the gallery renders every `@ui` component. `knip`
+  (configured in `web/knip.json`) fails on an export nothing else imports, an unused file or an unused dependency:
+  drop the `export` from a name only its own file uses. It skips `web/ui/primitives` (shadcn's sources). Helpers: `stubApi` and `renderWithQuery` in `web/src/test-utils.tsx`; a test that touches the
   file system needs `// @vitest-environment node`.
 - **Site:** `pnpm --filter site test` (link rewriting, and the user docs' check for internal references).
 - **Desktop:** `cargo test -p pdt-desktop` needs `pnpm --dir web build` first; plain `cargo test` skips that crate.

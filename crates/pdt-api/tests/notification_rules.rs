@@ -27,29 +27,15 @@ fn kind<'a>(v: &'a Value, k: &str) -> &'a Value {
 }
 
 fn gate(id: &str) -> InboxItem {
-    InboxItem {
-        id: id.into(),
-        kind: InboxKind::Gate,
-        group: InboxGroup::Gate,
-        status: InboxStatus::Open,
-        project_id: None,
-        ticket_id: None,
-        ticket_key: None,
-        ticket_title: None,
-        attempt_id: None,
-        session_id: None,
-        run_id: None,
-        step_id: None,
-        persona_id: None,
-        persona_name: None,
-        change_request: None,
-        title: format!("Go on with {id}?"),
-        body: json!({}),
-        choices: vec![InboxChoice::new("yes", "Yes", true)],
-        resolution: Value::Null,
-        created_at: jiff::Timestamp::now().as_millisecond(),
-        resolved_at: None,
-    }
+    InboxItem::new(
+        id,
+        InboxKind::Gate,
+        InboxGroup::Gate,
+        format!("Go on with {id}?"),
+        json!({}),
+        jiff::Timestamp::now().as_millisecond(),
+    )
+    .choices(vec![InboxChoice::new("yes", "Yes", true)])
 }
 
 /// The live rows, by dedupe key.

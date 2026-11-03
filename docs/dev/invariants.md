@@ -164,7 +164,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   project's start lock (`AppState::ticket_start_locks`), which covers only the checks, the worktree and the rows.
 - **Secrets are filled in only when a node runs**, only from the node's own config, never from text that arrived as
   data. Stored step inputs, outputs and errors are redacted. Errors from outbound HTTP go through `send_error`, which
-  drops the URL (it can carry a secret).
+  drops the URL (it can carry a secret). An integration calls its service's JSON API through pdt-api
+  `sdk::http::call_json_with` (a timeout, an answer cap, its auth, the service's error message, 404 as none), not its
+  own send-and-check.
+- **Every HTTP client names itself with `brand::user_agent`** (the build's version) and connects within pdt-core
+  `outbound::CONNECT_TIMEOUT`; downloads end within `outbound::DOWNLOAD_TIMEOUT`. Discord's bot calls keep the
+  User-Agent Discord requires.
 - **Outside text never reaches a shell as code.** A `command` step's `script` refuses `{{…}}` references (only a
   template's `params` may stay); they go through `env`. `check` refuses them on save, and `NodeKind::check_at_run`
   (pdt-api `workflow/catalog.rs`, called by the engine before it resolves a step's input) stops a workflow saved before

@@ -135,7 +135,7 @@ const SORTS: Option<TicketSort>[] = [
 // Rank moves (optimistic)
 
 /** The pages with `ids` moved directly before or after `target`, page sizes kept (so the cursor pages still line up). */
-export function movedPages(data: InfiniteData<TicketPage>, ids: string[], target: string, place: 'before' | 'after'): InfiniteData<TicketPage> {
+function movedPages(data: InfiniteData<TicketPage>, ids: string[], target: string, place: 'before' | 'after'): InfiniteData<TicketPage> {
   const all = data.pages.flatMap((p) => p.items);
   const moving = ids.map((id) => all.find((t) => t.id === id)).filter((t): t is TicketSummary => !!t);
   const rest = all.filter((t) => !ids.includes(t.id));

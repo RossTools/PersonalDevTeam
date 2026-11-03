@@ -262,7 +262,7 @@ export function QuickAdd({ now, projects, projectId, focusSeq, onAdd, onCustomRe
 }
 
 /** The kinds whose dismissed phrases are all still in the text (once one is edited away, its kind matches again). */
-export function ignored(dismissed: Partial<Record<ParseKind, string[]>>, text: string): ReadonlySet<ParseKind> {
+function ignored(dismissed: Partial<Record<ParseKind, string[]>>, text: string): ReadonlySet<ParseKind> {
   const lower = text.toLowerCase();
   return new Set((Object.keys(dismissed) as ParseKind[]).filter((k) => dismissed[k]!.every((w) => lower.includes(w))));
 }

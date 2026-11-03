@@ -23,7 +23,7 @@ export const SECTION_OF: Record<InboxGroup, InboxSection> = {
 };
 
 /** The Inbox's sections, most urgent first. */
-export const SECTIONS: { id: InboxSection; title: string }[] = [
+const SECTIONS: { id: InboxSection; title: string }[] = [
   { id: 'question', title: 'Questions' },
   { id: 'approval', title: 'Approvals' },
   { id: 'stuck', title: 'Stuck' },
@@ -128,11 +128,6 @@ export function passesOf(item: InboxItem): Pass[] {
       summary: typeof r.summary === 'string' ? r.summary : null,
     };
   });
-}
-
-/** The item's primary choice (Enter takes it). */
-export function primary(item: InboxItem): string | null {
-  return item.choices.find((c) => c.primary)?.id ?? null;
 }
 
 /** A stalled step whose first message never reached its session: it offers Resume with this message (PDT-144). */
@@ -245,7 +240,7 @@ export function proposalPath(item: InboxItem): string {
 }
 
 /** An Update's id in the Inbox's selection (Needs-you items use their own ids). */
-export const UPDATE = 'update:';
+const UPDATE = 'update:';
 
 export function updateSelection(id: string): string {
   return `${UPDATE}${id}`;

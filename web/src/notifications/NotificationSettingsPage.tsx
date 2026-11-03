@@ -12,7 +12,7 @@ import { desktopNotificationsOn, setDesktopNotifications, showDesktop } from './
 import { useNotificationRules, useNotificationRulesActions } from './queries';
 import { QueryStatus } from '../common/QueryStatus';
 
-export const SHOW_LABEL: Record<Show, string> = {
+const SHOW_LABEL: Record<Show, string> = {
   off: 'Off',
   dot: 'Dot only',
   inbox: 'Inbox',

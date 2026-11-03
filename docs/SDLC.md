@@ -116,7 +116,7 @@ names another (below, "Runners").
 |---|---|---|---|
 | lint (linux) | version sync, fmt, clippy (pdtd also without integration features) | a Rust change | unless docs only |
 | test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | a Rust change | unless docs only |
-| web (linux) | web typecheck and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
+| web (linux) | web typecheck, knip and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
 | build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
 | build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |

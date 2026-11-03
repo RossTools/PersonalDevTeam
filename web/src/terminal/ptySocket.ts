@@ -43,7 +43,7 @@ export interface PtySocketOptions {
 
 const OPEN = 1;
 /** gunzip with the browser's DecompressionStream, or null where there is none (then the replay comes raw). */
-export const browserGunzip: PtySocketOptions['gunzip'] =
+const browserGunzip: PtySocketOptions['gunzip'] =
   typeof DecompressionStream === 'undefined'
     ? null
     : async (bytes) => {

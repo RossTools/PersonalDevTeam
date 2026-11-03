@@ -141,4 +141,6 @@ so a page reads the same everywhere and nothing destructive sits next to somethi
 export const section = { title: 'Buttons', order: 10, render: () => <>…every variant…</> };
 ```
 
-The gallery picks up every file in that folder by itself (`import.meta.glob`).
+The gallery picks up every file in that folder by itself (`import.meta.glob`). `web/src/gallery/coverage.test.ts`
+fails when a component `@ui` exports isn't rendered (`<Name`) in some section, so a new component comes with its
+gallery demo.

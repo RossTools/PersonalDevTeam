@@ -17,10 +17,10 @@ const SEGMENT: Record<PartState, string> = {
 };
 
 /** `2/4`: closed parts of all parts. */
-export const partsCount = (p: Pick<PartsProgress, 'done' | 'total'>) => `${p.done}/${p.total}`;
+const partsCount = (p: Pick<PartsProgress, 'done' | 'total'>) => `${p.done}/${p.total}`;
 
 /** "2 of 4 parts done, 1 in review, 1 in progress": what the stepper shows, for screen readers and tooltips. */
-export function partsSummary(p: PartsProgress): string {
+function partsSummary(p: PartsProgress): string {
   const rest = (
     [
       ['merged', p.merged],

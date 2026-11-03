@@ -5,7 +5,7 @@ import type { DecideChoice } from '../api/gen/DecideChoice';
 import type { DecideRow } from '../api/gen/DecideRow';
 import { PRIORITY_LABEL } from '../common/PriorityIcon';
 
-export const DECISION_LABEL: Record<DecideChoice, string> = {
+const DECISION_LABEL: Record<DecideChoice, string> = {
   accept_todo: 'Accept to Todo',
   accept_backlog: 'Accept to backlog',
   duplicate: 'Duplicate',

@@ -36,7 +36,7 @@ export interface PluginFilter {
 export const NO_FILTER: PluginFilter = { q: '', tab: 'all', category: null };
 
 /** On, whether or not it works yet. */
-export const isOn = (p: Plugin) => p.status === 'on' || p.status === 'needs_setup' || p.status === 'error';
+const isOn = (p: Plugin) => p.status === 'on' || p.status === 'needs_setup' || p.status === 'error';
 
 /** Needs the user: on without a connection, or one failing. */
 export const needsAttention = (p: Plugin) => p.status === 'needs_setup' || p.status === 'error';

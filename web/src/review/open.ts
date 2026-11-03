@@ -1,1 +1,1 @@
-export { OpenChangesContext, useOpenChanges, type OpenChangesOptions } from '../common/open';
+export { OpenChangesContext, useOpenChanges } from '../common/open';

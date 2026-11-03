@@ -17,8 +17,6 @@ import { runAction } from '../common/useAction';
 import { useViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useTopBarActions } from '../shell/PhoneTopBar';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
 import { DryRunDialog } from './DryRunDialog';
 import { EnableDialog, EnableSwitch, useEnable } from './EnableSwitch';
 import { ExportDialog } from './ExportDialog';
@@ -102,7 +100,7 @@ export interface WorkflowPageProps {
   projectInView?: string | null;
 }
 
-export interface WorkflowPageView {
+interface WorkflowPageView {
   /** Unset: the default (Outline on a phone, Graph otherwise). */
   tab?: WorkflowTab;
   runId: string | null;

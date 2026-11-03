@@ -51,9 +51,9 @@ impl Http {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .https_only(true)
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(15 * 60))
-            .user_agent(format!("{}/{}", pdt_core::brand::SLUG, pdt_core::BUILD_VERSION))
+            .connect_timeout(pdt_core::outbound::CONNECT_TIMEOUT)
+            .timeout(pdt_core::outbound::DOWNLOAD_TIMEOUT)
+            .user_agent(pdt_core::brand::user_agent(""))
             .build()
             .unwrap_or_default();
         Http(client)
