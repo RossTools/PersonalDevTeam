@@ -426,7 +426,7 @@ pub(super) async fn append(
     let raw = scrubbed.as_deref().or(raw);
     // The runtime state follows the event as it comes, whether or not it can be stored yet: a message the agent took
     // leaves the queue even while the disk is full (PDT-331). What reads the log waits until it is stored.
-    let (state_changed, then) = apply_event(c, item_id, &event);
+    let (state_changed, then) = apply_event(st, c, item_id, &event);
     let unstored = Unstored {
         ts,
         item_id: item_id.map(String::from),
@@ -446,9 +446,8 @@ pub(super) async fn append(
 /// What an event sets off once it is stored (never when it can't be: its session was removed).
 enum FollowUp {
     /// An agent step's session ended a turn: did it submit an outcome? A PM session's may be due
-    /// its daily update (PDT-167), or end once the user closed it. `expire_held`: PDT's open requests expire with it,
-    /// unless the agent has a message to take next.
-    TurnEnded { expire_held: bool },
+    /// its daily update (PDT-167), or end once the user closed it.
+    TurnEnded,
     /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
     PdtRequest { id: String, tool: String, input: serde_json::Value },
     /// A PM conversation writes a journal checkpoint and carries on (PDT-167).
@@ -461,10 +460,7 @@ impl FollowUp {
     fn spawn(self, st: &AppState, session: &str) {
         let (st, sid) = (st.clone(), session.to_string());
         match self {
-            FollowUp::TurnEnded { expire_held } => tokio::spawn(async move {
-                if expire_held {
-                    super::held::end_session(&st, &sid);
-                }
+            FollowUp::TurnEnded => tokio::spawn(async move {
                 crate::workflow::agent::turn_ended(&st, &sid).await;
                 crate::pm::turn_ended(&st, &sid).await;
             }),
@@ -480,7 +476,7 @@ impl FollowUp {
 }
 
 /// Applies an event to the conversation's runtime state: whether the state viewers see changed, and what it sets off.
-fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Vec<FollowUp>) {
+fn apply_event(st: &AppState, c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Vec<FollowUp>) {
     let mut then = Vec::new();
     let mut s = c.state();
     s.has_history = true;
@@ -502,7 +498,12 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
             // With a message waiting the agent goes straight on to its next turn, and its first call may reach PDT
             // before this end does: PDT's requests then stay open. One the ended turn left expires when the agent
             // drops the call, at the next end with nothing waiting, or when the agent exits (PDT-420).
-            then.push(FollowUp::TurnEnded { expire_held: s.pending.is_empty() });
+            // Expired here, as the end comes and under the state's lock, not once it is stored: a message sent after
+            // it (its call's card opened after it) would otherwise have its card expired by this end (PDT-497).
+            if s.pending.is_empty() {
+                super::held::end_session(st, &c.id);
+            }
+            then.push(FollowUp::TurnEnded);
             true
         }
         AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
