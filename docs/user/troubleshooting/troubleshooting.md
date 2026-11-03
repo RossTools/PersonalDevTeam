@@ -164,8 +164,8 @@ No. Agents, runs and workflows carry on, and the Inbox collects what needs you. 
 
 ### Can anyone else on my tailnet get in?
 
-No. PDT lets in only the Tailscale user set as its **Owner**. Other users, shared and tagged devices, and Tailscale
-Funnel are turned away. See [Remote access and your phone](../your-machine/remote-access.md).
+No. PDT lets in only the Tailscale user set as its **Owner**, and the same goes for the tailnet addresses of the runs
+it starts. Other users, shared and tagged devices, and Tailscale Funnel are turned away. See [Remote access and your phone](../your-machine/remote-access.md).
 
 ### Can I run PDT on a server and use it from my laptop?
 

@@ -54,6 +54,7 @@ mod project_settings;
 mod projects;
 mod pty_ws;
 pub mod remote;
+mod remote_proxy;
 mod review;
 mod routes;
 mod run_manager;

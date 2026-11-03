@@ -126,9 +126,18 @@ fn now_ms() -> i64 {
 }
 
 async fn http_get(port: u16) -> String {
+    http_get_with(port, "").await
+}
+
+/// A GET as `tailscale serve` sends it for the tailnet user `login`.
+async fn http_get_as(port: u16, login: &str) -> String {
+    http_get_with(port, &format!("Tailscale-User-Login: {login}\r\nX-Forwarded-For: 100.64.0.2\r\n")).await
+}
+
+async fn http_get_with(port: u16, headers: &str) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-    s.write_all(b"GET / HTTP/1.0\r\nHost: x\r\n\r\n").await.unwrap();
+    s.write_all(format!("GET / HTTP/1.0\r\nHost: x\r\n{headers}\r\n").as_bytes()).await.unwrap();
     let mut buf = String::new();
     s.read_to_string(&mut buf).await.unwrap();
     buf
@@ -287,6 +296,19 @@ async fn restarting_a_run_counts_toward_the_limit() {
     env.state.ptys.shutdown().await;
 }
 
+/// The proxy port a run's `port` is mapped to on the tailnet: never the run's own port, so the owner check applies.
+fn proxied(calls: &[String], port: u16) -> u16 {
+    let prefix = format!("serve --bg --https={port} http://127.0.0.1:");
+    let target = calls
+        .iter()
+        .rev()
+        .find_map(|c| c.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("{port} not mapped: {calls:?}"));
+    let target: u16 = target.parse().unwrap();
+    assert_ne!(target, port, "mapped straight to the run: {calls:?}");
+    target
+}
+
 fn recording() -> Arc<RecordingTailscale> {
     Arc::new(RecordingTailscale::new(Ok(pdt_tailscale::TsStatus {
         dns_name: "box.t.ts.net".into(),
@@ -312,7 +334,7 @@ async fn remote_runs_get_https_links_and_mappings() {
     let r = wait_state(&env.app, &id, &["ready", "failed"]).await;
     let port = r["port"].as_u64().unwrap();
     assert_eq!(r["url"], format!("https://box.t.ts.net:{port}/"));
-    assert!(fake.calls().contains(&format!("serve --bg --https={port} http://127.0.0.1:{port}")), "{:?}", fake.calls());
+    proxied(&fake.calls(), port as u16);
     call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
     wait_state(&env.app, &id, &["stopped"]).await;
     assert_eq!(fake.calls().last().unwrap(), &format!("serve --https={port} off"));
@@ -377,7 +399,7 @@ async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
     wait_state(&env.app, "left-behind", &["ready"]).await;
     let calls = fake.calls();
     assert!(calls.iter().all(|c| !c.contains(&format!("--https={old}"))), "the old port is left alone: {calls:?}");
-    assert!(calls.contains(&format!("serve --bg --https={new} http://127.0.0.1:{new}")), "{calls:?}");
+    proxied(&calls, new);
     call(&env.app, "POST", "/api/runs/left-behind/stop", None).await;
     wait_state(&env.app, "left-behind", &["stopped"]).await;
     env.state.ptys.shutdown().await;
@@ -395,7 +417,7 @@ async fn exit_with_a_mapped_web_run(env: &mut Env, fake: &Arc<RecordingTailscale
     let id = r["id"].as_str().unwrap().to_string();
     let r = wait_state(&env.app, &id, &["ready"]).await;
     let port = r["port"].as_u64().unwrap() as u16;
-    assert!(fake.calls().contains(&format!("serve --bg --https={port} http://127.0.0.1:{port}")), "{:?}", fake.calls());
+    proxied(&fake.calls(), port as u16);
     env.state.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
     env.state.ptys.shutdown().await;
     (id, port)
@@ -455,8 +477,8 @@ async fn a_mapped_run_that_does_not_come_back_is_unmapped_after_resume() {
     next.ptys.shutdown().await;
 }
 
-/// Turning remote access on maps the running web runs and gives them tailnet links; turning it off removes those
-/// mappings and gives back loopback links.
+/// Turning remote access on maps the running web runs, through a proxy that lets only the owner in, and gives them
+/// tailnet links; turning it off removes those mappings and proxies and gives back loopback links.
 #[tokio::test]
 async fn toggling_remote_access_updates_running_web_runs() {
     let mut env = setup().await;
@@ -471,12 +493,17 @@ async fn toggling_remote_access_updates_running_web_runs() {
     let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    assert!(fake.calls().contains(&format!("serve --bg --https={port} http://127.0.0.1:{port}")), "{:?}", fake.calls());
+    let proxy = proxied(&fake.calls(), port as u16);
+    let owner = http_get_as(proxy, "me@example.com").await;
+    assert!(owner.contains(" 200 ") && owner.ends_with("main"), "{owner}");
+    let other = http_get_as(proxy, "eve@example.com").await;
+    assert!(other.contains(" 403 "), "{other}");
     let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
     assert_eq!(r["url"], format!("https://box.t.ts.net:{port}/"));
     let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"remoteAccess": false}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert!(fake.calls().contains(&format!("serve --https={port} off")), "{:?}", fake.calls());
+    wait_until("the proxy to stop", async || tokio::net::TcpStream::connect(("127.0.0.1", proxy)).await.is_err()).await;
     let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
     assert_eq!(r["url"], format!("http://127.0.0.1:{port}/"));
     call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
