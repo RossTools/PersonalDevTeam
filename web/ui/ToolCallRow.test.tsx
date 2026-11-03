@@ -15,6 +15,19 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('ok')).toBeInTheDocument();
   });
 
+  it('puts its tags (links) beside its button, not in it', async () => {
+    render(
+      <ToolCallRow verb="Read" tags={<a href="/tickets/ALP-1">ALP-1</a>}>
+        <ToolCallRow verb="Run" subject="ls" status="done" />
+      </ToolCallRow>,
+    );
+    const row = screen.getByRole('button', { name: 'Read' });
+    const link = screen.getByRole('link', { name: 'ALP-1' });
+    expect(row).not.toContainElement(link);
+    await userEvent.click(row);
+    expect(screen.getByText('ls')).toBeInTheDocument();
+  });
+
   it('is not a button with nothing to show; running shows a spinner', () => {
     render(<ToolCallRow verb="Read" subject="a.ts" status="running" />);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();

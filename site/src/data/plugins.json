@@ -129,7 +129,7 @@
           "title": "Re-run a workflow run's failed jobs"
         },
         {
-          "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `url` and `ticketKey`.",
+          "description": "Opens an issue in a project's GitHub repository, as PDT's GitHub login: from a ticket (`{{trigger.ticketId}}`; its title and description unless given, and the ticket links the issue), or in `project`'s repository. Output: `repo`, `number`, `issue` (owner/name#12), `title`, `url` and `ticketKey`.",
           "id": "github.create_issue",
           "title": "Create a GitHub issue"
         }

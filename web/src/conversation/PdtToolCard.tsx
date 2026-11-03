@@ -1,21 +1,33 @@
 // PDT's own tool calls in a conversation as cards (PDT-382): what the agent created, changed, linked, sent, ran or
 // watched, instead of a folded "Used N tools" line.
-import type { ReactNode } from 'react';
+import { useContext, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Eye, GitFork, Mail, MessageSquare, Pencil, Play, Plus } from 'lucide-react';
-import { Badge, Button, Spinner } from '@ui';
+import {
+  ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
+  StickyNote, Trash2,
+} from 'lucide-react';
+import { Badge, Button, Disclosure, DiffStat, diffStats, Spinner } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { TicketStage } from '../api/gen/TicketStage';
 import { Markdown } from '../common/Markdown';
+import { plural } from '../common/text';
 import { PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
-import { actionError } from '../common/useAction';
+import { actionError, useAction } from '../common/useAction';
+import { MarkdownRefsContext } from '../common/markdownRefs';
+import { besideKey } from '../documents/BesidePanel';
+import { routePath } from '../shell/route';
 import { RUN_STATUS } from '../workflows/runs';
 import {
   createdTicket,
+  documentOf,
+  filedIssue,
+  issueLink,
+  noteOf,
+  stoppedTicket,
   LINK_TEXT,
   pdtTool,
   resultOf,
@@ -47,6 +59,20 @@ export const priorityLabel = (p: string) => PRIORITY_LABEL[p as Priority] ?? p;
 export function Key({ value }: { value: string | null }) {
   if (!value) return <span className="text-muted-foreground">a ticket</span>;
   return /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(value) ? <TicketPill ticketKey={value.toUpperCase()} /> : <span className="font-mono text-meta">{value}</span>;
+}
+
+/** The most ticket pills a folded row shows; the rest are counted. */
+const PILLS_SHOWN = 6;
+
+/** Ticket keys as pills ("Read PDT-499, PDT-492"), for a folded lookup's row: the first few, then "+3". */
+export function TicketPills({ keys }: { keys: string[] }) {
+  const rest = keys.slice(PILLS_SHOWN);
+  return (
+    <>
+      {keys.slice(0, PILLS_SHOWN).map((k) => <Key key={k} value={k} />)}
+      {rest.length > 0 && <span className="text-meta text-muted-foreground" title={rest.join(', ')}>+{rest.length}</span>}
+    </>
+  );
 }
 
 /** The frame every card shares: an icon and a heading, something on the right, then its rows. */
@@ -294,6 +320,196 @@ function UnwatchCard({ call }: { call: PdtCall }) {
   return <Card icon={<Eye />} label="Stopped watching" heading="Stopped watching" aside={state?.aside}>{state?.error && <Failure text={state.error} />}</Card>;
 }
 
+/** "Stopping", "Stopped", "Didn't stop": a card's verb for where its call is. */
+function verbFor(call: PdtCall, running: string, done: string, not: string): string {
+  return call.status === 'done' ? done : call.status === 'running' ? running : not;
+}
+
+/** `stop_ticket`: the ticket, where it went, and what stopped. */
+function StopTicketCard({ call }: { call: PdtCall }) {
+  const t = stoppedTicket(call.input, call.output);
+  const state = callState(call);
+  const verb = verbFor(call, 'Stopping work on', 'Stopped work on', "Didn't stop work on");
+  const stopped = [
+    t.runsCancelled > 0 && `cancelled ${plural(t.runsCancelled, 'workflow run')}`,
+    t.sessionsStopped > 0 && `stopped ${plural(t.sessionsStopped, 'session')}`,
+    t.worktreeRemoved && 'removed its worktree',
+  ].filter(Boolean) as string[];
+  const done = call.status === 'done';
+  return (
+    <Card
+      icon={<CircleStop />}
+      label={`${verb} ${t.key}`}
+      heading={<>{verb} <Key value={t.key} /></>}
+      aside={state?.aside ?? (t.stage && <Badge>{stageLabel(t.stage)}</Badge>)}
+    >
+      {done && (stopped.length > 0 || t.branchNote) && (
+        <div className="flex flex-col gap-0.5 py-2 text-xs text-muted-foreground">
+          {stopped.length > 0 && <span>{stopped.join(', ').replace(/^./, (c) => c.toUpperCase())}</span>}
+          {t.branchNote && <span>{t.branchNote}</span>}
+        </div>
+      )}
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
+/** An issue's key (`owner/repo#12`) linking to it on its tracker. */
+function IssueKey({ issue, url }: { issue: string | null; url: string | null }) {
+  if (!issue && !url) return null;
+  const text = issue ?? url!;
+  return url ? (
+    <a href={url} target="_blank" rel="noreferrer" className="shrink-0 font-mono text-meta text-link underline-offset-2 hover:underline">{text}</a>
+  ) : (
+    <span className="shrink-0 font-mono text-meta">{text}</span>
+  );
+}
+
+/** `issue_create` / `report_bug`: the issue filed (its title, key and link), and the ticket that links it. */
+function IssueCard({ call }: { call: PdtCall }) {
+  const bug = pdtTool(call.tool) === 'report_bug';
+  const i = filedIssue(call.input, call.output);
+  const state = callState(call);
+  const heading = bug
+    ? verbFor(call, 'Reporting a bug in PDT…', 'Reported a bug in PDT', "Didn't report the bug")
+    : verbFor(call, 'Opening an issue…', 'Opened an issue', "Didn't open an issue");
+  // A bug report that became a local ticket (no issue) names the ticket instead.
+  const asTicket = bug && call.status === 'done' && !i.url && i.ticket;
+  return (
+    <Card icon={bug ? <Bug /> : <CircleDot />} label={heading} heading={heading} aside={state?.aside}>
+      {(i.title || i.issue || i.url || asTicket) && (
+        <div className="flex flex-wrap items-center gap-2 py-2">
+          <IssueKey issue={i.issue} url={i.url} />
+          {asTicket && <Key value={i.ticket} />}
+          {i.title && <span className="min-w-0 flex-1 font-medium">{i.title}</span>}
+          {!bug && i.ticket && <span className="flex items-center gap-1.5 text-xs text-muted-foreground">from <Key value={i.ticket} /></span>}
+        </div>
+      )}
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
+/** `link_issue` / `unlink_issue`: the ticket and the issue (or plain link) linked to it or removed. */
+function IssueLinkCard({ call }: { call: PdtCall }) {
+  const unlink = pdtTool(call.tool) === 'unlink_issue';
+  const l = issueLink(call.input, call.output);
+  const state = callState(call);
+  const verb = unlink
+    ? verbFor(call, 'Unlinking an issue from', 'Unlinked an issue from', "Didn't unlink an issue from")
+    : verbFor(call, 'Linking an issue to', 'Linked an issue to', "Didn't link an issue to");
+  return (
+    <Card icon={<Link2 />} label={`${verb} ${l.ticket}`} heading={<>{verb} <Key value={l.ticket} /></>} aside={state?.aside}>
+      <div className={cn('flex flex-wrap items-center gap-2 py-2', unlink && 'text-muted-foreground')}>
+        <IssueKey issue={l.key} url={l.url} />
+        {l.title && <span className={cn('min-w-0 flex-1', !unlink && 'font-medium')}>{l.title}</span>}
+      </div>
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
+/** Opens a document beside this conversation (as `document_open_beside` does). */
+function OpenBeside({ documentId }: { documentId: string }) {
+  const qc = useQueryClient();
+  const sessionId = useContext(MarkdownRefsContext)?.sessionId ?? null;
+  const [open, pending] = useAction(async () => {
+    qc.setQueryData(besideKey(sessionId!), await api.openBeside(sessionId!, documentId));
+  });
+  if (!sessionId) return null;
+  return (
+    <Button variant="ghost" size="sm" pending={pending} disabled={pending} onClick={() => void open()}>
+      <PanelRight aria-hidden /> Open beside
+    </Button>
+  );
+}
+
+const DOC_VERBS: Record<string, [string, string, string]> = {
+  document_create: ['Creating', 'Created', "Didn't create"],
+  doc_edit: ['Editing', 'Edited', "Didn't edit"],
+  sheet_edit: ['Editing', 'Edited', "Didn't edit"],
+};
+
+/** `document_create`, `doc_edit`, `sheet_edit`, `document_link`: the document, its kind, what changed, its links. */
+function DocumentCard({ call }: { call: PdtCall }) {
+  const name = pdtTool(call.tool) ?? '';
+  const d = documentOf(call.tool, call.input, call.output);
+  const state = callState(call);
+  const unlink = name === 'document_link' && (call.input as { unlink?: unknown } | null)?.unlink === true;
+  const [running, done, not] = DOC_VERBS[name] ?? (unlink ? ['Unlinking', 'Unlinked', "Didn't unlink"] : ['Linking', 'Linked', "Didn't link"]);
+  const verb = verbFor(call, running, done, not);
+  const diff = name === 'doc_edit' && call.status === 'done' ? diffOf(call.output) : null;
+  const stats = diff ? diffStats(diff) : null;
+  const title = d.id && call.status === 'done'
+    ? <a href={routePath({ view: 'documents', doc: d.id })} className="font-medium text-foreground underline-offset-2 hover:underline">{d.title}</a>
+    : <span className="font-medium text-foreground">{d.title}</span>;
+  const links = d.tickets.length + d.projects.length > 0;
+  return (
+    <Card
+      icon={d.kind === 'sheet' ? <Sheet /> : <FileText />}
+      label={`${verb} ${d.title}`}
+      heading={<>{verb} {title}{d.kind && <Badge>{d.kind === 'sheet' ? 'Sheet' : 'Doc'}</Badge>}</>}
+      aside={state?.aside ?? (d.id && call.status === 'done' && (d.openedBeside ? <span>Open beside</span> : <OpenBeside documentId={d.id} />))}
+    >
+      {d.change && (
+        <div className="flex items-baseline gap-2 py-2">
+          <span className="min-w-0 flex-1">{d.change}</span>
+          {stats && <DiffStat added={stats.added} removed={stats.removed} />}
+        </div>
+      )}
+      {links && call.status === 'done' && (
+        <div className="flex flex-wrap items-center gap-1.5 py-2 text-xs text-muted-foreground">
+          Linked to
+          {d.tickets.map((t) => <Key key={t} value={t} />)}
+          {d.projects.map((p) => <Badge key={p}>{p}</Badge>)}
+        </div>
+      )}
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
+/** A `doc_edit` result's diff, if it has one. */
+function diffOf(output?: string): string | null {
+  const v = resultOf(output)?.diff;
+  return typeof v === 'string' && v ? v : null;
+}
+
+/** `save_note` / `delete_note`: the note's title (its body folded under it), its project and whether it is pinned. */
+function NoteCard({ call }: { call: PdtCall }) {
+  const del = pdtTool(call.tool) === 'delete_note';
+  const note = noteOf(call.input, call.output);
+  const state = callState(call);
+  const heading = del
+    ? verbFor(call, 'Deleting a note…', 'Deleted a note', "Didn't delete the note")
+    : note.replaced
+      ? verbFor(call, 'Updating a note…', 'Updated a note', "Didn't update the note")
+      : verbFor(call, 'Saving a note…', 'Saved a note', "Didn't save the note");
+  const known = !del || call.status === 'done';
+  const badges = known && (
+    <span className="flex shrink-0 items-center gap-1">
+      <Badge>{note.project ?? 'Host-wide'}</Badge>
+      {note.pinned && <Badge><Pin aria-hidden /> Pinned</Badge>}
+    </span>
+  );
+  const title = note.title ?? (del ? `Note ${note.id ?? ''}`.trim() : 'Untitled');
+  return (
+    <Card icon={del ? <Trash2 /> : <StickyNote />} label={heading} heading={heading} aside={state?.aside}>
+      <div className={cn('flex items-start gap-2 py-2', del && 'text-muted-foreground')}>
+        {note.body ? (
+          <Disclosure title={<span className="font-medium">{title}</span>} className="min-w-0 flex-1" panelClassName="pt-1 text-sm">
+            <Markdown>{note.body}</Markdown>
+          </Disclosure>
+        ) : (
+          <span className={cn('min-w-0 flex-1', !del && 'font-medium', del && call.status === 'done' && 'line-through decoration-border')}>{title}</span>
+        )}
+        {badges}
+      </div>
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
 /** The card for a PDT tool call (one of `isCardTool`'s). */
 export function PdtToolCard({ call }: { call: PdtCall }) {
   switch (pdtTool(call.tool)) {
@@ -314,6 +530,22 @@ export function PdtToolCard({ call }: { call: PdtCall }) {
       return <WatchCard call={call} />;
     case 'unwatch':
       return <UnwatchCard call={call} />;
+    case 'stop_ticket':
+      return <StopTicketCard call={call} />;
+    case 'issue_create':
+    case 'report_bug':
+      return <IssueCard call={call} />;
+    case 'link_issue':
+    case 'unlink_issue':
+      return <IssueLinkCard call={call} />;
+    case 'document_create':
+    case 'doc_edit':
+    case 'sheet_edit':
+    case 'document_link':
+      return <DocumentCard call={call} />;
+    case 'save_note':
+    case 'delete_note':
+      return <NoteCard call={call} />;
     default:
       return null;
   }

@@ -6,7 +6,8 @@ import type { AttemptSummary } from '../../api/gen/AttemptSummary';
 import { Markdown } from '../../common/Markdown';
 import { MarkdownRefsContext, type MarkdownRefs } from '../../common/markdownRefs';
 import { TicketKeysContext } from '../../common/ticketKeys';
-import { CreateTicketsCard, PdtToolCard, type PdtCall } from '../../conversation/PdtToolCard';
+import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from '../../conversation/PdtToolCard';
+import { ToolCallRow } from '@ui/ToolCallRow';
 import { PdtProposal } from '../../conversation/PdtProposal';
 import { ticketKeys } from '../../tickets/queries';
 import { ticket } from '../../tickets/fixtures';
@@ -73,6 +74,8 @@ const ANSWER = [
   '| SHOP-24 | Discount codes | ready to accept |',
 ].join('\n');
 
+const doc = { id: 'd1', title: 'Guest checkout spec', kind: 'doc', provider: 'local', url: null, projects: ['SHOP'], tickets: ['SHOP-31'] };
+
 const done = (tool: string, input: unknown, result: unknown): PdtCall => ({ tool: `mcp__pdt__${tool}`, input, status: 'done', output: JSON.stringify(result) });
 
 export const section = {
@@ -115,6 +118,31 @@ export const section = {
             <PdtToolCard call={done('watch', { ticket: 'SHOP-31' }, { watching: [watch] })} />
             <PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Discount codes' }, status: 'running' }} />
             <PdtToolCard call={{ tool: 'mcp__pdt__link_tickets', input: { ticket: 'SHOP-1', kind: 'blocks', other: 'SHOP-1' }, status: 'failed', output: 'a ticket cannot block itself' }} />
+          </div>
+        </Demo>
+        <Demo label="PDT tool cards · stopped work, issues, documents, notes (running and failed too)">
+          <div className="flex flex-col gap-3">
+            <PdtToolCard call={done('stop_ticket', { ticket: 'SHOP-19' }, { stopped: true, key: 'SHOP-19', stage: 'todo', runsCancelled: 1, sessionsStopped: 1, worktreeRemoved: false, branchNote: null })} />
+            <PdtToolCard call={done('issue_create', { ticket: 'SHOP-19' }, { repo: 'acme/shop', number: 41, issue: 'acme/shop#41', url: 'https://github.com/acme/shop/issues/41', title: 'Save the cart across visits', ticketKey: 'SHOP-19' })} />
+            <PdtToolCard call={done('report_bug', { title: 'The board forgets its filter after a restart' }, { kind: 'issue', number: 88, url: 'https://github.com/acme/pdt/issues/88' })} />
+            <PdtToolCard call={done('link_issue', { ticket: 'SHOP-31', issue: 'https://github.com/acme/shop/issues/97' }, { linked: true, issue: { key: 'acme/shop#97', url: 'https://github.com/acme/shop/issues/97', title: 'Guests can’t check out' }, ticket: { key: 'SHOP-31' } })} />
+            <PdtToolCard call={done('document_create', { title: 'Guest checkout spec', kind: 'doc', ticket: 'SHOP-31' }, { ...doc, title: 'Guest checkout spec' })} />
+            <PdtToolCard call={done('doc_edit', { document: 'd1', edits: [{ op: 'replace_section', heading: 'Scope', markdown: '…' }, { op: 'table_append_row', heading: 'Open questions', cells: ['Receipts', 'PM'] }] }, { ...doc, version: '3', diff: '--- a\n+++ b\n@@ -1,2 +1,3 @@\n-Old scope.\n+Email-only orders.\n+No password.\n' })} />
+            <PdtToolCard call={done('sheet_edit', { document: 'Q3 budget', edits: [{ op: 'set_cells', sheet: 'Costs', cell: 'B2', values: [['1200']] }, { op: 'add_chart' }] }, { ...doc, id: 'd2', title: 'Q3 budget', kind: 'sheet', tickets: [], version: '8', charts: ['c1'] })} />
+            <PdtToolCard call={done('document_link', { document: 'd1', ticket: 'SHOP-32' }, { ...doc, title: 'Guest checkout spec', tickets: ['SHOP-31', 'SHOP-32'] })} />
+            <PdtToolCard call={done('save_note', { title: 'Release on Tuesdays', body: 'The user cuts releases on **Tuesdays** only; never suggest a Friday release.', project: 'SHOP', pinned: true }, { saved: true, id: 'n1', title: 'Release on Tuesdays', project: 'SHOP', pinned: true })} />
+            <PdtToolCard call={done('delete_note', { id: 'n2' }, { deleted: true, title: 'CI runs on the Mac mini', project: null, pinned: false })} />
+            <PdtToolCard call={{ tool: 'mcp__pdt__sheet_edit', input: { document: 'Q3 budget', edits: [{ op: 'sort', sheet: 'Costs', range: 'A1:C9', by: [] }] }, status: 'running' }} />
+            <PdtToolCard call={{ tool: 'mcp__pdt__issue_create', input: { title: 'Flaky e2e' }, status: 'failed', output: 'acme/shop has no issues' }} />
+          </div>
+        </Demo>
+        <Demo label="ToolCallRow · folded lookups name the tickets they read">
+          <div className="flex flex-col">
+            <ToolCallRow verb="Read" tags={<TicketPills keys={['SHOP-19', 'SHOP-31']} />}>
+              <ToolCallRow verb="pdt: get_ticket" status="done" />
+              <ToolCallRow verb="pdt: get_ticket" status="done" />
+            </ToolCallRow>
+            <ToolCallRow verb="Read" status="done" tags={<TicketPills keys={['SHOP-19', 'SHOP-24', 'SHOP-31', 'SHOP-32', 'SHOP-33', 'SHOP-34', 'SHOP-35', 'SHOP-36']} />} details={<span>search_tickets</span>} />
           </div>
         </Demo>
       </div>

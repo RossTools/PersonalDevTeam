@@ -15,9 +15,9 @@ import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
 import type { Streams } from './model';
-import { CreateTicketsCard, PdtToolCard, type PdtCall } from './PdtToolCard';
+import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
 import { PdtProposal } from './PdtProposal';
-import { isCardTool, pdtApprovalTitle } from './pdtTools';
+import { isCardTool, lookedUp, pdtApprovalTitle } from './pdtTools';
 import { approvalTitle, clock, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
@@ -150,6 +150,8 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   // PDT's own actions show as cards (PDT-382); in a sub-agent, as rows like the rest.
   if (isCardTool(ev.tool) && !ev.parentId) return <PdtToolCard call={pdtCall(node, streams)} />;
   const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
+  // A lookup names the tickets it read as pills (PDT-503).
+  const read = ev.status === 'done' ? lookedUp([{ tool: ev.tool, input: ev.input, output }]) : null;
   // A file change shows its diff instead of the raw input, and its output only when it failed.
   const diff = ev.diff || null;
   const input = diff ? '' : inputText(ev.tool, ev.input);
@@ -163,8 +165,9 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
         : undefined;
   return (
     <ToolCallRow
-      verb={toolVerb(ev.tool)}
-      subject={ev.title || undefined}
+      verb={read ? 'Read' : toolVerb(ev.tool)}
+      subject={read ? undefined : ev.title || undefined}
+      tags={read ? <TicketPills keys={read} /> : undefined}
       status={ev.status}
       meta={meta}
       details={
@@ -401,8 +404,13 @@ const BlockView = memo(
   }) {
     if (block.type === 'tickets') return <CreateTicketsCard calls={block.nodes.map((n) => pdtCall(n, streams))} />;
     if (block.type === 'group') {
+      // Lookups name the tickets they read: "Read PDT-499, PDT-492" (PDT-503).
+      const read = lookedUp(block.nodes.flatMap((n) => {
+        const e = n.row.event;
+        return e.kind === 'tool_call' ? [{ tool: e.tool, input: e.input, output: (n.row.itemId && streams[n.row.itemId]?.output) || e.output }] : [];
+      }));
       return (
-        <ToolCallRow verb={summarizeTools(block.calls)}>
+        <ToolCallRow verb={read ? 'Read' : summarizeTools(block.calls)} tags={read ? <TicketPills keys={read} /> : undefined}>
           {block.nodes.map((n) => (
             <div key={n.row.itemId ?? n.row.seq} className="py-0.5">
               <NodeView node={n} streams={streams} />

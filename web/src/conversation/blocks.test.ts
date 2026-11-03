@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import { buildBlocks, currentTool } from './blocks';
+import { lookedUp } from './pdtTools';
 import { approvalTitle, clock, questionsOf, summarizeTools, toolVerb } from './tools';
 
 const ev = (seq: number, event: AgentEvent, turnId = 'u1'): ConversationEvent => ({ seq, pos: seq, ts: seq, event, turnId, itemId: `i${seq}` });
@@ -105,6 +106,36 @@ describe('buildBlocks', () => {
     expect(shape(buildBlocks(rows, false))).toEqual([
       'row(2)', 'tickets(3,4)', 'group(5,6)', 'row(7)', 'row(8)', 'row(9)', 'row(10)', 'row(11)',
     ]);
+  });
+
+  it('never folds stopping work, issues, documents or notes in with the turn\'s other tools, by either name', () => {
+    const tools = [
+      'mcp__pdt__stop_ticket', 'mcp:pdt/issue_create', 'mcp__pdt__report_bug', 'mcp__pdt__link_issue', 'mcp:pdt/unlink_issue',
+      'mcp__pdt__document_create', 'mcp:pdt/doc_edit', 'mcp__pdt__sheet_edit', 'mcp__pdt__document_link', 'mcp__pdt__save_note',
+      'mcp:pdt/delete_note',
+    ];
+    const rows = [
+      turn(1, 'started'),
+      ...tools.flatMap((t, i) => [ev(2 + 2 * i, call(`r${i}`, 'Read', `f${i}.ts`)), ev(3 + 2 * i, call(`p${i}`, t, ''))]),
+      turn(100, 'ended'),
+    ];
+    expect(buildBlocks(rows, false).filter((b) => b.type === 'group')).toEqual([]);
+  });
+
+  it('names the tickets folded lookups read, each once', () => {
+    const out = (v: unknown) => JSON.stringify(v);
+    expect(lookedUp([
+      { tool: 'mcp__pdt__get_ticket', input: { ticket: 'pdt-499' }, output: out({ key: 'PDT-499', title: 'x' }) },
+      { tool: 'mcp:pdt/get_ticket', input: {}, output: out({ structuredContent: { key: 'PDT-492' } }) },
+      { tool: 'mcp__pdt__search_tickets', input: { query: 'cart' }, output: out({ tickets: [{ key: 'PDT-492' }, { key: 'PDT-12' }], total: 2 }) },
+      { tool: 'mcp__pdt__get_overview', input: {}, output: out({ projects: [], inProgress: [{ key: 'PDT-7' }], inbox: [] }) },
+    ])).toEqual(['PDT-499', 'PDT-492', 'PDT-12', 'PDT-7']);
+    // A lookup that hasn't answered names the ticket it asked for.
+    expect(lookedUp([{ tool: 'mcp__pdt__get_ticket', input: { ticket: 'PDT-3' } }])).toEqual(['PDT-3']);
+    // Anything else in the run, or no tickets read: the row keeps its summary.
+    expect(lookedUp([{ tool: 'mcp__pdt__get_ticket', input: { ticket: 'PDT-3' } }, { tool: 'Bash', input: {} }])).toBeNull();
+    expect(lookedUp([{ tool: 'mcp__pdt__search_tickets', input: {}, output: out({ tickets: [], total: 0 }) }])).toBeNull();
+    expect(lookedUp([])).toBeNull();
   });
 
   it('keeps commentary at top level when no tool call follows it directly', () => {

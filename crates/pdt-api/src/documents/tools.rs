@@ -399,7 +399,11 @@ impl Action for DocEdit {
                 Ok(DocumentContent::Doc { markdown, .. }) => markdown,
                 _ => before.clone(),
             };
-            Ok(json!({"version": r.version, "diff": pdt_core::document_ops::diff(&before, &after)}))
+            // The document's brief too, for the conversation's card.
+            let mut v = brief(&d);
+            v["version"] = json!(r.version);
+            v["diff"] = json!(pdt_core::document_ops::diff(&before, &after));
+            Ok(v)
         })
     }
 }
@@ -513,7 +517,10 @@ impl Action for SheetEdit {
             need_kind(&d, DocumentKind::Sheet, "sheet_edit")?;
             edits_for(&i.edits, false)?;
             let r = apply_edits(cx.st, &d, i.edits).await.map_err(api)?;
-            Ok(json!({"version": r.version, "charts": r.charts}))
+            let mut v = brief(&d);
+            v["version"] = json!(r.version);
+            v["charts"] = json!(r.charts);
+            Ok(v)
         })
     }
 }
