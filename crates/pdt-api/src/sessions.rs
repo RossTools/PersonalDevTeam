@@ -16,9 +16,24 @@ use pdt_store::Store;
 use std::collections::HashSet;
 use std::path::{Path as FsPath, PathBuf};
 
-pub(crate) async fn list(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Vec<Session>>, ApiError> {
+/// `?ended=N` on a project's sessions or runs: the running (or active) ones, those a tab holds, and only the `N` most
+/// recently ended others. Without it, every one.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct RecentQuery {
+    pub ended: Option<i64>,
+}
+
+/// `GET /api/projects/{id}/sessions?ended=`.
+pub(crate) async fn list(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RecentQuery>,
+) -> Result<Json<Vec<Session>>, ApiError> {
     st.project(&id).await?;
-    Ok(Json(st.store.list_sessions(&id).await?))
+    Ok(Json(match q.ended {
+        Some(n) => st.store.list_recent_sessions(&id, n).await?,
+        None => st.store.list_sessions(&id).await?,
+    }))
 }
 
 pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Session>, ApiError> {

@@ -188,6 +188,18 @@ describe('inbox', () => {
     expect(screen.getByText('Refiner · Pipeline')).toBeInTheDocument();
   });
 
+  it('a long section shows its first 50 rows (and the selected one) until Show all', async () => {
+    const gates = Array.from({ length: 60 }, (_, i) => item(`g${i}`));
+    const { unmount } = renderWithQuery(<InboxList items={gates} selectedId={null} onSelect={() => {}} />);
+    const section = screen.getByRole('region', { name: 'Ready to accept' });
+    expect(within(section).getAllByRole('row')).toHaveLength(50);
+    await userEvent.click(within(section).getByRole('button', { name: 'Show all 60' }));
+    expect(within(section).getAllByRole('row')).toHaveLength(60);
+    unmount();
+    renderWithQuery(<InboxList items={gates} selectedId="g55" onSelect={() => {}} />);
+    expect(screen.getByText('Item g55')).toBeInTheDocument();
+  });
+
   it('answers a gate with Enter and moves on', async () => {
     const calls = stubApi({ 'POST /api/inbox/g/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();

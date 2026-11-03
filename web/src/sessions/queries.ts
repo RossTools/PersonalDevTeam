@@ -11,10 +11,16 @@ export const sessionKeys = {
   file: (id: string, path: string) => ['session-file', id, path] as const,
 };
 
+/**
+ * How many ended sessions (and finished runs) a project's list brings beyond the running ones and those a tab holds:
+ * workflow steps leave an ended session each, and the list is polled every 2 s.
+ */
+export const RECENT_ENDED = 50;
+
 /** The query for a project's sessions (`useQuery({ ...sessionsQuery(id), enabled })`). */
 export const sessionsQuery = (projectId: string) => ({
   queryKey: sessionKeys.project(projectId),
-  queryFn: () => api.listSessions(projectId),
+  queryFn: () => api.listSessions(projectId, { ended: RECENT_ENDED }),
   refetchInterval: POLL.live,
 });
 
