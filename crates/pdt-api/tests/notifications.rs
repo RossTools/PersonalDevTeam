@@ -279,3 +279,45 @@ async fn an_open_inbox_item_notifies_until_it_is_answered() {
     pdt_api::sync_notifications(&st).await;
     assert!(list(&app, "needs_you").await.is_empty(), "answered: cleared");
 }
+
+/// `POST /api/inbox/{id}/dismiss` closes a question, a secret request, a stalled step or a notice without acting (and
+/// its notification clears); anything else must be answered, and an item already closed can't be dismissed again.
+#[tokio::test]
+async fn dismiss_closes_the_kinds_that_can_wait_and_refuses_the_rest() {
+    use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind, InboxStatus};
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    let items = [
+        ("q1", InboxKind::Question, InboxGroup::Question),
+        ("s1", InboxKind::Secret, InboxGroup::Question),
+        ("st1", InboxKind::Stalled, InboxGroup::Stalled),
+        ("n1", InboxKind::Notice, InboxGroup::Notice),
+        ("g1", InboxKind::Gate, InboxGroup::Accept),
+    ];
+    for (id, kind, group) in items {
+        st.store.open_inbox_item(&InboxItem::new(id, kind, group, "Over to you", json!({}), 1)).await.unwrap();
+    }
+    pdt_api::sync_notifications(&st).await;
+    assert!(list(&app, "needs_you").await.iter().any(|r| r["inboxItemId"] == "q1"));
+
+    for id in ["q1", "s1", "st1", "n1"] {
+        let (s, v) = call(&app, "POST", &format!("/api/inbox/{id}/dismiss"), None).await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{id}: {v}");
+        let i = st.store.get_inbox_item(id).await.unwrap().unwrap();
+        assert_eq!((i.status, i.resolution), (InboxStatus::Closed, json!({"dismissed": true})), "{id}");
+    }
+    let (s, v) = call(&app, "POST", "/api/inbox/g1/dismiss", None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("cannot_answer")), "{v}");
+    assert_eq!(st.store.get_inbox_item("g1").await.unwrap().unwrap().status, InboxStatus::Open, "a gate is answered");
+    let (s, v) = call(&app, "POST", "/api/inbox/q1/dismiss", None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("cannot_answer")), "already closed: {v}");
+    let (s, _) = call(&app, "POST", "/api/inbox/nope/dismiss", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    pdt_api::sync_notifications(&st).await;
+    let left: Vec<Value> = list(&app, "needs_you").await.into_iter().map(|r| r["inboxItemId"].clone()).collect();
+    assert!(!left.contains(&json!("q1")), "the dismissed question's notification cleared: {left:?}");
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    let open: Vec<&str> = inbox["items"].as_array().unwrap().iter().filter_map(|i| i["id"].as_str()).collect();
+    assert!(open.contains(&"g1") && !open.contains(&"q1") && !open.contains(&"n1"), "{open:?}");
+}
