@@ -399,6 +399,69 @@ async fn public_posting_tools_run_in_a_step_and_ask_outside_one() {
     assert_eq!(gh.issue_comments.lock().unwrap().len(), 1, "nothing posted after a Deny");
 }
 
+/// PDT-495: a turn's end that is stored late (a slow or failing write) expires only PDT's requests that were open when
+/// it ended, never the card of the next turn's call that opened meanwhile.
+#[tokio::test]
+async fn a_turn_end_stored_late_leaves_the_next_turns_card_open() {
+    let gh = std::sync::Arc::new(pdt_forge::testing::FakeForge::default());
+    let fake = gh.clone();
+    let env = setup_with(move |st| {
+        st.forges = pdt_forge::ForgeRegistry::new(vec![std::sync::Arc::new(pdt_forge::testing::fake_github(&fake))]);
+    })
+    .await;
+    git(&env._tmp.path().join("repo"), &["remote", "add", "origin", "https://github.com/o/r.git"]);
+    let other = ticket(&env, "Other").await;
+    let (s, started) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{other}/start"),
+        Some(json!({"agent": "claude", "sessionMode": "conversation", "permissionMode": "bypass"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{started}");
+    let plain = started["session"]["id"].as_str().unwrap().to_string();
+    let idle = || async {
+        (!agent_says(&env, &plain).await.is_empty() && !pdt_api::sdk::conversations::is_working(&env.state, &plain))
+            .then_some(json!(true))
+    };
+    tick_until(&env, "the first turn's end", idle).await;
+
+    // The disk fills: the next turn's end waits to be stored, with the agent idle.
+    let db = env._tmp.path().join("pdt.db");
+    common::disk_full(&db, "session_events", Some("1")).await;
+    let send = |text: &str| {
+        let (env, url) = (&env, format!("/api/sessions/{plain}/messages"));
+        let body = json!({"text": text});
+        async move {
+            let (s, v) = call(&env.app, "POST", &url, Some(body)).await;
+            assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+        }
+    };
+    send("hello").await;
+    tick_until(&env, "the second turn's end", || async {
+        (!pdt_api::sdk::conversations::is_working(&env.state, &plain)).then_some(json!(true))
+    })
+    .await;
+    // The third turn's call asks; its card waits behind the unstored end.
+    let n = agent_says(&env, &plain).await.len();
+    send(r#"mcp: issue_comment {"number": 3, "body": "Looking"}"#).await;
+    tick_until(&env, "the call asking", || async {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{plain}"), None).await;
+        (s["activity"] == "needs_you").then_some(json!(true))
+    })
+    .await;
+    common::disk_full(&db, "session_events", None).await;
+
+    let card = open_card(&env, &plain).await;
+    answer_card(&env, &plain, &card, json!({"type": "deny"})).await;
+    let said = tick_until(&env, "the call's answer", || async {
+        agent_says(&env, &plain).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+    })
+    .await;
+    assert!(said.as_str().unwrap().contains("denied"), "{said}");
+    assert!(gh.issue_comments.lock().unwrap().is_empty(), "nothing posted after a Deny");
+}
+
 /// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
 /// ticket it works on, in the timeline and in `get_ticket`.
 #[tokio::test]

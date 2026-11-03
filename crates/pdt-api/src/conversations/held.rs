@@ -155,9 +155,21 @@ pub(crate) fn answer(
     tx.send((answer.clone(), by_user)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
 }
 
-/// A session's turn or agent ended: its open requests of PDT's expire, and their calls go on without running.
+/// A session's agent ended: its open requests of PDT's expire, and their calls go on without running.
 pub(crate) fn end_session(st: &AppState, session_id: &str) {
     st.conversations.held.waiting.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _), _| s != session_id);
+}
+
+/// A session's turn ended: these requests of PDT's (those open at its end) expire, and their calls go on without
+/// running. One opened since stays open.
+pub(crate) fn expire(st: &AppState, session_id: &str, request_ids: &[String]) {
+    if request_ids.is_empty() {
+        return;
+    }
+    let mut waiting = st.conversations.held.waiting.lock().unwrap_or_else(|e| e.into_inner());
+    for id in request_ids {
+        waiting.remove(&(session_id.to_string(), id.clone()));
+    }
 }
 
 /// An open request's card in the conversation; one dropped before its answer (the call was given up) expires.
