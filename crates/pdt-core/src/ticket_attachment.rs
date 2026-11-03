@@ -5,7 +5,7 @@
 use crate::conversation::composer::{MAX_IMAGE_BYTES, image_extension, image_type};
 use crate::ticket::{Actor, AgentBy};
 use serde::{Deserialize, Serialize};
-use std::path::{Component, Path};
+use std::path::{Path, PathBuf};
 use ts_rs::TS;
 
 /// The largest text file a ticket takes (1 MB). Images take the composer's limit ([`MAX_IMAGE_BYTES`]).
@@ -173,10 +173,34 @@ pub fn clean_name(given: &str, media_type: &str) -> String {
 const SECRET_DIRS: &[&str] =
     &[".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".password-store", "Keychains", ".config/gh"];
 
+/// Whether paths here are compared without case: macOS's and Windows's file systems usually ignore it, so `.SSH` is
+/// `.ssh` there.
+const FOLD_CASE: bool = cfg!(any(target_os = "macos", windows));
+
+/// A path's parts as compared: every component, lower-cased when `fold`.
+fn parts(path: &Path, fold: bool) -> Vec<String> {
+    path.components()
+        .map(|c| {
+            let s = c.as_os_str().to_string_lossy();
+            if fold { s.to_lowercase() } else { s.into_owned() }
+        })
+        .collect()
+}
+
+/// `path`'s parts below `root`, or None when it isn't inside it.
+fn below(path: &[String], root: &[String]) -> Option<Vec<String>> {
+    path.starts_with(root).then(|| path[root.len()..].to_vec())
+}
+
 /// Why an agent may not attach the file at `path` (absolute, with links resolved), or None. Refused: dotfiles (`.env`,
 /// `.netrc`), anything in a key or credential folder (`.ssh`, `.aws`, keychains), and PDT's own data folder except
-/// the images pasted into conversations (`sessions/<id>/attachments/`) and other tickets' attachments.
+/// the images pasted into conversations (`sessions/<id>/attachments/`) and other tickets' attachments. Compared
+/// without case on macOS and Windows.
 pub fn path_refusal(path: &Path, data_dir: &Path) -> Option<&'static str> {
+    refusal(path, data_dir, FOLD_CASE)
+}
+
+fn refusal(path: &Path, data_dir: &Path, fold: bool) -> Option<&'static str> {
     if !path.is_absolute() {
         return Some("give an absolute path");
     }
@@ -184,30 +208,37 @@ pub fn path_refusal(path: &Path, data_dir: &Path) -> Option<&'static str> {
     if name.starts_with('.') {
         return Some("dotfiles (such as .env) are never attached");
     }
-    let parts: Vec<String> = path
-        .components()
-        .filter_map(|c| match c {
-            Component::Normal(p) => Some(p.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
+    let have = parts(path, fold);
     let in_secrets = SECRET_DIRS.iter().any(|d| {
-        let want: Vec<&str> = d.split('/').collect();
-        parts.windows(want.len()).any(|w| w.iter().zip(&want).all(|(a, b)| a == b))
+        let want = parts(Path::new(d), fold);
+        have.windows(want.len()).any(|w| w == want.as_slice())
     });
     if in_secrets {
         return Some("files in key and credential folders are never attached");
     }
-    if let Ok(rel) = path.strip_prefix(data_dir) {
-        let rel: Vec<_> = rel.components().collect();
-        let allowed = rel.len() == 4
-            && matches!(rel[0], Component::Normal(p) if p == "sessions" || p == "tickets")
-            && matches!(rel[2], Component::Normal(p) if p == "attachments");
+    if let Some(rel) = below(&have, &parts(data_dir, fold)) {
+        let allowed = rel.len() == 4 && (rel[0] == "sessions" || rel[0] == "tickets") && rel[2] == "attachments";
         if !allowed {
             return Some("PDT's own data is never attached (only images pasted into its conversations)");
         }
     }
     None
+}
+
+/// Why an agent may not attach the file at `real` (absolute, with links resolved) for where it is, or None: it must be
+/// inside one of `roots` (the session's folder, the temporary folder and PDT's data folder, whose attachments
+/// [`path_refusal`] lets through), so an agent can't attach files from elsewhere on the machine. Compared without
+/// case on macOS and Windows.
+pub fn outside_roots(real: &Path, roots: &[PathBuf]) -> Option<&'static str> {
+    outside(real, roots, FOLD_CASE)
+}
+
+fn outside(real: &Path, roots: &[PathBuf], fold: bool) -> Option<&'static str> {
+    let have = parts(real, fold);
+    match roots.iter().any(|r| below(&have, &parts(r, fold)).is_some()) {
+        true => None,
+        false => Some("only files in this session's folder, the temporary folder or PDT's attachments can be attached"),
+    }
 }
 
 #[cfg(test)]
@@ -321,5 +352,36 @@ mod tests {
         assert!(path_refusal(&data.join("pdt.db"), &data).is_some());
         assert!(path_refusal(&data.join("logs").join("pdtd.log"), &data).is_some());
         assert!(path_refusal(&data.join("sessions").join("s1").join("other").join("x"), &data).is_some());
+    }
+
+    #[test]
+    fn case_never_gets_round_the_refusals_where_the_file_system_ignores_it() {
+        let data = root().join("Data");
+        let home = root().join("home");
+        for bad in [home.join(".SSH").join("id_ed25519"), home.join(".Config").join("GH").join("hosts.yml")] {
+            assert!(refusal(&bad, &data, true).is_some(), "{}", bad.display());
+            assert!(refusal(&bad, &data, false).is_none(), "{}", bad.display());
+        }
+        let db = root().join("data").join("pdt.db");
+        assert!(refusal(&db, &data, true).is_some());
+        let pasted = root().join("DATA").join("Sessions").join("s1").join("Attachments").join("a.png");
+        assert!(refusal(&pasted, &data, true).is_none());
+    }
+
+    #[test]
+    fn only_files_in_the_sessions_folder_temp_or_pdts_data_are_attached() {
+        let roots = [root().join("work").join("repo"), root().join("tmp"), root().join("data")];
+        assert!(outside(&root().join("work").join("repo").join("shot.png"), &roots, false).is_none());
+        assert!(outside(&root().join("tmp").join("qa").join("shot.png"), &roots, false).is_none());
+        assert!(
+            outside(&root().join("data").join("tickets").join("t").join("attachments").join("a"), &roots, false)
+                .is_none()
+        );
+        for bad in [root().join("Documents").join("notes.txt"), root().join("work").join("repo2").join("x.txt")] {
+            assert!(outside(&bad, &roots, false).is_some(), "{}", bad.display());
+        }
+        let shouty = root().join("WORK").join("Repo").join("shot.png");
+        assert!(outside(&shouty, &roots, true).is_none());
+        assert!(outside(&shouty, &roots, false).is_some());
     }
 }

@@ -189,7 +189,7 @@ pub(crate) fn storage(st: &AppState) -> Option<InboxItem> {
     let full = pdt_store::is_disk_full(&f.message);
     // The data folder, or the nearest folder above it that exists.
     let free = full.then(|| st.data_dir.ancestors().find_map(|d| fs4::available_space(d).ok())).flatten();
-    Some(inbox::storage_item(&f.message, full, free, f.since))
+    Some(inbox::storage_item(full, free, f.since))
 }
 
 /// `host`: an account on another host than the forge's public one (PDT-244), with an item of its own.

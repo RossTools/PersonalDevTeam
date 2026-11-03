@@ -121,7 +121,7 @@ pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
     v.insert(LEVELS.into(), levels);
     let d = fill(&rules_template(), &v)?;
     let node = d.node(LEVELS_NODE).ok_or("the levels are missing")?;
-    serde_json::from_value::<LevelsConfig>(node.config.clone()).map_err(|e| e.to_string())?.levels()?;
+    serde_json::from_value::<LevelsConfig>(node.config.clone()).map_err(crate::workflow::err)?.levels()?;
     Ok(d)
 }
 

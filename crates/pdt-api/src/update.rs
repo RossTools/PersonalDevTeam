@@ -919,9 +919,11 @@ async fn download_and_hand_off(
     };
     let version = release.version.to_string();
     let downloads = downloads_dir(&st.data_dir);
-    let asset = fetch_verified(&svc.client, &tok, &release, this_host(), &downloads.join(&version))
-        .await
-        .map_err(|e| fail(StatusCode::BAD_GATEWAY, codes::UPDATE_FAILED, e.to_string()))?;
+    let asset =
+        fetch_verified(&svc.client, &tok, &release, this_host(), &downloads.join(&version)).await.map_err(|e| {
+            tracing::warn!(error = %e, "the update could not be downloaded");
+            fail(StatusCode::BAD_GATEWAY, codes::UPDATE_FAILED, crate::error::short_text(&e.to_string()))
+        })?;
     // The download can take minutes: ask again, keeping the verified file for the next attempt.
     if !force {
         let busy = busy_reasons(st).await;
@@ -939,7 +941,8 @@ async fn download_and_hand_off(
         automatic,
     };
     write_atomic(&request_path(&st.data_dir), &serde_json::to_vec_pretty(&req).expect("json")).map_err(|e| {
-        fail(StatusCode::INTERNAL_SERVER_ERROR, "internal", format!("could not write the update request: {e}"))
+        let e = ApiError::io("writing the update request", e);
+        fail(e.status(), e.code(), e.message().to_string())
     })?;
     prune_downloads(&downloads, &req.version);
     tracing::info!(version = %req.version, "update downloaded and verified; handing over to pdt-host");

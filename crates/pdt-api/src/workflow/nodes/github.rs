@@ -84,7 +84,7 @@ impl IssueTarget {
     async fn resolve(&self, st: &AppState) -> Result<Option<(String, u64)>, String> {
         if let Some(t) = nonblank(&self.ticket) {
             let id = crate::mcp::tools::resolve_ticket(st, t, None).await?;
-            let links = st.store.external_links(&id, GITHUB).await.map_err(|e| e.to_string())?;
+            let links = st.store.external_links(&id, GITHUB).await.map_err(crate::workflow::err)?;
             // The URL keeps the repository's own spelling; the key is lower case.
             return Ok(links.iter().find_map(|l| parse_issue(&l.url, None).or_else(|| parse_issue(&l.key, None))));
         }
@@ -174,14 +174,15 @@ pub(crate) async fn import_issue(
 ) -> Result<Imported, String> {
     let key = issue_key(repo, number);
     let exists = |ticket_id: String| async move {
-        let t = st.store.get_ticket(&ticket_id).await.map_err(|e| e.to_string())?.ok_or("the linked ticket is gone")?;
+        let t =
+            st.store.get_ticket(&ticket_id).await.map_err(crate::workflow::err)?.ok_or("the linked ticket is gone")?;
         let url = t.summary.external.iter().find(|l| l.system == GITHUB).map(|l| l.url.clone()).unwrap_or_default();
         Ok::<_, String>(Imported {
             output: GithubImportOutput { ticket_id, ticket_key: t.summary.key, issue: issue_key(repo, number), url },
             existed: true,
         })
     };
-    if let Some(t) = st.store.ticket_for_external(GITHUB, &repo_id(repo), &key).await.map_err(|e| e.to_string())? {
+    if let Some(t) = st.store.ticket_for_external(GITHUB, &repo_id(repo), &key).await.map_err(crate::workflow::err)? {
         return exists(t).await;
     }
     let r = repo.to_string();
@@ -209,7 +210,7 @@ pub(crate) async fn import_issue(
         Ok(v) => v,
         Err(_) => {
             (new.priority, new.labels) = (None, None);
-            new.validate().map_err(|e| e.to_string())?
+            new.validate().map_err(crate::workflow::err)?
         }
     };
     let link = StoredExternalLink::new("", GITHUB, repo_id(repo), &key, &d.issue.url, LinkOrigin::Imported);

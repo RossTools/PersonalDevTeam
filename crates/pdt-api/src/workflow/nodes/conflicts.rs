@@ -69,10 +69,10 @@ impl NodeKind for DeferConflict {
         Box::pin(async move {
             let c: DeferConfig = parse(&input)?;
             let st = cx.st;
-            let Some(info) = st.store.get_attempt(&c.attempt).await.map_err(|e| e.to_string())? else {
+            let Some(info) = st.store.get_attempt(&c.attempt).await.map_err(crate::workflow::err)? else {
                 return Ok(Outcome::next("now", json!({"deferred": false})));
             };
-            let policy = st.store.get_project_settings(&info.project_id).await.map_err(|e| e.to_string())?.policy;
+            let policy = st.store.get_project_settings(&info.project_id).await.map_err(crate::workflow::err)?.policy;
             let stage =
                 st.store.get_ticket_summary(&info.ticket_id).await.ok().flatten().and_then(|t| t.pipeline_stage);
             let pr = crate::github::watched_pr(st, &info.attempt.id);
@@ -142,7 +142,7 @@ impl NodeKind for UpdateBase {
                 return Ok(Outcome::next("current", json!({"would": format!("update attempt {}", c.attempt)})));
             }
             let st = cx.st;
-            let Some(info) = st.store.get_attempt(&c.attempt).await.map_err(|e| e.to_string())? else {
+            let Some(info) = st.store.get_attempt(&c.attempt).await.map_err(crate::workflow::err)? else {
                 let d = skipped("the attempt is gone");
                 return Ok(Outcome::next(d.port, d.output));
             };
@@ -186,8 +186,8 @@ async fn regenerate_rules(st: &AppState, info: &AttemptInfo) -> (Vec<RegenerateD
     let (repo, base) = (PathBuf::from(&info.repo_path), info.attempt.base_branch.clone());
     let file = tokio::task::spawn_blocking(move || pdt_git::branch_file(&repo, &base, PROJECT_CONFIG_FILE))
         .await
-        .map_err(|e| e.to_string())
-        .and_then(|r| r.map_err(|e| e.to_string()));
+        .map_err(crate::workflow::err)
+        .and_then(|r| r.map_err(crate::workflow::err));
     let config = match file {
         Ok(f) => crate::runconfig::effective_for_file(st, &info.project_id, f.as_deref())
             .await
@@ -224,7 +224,7 @@ async fn update(st: &AppState, info: &AttemptInfo) -> Done {
     let wt = worktree.clone();
     let prepared = tokio::task::spawn_blocking(move || prepare(&repo, &wt, &base, &branch, remote_pr))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::workflow::err)
         .and_then(|r| r);
     let p = match prepared {
         Ok(p) => p,
@@ -250,7 +250,7 @@ async fn update(st: &AppState, info: &AttemptInfo) -> Done {
             let wt = worktree.clone();
             let generated = plan.generated.clone();
             let taken = tokio::task::spawn_blocking(move || pdt_git::take_theirs(&wt, &generated)).await;
-            if let Err(e) = taken.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())) {
+            if let Err(e) = taken.map_err(crate::workflow::err).and_then(|r| r.map_err(crate::workflow::err)) {
                 return conflict(&worktree, &p, files, &[], Some(("git checkout --theirs", &e))).await;
             }
             let commands: Vec<String> = plan.rules.iter().map(|&i| rules[i].run.clone()).collect();
@@ -264,7 +264,7 @@ async fn update(st: &AppState, info: &AttemptInfo) -> Done {
                 }
                 let (wt, globs) = (worktree.clone(), rule.paths.clone());
                 let staged = tokio::task::spawn_blocking(move || pdt_git::stage_globs(&wt, &globs)).await;
-                if let Err(e) = staged.map_err(|e| e.to_string()).and_then(|r| r.map_err(|e| e.to_string())) {
+                if let Err(e) = staged.map_err(crate::workflow::err).and_then(|r| r.map_err(crate::workflow::err)) {
                     return conflict(&worktree, &p, &[], &commands, Some((&rule.run, &e))).await;
                 }
             }
@@ -310,7 +310,7 @@ struct Prepared {
 fn prepare(repo: &Path, worktree: &Path, base: &str, branch: &str, remote_pr: bool) -> Result<Prepared, String> {
     if pdt_git::merge_in_progress(worktree) {
         // An agent's resolution not finished: its conflicts are still the agent's.
-        let files = pdt_git::unmerged_files(worktree).map_err(|e| e.to_string())?;
+        let files = pdt_git::unmerged_files(worktree).map_err(crate::workflow::err)?;
         if files.is_empty() {
             return Err("a merge is in progress in the worktree".into());
         }
@@ -318,12 +318,13 @@ fn prepare(repo: &Path, worktree: &Path, base: &str, branch: &str, remote_pr: bo
         let base_ref = pdt_git::rev_parse(worktree, "MERGE_HEAD").unwrap_or_else(|| base.to_string());
         return Ok(Prepared { merged: Merged::Conflicts(files), base_ref, before, push: None, branch: branch.into() });
     }
-    if pdt_git::is_dirty(worktree).map_err(|e| e.to_string())? {
+    if pdt_git::is_dirty(worktree).map_err(crate::workflow::err)? {
         return Err("the worktree has uncommitted changes".into());
     }
     let origin = pdt_git::remote_url(repo, "origin").is_some();
     let base_ref = if origin {
-        pdt_git::fetch(repo, "origin", base, REMOTE_LIMIT).map_err(|e| format!("couldn't fetch {base}: {e}"))?;
+        pdt_git::fetch(repo, "origin", base, REMOTE_LIMIT)
+            .map_err(|e| format!("couldn't fetch {base}: {}", crate::workflow::err(e)))?;
         // A pull request merges into the remote's base; a local merge into the newer of the two.
         if remote_pr { format!("origin/{base}") } else { pdt_git::start_point(repo, base) }
     } else {
@@ -333,12 +334,13 @@ fn prepare(repo: &Path, worktree: &Path, base: &str, branch: &str, remote_pr: bo
     // Pushed once already (or with a pull request on the remote): the update goes there too.
     let pushed = pdt_git::rev_parse(repo, &format!("refs/remotes/origin/{branch}")).is_some();
     let push = (origin && (remote_pr || pushed)).then(|| "origin".to_string());
-    let merged =
-        match pdt_git::merge_base_in(worktree, &base_ref).map_err(|e| format!("couldn't merge {base_ref}: {e}"))? {
-            pdt_git::BaseMerge::Current => Merged::Current,
-            pdt_git::BaseMerge::Merged { .. } => Merged::Clean,
-            pdt_git::BaseMerge::Conflicts { files } => Merged::Conflicts(files),
-        };
+    let merged = match pdt_git::merge_base_in(worktree, &base_ref)
+        .map_err(|e| format!("couldn't merge {base_ref}: {}", crate::workflow::err(e)))?
+    {
+        pdt_git::BaseMerge::Current => Merged::Current,
+        pdt_git::BaseMerge::Merged { .. } => Merged::Clean,
+        pdt_git::BaseMerge::Conflicts { files } => Merged::Conflicts(files),
+    };
     Ok(Prepared { merged, base_ref, before, push, branch: branch.into() })
 }
 
@@ -351,16 +353,19 @@ async fn finish(worktree: &Path, p: &Prepared, how: &str, regenerated: &[String]
             match pdt_git::push(&wt, &remote, &[&refspec], REMOTE_LIMIT) {
                 Ok(pdt_git::PushOutcome::Pushed) => Ok(()),
                 Ok(pdt_git::PushOutcome::Rejected(why)) => Err(format!("the branch moved on the remote: {why}")),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(crate::workflow::err(e)),
             }
             // Only the merge just made goes: the worktree was clean before it.
             .map_err(|why| match pdt_git::undo_merge(&wt, &before) {
                 Ok(()) => why,
-                Err(e) => format!("{why}; and the merge couldn't be undone, so the worktree still has it: {e}"),
+                Err(e) => format!(
+                    "{why}; and the merge couldn't be undone, so the worktree still has it: {}",
+                    crate::workflow::err(e)
+                ),
             })
         })
         .await;
-        match result.map_err(|e| e.to_string()).and_then(|r| r) {
+        match result.map_err(crate::workflow::err).and_then(|r| r) {
             Ok(()) => pushed = true,
             Err(why) => return skipped(&format!("couldn't push the update: {why}")),
         }
@@ -428,7 +433,7 @@ async fn run_command(dir: &Path, command: &str, path: Option<&str>) -> Result<()
     };
     let (stdout, stderr, status) = match tokio::time::timeout(REGENERATE_LIMIT, run).await {
         Err(_) => return Err(format!("stopped after {} minutes", REGENERATE_LIMIT.as_secs() / 60)),
-        Ok((out, err, status)) => (out, err, status.map_err(|e| e.to_string())?),
+        Ok((out, err, status)) => (out, err, status.map_err(crate::workflow::err)?),
     };
     guard.0 = None;
     if status.success() {

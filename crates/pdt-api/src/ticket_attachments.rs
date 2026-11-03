@@ -12,7 +12,7 @@ use axum::response::{IntoResponse, Response};
 use pdt_core::conversation::composer::MAX_IMAGE_BYTES;
 use pdt_core::session::Session;
 use pdt_core::ticket::{Actor, By};
-use pdt_core::ticket_attachment::{Refused, TicketAttachment, clean_name, path_refusal, sniff};
+use pdt_core::ticket_attachment::{Refused, TicketAttachment, clean_name, outside_roots, path_refusal, sniff};
 use pdt_store::AddAttachment;
 use std::path::PathBuf;
 
@@ -106,8 +106,18 @@ pub(crate) async fn attach(
     }
 }
 
-/// The file an agent names, as `(name, bytes)`: a local path (absolute; a readable regular file, never a secret, see
-/// [`path_refusal`]), or `pasted:N`, the Nth newest image the user pasted into this conversation (`pasted:1` the
+/// Where an agent may attach files from ([`outside_roots`]), with links resolved: its session's folder, the temporary
+/// folder (where screenshots usually go) and PDT's data folder. Blocking.
+fn attach_roots(session_folder: PathBuf, data_dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut roots = vec![session_folder, std::env::temp_dir(), data_dir.to_path_buf()];
+    if cfg!(unix) {
+        roots.push(PathBuf::from("/tmp"));
+    }
+    roots.into_iter().filter_map(|r| r.canonicalize().ok()).collect()
+}
+
+/// The file an agent names, as `(name, bytes)`: a local path (absolute; a readable regular file in the session's
+/// folder, the temporary folder or PDT's attachments, never a secret, see [`attach_roots`] and [`path_refusal`]), or `pasted:N`, the Nth newest image the user pasted into this conversation (`pasted:1` the
 /// latest).
 pub(crate) async fn read_for_agent(st: &AppState, session: &Session, given: &str) -> Result<(String, Vec<u8>), String> {
     let given = given.trim();
@@ -116,12 +126,16 @@ pub(crate) async fn read_for_agent(st: &AppState, session: &Session, given: &str
         None => PathBuf::from(given),
     };
     let data_dir = st.data_dir.canonicalize().unwrap_or_else(|_| st.data_dir.clone());
+    let session_folder = PathBuf::from(&session.cwd);
     tokio::task::spawn_blocking(move || {
         if !path.is_absolute() {
             return Err(format!("{} is not an absolute path", path.display()));
         }
         let real = path.canonicalize().map_err(|e| format!("can't read {}: {e}", path.display()))?;
-        if let Some(why) = path_refusal(&real, &data_dir).or_else(|| path_refusal(&path, &data_dir)) {
+        let refused = path_refusal(&real, &data_dir)
+            .or_else(|| path_refusal(&path, &data_dir))
+            .or_else(|| outside_roots(&real, &attach_roots(session_folder, &data_dir)));
+        if let Some(why) = refused {
             return Err(format!("{}: {why}", path.display()));
         }
         let meta = std::fs::metadata(&real).map_err(|e| format!("can't read {}: {e}", path.display()))?;

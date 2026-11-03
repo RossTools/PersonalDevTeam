@@ -28,9 +28,7 @@ pub(crate) use recovery::sweep;
 
 type R<T> = Result<T, String>;
 
-fn err(e: impl std::fmt::Display) -> String {
-    e.to_string()
-}
+use super::err;
 
 /// How long a step may wait for a session that ended mid-step before it counts as stalled.
 const GONE_GRACE_MS: i64 = 30_000;

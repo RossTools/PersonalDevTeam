@@ -4,7 +4,7 @@ members = ["crates/*", "desktop/src-tauri"]
 default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd", "crates/pdt-tailscale", "crates/pdt-forge", "crates/pdt-github", "crates/pdt-update", "crates/pdt-host", "crates/pdt-int-discord", "crates/pdt-int-jira", "crates/pdt-int-buildkite", "crates/pdt-int-arr", "crates/pdt-int-scryer", "crates/pdt-int-plex", "crates/pdt-int-gitlab", "crates/pdt-int-google", "crates/pdt-sheet"]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
@@ -38,7 +38,9 @@ tower-http = { version = "0.7.1", features = ["fs", "trace", "compression-gzip",
 sqlx = { version = "0.9.0", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-ts-rs = "12.0.1"
+# no-serde-warnings: ts-rs ignores the serde attributes it has no TS meaning for (alias,
+# deserialize_with, deny_unknown_fields) and would print a warning for each on every build.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 thiserror = "2.0.21"
 anyhow = "1.0.104"
 tracing = "0.1.44"

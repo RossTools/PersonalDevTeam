@@ -823,8 +823,14 @@ async fn mcp_connection(st: &AppState, id: &str) -> Result<Connection, ApiError>
 /// The connection of `kind` that `name` means: that one, or the only one of its kind there is (the PM's tools).
 pub async fn connection_of_kind(st: &AppState, kind: &str, name: Option<&str>) -> Result<Connection, String> {
     let label = st.registry().connection_label(kind);
-    let all: Vec<Connection> =
-        st.store.list_connections().await.map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == kind).collect();
+    let all: Vec<Connection> = st
+        .store
+        .list_connections()
+        .await
+        .map_err(crate::workflow::err)?
+        .into_iter()
+        .filter(|c| c.kind == kind)
+        .collect();
     match name.map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) => {
             let c = all.into_iter().find(|c| c.name.eq_ignore_ascii_case(n));
@@ -849,15 +855,15 @@ pub async fn connection_with_secret(st: &AppState, name: &str) -> Result<(Connec
         .store
         .connection_by_name(name)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::workflow::err)?
         .ok_or_else(|| format!("no connection is called {name}"))?;
     let secrets = st.secrets.clone();
     let account = secret_account(&c.id);
     let what = format!("the secret of the connection {}", c.name);
     let secret = tokio::task::spawn_blocking(move || secrets.get(&account).map_err(|e| e.naming(&account, &what)))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::workflow::err)?
+        .map_err(crate::workflow::err)?;
     Ok((c, secret))
 }
 
