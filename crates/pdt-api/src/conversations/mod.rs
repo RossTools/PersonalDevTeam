@@ -25,11 +25,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
+mod held;
 mod live;
 mod routes;
 mod state;
 mod terminal;
 
+pub(crate) use held::{Asked, allowed_always, ask as ask_inline};
 use live::{Unstored, conv, ensure_live, flush_unstored, park, refresh_activity};
 pub(crate) use routes::{answer_request, router};
 pub(crate) use state::{
@@ -70,6 +72,8 @@ pub struct Conversations {
     all: broadcast::Sender<(String, ConversationEvent)>,
     /// The conversations whose log was checked for gaps since pdtd started ([`repair_gaps`]).
     repaired: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    /// PDT's own requests waiting for the user ([`held`]).
+    held: Arc<held::Held>,
 }
 
 impl Default for Conversations {
@@ -86,6 +90,7 @@ impl Default for Conversations {
             codex: Default::default(),
             all: broadcast::channel(1024).0,
             repaired: Default::default(),
+            held: Default::default(),
         }
     }
 }

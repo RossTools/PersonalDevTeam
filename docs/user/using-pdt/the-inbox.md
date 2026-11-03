@@ -42,7 +42,9 @@ token, a password) has a masked field, and the value goes straight to PDT's secr
 
 An agent wants to run a command or edit a file, shown as it would run: **Allow once**, **Always allow**, or **Deny**
 (with an optional reason). Answering here or in the agent's conversation answers both. A call to one of PDT's own tools
-from an agent that can't ask in its own prompt shows here too, with its arguments. When the PM proposes decisions on
+from an agent that can't ask in its own prompt shows here too, with its arguments: in a conversation it is also a card in
+the conversation, and the agent waits for your answer. From a terminal session it waits only here, and the agent hears
+the result once you answer. When the PM proposes decisions on
 your ticket proposals, they wait here as one table: untick the rows you don't want, then **Allow** the rest (see
 [Decide Inbox items](../automation/the-pm.md#decide-inbox-items)).
 
