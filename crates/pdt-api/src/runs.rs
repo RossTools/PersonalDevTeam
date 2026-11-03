@@ -8,7 +8,7 @@ use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::project::Project;
@@ -319,14 +319,11 @@ pub(crate) async fn stop(State(st): State<AppState>, Path(id): Path<String>) -> 
 pub(crate) async fn restart(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Run>, ApiError> {
     // The body is optional: empty means no stopRunId.
-    let input: RestartRun = if body.iter().all(u8::is_ascii_whitespace) {
-        RestartRun::default()
-    } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
-    };
+    let input: RestartRun = crate::host_guard::optional_json(&headers, &body)?;
     let run = load(&st, &id).await?;
     let was_active = run.state.is_active();
     // A command the user hasn't approved refuses the restart before the running one is stopped.

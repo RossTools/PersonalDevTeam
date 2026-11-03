@@ -346,6 +346,33 @@ async fn origin_must_match_an_allowed_host() {
 }
 
 #[tokio::test]
+async fn a_browser_change_from_another_site_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_host_guard(app(tmp.path(), None).await, vec!["127.0.0.1:7420".into()]);
+    let send = |method: &'static str, site: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut req = Request::builder().method(method).uri("/api/health").header("host", "127.0.0.1:7420");
+            if let Some(s) = site {
+                req = req.header("sec-fetch-site", s);
+            }
+            app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+        }
+    };
+    for site in ["cross-site", "same-site"] {
+        let res = send("POST", Some(site)).await;
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{site}");
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap()["code"], "forbidden_origin");
+        assert_eq!(send("GET", Some(site)).await.status(), StatusCode::OK, "{site}");
+    }
+    // Not refused by the guard: the route answers (it only takes GET).
+    for site in [None, Some("same-origin"), Some("none")] {
+        assert_eq!(send("POST", site).await.status(), StatusCode::METHOD_NOT_ALLOWED, "{site:?}");
+    }
+}
+
+#[tokio::test]
 async fn health_reports_version_and_wrong_content_type_is_json() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path(), None).await;
