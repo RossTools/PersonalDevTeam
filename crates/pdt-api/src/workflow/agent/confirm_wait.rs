@@ -45,8 +45,8 @@ pub(crate) async fn wait(st: &AppState, item: &InboxItem) -> Confirmed {
             r = &mut rx => return r.unwrap_or(Confirmed::Ended),
             _ = tokio::time::sleep(CHECK) => {}
         }
-        // An item that ends without an answer (its step went away, a newer call replaced it) ends the wait; one being
-        // answered has already taken its waiter.
+        // An item that ends without an answer (its step went away, a newer call replaced it) ends the wait. One being
+        // answered keeps it: [`take`] removes the waiter before the item ends, and the answer follows.
         let open = matches!(st.store.get_inbox_item(&item.id).await, Ok(Some(i)) if i.status == InboxStatus::Open);
         if !open && st.confirm_waits.map().contains_key(&item.id) {
             return Confirmed::Ended;
@@ -54,10 +54,27 @@ pub(crate) async fn wait(st: &AppState, item: &InboxItem) -> Confirmed {
     }
 }
 
-/// Hands the answer to the call waiting on `item_id`: false when none is (it gets the old way).
-pub(crate) fn answer(st: &AppState, item_id: &str, c: Confirmed) -> bool {
-    let tx = st.confirm_waits.map().remove(item_id);
-    tx.is_some_and(|tx| tx.send(c).is_ok())
+/// The call waiting on an item, taken out before the item ends so the wait never mistakes the answer for the item
+/// closing unanswered.
+pub(crate) struct Waiter(oneshot::Sender<Confirmed>);
+
+/// Takes the waiter of `item_id`, if a call waits on it.
+pub(crate) fn take(st: &AppState, item_id: &str) -> Option<Waiter> {
+    st.confirm_waits.map().remove(item_id).map(Waiter)
+}
+
+impl Waiter {
+    /// Hands the call its answer: false when it stopped waiting meanwhile (it gets the old way).
+    pub(crate) fn answer(self, c: Confirmed) -> bool {
+        self.0.send(c).is_ok()
+    }
+
+    /// The item wasn't answered after all (someone else answered it first): the call waits on.
+    pub(crate) fn put_back(self, st: &AppState, item_id: &str) {
+        if !self.0.is_closed() {
+            st.confirm_waits.map().insert(item_id.to_string(), self.0);
+        }
+    }
 }
 
 struct Unwait<'a> {

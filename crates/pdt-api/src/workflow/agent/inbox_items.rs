@@ -88,10 +88,17 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         (true, Some(rows)) if item.body.get("rows").is_some() => json!({"choice": choice, "rows": rows}),
         _ => json!({"choice": choice}),
     };
-    end_item(st, item, resolution).await?;
-    // The call still waits on the item (PDT-492): it goes on in the agent's turn with the answer.
+    // A call still waiting on the item (PDT-492) goes on in the agent's turn with the answer. Its waiter comes out
+    // before the item ends, so the wait can't take the ended item for one closed unanswered.
+    let waiter = super::confirm_wait::take(st, &item.id);
+    if let Err(e) = end_item(st, item, resolution).await {
+        if let Some(w) = waiter {
+            w.put_back(st, &item.id);
+        }
+        return Err(e);
+    }
     let waited = if allowed { Confirmed::Allowed(kept.map(<[u32]>::to_vec)) } else { Confirmed::Denied };
-    if super::confirm_wait::answer(st, &item.id, waited) {
+    if waiter.is_some_and(|w| w.answer(waited)) {
         let _locked = crate::workflow::engine::lock_run(st, item.run_id.as_deref()).await;
         working_again(st, item).await?;
         return Ok(json!({"allowed": allowed, "waited": true}));
