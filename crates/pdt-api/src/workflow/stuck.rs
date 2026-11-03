@@ -400,7 +400,7 @@ async fn branch_state(t: &Target) -> Option<BranchState> {
             commits: commits
                 .into_iter()
                 .take(5)
-                .map(|(sha, subject)| format!("{} {subject}", &sha[..sha.len().min(8)]))
+                .map(|(sha, subject)| format!("{} {subject}", sha.get(..8).unwrap_or(&sha)))
                 .collect(),
         })
     })
