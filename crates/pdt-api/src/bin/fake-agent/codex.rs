@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 
@@ -82,14 +82,14 @@ struct Server {
     next: AtomicU64,
 }
 
-/// A running turn: its id, its interrupt and where steered messages go.
-type RunningTurn = (String, Arc<tokio::sync::Notify>, mpsc::UnboundedSender<String>);
+/// A running turn: its id, its interrupt, where steered messages go and what closes once it has ended.
+type RunningTurn = (String, Arc<tokio::sync::Notify>, mpsc::UnboundedSender<String>, watch::Receiver<()>);
 
 struct Conn {
     tx: mpsc::UnboundedSender<String>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
     next_req: AtomicU64,
-    /// Running turns by thread: (turn id, interrupt, steer).
+    /// Running turns by thread.
     turns: Mutex<HashMap<String, RunningTurn>>,
     resumed: Mutex<std::collections::HashSet<String>>,
     /// Threads started or resumed with `developerInstructions`.
@@ -179,6 +179,22 @@ async fn connection(server: Arc<Server>, tcp: tokio::net::TcpStream) {
                 if let Some(tx) = id.as_u64().and_then(|i| conn.pending.lock().unwrap().remove(&i)) {
                     let _ = tx.send(v.get("result").cloned().unwrap_or(Value::Null));
                 }
+            }
+            // Codex answers an interrupt once the turn has ended (its `turn/completed` sent), so a turn started next
+            // never overlaps it. The wait runs aside: the read loop still takes the turn's answers meanwhile.
+            (Some(method), Some(id)) if method == "turn/interrupt" => {
+                let thread = v.pointer("/params/threadId").and_then(Value::as_str).unwrap_or("");
+                let ended = conn.turns.lock().unwrap().get(thread).map(|(_, interrupt, _, ended)| {
+                    interrupt.notify_one();
+                    ended.clone()
+                });
+                let conn = conn.clone();
+                tokio::spawn(async move {
+                    if let Some(mut ended) = ended {
+                        let _ = ended.changed().await;
+                    }
+                    conn.send(json!({"jsonrpc": "2.0", "id": id, "result": {}}));
+                });
             }
             (Some(method), Some(id)) => {
                 let p = v.get("params").cloned().unwrap_or(Value::Null);
@@ -313,28 +329,26 @@ async fn handle(server: &Arc<Server>, conn: &Arc<Conn>, method: &str, p: &Value)
             let text = p.pointer("/input/0/text").and_then(Value::as_str).unwrap_or("").to_string();
             let (steer_tx, steer_rx) = mpsc::unbounded_channel();
             let interrupt = Arc::new(tokio::sync::Notify::new());
-            conn.turns.lock().unwrap().insert(thread.clone(), (turn.clone(), interrupt.clone(), steer_tx));
+            let (ended_tx, ended_rx) = watch::channel(());
+            conn.turns.lock().unwrap().insert(thread.clone(), (turn.clone(), interrupt.clone(), steer_tx, ended_rx));
             let (server, conn, p) = (server.clone(), conn.clone(), p.clone());
             let t = turn.clone();
-            tokio::spawn(async move { run_turn(server, conn, thread, t, text, p, interrupt, steer_rx).await });
+            tokio::spawn(async move {
+                run_turn(server, conn, thread, t, text, p, interrupt, steer_rx).await;
+                drop(ended_tx);
+            });
             Ok(json!({"turn": {"id": turn, "status": "inProgress"}}))
         }
         "turn/steer" => {
             let expected = p.get("expectedTurnId").and_then(Value::as_str).unwrap_or("");
             let text = p.pointer("/input/0/text").and_then(Value::as_str).unwrap_or("").to_string();
             match conn.turns.lock().unwrap().get(&thread) {
-                Some((t, _, steer)) if t == expected => {
+                Some((t, _, steer, _)) if t == expected => {
                     let _ = steer.send(text);
                     Ok(json!({"turnId": t}))
                 }
                 _ => Err("no running turn to steer".into()),
             }
-        }
-        "turn/interrupt" => {
-            if let Some((_, interrupt, _)) = conn.turns.lock().unwrap().get(&thread) {
-                interrupt.notify_one();
-            }
-            Ok(json!({}))
         }
         other => Err(format!("{other} is not supported by the fake")),
     }
