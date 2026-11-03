@@ -109,6 +109,11 @@ impl NodeKind for HasChanges {
         parse::<HasChangesConfig>(config).map(|_| ())
     }
 
+    /// It runs git in the attempt's repository, which may be slow: other runs and the engine's tick don't wait for it.
+    fn in_engine_lock(&self, _category: Category) -> bool {
+        false
+    }
+
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let c: HasChangesConfig = parse(&input)?;
@@ -118,5 +123,16 @@ impl NodeKind for HasChanges {
             let changes = has_changes(cx, &c.attempt).await?;
             Ok(Outcome::next(if changes { "yes" } else { "no" }, json!({"changes": changes})))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_git_reading_condition_runs_outside_the_engine_lock() {
+        assert!(!HasChanges.in_engine_lock(Category::Condition), "git may be slow: other runs don't wait for it");
+        assert!(AgentWorking.in_engine_lock(Category::Condition), "a condition reads the engine's state under it");
     }
 }

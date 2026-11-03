@@ -85,7 +85,7 @@ impl NodeKind for SessionSend {
     }
 
     /// Its message may be delivered at once: the step is waiting by then.
-    fn in_engine_lock(&self) -> bool {
+    fn in_engine_lock(&self, _category: Category) -> bool {
         true
     }
 
