@@ -367,54 +367,51 @@ impl McpPool {
         self.live.lock().await.get(id).is_some_and(|l| !l.health.is_broken() && !l.service.is_closed())
     }
 
-    async fn forget(&self, id: &str) {
-        if let Some(old) = self.live.lock().await.remove(id) {
+    /// Stops the client a failed call used, if it is still the live one: a client started since (the settings
+    /// changed, and the call failed because its client was replaced) is in use by other callers.
+    async fn forget(&self, id: &str, health: &Arc<Health>) {
+        let mut live = self.live.lock().await;
+        if live.get(id).is_some_and(|l| Arc::ptr_eq(&l.health, health))
+            && let Some(old) = live.remove(id)
+        {
             tokio::spawn(stop(old));
         }
     }
 
     /// Lists the server's tools now and caches them (on failure, the error, keeping the tools from before).
     pub async fn refresh(&self, st: &AppState, name: &str) -> McpTools {
+        let started = now_ms();
         let listed = async {
             let (id, peer, health) = self.peer(st, name).await?;
-            let call = InFlight::start(health);
+            let call = InFlight::start(health.clone());
             let r = tokio::time::timeout(CONNECT_TIMEOUT, peer.list_all_tools()).await;
             call.done();
             match r {
                 Ok(Ok(tools)) => Ok(tools),
                 Ok(Err(e)) => {
                     if broken(&e) {
-                        self.forget(&id).await;
+                        self.forget(&id, &health).await;
                     }
                     Err(format!("{name}: listing its tools failed: {e}"))
                 }
                 Err(_) => {
-                    self.forget(&id).await;
+                    self.forget(&id, &health).await;
                     Err(format!("{name}: listing its tools took too long"))
                 }
             }
         }
         .await;
-        let now = now_ms();
+        let listed = listed
+            .map(|tools| tools.iter().filter_map(|t| tool_of(&serde_json::to_value(t).unwrap_or_default())).collect());
         let mut cache = self.tools.lock().unwrap_or_else(|e| e.into_inner());
         let entry = cache.entry(name.to_string()).or_insert_with(|| McpTools {
             server: name.to_string(),
             tools: vec![],
             error: None,
             listed_at: None,
-            tried_at: now,
+            tried_at: started,
         });
-        entry.tried_at = now;
-        match listed {
-            Ok(tools) => {
-                let tools: Vec<McpTool> =
-                    tools.iter().filter_map(|t| tool_of(&serde_json::to_value(t).unwrap_or_default())).collect();
-                entry.tools = tools;
-                entry.error = None;
-                entry.listed_at = Some(now);
-            }
-            Err(e) => entry.error = Some(e),
-        }
+        record(entry, started, now_ms(), listed);
         entry.clone()
     }
 
@@ -431,19 +428,19 @@ impl McpPool {
     ) -> Result<Value, String> {
         let (id, peer, health) = self.peer(st, name).await?;
         let params = CallToolRequestParams::new(tool.to_string()).with_arguments(arguments);
-        let call = InFlight::start(health);
+        let call = InFlight::start(health.clone());
         let r = tokio::time::timeout(timeout, peer.call_tool(params)).await;
         call.done();
         match r {
             Ok(Ok(r)) => serde_json::to_value(r).map_err(|e| e.to_string()),
             Ok(Err(e)) => {
                 if broken(&e) {
-                    self.forget(&id).await;
+                    self.forget(&id, &health).await;
                 }
                 Err(format!("{name}: {tool}: {e}"))
             }
             Err(_) => {
-                self.forget(&id).await;
+                self.forget(&id, &health).await;
                 Err(format!(
                     "{name}: {tool} did not answer in {} s; the server is started again on next use",
                     timeout.as_secs()
@@ -524,6 +521,24 @@ impl McpPool {
     pub async fn shutdown(&self) {
         let all: Vec<Live> = self.live.lock().await.drain().map(|(_, l)| l).collect();
         futures_util::future::join_all(all.into_iter().map(stop)).await;
+    }
+}
+
+/// Records a listing begun at `started` and ended at `now` in the server's cache entry. A failure is not recorded over a
+/// listing begun after it that succeeded (the failed one's client was replaced while it listed).
+fn record(entry: &mut McpTools, started: i64, now: i64, listed: Result<Vec<McpTool>, String>) {
+    match listed {
+        Ok(tools) => {
+            entry.tools = tools;
+            entry.error = None;
+            entry.listed_at = Some(now);
+            entry.tried_at = now;
+        }
+        Err(_) if entry.listed_at.is_some_and(|at| at > started) => {}
+        Err(e) => {
+            entry.error = Some(e);
+            entry.tried_at = now;
+        }
     }
 }
 
@@ -655,6 +670,25 @@ mod tests {
         assert!(!h.busy() && !h.is_broken());
         drop(InFlight::start(h.clone()));
         assert!(h.is_broken() && !h.busy(), "dropped unfinished: its step timed out");
+    }
+
+    #[test]
+    fn a_failure_does_not_overwrite_a_later_success() {
+        let tool = McpTool {
+            name: "a".into(),
+            title: None,
+            description: String::new(),
+            input_schema: json!({}),
+            output_schema: None,
+        };
+        let mut t = McpTools { server: "s".into(), tools: vec![], error: None, listed_at: None, tried_at: 0 };
+        record(&mut t, 20, 30, Ok(vec![tool.clone()]));
+        record(&mut t, 10, 40, Err("Transport closed".into()));
+        assert_eq!((t.error.as_deref(), t.listed_at, t.tools.len()), (None, Some(30), 1), "begun before the success");
+        record(&mut t, 50, 60, Err("down".into()));
+        assert_eq!((t.error.as_deref(), t.tried_at, t.tools.len()), (Some("down"), 60, 1), "keeps the tools");
+        record(&mut t, 70, 80, Ok(vec![tool]));
+        assert_eq!((t.error, t.listed_at), (None, Some(80)));
     }
 
     #[test]
