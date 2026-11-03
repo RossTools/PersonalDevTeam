@@ -446,9 +446,9 @@ pub(super) async fn append(
 /// What an event sets off once it is stored (never when it can't be: its session was removed).
 enum FollowUp {
     /// An agent step's session ended a turn: did it submit an outcome? A PM session's may be due
-    /// its daily update (PDT-167), or end once the user closed it. `expire_held`: PDT's open requests expire with it,
-    /// unless the agent has a message to take next.
-    TurnEnded { expire_held: bool },
+    /// its daily update (PDT-167), or end once the user closed it. `expire_held`: PDT's requests opened before the end
+    /// was read ([`super::held::mark`]) expire with it, unless the agent has a message to take next.
+    TurnEnded { expire_held: Option<u64> },
     /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
     PdtRequest { id: String, tool: String, input: serde_json::Value },
     /// A PM conversation writes a journal checkpoint and carries on (PDT-167).
@@ -462,8 +462,8 @@ impl FollowUp {
         let (st, sid) = (st.clone(), session.to_string());
         match self {
             FollowUp::TurnEnded { expire_held } => tokio::spawn(async move {
-                if expire_held {
-                    super::held::end_session(&st, &sid);
+                if let Some(before) = expire_held {
+                    super::held::end_turn(&st, &sid, before);
                 }
                 crate::workflow::agent::turn_ended(&st, &sid).await;
                 crate::pm::turn_ended(&st, &sid).await;
@@ -502,7 +502,9 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
             // With a message waiting the agent goes straight on to its next turn, and its first call may reach PDT
             // before this end does: PDT's requests then stay open. One the ended turn left expires when the agent
             // drops the call, at the next end with nothing waiting, or when the agent exits (PDT-420).
-            then.push(FollowUp::TurnEnded { expire_held: s.pending.is_empty() });
+            // The mark is taken now, as the end is read: it runs once stored, and the next turn's call may be in by then.
+            let expire_held = s.pending.is_empty().then(super::held::mark);
+            then.push(FollowUp::TurnEnded { expire_held });
             true
         }
         AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
