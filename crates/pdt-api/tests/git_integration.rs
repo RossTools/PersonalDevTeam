@@ -98,6 +98,18 @@ async fn base_branch_defaults_to_the_default_branch_and_can_be_changed() {
     let (s, p) =
         call(&env.app, "POST", "/api/projects", Some(json!({"name": "c", "repoPath": clone.to_string_lossy()}))).await;
     assert_eq!((s, p["baseBranch"].as_str()), (StatusCode::CREATED, Some("main")), "{p}");
+    // A base given when the project is added is checked as a change is.
+    let other = env.tmp.path().join("other");
+    git(env.tmp.path(), &["clone", "-q", &env.repo.to_string_lossy(), &other.to_string_lossy()]);
+    git(&other, &["branch", "-q", "trunk"]);
+    for (base, code) in [("nope", "unknown_branch"), ("-x", "invalid_branch"), ("--output=x", "invalid_branch")] {
+        let body = json!({"name": "r", "repoPath": other.to_string_lossy(), "baseBranch": base});
+        let (s, v) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some(code)), "{base} {v}");
+    }
+    let body = json!({"name": "r", "repoPath": other.to_string_lossy(), "baseBranch": " trunk "});
+    let (s, v) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+    assert_eq!((s, v["baseBranch"].as_str()), (StatusCode::CREATED, Some("trunk")), "{v}");
 
     // Any local branch or one only on origin; nothing else.
     git(&env.repo, &["branch", "release"]);
@@ -443,6 +455,11 @@ async fn the_files_view_never_writes_outside_the_checkout_or_into_git() {
     }
     let (s, _) = call(&env.app, "DELETE", &format!("{base}/content?path=.git/HEAD"), None).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+    // Nor read from it, however the name is spelt (Windows drops trailing dots and spaces).
+    for bad in [".git/HEAD", ".GIT/HEAD", ".git./HEAD", ".git%20/HEAD"] {
+        let (s, _) = call(&env.app, "GET", &format!("{base}/content?path={bad}"), None).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "read {bad}");
+    }
     assert!(!env.tmp.path().join("escape.txt").exists());
     assert!(env.repo.join(".git").join("HEAD").is_file());
 

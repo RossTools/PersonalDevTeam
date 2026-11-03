@@ -95,6 +95,7 @@ pub(crate) async fn get(
     State(st): State<AppState>,
     Path((id, aid)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
+    st.store.get_session(&id).await?.or_404("session")?;
     let img = find(&st, &id, &aid).or_404("attachment")?;
     let bytes = tokio::fs::read(&img.path).await.map_err(|_| ApiError::not_found("attachment"))?;
     Ok((

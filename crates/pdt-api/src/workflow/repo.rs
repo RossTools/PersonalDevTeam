@@ -24,8 +24,8 @@ pub(crate) fn read_dir(repo: &Path) -> Vec<(String, WorkflowDoc)> {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
         let file = format!("{DIR}/{name}");
         match std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|t| serde_json::from_str::<WorkflowDoc>(&t).map_err(|e| e.to_string()))
+            .map_err(crate::workflow::err)
+            .and_then(|t| serde_json::from_str::<WorkflowDoc>(&t).map_err(crate::workflow::err))
         {
             Ok(doc) => out.push((file, doc)),
             Err(e) => tracing::debug!(file = %path.display(), error = %e, "skipped a workflow file that does not read"),

@@ -338,6 +338,10 @@ impl StartTicket {
             ),
             None => None,
         };
+        // A base reaches git as a revision; one starting with `-` would read as an option.
+        if nonblank(&self.base).is_some_and(|b| b.starts_with('-')) {
+            return Err(TicketValidationError::Invalid("the base must be a branch or commit".into()));
+        }
         let from_session = nonblank(&self.from_session);
         if from_session.is_some() && (branch.is_some() || nonblank(&self.base).is_some()) {
             return Err(TicketValidationError::Invalid("a start from a chat keeps the chat's branch".into()));
@@ -633,6 +637,7 @@ mod tests {
         for bad in [
             serde_json::json!({"agent": "claude", "branch": "a b"}),
             serde_json::json!({"agent": "claude", "branch": "x..y"}),
+            serde_json::json!({"agent": "claude", "base": " --output=/tmp/x"}),
             serde_json::json!({"agent": "claude", "cols": 19}),
             serde_json::json!({"agent": "claude", "cols": 501}),
             serde_json::json!({"agent": "claude", "rows": 4}),

@@ -2,6 +2,7 @@
 //! with one Markdown file per day and an `index.jsonl` of what each entry covered, so a brief can look back and not
 //! repeat itself. Files, not tables: readable and greppable outside PDT.
 
+use crate::error::ApiError;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -189,9 +190,9 @@ async fn append(path: &Path, text: &str) -> Result<(), String> {
         .append(true)
         .open(path)
         .await
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    f.write_all(text.as_bytes()).await.map_err(|e| format!("{}: {e}", path.display()))?;
-    f.flush().await.map_err(|e| e.to_string())
+        .map_err(|e| ApiError::io("opening the archive", e).to_string())?;
+    f.write_all(text.as_bytes()).await.map_err(|e| ApiError::io("writing the archive", e).to_string())?;
+    f.flush().await.map_err(|e| ApiError::io("writing the archive", e).to_string())
 }
 
 pub struct Archive;
@@ -247,7 +248,9 @@ impl NodeKind for Archive {
                 return Ok(Outcome::next("out", json!({"would": what})));
             }
             let _guard = write_lock().lock().await;
-            tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("{}: {e}", dir.display()))?;
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(|e| ApiError::io("making the archive's folder", e).to_string())?;
             let mut md = String::new();
             if tokio::fs::metadata(&path).await.is_err() {
                 md.push_str(&format!("# {} — {date}\n\n", c.brief));
@@ -260,7 +263,7 @@ impl NodeKind for Archive {
                 title: c.title.trim().to_string(),
                 items: items.into_iter().map(|i| BriefItem { note: None, ..i }).collect(),
             };
-            let line = serde_json::to_string(&entry).map_err(|e| e.to_string())? + "\n";
+            let line = serde_json::to_string(&entry).map_err(crate::workflow::err)? + "\n";
             append(&dir.join("index.jsonl"), &line).await?;
             Ok(Outcome::next("out", BriefArchiveOutput { date, path: path.to_string_lossy().into_owned() }))
         })

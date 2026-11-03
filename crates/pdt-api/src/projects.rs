@@ -68,6 +68,13 @@ async fn add(
     })
     .await
     .map_err(ApiError::internal)??;
+    let base_branch = match base_branch {
+        Some(b) => {
+            let repo = info.root.clone();
+            Some(tokio::task::spawn_blocking(move || valid_base(&repo, b)).await.map_err(ApiError::internal)??)
+        }
+        None => None,
+    };
     if let Some(k) = &key
         && st.store.project_keys().await?.iter().any(|t| t == k)
     {
@@ -207,7 +214,10 @@ pub(crate) async fn clone(
     let target = dest.clone();
     tokio::task::spawn_blocking(move || pdt_git::clone(&url, &target)).await.map_err(ApiError::internal)?.map_err(
         |e| match e {
-            pdt_git::GitError::Command(m) => ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {m}")),
+            pdt_git::GitError::Command(m) => {
+                tracing::warn!(error = %m, "git clone failed");
+                ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {}", crate::error::short_text(&m)))
+            }
             other => other.into(),
         },
     )?;
@@ -253,21 +263,22 @@ async fn checked_base(st: &AppState, id: &str, branch: String) -> Result<String,
     let project = st.project(id).await?;
     needs_repo(&project, "base branch")?;
     let repo = PathBuf::from(&project.repo_path);
-    tokio::task::spawn_blocking(move || {
-        if branch.starts_with('-') {
-            return Err(pdt_git::GitError::InvalidBranch(branch).into());
-        }
-        pdt_git::check_branch_name(&repo, &branch)?;
-        if !pdt_git::list_branches(&repo)?.iter().any(|b| b.name == branch) {
-            return Err(ApiError::bad_request(
-                codes::UNKNOWN_BRANCH,
-                format!("{branch} is not a branch of this repository (locally or on origin)"),
-            ));
-        }
-        Ok(branch)
-    })
-    .await
-    .map_err(ApiError::internal)?
+    tokio::task::spawn_blocking(move || valid_base(&repo, branch)).await.map_err(ApiError::internal)?
+}
+
+/// `branch` if it names a branch of `repo`, local or on `origin`. Blocking.
+fn valid_base(repo: &std::path::Path, branch: String) -> Result<String, ApiError> {
+    if branch.starts_with('-') {
+        return Err(pdt_git::GitError::InvalidBranch(branch).into());
+    }
+    pdt_git::check_branch_name(repo, &branch)?;
+    if !pdt_git::list_branches(repo)?.iter().any(|b| b.name == branch) {
+        return Err(ApiError::bad_request(
+            codes::UNKNOWN_BRANCH,
+            format!("{branch} is not a branch of this repository (locally or on origin)"),
+        ));
+    }
+    Ok(branch)
 }
 
 /// Removes a project from PDT: stops its sessions and runs and forgets everything about it (its tickets' attachments

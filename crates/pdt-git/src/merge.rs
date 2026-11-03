@@ -17,14 +17,14 @@ pub fn rev_parse(repo: &Path, rev: &str) -> Option<String> {
 
 /// Whether commit `a` is an ancestor of (or the same as) commit `b`.
 pub fn is_ancestor(repo: &Path, a: &str, b: &str) -> bool {
-    matches!(git_with_env(repo, &["merge-base", "--is-ancestor", a, b], &[]), Ok(Ok(_)))
+    matches!(git_with_env(repo, &["merge-base", "--is-ancestor", "--end-of-options", a, b], &[]), Ok(Ok(_)))
 }
 
 /// The commits `head` has that `from` doesn't (`from..head`), newest first, as (sha, subject). None when git can't
 /// tell (an unknown commit).
 pub fn commits_between(repo: &Path, from: &str, head: &str) -> Option<Vec<(String, String)>> {
     let range = format!("{from}..{head}");
-    match git_with_env(repo, &["log", "--format=%H%x09%s", &range, "--"], &[]) {
+    match git_with_env(repo, &["log", "--format=%H%x09%s", "--end-of-options", &range, "--"], &[]) {
         Ok(Ok(s)) => Some(
             s.lines()
                 .filter_map(|l| l.split_once('\t'))
@@ -37,7 +37,7 @@ pub fn commits_between(repo: &Path, from: &str, head: &str) -> Option<Vec<(Strin
 
 /// The best common ancestor of `a` and `b`.
 pub fn merge_base(repo: &Path, a: &str, b: &str) -> Option<String> {
-    match git_with_env(repo, &["merge-base", a, b], &[]) {
+    match git_with_env(repo, &["merge-base", "--end-of-options", a, b], &[]) {
         Ok(Ok(s)) if !s.is_empty() => Some(s),
         _ => None,
     }
@@ -59,7 +59,7 @@ pub fn patch_in(repo: &Path, head: &str, base: &str) -> bool {
         _ => return false,
     };
     // `-` marks a commit whose patch is already upstream.
-    match git_with_env(repo, &["cherry", base, &squashed], &[]) {
+    match git_with_env(repo, &["cherry", "--end-of-options", base, &squashed], &[]) {
         Ok(Ok(out)) => out.lines().any(|l| l.starts_with("- ")),
         _ => false,
     }
@@ -67,7 +67,7 @@ pub fn patch_in(repo: &Path, head: &str, base: &str) -> bool {
 
 fn rev_parse_tree(repo: &Path, commit: &str) -> Option<String> {
     let spec = format!("{commit}^{{tree}}");
-    match git_with_env(repo, &["rev-parse", "--verify", "--quiet", &spec], &[]) {
+    match git_with_env(repo, &["rev-parse", "--verify", "--quiet", "--end-of-options", &spec], &[]) {
         Ok(Ok(s)) if !s.is_empty() => Some(s),
         _ => None,
     }

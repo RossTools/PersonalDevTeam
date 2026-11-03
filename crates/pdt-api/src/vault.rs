@@ -28,8 +28,8 @@ async fn keychain_get(st: &AppState, s: &Secret) -> Result<Option<String>, Strin
     let (secrets, acct, what) = (st.secrets.clone(), account(&s.id), format!("the secret {}", s.name));
     tokio::task::spawn_blocking(move || secrets.get(&acct).map_err(|e| e.naming(&acct, &what)))
         .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+        .map_err(crate::workflow::err)?
+        .map_err(|e| ApiError::keychain(e).message().to_string())
 }
 
 async fn keychain_set(st: &AppState, id: &str, value: &str) -> Result<(), ApiError> {

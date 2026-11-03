@@ -156,10 +156,11 @@ pub(crate) async fn file(
     let sides = tokio::task::spawn_blocking(move || -> Result<FileSides, ApiError> {
         let mb = pdt_git::review_base(&checkout, &base, &fallback);
         let old = pdt_git::file_at(&checkout, &mb, &old_rel)?;
-        let full = crate::files::contained(&checkout, &rel)?;
-        let (new, new_huge) = match std::fs::metadata(&full) {
+        crate::files::contained(&checkout, &rel)?;
+        let dir = crate::files::checkout_dir(&checkout)?;
+        let (new, new_huge) = match dir.metadata(&rel) {
             Ok(m) if m.is_file() && m.len() > MAX_SIDE_BYTES as u64 => (None, true),
-            Ok(m) if m.is_file() => (Some(std::fs::read(&full)?), false),
+            Ok(m) if m.is_file() => (Some(dir.read(&rel).map_err(crate::files::io_err)?), false),
             _ => (None, false),
         };
         let (old, old_bin, old_big) = side_text(old);
@@ -734,7 +735,7 @@ pub(crate) async fn merge_attempt(
     let outcome = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &branch, &base, &message, squash))
         .await
         .map_err(ApiError::internal)?
-        .map_err(|e| ApiError::conflict(codes::MERGE_FAILED, e.to_string()))?;
+        .map_err(|e| ApiError::conflict(codes::MERGE_FAILED, ApiError::from(e).to_string()))?;
     let commit = match outcome {
         pdt_git::MergeOutcome::Merged { commit } => commit,
         pdt_git::MergeOutcome::Conflict { .. } => return Ok(Err(Refusal::blocked(MergeProblem::Conflict, true))),

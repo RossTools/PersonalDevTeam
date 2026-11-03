@@ -43,6 +43,15 @@ pub enum GitError {
     UnknownRef(String),
 }
 
+/// Settings for every git command PDT runs: a repository's own `core.fsmonitor` is a command git runs on `git status`
+/// and friends, so a repository folder from an archive could run code the moment PDT reads it (PDT-417).
+const PDT_GIT_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
+/// Whether `s` is a full commit id (SHA-1 or SHA-256, lowercase hex), as a forge reports one.
+pub fn is_commit_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// A git invocation that ran but exited non-zero.
 struct Failed {
     code: Option<i32>,
@@ -64,7 +73,7 @@ fn git_with_env(dir: &Path, args: &[&str], inherited_env: &[(&str, &str)]) -> Re
     // PDT reads checkouts agents work in: a read (`git status`) must not take `index.lock` to refresh the index, or
     // the agent's own git command fails at that moment (PDT-335). Writes still take the locks they need.
     cmd.env("GIT_OPTIONAL_LOCKS", "0");
-    let output = cmd.arg("-C").arg(dir).args(args).output().map_err(|e| {
+    let output = cmd.args(PDT_GIT_CONFIG).arg("-C").arg(dir).args(args).output().map_err(|e| {
         if e.kind() == ErrorKind::NotFound { GitError::GitMissing } else { GitError::Command(e.to_string()) }
     })?;
     if output.status.success() {
@@ -93,7 +102,7 @@ fn git_bytes(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Result<V
     for var in ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] {
         cmd.env_remove(var);
     }
-    cmd.arg("-C").arg(dir).args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(PDT_GIT_CONFIG).arg("-C").arg(dir).args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == ErrorKind::NotFound { GitError::GitMissing } else { GitError::Command(e.to_string()) }
@@ -154,8 +163,12 @@ fn classify_failure(path: &Path, f: Failed) -> GitError {
     }
 }
 
-/// Checks a branch name with `git check-ref-format --branch`.
+/// Checks a branch name with `git check-ref-format --branch`. `@{-1}` (which that command expands to the branch checked
+/// out before) and a leading `-` are refused: a branch is a name, never a reference to another or an option.
 pub fn check_branch_name(repo: &Path, branch: &str) -> Result<(), GitError> {
+    if branch.contains("@{") || branch.starts_with('-') {
+        return Err(GitError::InvalidBranch(branch.to_string()));
+    }
     match git_with_env(repo, &["check-ref-format", "--branch", branch], &[])? {
         Ok(_) => Ok(()),
         Err(_) => Err(GitError::InvalidBranch(branch.to_string())),
@@ -336,10 +349,18 @@ pub fn ensure_excluded(repo: &Path, pattern: &str) -> Result<(), GitError> {
     std::fs::write(&file, text).map_err(io)
 }
 
-/// The identity and settings for commits PDT makes itself (demo data): they work without a configured git identity
-/// and never wait on a signing prompt.
-const PDT_COMMIT_CONFIG: [&str; 6] =
-    ["-c", "user.name=PDT Demo", "-c", "user.email=demo@pdt.invalid", "-c", "commit.gpgsign=false"];
+/// The identity and settings for commits PDT makes itself (demo data, the merge check's scratch commit): they work
+/// without a configured git identity, never wait on a signing prompt and run none of the repository's hooks.
+const PDT_COMMIT_CONFIG: [&str; 8] = [
+    "-c",
+    "user.name=PDT Demo",
+    "-c",
+    "user.email=demo@pdt.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+];
 
 /// Creates a repository at `dir` (made if missing) whose first branch is `branch`.
 pub fn init(dir: &Path, branch: &str) -> Result<(), GitError> {
@@ -369,7 +390,7 @@ pub fn commit_all(dir: &Path, message: &str) -> Result<String, GitError> {
 /// Creates branch `branch` at `start` (a branch or commit) without checking it out.
 pub fn create_branch(repo: &Path, branch: &str, start: &str) -> Result<(), GitError> {
     check_branch_name(repo, branch)?;
-    match git_with_env(repo, &["branch", branch, start], &[])? {
+    match git_with_env(repo, &["branch", "--end-of-options", branch, start], &[])? {
         Ok(_) => Ok(()),
         Err(f) if f.stderr.contains("already exists") => Err(GitError::BranchExists(branch.to_string())),
         Err(f) => Err(GitError::Command(f.stderr)),
@@ -672,5 +693,66 @@ mod tests {
         assert_eq!(git_ok(&dir, &["rev-parse", "fix/x"]), first);
         assert!(matches!(create_branch(&dir, "fix/x", "main"), Err(GitError::BranchExists(_))));
         assert!(matches!(create_branch(&dir, "bad..name", "main"), Err(GitError::InvalidBranch(_))));
+        for bad in ["@{-1}", "x@{1}", "-x"] {
+            assert!(matches!(check_branch_name(&dir, bad), Err(GitError::InvalidBranch(_))), "{bad}");
+        }
+    }
+
+    #[test]
+    fn commit_ids_are_full_lowercase_hex() {
+        assert!(is_commit_id(&"a1".repeat(20)));
+        assert!(is_commit_id(&"0f".repeat(32)));
+        for bad in ["", "abc123", "s", &"A1".repeat(20), &"a1".repeat(21), &format!("-{}", "a".repeat(39))] {
+            assert!(!is_commit_id(bad), "{bad}");
+        }
+    }
+
+    /// A program that leaves `marker` behind when git runs it.
+    #[cfg(unix)]
+    fn marking_script(dir: &Path, name: &str, marker: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join(name);
+        std::fs::write(&script, format!("#!/bin/sh\ntouch '{}'\n", marker.display())).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_repositorys_own_fsmonitor_and_hooks_never_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init(&repo, "main").unwrap();
+        let marker = tmp.path().join("ran");
+        let script = marking_script(tmp.path(), "fsmonitor", &marker);
+        git_ok(&repo, &["config", "core.fsmonitor", &script.to_string_lossy()]);
+        let hooks = repo.join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        for hook in ["pre-commit", "commit-msg", "post-commit"] {
+            marking_script(&hooks, hook, &marker);
+        }
+        std::fs::write(repo.join("a.txt"), "a").unwrap();
+        commit_all(&repo, "First").unwrap();
+        std::fs::write(repo.join("a.txt"), "b").unwrap();
+        assert!(is_dirty(&repo).unwrap());
+        assert!(!marker.exists(), "PDT's git commands ran the repository's fsmonitor or hooks");
+    }
+
+    #[test]
+    fn a_base_or_commit_starting_with_a_dash_is_never_an_option() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init(&repo, "main").unwrap();
+        std::fs::write(repo.join("a.txt"), "a").unwrap();
+        let head = commit_all(&repo, "First").unwrap();
+        let out = tmp.path().join("written");
+        let option = format!("--output={}", out.display());
+        assert!(changed_files(&repo, &option, &option).is_err());
+        assert_eq!(merge_base(&repo, "HEAD", &option), None);
+        assert!(!is_ancestor(&repo, &option, "HEAD"));
+        assert_eq!(commits_between(&repo, &option, &head), None);
+        assert!(first_parent_subjects(&repo, &option, &head, 5).is_empty());
+        assert!(create_branch(&repo, "x", &option).is_err());
+        assert!(!out.exists(), "a revision was read as an option");
     }
 }

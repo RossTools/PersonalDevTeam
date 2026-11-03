@@ -72,8 +72,8 @@ impl NodeKind for InboxAdmit {
             }
             let id = crate::mcp::tools::resolve_ticket(cx.st, given, cx.run.project_id.as_deref()).await?;
             let store = &cx.st.store;
-            let t = store.get_ticket_summary(&id).await.map_err(|e| e.to_string())?.ok_or("no such ticket")?;
-            let policy = store.get_project_settings(&t.project_id).await.map_err(|e| e.to_string())?.policy;
+            let t = store.get_ticket_summary(&id).await.map_err(crate::workflow::err)?.ok_or("no such ticket")?;
+            let policy = store.get_project_settings(&t.project_id).await.map_err(crate::workflow::err)?.policy;
             if policy.triage_approval == TriageApproval::Off {
                 return Ok(skipped("the project's triage approval is off"));
             }
@@ -113,7 +113,7 @@ impl NodeKind for InboxAdmit {
                 created_at: now_ms(),
                 resolved_at: None,
             };
-            match store.add_inbox_item_once(&item, &format!("admit:{id}")).await.map_err(|e| e.to_string())? {
+            match store.add_inbox_item_once(&item, &format!("admit:{id}")).await.map_err(crate::workflow::err)? {
                 Some(i) => {
                     crate::notifications::kick(cx.st);
                     Ok(Outcome::next("added", json!({"itemId": i.id})))
@@ -128,7 +128,7 @@ impl NodeKind for InboxAdmit {
 /// an Approve that lets an external ticket in needs: an agent's curl never admits one.
 pub(crate) async fn answer(st: &AppState, item: &InboxItem, choice: &str, from_ui: bool) -> Result<Value, String> {
     let id = item.ticket_id.as_deref().ok_or("the item has no ticket")?;
-    let t = st.store.get_ticket_summary(id).await.map_err(|e| e.to_string())?.ok_or("the ticket is gone")?;
+    let t = st.store.get_ticket_summary(id).await.map_err(crate::workflow::err)?.ok_or("the ticket is gone")?;
     let to = match choice {
         inbox::APPROVE => TicketStage::Todo,
         inbox::REJECT => TicketStage::WontDo,
@@ -144,7 +144,7 @@ pub(crate) async fn answer(st: &AppState, item: &InboxItem, choice: &str, from_u
         .store
         .end_inbox_item(&item.id, InboxStatus::Resolved, &json!({"choice": choice}), now_ms())
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::workflow::err)?
     {
         return Err("this item was already answered".into());
     }
@@ -153,7 +153,7 @@ pub(crate) async fn answer(st: &AppState, item: &InboxItem, choice: &str, from_u
     st.store
         .move_ticket_by(id, to, Actor::User, Some(&extra), now_ms())
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::workflow::err)?
         .ok_or("the ticket is gone")?;
     if to.is_closed() {
         crate::start::close_attempt(st, id, to, since, Actor::User, None).await.map_err(|e| e.message().to_string())?;

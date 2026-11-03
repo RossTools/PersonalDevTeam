@@ -392,9 +392,10 @@ pub fn human_bytes(bytes: u64) -> String {
     if unit == 0 || v >= 10.0 { format!("{v:.0} {}", UNITS[unit]) } else { format!("{v:.1} {}", UNITS[unit]) }
 }
 
-/// The item that says PDT can't save changes while writes fail (PDT-323): `message` the latest failure's,
-/// `disk_full` when it says the disk is full, then with what is free on the disk with PDT's data (`free`, bytes).
-pub fn storage_item(message: &str, disk_full: bool, free: Option<u64>, since: i64) -> InboxItem {
+/// The item that says PDT can't save changes while writes fail (PDT-323): `disk_full` when the latest failure says
+/// the disk is full, then with what is free on the disk with PDT's data (`free`, bytes). The database's own text is
+/// in PDT's log, not here.
+pub fn storage_item(disk_full: bool, free: Option<u64>, since: i64) -> InboxItem {
     let title = if disk_full { "PDT can't save changes: the disk is full" } else { "PDT can't save changes" };
     let text = if disk_full {
         let free = free.map(|b| format!(" ({} free)", human_bytes(b))).unwrap_or_default();
@@ -403,10 +404,9 @@ pub fn storage_item(message: &str, disk_full: bool, free: Option<u64>, since: i6
              conversations wait. Free up space on it; PDT saves again on its own within seconds, and starts what waited."
         )
     } else {
-        format!(
-            "PDT can't save to its database: `{message}`. Workflow runs and events wait, and PDT tries again every few \
-             seconds; this goes away once saving works."
-        )
+        "PDT can't save to its database (PDT's log says why). Workflow runs and events wait, and PDT tries again \
+         every few seconds; this goes away once saving works."
+            .to_string()
     };
     InboxItem {
         id: STORAGE_ID.into(),
@@ -425,7 +425,7 @@ pub fn storage_item(message: &str, disk_full: bool, free: Option<u64>, since: i6
         persona_name: None,
         change_request: None,
         title: title.into(),
-        body: serde_json::json!({"text": text, "error": message, "diskFull": disk_full, "freeBytes": free}),
+        body: serde_json::json!({"text": text, "diskFull": disk_full, "freeBytes": free}),
         choices: vec![],
         resolution: Value::Null,
         created_at: since,
@@ -940,7 +940,7 @@ mod tests {
 
     #[test]
     fn the_storage_item_says_the_disk_is_full_and_what_is_free() {
-        let i = storage_item("PDT can't save changes: database or disk is full", true, Some(12 * 1024 * 1024), 5);
+        let i = storage_item(true, Some(12 * 1024 * 1024), 5);
         assert_eq!(
             (i.id.as_str(), i.kind, i.group, i.created_at),
             (STORAGE_ID, InboxKind::Storage, InboxGroup::Notice, 5)
@@ -948,9 +948,9 @@ mod tests {
         assert_eq!(i.title, "PDT can't save changes: the disk is full");
         let text = i.body["text"].as_str().unwrap();
         assert!(text.contains("(12 MB free)"), "{text}");
-        let other = storage_item("PDT can't save changes: disk I/O error", false, None, 5);
+        let other = storage_item(false, None, 5);
         assert_eq!(other.title, "PDT can't save changes");
-        assert!(other.body["text"].as_str().unwrap().contains("disk I/O error"));
+        assert!(other.body["text"].as_str().unwrap().contains("PDT's log says why"));
         assert_eq!(InboxKind::parse("storage"), Some(InboxKind::Storage));
     }
 }

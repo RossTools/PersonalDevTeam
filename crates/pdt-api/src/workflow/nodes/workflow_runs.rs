@@ -251,7 +251,7 @@ impl NodeKind for GithubWorkflowWatch {
             let can_rerun = actions.capabilities().retry;
             let choices: Vec<&str> = if can_rerun { vec![RERUN, DISMISS] } else { vec![DISMISS] };
             let store = &cx.st.store;
-            let open = store.open_items_for_step(&cx.step.id).await.map_err(|e| e.to_string())?;
+            let open = store.open_items_for_step(&cx.step.id).await.map_err(crate::workflow::err)?;
             // It waits for the user's choice, and (`retry`) looks again until it stops watching: the item stays open
             // while the step does, and closes when it leaves by any port.
             let wait = |title: &str, progress: Value| {
@@ -351,7 +351,7 @@ impl NodeKind for GithubWorkflowWatch {
             // Once per run attempt: the trigger starts a run for each failed attempt, and the watch that reported an
             // earlier one may see this one too; whichever is first reports it.
             let key = format!("workflow-run:{}:{}:{id}:{attempt}", cx.workflow.id, of.repo.to_ascii_lowercase());
-            let added = store.add_inbox_item_once(&item, &key).await.map_err(|e| e.to_string())?;
+            let added = store.add_inbox_item_once(&item, &key).await.map_err(crate::workflow::err)?;
             // A later failed attempt replaces the earlier one's item, here or in the run that reported it.
             for old in &open {
                 let gone = json!({"replacedBy": attempt});

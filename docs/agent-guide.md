@@ -96,9 +96,10 @@ matter (Claude Code with its Read tool, Codex with `view_image`). On a ticket fr
 `text`, fenced as outside input.
 
 To attach files, give absolute paths in `files` (`add_ticket_comment`, `create_ticket`, `edit_ticket`); `pasted:1` is
-the newest image the person pasted into this conversation (`pasted:2` the one before). Dotfiles (`.env`), key and
-credential folders (`.ssh`, `.aws`, keychains) and PDT's own data are refused, and a call with one bad file attaches
-none.
+the newest image the person pasted into this conversation (`pasted:2` the one before). Files come from your
+session's folder or the temporary folder (save screenshots there); anything else is refused, as are dotfiles
+(`.env`), key and credential folders (`.ssh`, `.aws`, keychains) and PDT's own data, and a call with one bad file
+attaches none.
 
 | Call | Does |
 |---|---|

@@ -126,7 +126,7 @@ impl NodeKind for Move {
             }
             if let Some(instead) = &c.external_stage {
                 let instead = *instead.value().ok_or("externalStage is not a stage")?;
-                let cur = cx.st.store.get_ticket_summary(&c.ticket).await.map_err(|e| e.to_string())?;
+                let cur = cx.st.store.get_ticket_summary(&c.ticket).await.map_err(crate::workflow::err)?;
                 if let Some(cur) = cur.filter(crate::untrusted::held_back)
                     && pdt_core::ticket::boards(Some(cur.stage), Some(stage), &[], None)
                 {
@@ -140,7 +140,7 @@ impl NodeKind for Move {
                 .store
                 .move_ticket_by(&c.ticket, stage, Actor::System, Some(&data), since)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::workflow::err)?
                 .ok_or("no such ticket")?;
             // Closing it ends its attempt and winds its work down (PDT-339), but this run's.
             if stage.is_closed() {
@@ -197,7 +197,7 @@ impl NodeKind for Comment {
             }
             let ticket = crate::mcp::tools::resolve_ticket(cx.st, &c.ticket, cx.run.project_id.as_deref()).await?;
             // The comment carries its step, so the step run again after a restart finds it (PDT-131).
-            if let Some(e) = cx.st.store.comment_by_step(&ticket, &cx.step.id).await.map_err(|e| e.to_string())? {
+            if let Some(e) = cx.st.store.comment_by_step(&ticket, &cx.step.id).await.map_err(crate::workflow::err)? {
                 return Ok(Outcome::next("out", json!({"eventId": e.id})));
             }
             let mut data = cx.by().data();
@@ -207,7 +207,7 @@ impl NodeKind for Comment {
                 .store
                 .add_comment_by(&ticket, &c.body, Actor::System, Some(data), now_ms())
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::workflow::err)?
                 .ok_or("no such ticket")?;
             Ok(Outcome::next("out", json!({"eventId": e.id})))
         })
@@ -284,14 +284,14 @@ impl NodeKind for Create {
                 true => TicketSource::External,
                 false => TicketSource::Workflow,
             };
-            let valid = ValidNewTicket { source, ..input.validate().map_err(|e| e.to_string())? };
+            let valid = ValidNewTicket { source, ..input.validate().map_err(crate::workflow::err)? };
             let id = uuid::Uuid::now_v7().to_string();
             let t = cx
                 .st
                 .store
                 .create_ticket_by(&id, &c.project, &valid, Actor::System, now_ms())
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::workflow::err)?;
             if untrusted {
                 crate::untrusted::record_run_on_ticket(cx.st, cx.run, &t.summary.id).await;
             }

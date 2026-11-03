@@ -151,6 +151,9 @@ pub(crate) async fn start_ticket(
     }
     let project = st.project(&ticket.summary.project_id).await?;
     let base = v.base.clone().unwrap_or_else(|| project.base_branch.clone());
+    if v.base.is_some() && !project.is_personal() {
+        known_base(&project.repo_path, &base).await?;
+    }
     // A Personal project has no repository: the ticket runs in its folder, with no branch or worktree.
     let personal = match project.is_personal() {
         true if v.from_session.is_some() => {
@@ -405,6 +408,22 @@ async fn open_tab_before_chat(
 async fn part_started(st: &AppState, parent: &TicketParent) {
     if let Err(e) = st.store.part_started(&parent.id, now_ms()).await {
         tracing::warn!(ticket = %parent.key, error = %e, "could not move the parent to In progress");
+    }
+}
+
+/// A requested base must name a commit of the repository, here or as `origin/<base>` (the attempt keeps it and
+/// later hands it to `git merge` and `git merge-base`).
+async fn known_base(repo_path: &str, base: &str) -> Result<(), ApiError> {
+    let (repo, b) = (PathBuf::from(repo_path), base.to_string());
+    let known = tokio::task::spawn_blocking(move || {
+        pdt_git::rev_parse(&repo, &b).is_some()
+            || pdt_git::rev_parse(&repo, &format!("refs/remotes/origin/{b}")).is_some()
+    })
+    .await
+    .map_err(ApiError::internal)?;
+    match known {
+        true => Ok(()),
+        false => Err(pdt_git::GitError::UnknownRef(base.to_string()).into()),
     }
 }
 
@@ -685,12 +704,14 @@ async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool, news: bool) -
             return Some((head, seen_own, true, vec![]));
         }
         // Merged on GitHub at an older head: the commits since aren't in the base.
-        let late =
-            match pr.as_ref().filter(|p| news && p.state == pdt_core::pr::PrState::Merged && !p.head_sha.is_empty()) {
-                Some(p) => pdt_git::commits_between(&repo, &p.head_sha, &head)
-                    .unwrap_or_else(|| vec![(head.clone(), String::new())]),
-                None => vec![],
-            };
+        let late = match pr
+            .as_ref()
+            .filter(|p| news && p.state == pdt_core::pr::PrState::Merged && pdt_git::is_commit_id(&p.head_sha))
+        {
+            Some(p) => pdt_git::commits_between(&repo, &p.head_sha, &head)
+                .unwrap_or_else(|| vec![(head.clone(), String::new())]),
+            None => vec![],
+        };
         let origin = format!("origin/{base}");
         let bases = [base.as_str(), origin.as_str()];
         // A head already in the base when first seen only caught up with it (PDT-45): not merged until the branch
