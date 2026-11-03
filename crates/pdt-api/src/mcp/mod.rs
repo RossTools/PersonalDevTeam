@@ -3,7 +3,10 @@
 //! session, and through it the project, ticket and agent step. The tools (`tools/`, one module per group) run the
 //! API's own handlers.
 
+pub(crate) mod listen;
 pub(crate) mod tools;
+
+pub(crate) use listen::{ToolWatch, tools_may_have_changed};
 
 use crate::routes::AppState;
 use axum::body::Bytes;
@@ -102,12 +105,22 @@ async fn authorize(st: &AppState, headers: &HeaderMap) -> Option<Session> {
     (!matches!(s.status, SessionStatus::Finished) && s.kind == SessionKind::AgentTui).then_some(s)
 }
 
-/// The tools a session gets: its persona version's set, else (no persona) the default set. A persona version PDT can't
-/// read gives none (PDT-414: it fails closed).
+/// The tools a session gets: its persona's current set, else (no persona) the default set. A running session follows
+/// its persona to newer versions for its tools (PDT-501: PDT updates the built-in personas' tools as plugins and
+/// releases add them), while its instructions stay those it was launched with; a persona that is gone leaves it its
+/// launch version's set. A persona PDT can't read gives none (PDT-414: it fails closed).
 pub(crate) async fn session_tools(st: &AppState, s: &Session) -> Vec<String> {
     let Some(p) = &s.persona else {
         return pdt_core::persona::DEFAULT_TOOLS.iter().map(|t| t.to_string()).collect();
     };
+    match st.store.get_persona(&p.id).await {
+        Ok(Some(current)) => return current.setup.tool_set(st.registry().tool_table()),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(session = %s.id, persona = %p.id, error = %e, "could not read the session's persona: no tools");
+            return vec![];
+        }
+    }
     match st.store.get_persona_version(&p.id, p.version).await {
         Ok(Some(v)) => v.setup.tool_set(st.registry().tool_table()),
         Ok(None) => {
@@ -185,16 +198,19 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
 const INSTRUCTIONS: &str = "PDT's tools for this agent session: read the ticket you work on, finish a workflow step \
 with an outcome, ask the user, and comment. They know which session you are.";
 
-/// `POST /api/mcp`.
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+        axum::Json(json!({"code": "unauthorized", "message": "a valid pdt-mcp session token is required"})),
+    )
+        .into_response()
+}
+
+/// `POST /api/mcp`. A request whose session's tools changed since it listed them, from a client that takes a stream,
+/// is answered as one with `notifications/tools/list_changed` first (the client may not hold the `GET` stream open).
 pub(crate) async fn post(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    let Some(session) = authorize(&st, &headers).await else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            axum::Json(json!({"code": "unauthorized", "message": "a valid pdt-mcp session token is required"})),
-        )
-            .into_response();
-    };
+    let Some(session) = authorize(&st, &headers).await else { return unauthorized() };
     let parsed: Result<Value, _> = serde_json::from_slice(&body);
     let value = match parsed {
         Ok(v) => v,
@@ -215,7 +231,15 @@ pub(crate) async fn post(State(st): State<AppState>, headers: HeaderMap, body: B
         }
         return axum::Json(out).into_response();
     }
+    let method = value.get("method").and_then(Value::as_str).unwrap_or_default().to_string();
     match handle(&st, &session, value).await {
+        Some(r)
+            if listen::accepts_stream(&headers)
+                && !matches!(method.as_str(), "initialize" | "tools/list")
+                && listen::changed_since_listed(&st, &session).await =>
+        {
+            listen::notice_then(&r)
+        }
         Some(r) => rpc(r).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
     }
@@ -225,7 +249,7 @@ fn rpc(r: RpcResponse) -> axum::Json<RpcResponse> {
     axum::Json(r)
 }
 
-/// `GET` and `DELETE /api/mcp`: no server-initiated stream and no protocol sessions.
+/// `DELETE /api/mcp`, and a `GET` that takes no stream: no protocol sessions.
 pub(crate) async fn not_allowed() -> Response {
     (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "POST")]).into_response()
 }
@@ -244,8 +268,8 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
         }
         "ping" => Ok(json!({})),
         "tools/list" => {
-            let allowed = session_tools(st, session).await;
-            let list: Vec<_> = st.registry().tool_infos().into_iter().filter(|t| allowed.contains(&t.name)).collect();
+            let list = listen::listed(st, session).await;
+            listen::record(st, session, &list);
             Ok(json!({"tools": list}))
         }
         "tools/call" => {
@@ -283,7 +307,7 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
 /// This module's API routes; `routes::router` merges them under `/api`.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::post;
-    axum::Router::new().route("/mcp", post(self::post).get(not_allowed).delete(not_allowed))
+    axum::Router::new().route("/mcp", post(self::post).get(listen::get).delete(not_allowed))
 }
 
 #[cfg(test)]
