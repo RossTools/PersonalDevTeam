@@ -250,11 +250,18 @@ async fn no_page_may_frame_pdt_and_the_ui_runs_under_a_content_security_policy()
     // The UI's script comes only from PDT itself.
     let res = get_with(&app, "/", &[]).await;
     let csp = res.headers()["content-security-policy"].to_str().unwrap();
-    for directive in
-        ["default-src 'self'", "script-src 'self' 'wasm-unsafe-eval';", "object-src 'none'", "base-uri 'none'"]
-    {
+    for directive in [
+        "default-src 'self'",
+        "script-src 'self' 'wasm-unsafe-eval';",
+        "connect-src 'self';",
+        "frame-src 'self';",
+        "object-src 'none'",
+        "base-uri 'none'",
+    ] {
         assert!(csp.contains(directive), "{directive} in {csp}");
     }
+    // Nothing from outside PDT without a plugin that names it.
+    assert!(!csp.contains("https:"), "{csp}");
 }
 
 #[tokio::test]

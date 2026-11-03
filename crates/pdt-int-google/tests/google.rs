@@ -297,6 +297,34 @@ async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
     assert!(v["message"].as_str().unwrap().contains("isn't signed in"), "{v}");
 }
 
+/// The web UI's Content-Security-Policy, as the page gets it.
+async fn web_csp(env: &Env) -> String {
+    use tower::ServiceExt;
+    let req = axum::http::Request::get("/").body(axum::body::Body::empty()).unwrap();
+    let res = env.app.clone().oneshot(req).await.unwrap();
+    res.headers()["content-security-policy"].to_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn the_ui_may_load_googles_picker_and_embed_only_while_the_plugin_is_on() {
+    let env = env().await;
+    let csp = web_csp(&env).await;
+    // Google's picker script and its frame (where the live embed is too), and nothing broader.
+    assert!(csp.contains("script-src 'self' 'wasm-unsafe-eval' https://apis.google.com;"), "{csp}");
+    assert!(csp.contains("frame-src 'self' https://docs.google.com;"), "{csp}");
+    assert!(csp.contains("connect-src 'self';"), "{csp}");
+    // No bare scheme and no wildcard beyond images'.
+    assert!(!csp.split([' ', ';']).any(|s| s == "https:"), "{csp}");
+    assert_eq!(csp.matches('*').count(), 1, "{csp}");
+    for directive in ["object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"] {
+        assert!(csp.contains(directive), "{directive} in {csp}");
+    }
+
+    env.st.integrations.enable(&[]);
+    let csp = web_csp(&env).await;
+    assert!(!csp.contains("google"), "{csp}");
+}
+
 #[tokio::test]
 async fn a_connection_needs_its_client_id_and_both_picker_settings() {
     let env = env().await;

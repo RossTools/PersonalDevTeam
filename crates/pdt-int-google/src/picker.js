@@ -9,9 +9,23 @@ let loading = null;
 /** Google's picker script, loaded once. */
 function loadPicker() {
   loading ??= new Promise((resolve, reject) => {
+    // The page's Content-Security-Policy names Google only while the plugin is on: a page loaded before it was turned
+    // on blocks Google's script.
+    let blocked = false;
+    const onViolation = (e) => {
+      if (e.blockedURI.startsWith('https://apis.google.com')) blocked = true;
+    };
+    document.addEventListener('securitypolicyviolation', onViolation);
     const failed = () => {
+      document.removeEventListener('securitypolicyviolation', onViolation);
       loading = null;
-      reject(new Error('Google’s file picker could not be loaded. Is this machine offline?'));
+      reject(
+        new Error(
+          blocked
+            ? 'Google’s file picker was turned on after this page loaded: reload PDT to use it.'
+            : 'Google’s file picker could not be loaded. Is this machine offline?',
+        ),
+      );
     };
     const s = document.createElement('script');
     s.src = 'https://apis.google.com/js/api.js';
@@ -20,7 +34,11 @@ function loadPicker() {
     s.onload = () => {
       if (!window.gapi) return failed();
       window.gapi.load('picker', {
-        callback: () => (window.google?.picker ? resolve(window.google.picker) : failed()),
+        callback: () => {
+          if (!window.google?.picker) return failed();
+          document.removeEventListener('securitypolicyviolation', onViolation);
+          resolve(window.google.picker);
+        },
         onerror: failed,
       });
     };

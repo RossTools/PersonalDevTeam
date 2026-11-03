@@ -298,8 +298,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   web runs' owner-checking proxies (pdt-api `remote_proxy.rs`); never map a port straight to a run or another process.
 - **Every response carries the security headers** (pdt-api `security_headers.rs`, the router's outer layers): no
   framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, no referrer, and for the web UI a CSP with
-  script only from PDT's own bundle. Keep the UI free of inline scripts and `eval`; a new kind of resource it loads
-  (a worker, another frame source) needs the policy widened there. A response with its own CSP keeps it.
+  script and frames only from PDT itself and the exact origins the enabled plugins name (`Integration::web_sources`:
+  Google's picker script and its Docs frame), connections only to PDT. Keep the UI free of inline scripts and `eval`;
+  a new kind of resource it loads (a worker) needs the policy widened there, and a plugin's page script or frame goes
+  in its `web_sources`, never a scheme or wildcard. A response with its own CSP keeps it.
 - **An error's message never carries another program's raw text** (an API error's `message`, a step's error, an
   Inbox item): the web shows it as it is, in screenshots and bug reports. A database, git, spawn, keychain or file
   error goes through its `From` into `ApiError` (or `ApiError::io(doing, e)`), which logs the full text and says what
