@@ -3,10 +3,20 @@
 //! Settings → Updates shows: a time window, stable releases only, installing anyway after a while, the check after
 //! installing and telling what changed. A failed install or health check goes to the Inbox.
 
+use super::inputs::InputsBuiltin;
 use super::*;
-use crate::workflow::templates::{params, unfill};
-use pdt_core::workflow::template::{TemplateParam, fill, param_values};
+use crate::workflow::templates::params;
+use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
+
+pub static SETTINGS: InputsBuiltin = InputsBuiltin {
+    id: INSTALL_UPDATES,
+    params: install_params,
+    template: install_template,
+    finish: Some(finish),
+    read: None,
+    extra: None,
+};
 
 /// How long a run may wait for PDT to be idle (and the window) before it fails.
 const MAX_RUNTIME_MS: u64 = 30 * 24 * 60 * 60 * 1000;
@@ -138,15 +148,8 @@ pub fn install_template() -> WorkflowDoc {
     }))
 }
 
-/// The inputs' defaults.
-pub fn defaults() -> Map<String, Value> {
-    param_values(&install_params(), &Map::new()).expect("Install updates' defaults")
-}
-
-/// The workflow filled in with `values` (checked; missing ones take their defaults).
-pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
-    let v = param_values(&install_params(), values)?;
-    let d = fill(&install_template(), &v)?;
+/// Checks the wait the inputs filled in (its window's times, how long it waits for agents).
+fn finish(d: WorkflowDoc, _: &Map<String, Value>) -> Result<WorkflowDoc, String> {
     let wait = d.node("wait").ok_or("the wait is missing")?;
     crate::workflow::nodes::host_update::check_wait(&wait.config)?;
     Ok(d)
@@ -154,30 +157,7 @@ pub fn filled(values: &Map<String, Value>) -> Result<WorkflowDoc, String> {
 
 /// The built-in as PDT ships it.
 pub(super) fn install_updates() -> WorkflowDoc {
-    filled(&Map::new()).expect("Install updates fills in")
-}
-
-/// The inputs a document was filled in with: each one read back from it, else its default.
-pub fn values_of(doc: &WorkflowDoc) -> Map<String, Value> {
-    let mut out = defaults();
-    for (k, v) in unfill(&install_template(), doc) {
-        if out.contains_key(&k) {
-            out.insert(k, v);
-        }
-    }
-    out
-}
-
-/// Whether a document is the workflow filled in with some inputs (its name and description aside): else the user
-/// changed it beyond its inputs.
-pub fn customized(doc: &WorkflowDoc) -> bool {
-    match filled(&values_of(doc)) {
-        Ok(mut d) => {
-            (d.name, d.description) = (doc.name.clone(), doc.description.clone());
-            d != *doc
-        }
-        Err(_) => true,
-    }
+    SETTINGS.shipped()
 }
 
 #[cfg(test)]
@@ -202,8 +182,8 @@ mod tests {
         assert_eq!(d.node("announce_on").unwrap().config["conditions"][0]["left"], false);
         assert_eq!(d.node("install").unwrap().config["force"], false);
         assert_eq!(d.node("install_anyway").unwrap().config["force"], true);
-        assert!(!customized(&d));
-        assert_eq!(values_of(&d), defaults());
+        assert!(!SETTINGS.customized(&d));
+        assert_eq!(SETTINGS.values_of(&d), SETTINGS.defaults());
     }
 
     /// Changed inputs land in the document and read back; an edit beyond them is a customization.
@@ -211,22 +191,22 @@ mod tests {
     fn inputs_fill_in_and_read_back() {
         let given = json!({"window": true, "windowFrom": "01:30", "windowTo": "05:00", "installAnywayAfter": "4h",
                            "stableOnly": true, "announce": true, "chat": "team"});
-        let d = filled(given.as_object().unwrap()).unwrap();
+        let d = SETTINGS.filled(given.as_object().unwrap()).unwrap();
         let wait = &d.node("wait").unwrap().config;
         assert_eq!(wait["window"], json!({"on": true, "from": "01:30", "to": "05:00"}));
         assert_eq!(wait["maxWaitMs"], 4 * 3_600_000);
         assert_eq!(d.node("announce").unwrap().config["chat"], "team");
-        let v = values_of(&d);
+        let v = SETTINGS.values_of(&d);
         assert_eq!(
             (v["window"].clone(), v["installAnywayAfter"].clone(), v["checkAfter"].clone()),
             (json!(true), json!(4 * 3_600_000), json!(true))
         );
-        assert!(!customized(&d));
+        assert!(!SETTINGS.customized(&d));
         let mut edited = d.clone();
         edited.nodes.retain(|n| n.id != "announce");
-        assert!(customized(&edited));
+        assert!(SETTINGS.customized(&edited));
         for bad in [json!({"windowFrom": "2am", "window": true}), json!({"installAnywayAfter": "soon"})] {
-            assert!(filled(bad.as_object().unwrap()).is_err(), "{bad}");
+            assert!(SETTINGS.filled(bad.as_object().unwrap()).is_err(), "{bad}");
         }
     }
 }
