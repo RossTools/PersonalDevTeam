@@ -6,6 +6,7 @@ import { Alert, Dialog, DialogActions, Field, Input, Textarea, toast } from '@ui
 import { api } from '../api/client';
 import type { Ticket } from '../api/gen/Ticket';
 import { invalidateTickets } from './queries';
+import { openExternal } from '../common/open';
 
 /** GitHub's longest issue title (crates/pdt-api/src/issues.rs). */
 const MAX_TITLE = 256;
@@ -28,7 +29,7 @@ export function CreateIssueDialog({ projectId, repo, ticket, onClose }: {
       if (ticket) invalidateTickets(qc, [ticket.id]);
       toast.success(`Filed ${r.repo}#${r.number}`, {
         ...(r.ticketKey ? { description: `${r.ticketKey} links it.` } : {}),
-        action: { label: 'Open', onClick: () => window.open(r.url, '_blank', 'noopener') },
+        action: { label: 'Open', onClick: () => openExternal(r.url) },
       });
       onClose();
     },

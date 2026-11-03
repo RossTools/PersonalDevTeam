@@ -8,7 +8,7 @@ import { Alert, Badge, Button, EmptyState, RelativeTime, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { WatchButton, Watchers } from '../common/Watch';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import type { WorkflowRun } from '../api/gen/WorkflowRun';
 import type { WorkflowRunDetail } from '../api/gen/WorkflowRunDetail';
 import type { WorkflowStep } from '../api/gen/WorkflowStep';

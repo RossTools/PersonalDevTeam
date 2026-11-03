@@ -18,7 +18,7 @@ import { useProjectSettingsSections } from '../runs/ProjectSettingsPanel';
 import { SettingsScreens, type SettingsSection } from '../common/SettingsScreens';
 import { repoUrl } from './forgeLinks';
 import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
-import { useOpenChanges } from '../review/open';
+import { useOpenChanges } from '../common/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
 import { invalidateProjects, projectKeys } from './queries';
 import { LoadError } from '../common/QueryStatus';

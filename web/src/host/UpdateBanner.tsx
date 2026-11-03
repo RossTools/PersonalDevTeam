@@ -5,7 +5,7 @@ import { api, ApiError } from '../api/client';
 import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
 import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
 import { Markdown } from '../common/LazyMarkdown';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { hostKeys } from './queries';
 import { POLL } from '../common/poll';
 

@@ -16,6 +16,7 @@ import { withStopConfirm } from './useStartRun';
 import type { ForgeLinks } from '../api/gen/ForgeLinks';
 import { useProjects } from '../projects/queries';
 import { invalidateRuns, runKeys } from './queries';
+import { openExternal } from '../common/open';
 
 type Step = 'setup' | 'command';
 
@@ -82,7 +83,7 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
 
   const entries = (): MenuEntry[] => [
     ...(run.url ? [{ label: 'Copy URL', onSelect: () => void copyToClipboard(run.url!, 'URL copied') }] : []),
-    ...(!theForge && branchLink ? [{ label: 'Open on the forge', onSelect: () => void window.open(branchLink, '_blank', 'noopener,noreferrer') }] : []),
+    ...(!theForge && branchLink ? [{ label: 'Open on the forge', onSelect: () => openExternal(branchLink) }] : []),
     ...(!active
       ? [
           { separator: true } as const,
@@ -97,7 +98,7 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
   const phoneEntries = (): MenuEntry[] => [
     ...(active ? [{ label: 'Stop', onSelect: () => void stop(), disabled: busy }] : []),
     { label: 'Restart', onSelect: () => void restart(), disabled: busy },
-    ...(run.url && run.state === 'ready' ? [{ label: 'Open', onSelect: () => void window.open(run.url!, '_blank', 'noopener,noreferrer') }] : []),
+    ...(run.url && run.state === 'ready' ? [{ label: 'Open', onSelect: () => openExternal(run.url!) }] : []),
     ...entries(),
   ];
   const state = `${runLabel(run.state)}${run.exitCode !== null ? ` (exit ${run.exitCode})` : ''}`;

@@ -13,7 +13,7 @@ import { runAction } from '../common/useAction';
 import { usePm } from '../pm/usePm';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import { LinkDocumentDialog } from './DocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
 import { openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';

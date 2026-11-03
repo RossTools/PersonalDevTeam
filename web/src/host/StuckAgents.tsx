@@ -3,7 +3,8 @@ import { Alert, Link, Section, Select, SettingsRow, Skeleton, Switch } from '@ui
 import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
-import { CustomizedNotice, openWorkflow, type PutInputs } from '../common/BuiltinSettings';
+import { CustomizedNotice, type PutInputs } from '../common/BuiltinSettings';
+import { openWorkflow } from '../common/open';
 import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 
 const KEY = ['stuck-agents'];

@@ -9,7 +9,7 @@ import { useRememberedScroll } from '../common/viewState';
 import { InlineRename } from '../common/InlineRename';
 import { cn } from '@ui/lib/utils';
 import { runAction } from '../common/useAction';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';

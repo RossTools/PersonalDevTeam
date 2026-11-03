@@ -11,7 +11,7 @@ import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { RepeatRule } from '../api/gen/RepeatRule';
 import type { Todo } from '../api/gen/Todo';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { defaultRecurrence, grouped, localDay, moveToToday, positionFor, repeatText, shown, weekdayOf, WEEKDAYS, type DueGroupId, type TodoFilter } from './model';
 import { QuickAdd } from './QuickAdd';
