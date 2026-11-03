@@ -3,6 +3,42 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.6.1 (2026-11-03)
+
+### Changed
+
+- Images from other sites in tickets, comments and agent output load only when you click them, and never send a referrer. A toast shows when a program in a terminal sets your clipboard. Incoming webhooks refuse every bad call the same way and pause after ten in a minute, and embedded documents can no longer navigate PDT's page away.
+- Error messages no longer show raw git, database, keychain or system error text with your folders' full paths: they say what failed in a line, and PDT's log keeps the full text.
+- PDT's requests to GitHub, update checks, toolchain installs and workflow services now all identify themselves with PDT's version and give up connecting after the same 10 seconds.
+- Agents, terminals and runs now all get the same three seconds to shut down before they are force-stopped (and stop waiting as soon as everything has exited), and Claude, Codex and the other agents share one set of start and request timeouts.
+- Long lists stay quick: the sidebar loads only recently ended agent sessions and runs (open tabs always stay), Documents and Notes load 100 at a time with Show more, and a long Inbox section shows its first 50 items until Show all.
+- Tabs, folding sections, pickable cards, section labels and counts look and behave the same everywhere: folds open with a turning chevron from the keyboard too, cards such as the default agent are picked with the arrow keys, and a phone's main buttons are all the same 48px height.
+- Page and document titles share one size across settings, documents, todos and setup. Settings pages, the Inbox, conversations and tickets use the same side margins, and a ticket's and an Inbox update's header lines up with the content under it.
+- Dialogs all end with the same Cancel button beside the action, and a list that fails to load (secrets, MCP servers, a plugin's connections) says so instead of showing "None yet." under the error.
+- A ticket's ⋯ menu offers the same actions on the ticket's tab, the backlog's peek and a phone: Priority and Refine are there everywhere, and links PDT opens in a new browser tab no longer pass PDT's address along.
+- Updates no longer need a GitHub token: PDT checks for and downloads its public releases without one. A saved token is now optional (under Settings › This host › Updates › Advanced), for a private fork or a higher rate limit; if GitHub rejects it, updates go on without it and PDT says so.
+- Cut a release now watches the release workflow's run while it waits for the release: a failed run reaches your Inbox with its failed jobs within minutes, and a cancelled one is reported too, instead of the wait running out in silence. Re-run the failed jobs on GitHub and it still tells you when the release is published.
+- The tray's **Quit** is now **Quit tray (PDT keeps running)**, and a new **Stop PDT and quit** stops PDT itself until your next login, asking first when agents are working. `pdt-host stop` does the same from a terminal, and **Settings › This host › Startup › Start PDT at login** turns starting at login off and on.
+- Settings › This host › Runs now says what a run is, where a project defines its runs (with a link to the docs), what the ports are for and what happens when the most runs at once is reached.
+- Lists of notes, documents, workflow versions and runs, and a ticket's sessions now move with the arrow keys and mark the open one the same way, the due date's repeat options move with the arrow keys too, and names that open a session, ticket or plugin read as links.
+
+### Fixed
+
+- PDT no longer runs a repository's own file-monitor command or hooks when it reads or commits in it, and a base branch given when adding a project or starting a ticket must exist in the repository.
+- Agents can attach files to tickets only from their own folder or the temporary folder, and the Files view can no longer be led outside its checkout or into `.git` by a symlink or an unusual spelling of the name.
+- PDT refuses changes a browser sends from another website, and merging or restarting a run with a request body now needs that body sent as JSON.
+- With remote access on, the tailnet addresses of web runs (your dev servers) now let in only PDT's owner, like PDT
+  itself; other tailnet users and tagged devices are turned away.
+- A very chatty agent, or a slow disk, can no longer make PDT's memory grow without limit: PDT now pauses reading an agent's output until it has saved what came before, and skips any single line of output larger than 64 MB.
+- Times like "5m ago" in the Inbox, PM conversations, Secrets, pull requests and review comments now keep up to date on a page left open, and durations, run statuses and git status colours read the same everywhere.
+- The website shows the latest stable version rather than a nightly, counts stable releases only, and its install commands always use https://.
+- Listing an MCP server's tools right after changing its settings or secret no longer sometimes reports "Transport closed" next to a working tool list.
+- When the PM (or any conversation whose agent can't ask itself, such as Codex or Claude in Bypass) needs your yes for one of PDT's tools, it asks with an approval card right in the conversation and carries on once you answer there or in the Inbox, instead of sending you to the Inbox and stopping.
+- When an agent in a terminal needs your yes for one of PDT's tools, or the PM asks you to confirm its decisions on ticket proposals, the agent now waits for your answer in the Inbox and carries on in the same turn, instead of stopping and picking up the result later.
+- Import a document no longer asks an account that uses PDT's own Google sign-in for a picker API key: it says when this copy of PDT has no Google file picker, an account with your own OAuth client gets a button to add the key, and an empty search explains that it finds only files PDT made or you opened in PDT.
+- A confirmation card the agent asks for right after its previous turn ends no longer expires the moment it opens.
+- **Pick from Google Drive** opens Google's file picker again. The page loads Google's picker and its Docs and Sheets editor only while the Google plugin is on, and nothing else from outside PDT.
+
 ## 0.6.0 (2026-11-03)
 
 ### Added
