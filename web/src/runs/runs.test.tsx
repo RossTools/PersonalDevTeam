@@ -5,7 +5,7 @@ import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import { toast } from '@ui';
 import { githubLinks, renderWithQuery, Reply, stubApi } from '../test-utils';
-import { OpenSessionContext } from '../tickets/actions';
+import { OpenSessionContext } from '../common/open';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
 import { RunView } from './RunView';

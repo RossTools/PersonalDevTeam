@@ -15,12 +15,12 @@ import { LabelChips } from '../tickets/TicketParts';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';
-import { useOpenSession, useOpenTicket } from '../tickets/actions';
+import { useOpenSession, useOpenTicket } from '../common/open';
 import { formatBytes, STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
   confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
 import { DecideRows } from './DecideRows';
@@ -124,6 +124,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
+  const targets = inboxTargets(item);
   const withNote = (choice: string) => void answer({ choice, ...(note.trim() ? { text: note } : {}) });
   const plain = (choice: string) => void answer({ choice });
   const dismissAction: ItemAction[] = dismissable(item) ? [{ id: 'dismiss', title: 'Dismiss', kbd: 'e', end: true, run: dismiss }] : [];
@@ -252,12 +253,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'session': {
-        const open = () => item.sessionId && item.projectId && openSession({ id: item.sessionId, projectId: item.projectId });
+        const open = () => { if (targets.session) openSession(targets.session); };
         return {
           region: 'Session waiting',
           why: `${str(item.body.sessionTitle) ?? 'This session'} waits on a permission prompt or a question. Answer it in the session; looking at it takes it out of the Inbox.`,
           content: null,
-          actions: [{ id: 'open', title: 'Open session', primary: true, disabled: !item.sessionId, run: () => void open() }],
+          actions: [{ id: 'open', title: 'Open session', primary: true, disabled: !targets.session, run: open }],
         };
       }
       case 'stalled': {
@@ -369,8 +370,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
             : `${workflow ?? 'A workflow'} wants you to know. Act on it if you disagree, then dismiss it.`,
           content: <Callout tone="error"><Markdown>{noticeText(item)}</Markdown></Callout>,
           actions: [
-            ...(item.ticketId && item.projectId
-              ? [{ id: 'ticket', title: 'Open ticket', primary: true, run: () => openTicket({ id: item.ticketId!, projectId: item.projectId! }) }]
+            ...(targets.ticket
+              ? [{ id: 'ticket', title: 'Open ticket', primary: true, run: () => openTicket(targets.ticket!) }]
               : []),
             ...dismissAction,
           ],

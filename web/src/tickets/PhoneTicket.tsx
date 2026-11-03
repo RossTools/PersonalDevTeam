@@ -10,7 +10,7 @@ import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
 import { AgentDot } from '../common/AgentState';
 import { Markdown } from '../common/Markdown';
-import { useWatches, watchEntry, Watchers } from '../common/Watch';
+import { useWatches, Watchers } from '../common/Watch';
 import { PartsStepper } from '../common/PartsStepper';
 import { PRIORITY_LABEL, PriorityIcon } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
@@ -22,8 +22,7 @@ import { MergeDialog } from '../review/MergeDialog';
 import { useDiffSize } from '../review/queries';
 import { useTopBarActions, useTopBarEdit } from '../shell/PhoneTopBar';
 import {
-  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, patchTicket, priorityEntries, refineTicket, retryAutoStartEntry,
-  startNextPart, stopWaitingEntry, useOpenSession, useOpenTicket, useStartTicket,
+  canRefine, canStart, patchTicket, refineTicket, ticketMenu, useOpenSession, useOpenTicket, useStartTicket,
 } from './actions';
 import { AttemptSection, MergedBanner } from './Attempt';
 import { agentLine } from './Board';
@@ -108,21 +107,12 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   useTopBarEdit(editing ? { canSave, saving, onSave: () => void save(), onCancel: () => { setEditing(null); setError(null); } } : null);
 
   const watches = useWatches({ ticket: t.id }).data;
-  useTopBarActions((): MenuEntry[] => [
-    watchEntry(qc, { ticket: t.id }, watches),
-    ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
-    ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
-    { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },
-    { submenu: 'Priority', entries: priorityEntries(qc, t) },
-    ...(t.parts && !isClosed(t.stage) ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, t)) }] : []),
-    ...(canMakeParts(t) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-    ...(attempt?.state === 'active' ? [{ label: 'Merge…', onSelect: () => setMerging(true) }] : []),
-    ...(attempt?.state === 'active'
-      ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, t, attempt)) }]
-      : []),
-    { separator: true },
-    { label: 'Delete…', danger: true, onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, t)) onDeleted(); }) },
-  ]);
+  useTopBarActions((): MenuEntry[] => ticketMenu({
+    qc, confirm, ticket: t, watch: { watches }, startPart: start, abandon: true,
+    ...(canMakeParts(t) ? { onMakeParts: () => setMaking(true) } : {}),
+    onMerge: () => setMerging(true),
+    onDeleted,
+  }));
 
   // Open work: the session working on it now, else the active attempt's newest one, else the ticket's tab.
   const openWork = () => {

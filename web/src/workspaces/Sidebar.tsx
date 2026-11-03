@@ -14,7 +14,7 @@ import { agentMenu, workspaceMenu } from './menus';
 import { findTab, isTicketWorkspace, itemOf, positionInAll } from './model';
 import { TicketKey } from '../common/TicketKey';
 import { PrBadge } from '../tickets/PullRequest';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { SessionTicketChip } from './SessionTicketChip';
 import { startedByStep } from '../sessions/status';

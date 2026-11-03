@@ -596,6 +596,13 @@ the versions and the Settings sections that show a built-in). Poll intervals are
 (`POLL.live` 2 s for what's on screen, `steady`, `slow`, `paged`, `idle`); what the notification stream pushes polls
 with `streamPoll`, slowly while the stream is connected.
 
+**Web menus and opening things.** A ticket's menu, wherever it shows (backlog row, board card, peek, tab, phone top
+bar), comes from `ticketMenu` in `tickets/actions.ts`; a screen passes the options it can offer (Watch, Start next
+part, Merge…, Create issue…, Abandon…, rank) and a new ticket action is added there once. Opening a ticket, session,
+changes tab, workflow, Settings page or plugin goes through `common/open.ts` (the contexts AppShell provides and plain
+navigations), and a URL outside PDT through its `openExternal` (`noopener,noreferrer`), not `window.open`. What an
+Inbox item opens is `inboxTargets` in `inbox/model.ts`.
+
 A new top-level view (Inbox, Notes and the like) still means editing `AppShell.tsx`, because its state lives in the
 shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with shared fixtures in
 `web/src/shell/fixtures.ts`.

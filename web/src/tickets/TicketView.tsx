@@ -9,14 +9,10 @@ import { PriorityIcon } from '../common/PriorityIcon';
 import { StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
 import { WatchButton } from '../common/Watch';
-import { runAction, useAction } from '../common/useAction';
+import { useAction } from '../common/useAction';
 import { useRememberedScroll } from '../common/viewState';
 import { AttemptSection, MergedBanner } from './Attempt';
-import {
-  abandonAttempt, canRefine, canStart, deleteTicket, moveToEntries, refineTicket, retryAutoStart, retryAutoStartEntry, startNextPart,
-  stopWaitingEntry, useStartTicket,
-} from './actions';
-import { isClosed } from './model';
+import { canStart, retryAutoStart, ticketMenu, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
 import { useClearToStartToasts } from './clearToStart';
@@ -24,7 +20,7 @@ import { TicketBadges } from './TicketBadges';
 import { TicketConversation } from './TicketConversation';
 import { ChangesView } from '../review/ChangesView';
 import { MergeDialog } from '../review/MergeDialog';
-import { useOpenChanges } from '../review/open';
+import { useOpenChanges } from '../common/open';
 import { useDiffSize } from '../review/queries';
 import { useCheckMerge, useProjectForge, useTicket } from './queries';
 import { CreateIssueDialog } from './CreateIssueDialog';
@@ -152,27 +148,13 @@ export function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?
           )}
           <MenuButton
             label="Ticket actions"
-            entries={() => [
-              ...(canRefine(ticket) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, ticket)) }] : []),
-              ...(ticket.waiting ? [stopWaitingEntry(qc, ticket)] : []),
-              ...(ticket.pickupFailed ? [retryAutoStartEntry(qc, ticket)] : []),
-              { submenu: 'Move to', entries: moveToEntries(qc, ticket, confirm) },
-              ...(ticket.parts && !isClosed(ticket.stage)
-                ? [{ label: 'Start next part', onSelect: () => void runAction(() => startNextPart(start, ticket)) }]
-                : []),
-              ...(canMakeParts(ticket) ? [{ label: 'Make into parts…', onSelect: () => setMaking(true) }] : []),
-              ...(attempt?.state === 'active' ? [{ label: 'Merge…', onSelect: () => setMerging(true) }] : []),
-              ...(canFile ? [{ label: 'Create GitHub issue…', onSelect: () => setFiling(true) }] : []),
-              ...(attempt?.state === 'active'
-                ? [{ label: 'Abandon attempt…', onSelect: () => void runAction(() => abandonAttempt(confirm, qc, ticket, attempt)) }]
-                : []),
-              { separator: true },
-              {
-                label: 'Delete…',
-                danger: true,
-                onSelect: () => void runAction(async () => { if (await deleteTicket(confirm, qc, ticket)) onDeleted?.(); }),
-              },
-            ]}
+            entries={() => ticketMenu({
+              qc, confirm, ticket, startPart: start, abandon: true,
+              ...(canMakeParts(ticket) ? { onMakeParts: () => setMaking(true) } : {}),
+              onMerge: () => setMerging(true),
+              ...(canFile ? { onFileIssue: () => setFiling(true) } : {}),
+              ...(onDeleted ? { onDeleted } : {}),
+            })}
           />
         </>
       }

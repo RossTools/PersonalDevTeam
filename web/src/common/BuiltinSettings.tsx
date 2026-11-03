@@ -5,17 +5,14 @@ import type { BuiltinSettingsApi } from '../api/builtinSettings';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { NotificationChannel } from '../api/gen/NotificationChannel';
 import { useConnections } from '../connections/queries';
-import { routePath } from '../shell/route';
-import { navigate } from '../shell/router';
 import { AutoSaveRow } from './AutoSave';
+import { openWorkflow } from './open';
 import { invalidateWorkflow } from '../workflows/queries';
 
 // Settings is the home of a behaviour PDT runs as a built-in workflow (PDT-384): plain controls that read and write
 // the workflow's inputs, a "Customize as a workflow →" link, and, once the workflow is changed beyond its inputs or
 // turned off, a notice naming it with Open and Reset to default. The workflow editor's side is
 // workflows/BuiltinSettingsBanner.tsx.
-
-export const openWorkflow = (id: string) => navigate(routePath({ view: 'workflows', target: { kind: 'workflow', id } }));
 
 /** Saves some inputs; the view after it. */
 export type PutInputs = (values: Record<string, unknown>) => Promise<BuiltinSettingsView>;

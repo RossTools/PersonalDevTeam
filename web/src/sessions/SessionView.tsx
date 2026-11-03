@@ -24,7 +24,7 @@ import { INITIAL_SIZE } from './status';
 import { useViewTracking } from './useViewTracking';
 import { usePolledAt } from '../common/usePolledAt';
 import { worktreesQuery } from '../common/worktrees';
-import { useOpenChanges } from '../review/open';
+import { useOpenChanges, openExternal } from '../common/open';
 import { ChangesButton } from '../review/ChangesButton';
 import { DocumentsBesideLayout, useOpenBesidePicker } from '../documents/BesidePanel';
 import { useProjects } from '../projects/queries';
@@ -267,7 +267,7 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
           { separator: true } as const,
         ]),
     { label: 'Copy path', onSelect: () => void copyToClipboard(session.cwd, 'Path copied') },
-    ...(forgeLink ? [{ label: `Open on ${theForge?.name ?? 'the forge'}`, onSelect: () => void window.open(forgeLink, '_blank', 'noopener,noreferrer') }] : []),
+    ...(forgeLink ? [{ label: `Open on ${theForge?.name ?? 'the forge'}`, onSelect: () => openExternal(forgeLink) }] : []),
     { separator: true },
     { label: 'Remove…', onSelect: () => void askRemove(), disabled: busy, danger: true },
   ];

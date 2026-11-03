@@ -3,8 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
-import { OpenTicketContext } from '../tickets/actions';
-import { OpenChangesContext } from '../review/open';
+import { OpenTicketContext, OpenChangesContext } from '../common/open';
 import { ticket } from '../tickets/fixtures';
 import { TicketTabsContext } from '../workspaces/ticketTabs';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
@@ -599,7 +598,7 @@ describe('inbox', () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     renderWithQuery(<InboxView items={[blocked]} selectedId="b" onSelect={() => {}} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Open PR' }));
-    expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/12', '_blank', 'noopener');
+    expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/12', '_blank', 'noopener,noreferrer');
     expect(screen.getByRole('button', { name: /Merge again/ })).toBeInTheDocument();
     open.mockRestore();
   });
@@ -647,7 +646,7 @@ describe('inbox', () => {
     expect(within(choices).getByRole('button', { name: /Approve merge/ })).toBeInTheDocument();
     expect(question.closest('.overflow-auto')).not.toContainElement(choices);
     await userEvent.click(screen.getByRole('button', { name: 'Open pull request' }));
-    expect(open).toHaveBeenCalledWith('https://github.com/acme/app/pull/314', '_blank', 'noopener');
+    expect(open).toHaveBeenCalledWith('https://github.com/acme/app/pull/314', '_blank', 'noopener,noreferrer');
     open.mockRestore();
   });
 

@@ -1,7 +1,7 @@
 import type { SyntheticEvent } from 'react';
 import type { Session } from '../api/gen/Session';
 import { TicketKey } from '../common/TicketKey';
-import { useOpenTicket } from '../tickets/actions';
+import { useOpenTicket } from '../common/open';
 
 const stop = (e: SyntheticEvent) => e.stopPropagation();
 

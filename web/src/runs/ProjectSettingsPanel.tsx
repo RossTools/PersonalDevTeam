@@ -7,7 +7,7 @@ import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
-import { useOpenSession } from '../tickets/actions';
+import { useOpenSession } from '../common/open';
 import { AreasEditor } from '../tickets/Areas';
 import { ConfigCommands } from './ApproveCommands';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
