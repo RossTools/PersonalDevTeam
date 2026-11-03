@@ -1,4 +1,4 @@
-//! `mcp.tool` (Phase 7e spec §7.2): calls a tool of an MCP server (a connection of kind `mcp`). The catalog also lists
+//! `mcp.tool`: calls a tool of an MCP server (a connection of kind `mcp`). The catalog also lists
 //! each cached tool as its own entry (`mcp:<server>/<tool>`), which makes an `mcp.tool` node preset for that tool.
 
 use crate::mcp_client::{McpTool, McpTools};

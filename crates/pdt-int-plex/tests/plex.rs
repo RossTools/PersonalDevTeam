@@ -1,4 +1,4 @@
-//! Plex through the API (Phase 7e-3): search, what's new, refresh, and dry runs that call nothing. Plex is a local
+//! Plex through the API: search, what's new, refresh, and dry runs that call nothing. Plex is a local
 //! fake server.
 
 #[path = "../../pdt-api/tests/common/mod.rs"]

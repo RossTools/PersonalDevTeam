@@ -1,4 +1,4 @@
-//! A stand-in for `claude -p` stream-json, for tests (spec §12): frame shapes copied from recorded runs. Never
+//! A stand-in for `claude -p` stream-json, for tests: frame shapes copied from recorded runs. Never
 //! shipped. What a user message does:
 //! - `run: <cmd>` — asks to run `<cmd>` with Bash (a `can_use_tool` request), then reports it ran or was denied.
 //! - `ask: <question>` — asks an AskUserQuestion with options A and B, then says the answer.

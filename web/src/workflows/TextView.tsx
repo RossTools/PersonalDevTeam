@@ -1,4 +1,4 @@
-// The text view (Phase 7d spec §3.3): the draft as JSON or TOML. A parsed edit becomes the draft; a parse error shows
+// The text view: the draft as JSON or TOML. A parsed edit becomes the draft; a parse error shows
 // and leaves the draft as it was.
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Alert, SegmentedControl, Skeleton } from '@ui';

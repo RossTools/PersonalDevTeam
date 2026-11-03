@@ -1055,7 +1055,7 @@ fn command_text(s: &str) -> Option<String> {
 }
 
 /// Events for the turns a session's transcript (Claude's `<id>.jsonl`) has after the entry `after` (all of them
-/// without one): what was typed and done in the TUI (spec §8.3). Same mapping as the live stream; turns end at the
+/// without one): what was typed and done in the TUI. Same mapping as the live stream; turns end at the
 /// next prompt, an interrupt, or the TUI's `turn_duration`. Usage is left out (the transcript has no totals).
 pub fn history_events(transcript: &str, after: Option<&str>, cwd: Option<&str>) -> Result<Vec<MapOut>, HistoryError> {
     let entries: Vec<Value> =

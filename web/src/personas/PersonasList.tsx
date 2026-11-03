@@ -5,7 +5,7 @@ import { useAgents } from '../common/agents';
 import { agentLine, sortPersonas, usePersonas } from './model';
 
 /**
- * The list column of the Personas view (UX spec §8.4): a heading with New persona, then every persona (name; role,
+ * The list column of the Personas view: a heading with New persona, then every persona (name; role,
  * agent and model below), archived ones last and marked. `onSelect('new')` opens the create form (not on a phone,
  * where personas are read-only).
  */

@@ -1,4 +1,4 @@
-//! The `schedule` trigger (Phase 7e spec §2.2) and the scheduler that emits its `schedule.fired` events: one per slot
+//! The `schedule` trigger and the scheduler that emits its `schedule.fired` events: one per slot
 //! (keyed, so a slot fires once), a baseline for a new or changed workflow, and only the latest missed slot after
 //! pdtd was down (with `catchUp`).
 

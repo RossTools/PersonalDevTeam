@@ -31,7 +31,7 @@ const text = (v: unknown) => (typeof v === 'string' ? v : '');
 type Put = (input: NotificationRulesInput) => Promise<NotificationRulesView>;
 
 /**
- * Settings → Notifications (PDT-108 §7, PDT-368): this device's desktop notifications, and the Notification rules
+ * Settings → Notifications (PDT-108, PDT-368): this device's desktop notifications, and the Notification rules
  * workflow's inputs: what each kind of notification shows (every device sees the same Inbox), escalation, quiet hours
  * and a chat channel. A workflow changed beyond its inputs is only named here, with Open and Reset to default.
  */

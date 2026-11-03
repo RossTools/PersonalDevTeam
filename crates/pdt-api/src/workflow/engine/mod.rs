@@ -1,4 +1,4 @@
-//! The durable workflow engine (Phase 7a spec §4): matches logged events to enabled triggers, starts runs, executes
+//! The durable workflow engine: matches logged events to enabled triggers, starts runs, executes
 //! their steps one by one (each written before and after it runs, so a restart re-runs at most the step that was
 //! running), handles waits, retries, error paths, limits and sub-workflows, and dry-runs documents in memory.
 //!

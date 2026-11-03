@@ -1,4 +1,4 @@
-// A ticket on a phone (PDT-119, design §7): a full screen in place of the peek. The header reads its state at a
+// A ticket on a phone (PDT-119): a full screen in place of the peek. The header reads its state at a
 // glance; the Overview stacks into one column with the details folded at the top; the bottom bar holds Comment… and
 // the stage's primary action, everything else is under the top bar's ⋯.
 import { useState, type ReactNode } from 'react';

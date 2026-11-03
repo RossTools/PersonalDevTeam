@@ -1,4 +1,4 @@
-//! Jira Cloud (Phase 7e-2, PDT-85) through the API: a project linked to Jira, the sensor's events, importing issues
+//! Jira Cloud (PDT-85) through the API: a project linked to Jira, the sensor's events, importing issues
 //! (assigned ones by the built-in, any one by key, never twice), Done moving the issue, and the Jira actions. Jira is
 //! a fake local server.
 

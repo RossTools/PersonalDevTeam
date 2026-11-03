@@ -1,4 +1,4 @@
-// A template (Phase 7d spec §5): its params and document. Built-in ones are read-only; the user's own can be edited:
+// A template: its params and document. Built-in ones are read-only; the user's own can be edited:
 // name, description, params, and the document as text with `{{params.<id>}}`. On a phone it is view-only (PDT-120).
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';

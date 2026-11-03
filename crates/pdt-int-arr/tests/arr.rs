@@ -1,4 +1,4 @@
-//! Radarr and Sonarr through the API (Phase 7e-3): search, add once, the queue, and dry runs that call nothing.
+//! Radarr and Sonarr through the API: search, add once, the queue, and dry runs that call nothing.
 //! Both are local fake servers.
 
 #[path = "../../pdt-api/tests/common/mod.rs"]

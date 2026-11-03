@@ -175,7 +175,7 @@ pub enum ParentRule {
     ParentClosed,
 }
 
-/// Whether a ticket may become a part of another (spec §4, "Valid parent").
+/// Whether a ticket may become a part of another ("Valid parent").
 pub fn valid_parent(f: &ParentFacts) -> Result<(), ParentRule> {
     if f.is_self {
         return Err(ParentRule::Itself);

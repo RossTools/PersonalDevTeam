@@ -1,4 +1,4 @@
-//! Make ticket from a chat (structured agents spec §10): what PDT asks the agent in its hidden side request, the
+//! Make ticket from a chat: what PDT asks the agent in its hidden side request, the
 //! answer's shape, and reading the answer back. Pure.
 
 use crate::ticket::{MAX_DESCRIPTION, MAX_TITLE};

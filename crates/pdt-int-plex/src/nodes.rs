@@ -1,4 +1,4 @@
-//! Plex (Phase 7e spec §7.1): `plex.search`, `plex.recently_added` and `plex.refresh`. A connection of kind `plex`:
+//! Plex: `plex.search`, `plex.recently_added` and `plex.refresh`. A connection of kind `plex`:
 //! `url` the server's address (`http://nas:32400`), the secret its `X-Plex-Token`.
 
 use pdt_api::sdk::http::{call_json, service};

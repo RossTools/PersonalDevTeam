@@ -1,4 +1,4 @@
-//! Discord through the API (PDT-98, Phase 7e): `discord.post` (split messages, rate limits, restarts, its
+//! Discord through the API (PDT-98): `discord.post` (split messages, rate limits, restarts, its
 //! secret kept out of errors and logs), `discord.channel.ensure`, the templates that post to Discord, and the PM's
 //! Discord tools. Discord is a local fake server.
 

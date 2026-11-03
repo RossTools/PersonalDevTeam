@@ -73,7 +73,7 @@ async fn change_stage_by(
     now: i64,
 ) -> Result<(), StoreError> {
     let closed_at = if to.is_closed() { Some(now) } else { None };
-    // A closed ticket no longer waits to start; any move takes it out of its pipeline stage (Phase 7c §2).
+    // A closed ticket no longer waits to start; any move takes it out of its pipeline stage.
     sqlx::query(
         "UPDATE tickets SET stage = ?, updated_at = ?, pipeline_stage = NULL, \
          closed_at = CASE WHEN ? THEN COALESCE(closed_at, ?) ELSE NULL END, \

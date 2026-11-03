@@ -118,7 +118,7 @@ fn bundled_host(exe_dir: Option<&Path>) -> PathBuf {
 }
 
 /// The pdt-host to run. Windows: the data folder's copy when there is one (the installer must be able to replace the
-/// install folder, decision 14), else the one beside this exe (first run, development). macOS: always the one beside
+/// install folder), else the one beside this exe (first run, development). macOS: always the one beside
 /// this exe, in the bundle (PDT-40).
 fn host_to_run(os: pdt_host::register::Os, data_dir: Option<&Path>, exe_dir: Option<&Path>) -> PathBuf {
     data_dir

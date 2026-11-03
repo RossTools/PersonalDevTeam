@@ -3,7 +3,7 @@ import type { IssueState } from "./IssueState";
 import type { LinkOrigin } from "./LinkOrigin";
 
 /**
- * An issue in another tracker that a ticket is linked to (Phase 7e: an issue tracker integration's, or GitHub's).
+ * An issue in another tracker that a ticket is linked to (an issue tracker integration's, or GitHub's).
  */
 export type ExternalLink = { 
 /**

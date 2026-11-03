@@ -122,7 +122,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, f
 }
 
 /**
- * The Inbox's list column (UX spec §8.4, PDT-108 §5.1): **Needs you**, then **Updates**, with Mark all read, Clear all
+ * The Inbox's list column (PDT-108): **Needs you**, then **Updates**, with Mark all read, Clear all
  * (and Clear on each Update) and a way to the notification settings.
  */
 export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onClear, onClearAll, onSettings, loading, failed, updatesFailed }: {

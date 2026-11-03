@@ -1,4 +1,4 @@
-//! Agent activity (remote-host spec §5): what an agent terminal is doing, and whether the user has seen it since it
+//! Agent activity: what an agent terminal is doing, and whether the user has seen it since it
 //! last needed them. Pure; pdt-api feeds it hook reports and terminal input/output.
 
 use serde::{Deserialize, Serialize};

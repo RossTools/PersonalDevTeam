@@ -1,4 +1,4 @@
-//! MCP tools as workflow actions (Phase 7e spec §7.2): checking an `mcp.tool` node's `arguments` against the tool's
+//! MCP tools as workflow actions: checking an `mcp.tool` node's `arguments` against the tool's
 //! input schema, and turning a tool's result into a step's output. Pure.
 
 use serde_json::{Map, Value};

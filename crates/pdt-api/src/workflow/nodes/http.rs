@@ -1,4 +1,4 @@
-//! `http.request` (Phase 7e spec §3.2): one HTTP request, optionally through a connection (its base URL, and its
+//! `http.request`: one HTTP request, optionally through a connection (its base URL, and its
 //! secret sent the way its config says). A status outside `expect` is an error.
 
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};

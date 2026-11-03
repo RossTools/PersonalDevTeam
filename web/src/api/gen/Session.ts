@@ -72,7 +72,7 @@ model: string | null,
  */
 permissionMode: PermissionMode | null, 
 /**
- * The persona and version the session runs, when a workflow's agent step started it (Phase 7b).
+ * The persona and version the session runs, when a workflow's agent step started it.
  */
 persona: SessionPersona | null, 
 /**

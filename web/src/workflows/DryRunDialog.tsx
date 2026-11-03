@@ -1,4 +1,4 @@
-// Dry run (Phase 7d spec §4): runs the draft against a recent event, a hand-written one or a manual input, changing
+// Dry run: runs the draft against a recent event, a hand-written one or a manual input, changing
 // nothing, and shows the path and what each step would do.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';

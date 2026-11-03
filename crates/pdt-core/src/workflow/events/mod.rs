@@ -1,4 +1,4 @@
-//! The event log's types and payloads (Phase 7a spec §2). Each type is a trigger kind in the catalog, with its payload
+//! The event log's types and payloads. Each type is a trigger kind in the catalog, with its payload
 //! as the trigger's output schema. CI types are provider-neutral (`provider`).
 
 use schemars::{JsonSchema, Schema};

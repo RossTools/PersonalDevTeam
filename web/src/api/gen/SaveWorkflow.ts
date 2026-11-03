@@ -3,6 +3,6 @@ import type { WorkflowDoc } from "./WorkflowDoc";
 
 export type SaveWorkflow = { doc: WorkflowDoc | null, note: string, 
 /**
- * Propose the version instead (an agent's change): it waits for the user to accept it (Phase 7d spec §6.2).
+ * Propose the version instead (an agent's change): it waits for the user to accept it.
  */
 propose: boolean, };

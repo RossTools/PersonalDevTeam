@@ -6,6 +6,6 @@ export type Tab = { id: string, workspaceId: string,
  */
 sessionId: string | null, runId: string | null, ticketId: string | null, 
 /**
- * A changes tab: the worktree's review (Phase 6).
+ * A changes tab: the worktree's review.
  */
 worktreeId: string | null, position: number, };

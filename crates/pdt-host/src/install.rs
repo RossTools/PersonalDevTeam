@@ -1,4 +1,4 @@
-//! Installing a release and rolling it back (spec §3.4 steps 3–4): the silent NSIS installer on Windows, a bundle swap
+//! Installing a release and rolling it back: the silent NSIS installer on Windows, a bundle swap
 //! on macOS, an install folder (and AppImage) swap on Linux ([`crate::linux`]). The previous version is kept: a copy
 //! of the install folder (Windows), the old bundle (macOS) or the old folder (Linux).
 

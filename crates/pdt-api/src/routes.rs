@@ -121,7 +121,7 @@ pub struct AppState {
     pub(crate) ticket_start_locks: std::sync::Arc<crate::keyed_locks::KeyedLocks>,
     /// The finishes going on, per ticket: they run one at a time and spare each other's workflow runs (PDT-182).
     pub(crate) finishes: std::sync::Arc<crate::finish::Finishes>,
-    /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap, tickets spec §7).
+    /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap).
     pub(crate) changed_files: crate::overlap::ChangedFiles,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
@@ -191,7 +191,7 @@ pub struct AppState {
     /// Reads a disk's free space. `new` reads none (no disk is ever low), so tests never depend on the machine's own
     /// disk; only pdtd's production wiring installs the OS's (`storage::os_disk_space`), and a test sets a fake.
     pub disk_space: crate::storage::DiskProbe,
-    /// MCP servers PDT is a client of (Phase 7e-3): their live clients and cached tools.
+    /// MCP servers PDT is a client of: their live clients and cached tools.
     pub(crate) mcp: std::sync::Arc<crate::mcp_client::McpPool>,
     /// How long a watch's notes wait for more before they are told, and the longest they wait (PDT-319; tests
     /// shorten them).

@@ -1,4 +1,4 @@
-//! Tickets (tickets spec §3, §4): the types the store and API share, and the text rules for titles, labels, slugs
+//! Tickets: the types the store and API share, and the text rules for titles, labels, slugs
 //! and keys. A ticket's key is `<project key>-<number>`, e.g. `PDT-42`; numbers are never reused within a project.
 
 use serde::{Deserialize, Serialize};
@@ -233,11 +233,11 @@ pub enum EventKind {
     /// A part was added to or removed from a parent (on both tickets): `{parentId, parentKey, partId, partKey,
     /// removed}`.
     Parted,
-    /// Review comments were sent to the coder session (review spec §2.5): `{worktreeId, sessionId, count}`.
+    /// Review comments were sent to the coder session: `{worktreeId, sessionId, count}`.
     Feedback,
     /// The user approved the attempt's changes: `{verdict: "approved", head}`.
     Review,
-    /// An agent step's outcome (Phase 7b): `{outcome, summary, persona, personaVersion, by, sessionId, attemptId,
+    /// An agent step's outcome: `{outcome, summary, persona, personaVersion, by, sessionId, attemptId,
     /// workflowId, workflowName, runId}`.
     Outcome,
     /// Outside input reached an agent session, or was held back from one (PDT-202): `{source, url, sessionId, via,
@@ -381,7 +381,7 @@ pub enum TicketSort {
 }
 str_enum!(TicketSort { Rank => "rank", Priority => "priority", Updated => "updated", Created => "created" });
 
-/// A ticket's attempt (a branch + worktree + sessions working on it; Phase 4b creates them).
+/// A ticket's attempt (a branch + worktree + sessions working on it; Start creates them).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -412,7 +412,7 @@ pub struct AttemptSummary {
     pub merge_update: Option<crate::merge_update::MergeUpdateStatus>,
 }
 
-/// An issue in another tracker that a ticket is linked to (Phase 7e: an issue tracker integration's, or GitHub's).
+/// An issue in another tracker that a ticket is linked to (an issue tracker integration's, or GitHub's).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -491,7 +491,7 @@ pub struct TicketSummary {
     pub blocked_by: u32,
     /// The active attempt, else the latest one.
     pub attempt: Option<AttemptSummary>,
-    /// The worst planned/actual overlap with the project's tickets that have an active attempt (tickets spec §7).
+    /// The worst planned/actual overlap with the project's tickets that have an active attempt.
     pub overlap: OverlapLevel,
     /// The keys of the tickets it overlaps, conflicts first.
     pub overlap_with: Vec<String>,
@@ -505,7 +505,7 @@ pub struct TicketSummary {
     pub parent: Option<crate::parts::TicketParent>,
     /// The roll-up of its parts, when it has any (filled in by the API).
     pub parts: Option<crate::parts::PartsProgress>,
-    /// Where a pipeline workflow has it (Phase 7c): `refine` while Draft or Ready, the others while In progress. Any
+    /// Where a pipeline workflow has it: `refine` while Draft or Ready, the others while In progress. Any
     /// change of stage clears it.
     #[serde(default)]
     pub pipeline_stage: Option<PipelineStage>,
@@ -546,7 +546,7 @@ pub struct TicketSummary {
     pub proposed: bool,
 }
 
-/// A ticket's stage in a pipeline workflow (Phase 7c spec §2): the Board splits In progress by it.
+/// A ticket's stage in a pipeline workflow: the Board splits In progress by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -566,7 +566,7 @@ str_enum!(PipelineStage {
     MergeBlocked => "merge_blocked"
 });
 
-/// The state of whoever works on a ticket in a workflow now (Phase 7c spec §7).
+/// The state of whoever works on a ticket in a workflow now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
@@ -1071,7 +1071,7 @@ pub fn agent_areas(areas: &[String], configured: &[String]) -> Result<Vec<String
     }
 }
 
-/// Area names (matched against `.pdt/project.toml` in Phase 4c): trimmed, 1–60 characters, no commas; kept as
+/// Area names (matched against `.pdt/project.toml` areas): trimmed, 1–60 characters, no commas; kept as
 /// written, de-duplicated and sorted.
 pub fn normalize_areas(areas: &[String]) -> VResult<Vec<String>> {
     let mut out = Vec::with_capacity(areas.len());
@@ -1099,7 +1099,7 @@ pub fn valid_comment(body: &str) -> VResult<String> {
     Ok(b.to_string())
 }
 
-/// For branch names (Phase 4b): lower-case ASCII letters and digits joined by single dashes, at most 40 characters,
+/// For branch names: lower-case ASCII letters and digits joined by single dashes, at most 40 characters,
 /// cut at a word boundary where possible. Accented letters lose their accents where the letter is plain ASCII
 /// underneath; anything else separates words. May be empty.
 pub fn slug(title: &str) -> String {

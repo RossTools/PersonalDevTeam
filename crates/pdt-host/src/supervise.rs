@@ -1,4 +1,4 @@
-//! The supervision loop (spec §3.1, §3.4): start pdtd (or adopt one that is running), restart it with backoff when it
+//! The supervision loop: start pdtd (or adopt one that is running), restart it with backoff when it
 //! exits, and install the update it hands over, rolling back when the new version fails its health check.
 
 use crate::config::HostConfig;

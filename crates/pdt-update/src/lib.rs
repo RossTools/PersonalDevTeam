@@ -1,4 +1,4 @@
-//! The GitHub REST client for updates (remote-host spec §3.2–3.3; verified fact 6) and bug reports (PDT-153: issues on
+//! The GitHub REST client for updates and bug reports (PDT-153: issues on
 //! the release repository, with the same token). The token goes only to the API host: API redirects are followed on
 //! that host alone (a renamed or moved repository, PDT-195), asset redirects to storage by hand, without it (decision
 //! 13). The repository is pinned by its numeric id when it has one, which survives renames and transfers.

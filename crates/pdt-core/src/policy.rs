@@ -1,4 +1,4 @@
-//! Project policies (Phase 7c spec §4, §6): who may merge, whether an automated merge needs a person's approval, the
+//! Project policies: who may merge, whether an automated merge needs a person's approval, the
 //! cap on running attempts and auto-start. Pure rules: the domain commands (Merge, Start) and the scheduler apply them.
 
 use crate::ticket::{OverlapLevel, TicketSort, TicketSummary};
@@ -289,7 +289,7 @@ pub fn may_merge(
     }
 }
 
-/// Whether auto-start may take this ticket (spec §6.1): not a parent, no active attempt (an abandoned or merged one
+/// Whether auto-start may take this ticket: not a parent, no active attempt (an abandoned or merged one
 /// doesn't count: a ticket stopped and moved back to To do starts again, PDT-159), not blocked, no conflict, and not
 /// waiting unless it is clear to start.
 pub fn startable(t: &TicketSummary) -> bool {

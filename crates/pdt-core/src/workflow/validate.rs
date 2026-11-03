@@ -1,4 +1,4 @@
-//! Validating a workflow document (Phase 7a spec §6) against what the catalog says about each kind.
+//! Validating a workflow document against what the catalog says about each kind.
 
 use super::doc::{ERROR_PORT, WorkflowDoc};
 use serde::{Deserialize, Serialize};

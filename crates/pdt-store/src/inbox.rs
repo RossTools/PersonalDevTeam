@@ -1,4 +1,4 @@
-//! The Inbox's stored items and agent steps' session bindings (Phase 7b spec §4.2, §6).
+//! The Inbox's stored items and agent steps' session bindings.
 
 use crate::{Store, StoreError};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};

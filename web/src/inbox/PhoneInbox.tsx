@@ -1,4 +1,4 @@
-// The Inbox on a phone (PDT-117, design §6): the list with Needs you | Updates and Review all, and one item per screen
+// The Inbox on a phone (PDT-117): the list with Needs you | Updates and Review all, and one item per screen
 // with its decision fixed at the bottom, in the thumb's reach.
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';

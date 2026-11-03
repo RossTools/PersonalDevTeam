@@ -54,7 +54,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
 }
 
 impl Store {
-    /// Records a new active attempt on a ticket (Start, Phase 4b). `Conflict` if the ticket already has one.
+    /// Records a new active attempt on a ticket (Start). `Conflict` if the ticket already has one.
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_attempt(
         &self,
@@ -300,7 +300,7 @@ impl Store {
     }
 
     /// Whether to finish the ticket once the attempt's branch is merged, and whether to delete the branch then.
-    /// Sets (or clears) a ticket's pipeline stage (Phase 7c §2). False for an unknown ticket.
+    /// Sets (or clears) a ticket's pipeline stage. False for an unknown ticket.
     pub async fn set_pipeline_stage(&self, ticket_id: &str, stage: Option<PipelineStage>) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE tickets SET pipeline_stage = ? WHERE id = ?")
             .bind(stage.map(PipelineStage::as_str))
@@ -310,7 +310,7 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// How many active attempts a project's tickets have (its running-attempt cap, Phase 7c §4).
+    /// How many active attempts a project's tickets have (its running-attempt cap).
     pub async fn count_active_attempts(&self, project_id: &str) -> Result<u32, StoreError> {
         let (n,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM attempts a JOIN tickets t ON t.id = a.ticket_id \

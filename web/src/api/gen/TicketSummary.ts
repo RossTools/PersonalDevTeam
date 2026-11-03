@@ -48,7 +48,7 @@ blockedBy: number,
  */
 attempt: AttemptSummary | null, 
 /**
- * The worst planned/actual overlap with the project's tickets that have an active attempt (tickets spec §7).
+ * The worst planned/actual overlap with the project's tickets that have an active attempt.
  */
 overlap: OverlapLevel, 
 /**
@@ -64,7 +64,7 @@ parent: TicketParent | null,
  */
 parts: PartsProgress | null, 
 /**
- * Where a pipeline workflow has it (Phase 7c): `refine` while Draft or Ready, the others while In progress. Any
+ * Where a pipeline workflow has it: `refine` while Draft or Ready, the others while In progress. Any
  * change of stage clears it.
  */
 pipelineStage: PipelineStage | null, 

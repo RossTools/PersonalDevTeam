@@ -1,7 +1,7 @@
 // The Tickets view's Board: committed work in three columns (To do, In progress, Done in the project's window). Ready
 // tickets wait in the backlog until they are moved to To do. Rows are lanes (PDT-38): tickets that are not parts
 // first, then one lane per parent with its parts, under a header that tracks the parent. With a pipeline workflow at
-// work (Phase 7c), In progress splits into its stages: Code, Review, QA, Accept and Merge.
+// work, In progress splits into its stages: Code, Review, QA, Accept and Merge.
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type Ref, type TouchEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, GitBranch } from 'lucide-react';

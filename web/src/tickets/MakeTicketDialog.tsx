@@ -1,4 +1,4 @@
-// Make ticket… from a scratch chat (structured agents spec §10): the agent drafts a title and description in a hidden
+// Make ticket… from a scratch chat: the agent drafts a title and description in a hidden
 // side request (it forks the conversation and changes nothing), then the new-ticket form opens with them. "Start from
 // this chat" (a chat in its own worktree) makes the chat the ticket's attempt; nothing is sent to the agent.
 import { Suspense, useEffect, useState } from 'react';
