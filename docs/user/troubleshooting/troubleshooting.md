@@ -120,7 +120,10 @@ it was. The banner gives the reason; `pdt-host.log` has the details.
 
 **Settings › This host › Updates** says **Couldn't check: …**:
 
-- **No token, or the token was rejected**: paste a GitHub token under **GitHub token** and click **Save token**.
+- **GitHub's limit is used up**: PDT checks again once it resets, at the time shown. To check more often, save a
+  GitHub token under **Advanced › GitHub token**.
+- **The saved token was rejected and ignored**: updates go on without it. Paste a new one under **Advanced › GitHub
+  token**, or remove it under **Danger zone**.
 - **Network**: PDT couldn't reach GitHub. It tries again at the next check.
 - **Updates are off**: the app runs from a place it can't update itself in (see above), or this is a development copy
   of PDT, which never updates.

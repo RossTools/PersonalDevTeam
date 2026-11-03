@@ -38,7 +38,7 @@ function network(over: object = {}) {
 }
 const update = (over: object = {}) => ({
   current: '0.1.6', currentNightly: false, channel: 'stable', state: 'idle', disabledReason: null, policy: 'notify',
-  latest: null, lastCheckedAt: null, error: null, token: { state: 'missing' }, lastResult: null,
+  latest: null, lastCheckedAt: null, error: null, notice: null, retryAt: null, token: { state: 'missing' }, lastResult: null,
   releaseRepo: { repo: 'RossTools/PersonalDevTeam', id: 1, movedTo: null, overriddenBy: null }, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
@@ -114,7 +114,12 @@ describe('HostSettingsPage', () => {
       'PUT /api/host/token': update({ token: { state: 'valid', expiresAt: null } }),
     });
     renderWithQuery(<HostSettingsPage />);
-    const field = await screen.findByLabelText('GitHub token');
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    // Folded away: only a private repository or a fork needs one.
+    expect(within(updates).getByText('Advanced').closest('details')).not.toHaveAttribute('open');
+    await userEvent.click(within(updates).getByText('Advanced'));
+    expect(within(updates).getByText(/Only needed for a private repository or a fork/)).toBeInTheDocument();
+    const field = screen.getByLabelText('GitHub token');
     expect(field).toHaveAttribute('type', 'password');
     await userEvent.type(field, 'github_pat_abc');
     await userEvent.click(screen.getByRole('button', { name: 'Save token' }));
@@ -492,21 +497,75 @@ describe('HostSettingsPage', () => {
     expect(await within(updates).findByRole('status')).toHaveTextContent("You're up to date (v0.1.6). Last checked");
   });
 
-  it('says why it could not check, and points at the token field', async () => {
+  it('checks without a token: nothing asks for one', async () => {
     stubApi({
       'GET /api/host/settings': settingsView(),
       'GET /api/host/update': update(),
       'GET /api/host/checks': checks(true),
       'GET /api/host/whoami': local,
       'GET /api/connections': [],
-      'POST /api/host/update/check': { ...update(), result: { kind: 'cannotCheck', reason: 'noToken', message: "no GitHub token is saved, so PDT can't read its releases" } },
+      'POST /api/host/update/check': { ...update({ lastCheckedAt: 5 }), result: { kind: 'upToDate', version: '0.1.6' } },
     });
     renderWithQuery(<HostSettingsPage />);
     const updates = await screen.findByRole('region', { name: 'Updates' });
     await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
-    expect(await within(updates).findByRole('status')).toHaveTextContent("Couldn't check: no GitHub token is saved");
-    await userEvent.click(within(updates).getByRole('link', { name: 'Add a token' }));
-    expect(screen.getByLabelText('GitHub token')).toHaveFocus();
+    expect(await within(updates).findByRole('status')).toHaveTextContent("You're up to date (v0.1.6).");
+    expect(within(updates).queryByRole('link', { name: /token/ })).toBeNull();
+  });
+
+  it('says a rejected token was ignored, and points at the token field', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView({ tokenPresent: true }),
+      'GET /api/host/update': update({ lastCheckedAt: 5, token: { state: 'expired' }, notice: { kind: 'tokenIgnored', message: 'the saved GitHub token was rejected and ignored: replace or remove it' } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    expect(await within(updates).findByText(/The saved GitHub token was rejected and ignored/)).toBeInTheDocument();
+    expect(within(updates).getByText('Rejected, ignored')).toBeInTheDocument();
+    // Open while a token is stored; folded here, the link opens it again.
+    await userEvent.click(within(updates).getByText('Advanced'));
+    expect(within(updates).getByText('Advanced').closest('details')).not.toHaveAttribute('open');
+    await userEvent.click(within(updates).getByRole('link', { name: 'Replace the token' }));
+    await waitFor(() => expect(screen.getByLabelText('GitHub token')).toHaveFocus());
+    expect(within(updates).getByText('Advanced').closest('details')).toHaveAttribute('open');
+  });
+
+  it('says a rate limit without a reset time is a try-later, with no token link', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update({ lastCheckedAt: 5, retryAt: null, notice: { kind: 'rateLimited', message: "GitHub's limit on update checks is used up for now" } }),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    expect(await within(updates).findByText(/PDT checks again once it resets\./)).toBeInTheDocument();
+    expect(within(updates).queryByText(/\(after /)).toBeNull();
+    expect(within(updates).queryByRole('link', { name: /token/ })).toBeNull();
+  });
+
+  it('says a used-up rate limit is a try-later, not an error', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'POST /api/host/update/check': {
+        ...update({ lastCheckedAt: 5, retryAt: 4102444800000, notice: { kind: 'rateLimited', message: "GitHub's limit on update checks is used up for now" } }),
+        result: { kind: 'cannotCheck', reason: 'rateLimited', message: "GitHub's limit on update checks is used up for now" },
+      },
+    });
+    renderWithQuery(<HostSettingsPage />);
+    const updates = await screen.findByRole('region', { name: 'Updates' });
+    await userEvent.click(within(updates).getByRole('button', { name: 'Check for updates' }));
+    const status = await within(updates).findByRole('status');
+    expect(status).toHaveTextContent(/PDT checks again once it resets \(after /);
+    expect(status).not.toHaveTextContent("Couldn't check");
   });
 
   it('says when GitHub could not be reached, with no token link', async () => {
@@ -550,7 +609,7 @@ describe('HostSettingsPage', () => {
     });
     renderWithQuery(<HostSettingsPage />);
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
-    expect(screen.getByText('Expired or revoked')).toBeInTheDocument();
+    expect(screen.getByText('Rejected, ignored')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check for updates' })).not.toBeInTheDocument();
   });
 

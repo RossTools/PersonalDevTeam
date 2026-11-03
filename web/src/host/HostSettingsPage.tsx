@@ -11,6 +11,7 @@ import type { HostSettingsView } from '../api/gen/HostSettingsView';
 import type { SessionMode } from '../api/gen/SessionMode';
 import type { TokenState } from '../api/gen/TokenState';
 import type { UpdateChannel } from '../api/gen/UpdateChannel';
+import type { UpdateNotice } from '../api/gen/UpdateNotice';
 import type { UpdatePolicy } from '../api/gen/UpdatePolicy';
 import type { NetworkSettings } from '../api/gen/NetworkSettings';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
@@ -33,7 +34,7 @@ import { documentKeys, useDocumentProviders } from '../documents/queries';
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
   if (!present || t?.state === 'missing') return { tone: 'neutral', text: 'None' };
-  if (t?.state === 'expired') return { tone: 'failed', text: 'Expired or revoked' };
+  if (t?.state === 'expired') return { tone: 'failed', text: 'Rejected, ignored' };
   if (t && 'expiresAt' in t && t.expiresAt !== null) {
     const when = new Date(t.expiresAt).toLocaleDateString();
     return t.state === 'expires_soon' ? { tone: 'waiting', text: `Expires soon (${when})` } : { tone: 'running', text: `Stored · expires ${when}` };
@@ -41,14 +42,29 @@ function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeT
   return { tone: 'running', text: 'Stored' };
 }
 
+/** When GitHub's rate limit resets, as "after 14:05" (empty when GitHub didn't say). */
+function resetNote(retryAt: number | null | undefined): string {
+  return retryAt ? ` (after ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : '';
+}
+
 /** What a check the user asked for found, said in the Version row; `fixToken` points at the token field. */
-function CheckFound({ r, fixToken }: { r: CheckResult; fixToken: () => void }) {
+function CheckFound({ r, retryAt, fixToken }: { r: CheckResult; retryAt: number | null | undefined; fixToken: () => void }) {
   if (r.kind === 'upToDate') return <>You're up to date (v{r.version}).</>;
   if (r.kind === 'available') return <>v{r.version} is available: install it from the banner at the top of the page.</>;
-  const tokenFix = r.reason === 'noToken' ? 'Add a token' : r.reason === 'tokenRejected' ? 'Replace the token' : null;
+  if (r.reason === 'rateLimited') return <>GitHub's limit on checks is used up for now; PDT checks again once it resets{resetNote(retryAt)}.</>;
   return (
     <span className="text-destructive">
-      Couldn't check: {r.message}.{tokenFix && <> <Link onClick={fixToken}>{tokenFix}</Link></>}
+      Couldn't check: {r.message}.{r.reason === 'tokenRejected' && <> <Link onClick={fixToken}>Replace the token</Link></>}
+    </span>
+  );
+}
+
+/** What the last check wants the user to know without having failed: a rejected token, a rate limit. */
+function CheckNotice({ notice, retryAt, fixToken }: { notice: UpdateNotice; retryAt: number | null; fixToken: () => void }) {
+  if (notice.kind === 'rateLimited') return <>GitHub's limit on checks is used up for now; PDT checks again once it resets{resetNote(retryAt)}.</>;
+  return (
+    <span className="text-waiting">
+      {notice.message[0].toUpperCase() + notice.message.slice(1)}. <Link onClick={fixToken}>Replace the token</Link>
     </span>
   );
 }
@@ -210,6 +226,8 @@ function Updates({ v }: { v: HostSettingsView }) {
   });
   const tokenError = useFormError(token.error);
   const tokenInput = useRef<HTMLInputElement>(null);
+  // The token is only for a private repository or a fork: folded away unless one is stored.
+  const [advanced, setAdvanced] = useState(v.tokenPresent || !!v.tokenError);
   // The last check the button asked for, shown until another check (here or the background one) answers.
   const [found, setFound] = useState<{ result: CheckResult; at: number | null } | null>(null);
   const [check, checking] = useAction(async () => {
@@ -223,8 +241,11 @@ function Updates({ v }: { v: HostSettingsView }) {
   };
   const u = update.data;
   const shownFound = found && u && found.at === u.lastCheckedAt ? found.result : null;
-  // Focusing scrolls the field into view.
-  const fixToken = () => tokenInput.current?.focus();
+  // Focusing scrolls the field into view (once Advanced is open).
+  const fixToken = () => {
+    setAdvanced(true);
+    requestAnimationFrame(() => tokenInput.current?.focus());
+  };
   const updatesOff = u?.state === 'disabled';
   const badge = tokenBadge(v.tokenPresent, u?.token);
   const checked = u?.lastCheckedAt ? `Last checked ${new Date(u.lastCheckedAt).toLocaleString()}.` : null;
@@ -249,8 +270,9 @@ function Updates({ v }: { v: HostSettingsView }) {
         label={<span className="flex items-center gap-2">Version {u?.current ?? '…'} {u?.currentNightly && <Badge>Nightly</Badge>}</span>}
         description={
           updatesOff ? `Updates are off: ${u.disabledReason ?? 'updates apply to the installed app'}.`
-            : shownFound ? <span role="status"><CheckFound r={shownFound} fixToken={fixToken} /> {shownFound.kind !== 'cannotCheck' && checked}</span>
+            : shownFound ? <span role="status"><CheckFound r={shownFound} retryAt={u?.retryAt} fixToken={fixToken} /> {shownFound.kind !== 'cannotCheck' && checked}</span>
               : u?.error ? <span className="text-destructive">{u.error}</span>
+              : u?.notice ? <span><CheckNotice notice={u.notice} retryAt={u.retryAt} fixToken={fixToken} /> {checked}</span>
               : checked
         }
       >
@@ -302,26 +324,33 @@ function Updates({ v }: { v: HostSettingsView }) {
           </>
         )}
       </SettingsRow>
-      {v.tokenError && (
-        <Alert tone="error" title="Token: cannot be read.">
-          <p>{v.tokenError}</p>
-          <p className="text-muted-foreground">
-            A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
-            on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
-            Access, restart the daemon from the tray, and save the token again here.
-          </p>
-        </Alert>
-      )}
-      <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
-        <SettingsRow
-          label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
-          description={v.tokenPresent ? 'Kept in the OS keychain. Paste a new one to replace it.' : 'Lets this host read releases. Kept in the OS keychain.'}
-        >
-          <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
-          <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
-        </SettingsRow>
-        {tokenError}
-      </form>
+      <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="text-sm">
+        <summary className="cursor-pointer text-muted-foreground">Advanced</summary>
+        <div className="mt-2 flex flex-col gap-2">
+          {v.tokenError && (
+            <Alert tone="error" title="Token: cannot be read.">
+              <p>{v.tokenError}</p>
+              <p className="text-muted-foreground">
+                A token stored by an older build makes macOS ask before this one may read it. Look for a keychain prompt
+                on this Mac and choose Always Allow. If there is none, delete the <code>update-token</code> item in Keychain
+                Access, restart the daemon from the tray, and save the token again here.
+              </p>
+            </Alert>
+          )}
+          <form onSubmit={submit(() => { if (secret.trim()) token.mutate(secret.trim()); })} className="flex flex-col gap-2">
+            <SettingsRow
+              label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
+              description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
+                : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
+                  : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
+            >
+              <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
+              <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
+            </SettingsRow>
+            {tokenError}
+          </form>
+        </div>
+      </details>
     </Section>
   );
 }
@@ -854,7 +883,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
   const [removeToken, removingToken] = useAction(async () => {
     const { ok } = await confirm({
       title: 'Remove the GitHub token?',
-      body: 'It is deleted from the OS keychain; this host cannot check for updates until you save a new one.',
+      body: 'It is deleted from the OS keychain. Updates go on without it, from the public releases.',
       action: 'Remove token',
       danger: true,
     });
@@ -867,7 +896,7 @@ function DangerZone({ v }: { v: HostSettingsView }) {
     <Section label="Danger zone" danger description="These always ask first.">
       {!v.tokenPresent ? (
         <p className="text-xs text-muted-foreground">Nothing to remove: no GitHub token is stored.</p>
-      ) : <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Update checks stop until you save a new one.">
+      ) : <SettingsRow label="Remove the GitHub token" description="Deletes it from the OS keychain. Updates go on without it.">
         <Button size="sm" variant="danger" pending={removingToken} onClick={() => void removeToken()}>Remove token…</Button>
       </SettingsRow>}
     </Section>

@@ -24,7 +24,8 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
 - **Update channel**: **Stable releases**, or **Nightly builds too**.
 - **Check for updates**: how often PDT looks.
 - **Release repository**: where updates come from. Leave it empty.
-- **GitHub token**: the token PDT reads releases and files bug reports with, kept in your keychain.
+- **Advanced › GitHub token**: only for a private repository or a fork, or a higher rate limit; PDT reads its
+  releases without one. Bug reports are filed with it. Kept in your keychain.
 
 ### Agents
 
@@ -129,7 +130,8 @@ Whether PDT found the programs it runs: git, the agents and Tailscale, with wher
 
 ### Danger zone
 
-**Remove the GitHub token** deletes the update token from your keychain. It always asks first.
+**Remove the GitHub token** deletes the GitHub token from your keychain; updates go on without it. It always asks
+first.
 
 ## Notifications
 

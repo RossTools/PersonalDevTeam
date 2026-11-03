@@ -77,10 +77,16 @@ own. See [An update rolled back](../troubleshooting/troubleshooting.md#an-update
 
 ### The GitHub token for updates
 
-PDT reads its releases from GitHub. If it says **Couldn't check: …**, paste a GitHub token that can read public
-repositories in **Settings › This host › Updates › GitHub token** and click **Save token**. It's kept in your
-system's keychain, and is also used to file bug reports you send with **Report a bug…**. **Settings › This host ›
-Danger zone** removes it.
+PDT reads its releases from GitHub without a token: you don't need one to get updates.
+
+A token is only for a private repository or a fork, or if you check so often that GitHub's limit for checks without
+one runs out. When it does, PDT says so and checks again once the limit resets. Paste a token in
+**Settings › This host › Updates › Advanced › GitHub token** and click **Save token**. It's kept in your system's
+keychain, and is also used to file bug reports you send with **Report a bug…**. **Settings › This host › Danger
+zone** removes it.
+
+If GitHub rejects the saved token (it expired or was revoked), PDT keeps updating without it and says the token was
+ignored, so you can replace or remove it.
 
 ## Release channels
 

@@ -9,7 +9,7 @@
 #   --version X.Y.Z           PDT_VERSION   an exact release
 #   --force                   PDT_FORCE=1   install again over an existing install
 #   --yes                     PDT_YES=1     answer yes to questions (Linux: keep PDT running after you log out)
-#   GITHUB_TOKEN                            a GitHub token, for when the releases need one (a private repository)
+#   GITHUB_TOKEN                            optional: only for a private fork, or when GitHub's rate limit is used up
 #
 # It downloads the release for this system from GitHub, checks it against the release's SHA256SUMS and installs it:
 # macOS into ~/Applications (then opens it once, which starts it at login), Linux into ~/.local/opt/pdt as a systemd
@@ -275,7 +275,7 @@ no_releases() {
 	if [ -n "${GITHUB_TOKEN:-}" ]; then
 		die "could not read $product's releases from GitHub with GITHUB_TOKEN: check that it can read $repo."
 	fi
-	die "could not read $product's releases from GitHub. If the repository is private, set GITHUB_TOKEN to a token that can read $repo and run this again."
+	die "could not read $product's releases from GitHub. Try again later; if GitHub's rate limit is used up or $repo is a private fork, set GITHUB_TOKEN to a token that can read it and run this again."
 }
 
 # GitHub's JSON with each field on its own line (a field's value has no comma or brace in what is read here).
@@ -333,7 +333,7 @@ Installs Personal Dev Team (PDT) on macOS or Linux.
   --yes                     answer yes to questions
   -h, --help                this help
 
-Set GITHUB_TOKEN when the releases need a GitHub token to download.
+No GitHub token is needed. Set GITHUB_TOKEN only for a private fork, or when GitHub's rate limit is used up.
 EOF
 }
 

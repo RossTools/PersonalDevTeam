@@ -34,6 +34,10 @@ struct Fake {
     release_lists: Arc<AtomicUsize>,
     /// Releases listed before the others (newest first): `(tag, prerelease)`.
     newer: Arc<std::sync::Mutex<Vec<(String, bool)>>>,
+    /// The `Authorization` header of each request for the latest release (None: sent without a token).
+    auths: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    /// While set, the latest release answers that the rate limit is used up.
+    rate_limited: Arc<AtomicBool>,
 }
 
 async fn wait_while(flag: &AtomicBool) {
@@ -60,16 +64,26 @@ async fn fake_github() -> (String, Fake) {
         latest_tag: Arc::new(std::sync::Mutex::new("v0.1.7".into())),
         release_lists: Default::default(),
         newer: Default::default(),
+        auths: Default::default(),
+        rate_limited: Default::default(),
     };
-    let ok = |h: &HeaderMap| {
-        h.get("authorization").and_then(|v| v.to_str().ok()) == Some(format!("Bearer {TOKEN}").as_str())
+    // The release repository is public: read without a token or with the good one; any other token is rejected.
+    let ok = |h: &HeaderMap| match h.get("authorization").and_then(|v| v.to_str().ok()) {
+        None => true,
+        Some(a) => a == format!("Bearer {TOKEN}"),
     };
     let app = axum::Router::new()
         .route(
             "/repos/o/r/releases/latest",
             axum::routing::get(move |State(f): State<Fake>, h: HeaderMap| async move {
                 f.hits.fetch_add(1, Ordering::SeqCst);
+                f.auths.lock().unwrap().push(h.get("authorization").and_then(|v| v.to_str().ok()).map(String::from));
                 wait_while(&f.hold_latest).await;
+                if f.rate_limited.load(Ordering::SeqCst) {
+                    let headers = [("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "4102444800")];
+                    return (StatusCode::FORBIDDEN, headers, r#"{"message":"API rate limit exceeded"}"#)
+                        .into_response();
+                }
                 if !ok(&h) {
                     return StatusCode::UNAUTHORIZED.into_response();
                 }
@@ -103,7 +117,10 @@ async fn fake_github() -> (String, Fake) {
         )
         .route(
             "/repos/o/r/releases/assets/{id}",
-            axum::routing::get(|State(f): State<Fake>, Path(id): Path<u64>| async move {
+            axum::routing::get(move |State(f): State<Fake>, Path(id): Path<u64>, h: HeaderMap| async move {
+                if !ok(&h) {
+                    return StatusCode::UNAUTHORIZED.into_response();
+                }
                 if id != 3 {
                     wait_while(&f.hold_assets).await;
                 }
@@ -234,12 +251,84 @@ async fn unsupervised_pdtd_never_updates() {
 }
 
 #[tokio::test]
-async fn no_token_means_no_network_traffic() {
+async fn without_a_token_the_check_reads_the_releases_anonymously() {
     let tmp = tempfile::tempdir().unwrap();
     let (app, _, fake) = setup(tmp.path(), true).await;
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!((v["state"].as_str(), v["token"]["state"].as_str()), (Some("idle"), Some("missing")));
-    assert_eq!(fake.hits.load(Ordering::SeqCst), 0);
+    assert_eq!(v["result"], json!({"kind": "available", "version": "0.1.7"}), "{v}");
+    assert_eq!((v["state"].as_str(), v["token"]["state"].as_str()), (Some("available"), Some("missing")));
+    assert_eq!((&v["error"], &v["notice"]), (&Value::Null, &Value::Null), "{v}");
+    assert_eq!(*fake.auths.lock().unwrap(), [None], "no Authorization header");
+    assert_eq!(fake.compares.load(Ordering::SeqCst), 0, "a local build has nothing to compare from");
+}
+
+#[tokio::test]
+async fn a_saved_token_is_sent_when_there_is_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup(tmp.path(), true).await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["result"]["kind"].as_str(), v["token"]["state"].as_str()), (Some("available"), Some("valid")));
+    assert_eq!(*fake.auths.lock().unwrap(), [Some(format!("Bearer {TOKEN}"))]);
+}
+
+#[tokio::test]
+async fn a_rejected_token_is_ignored_and_the_check_goes_on_without_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, fake) = setup(tmp.path(), true).await;
+    state.secrets.set(&state.update_token_account, "revoked").unwrap();
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"], json!({"kind": "available", "version": "0.1.7"}), "{v}");
+    assert_eq!(v["token"]["state"], "expired", "still reported, so it can be fixed: {v}");
+    assert_eq!(v["notice"], json!({"kind": "tokenIgnored", "message": pdt_api::update::TOKEN_IGNORED}), "{v}");
+    assert_eq!(v["error"], Value::Null, "{v}");
+    assert_eq!(*fake.auths.lock().unwrap(), [Some("Bearer revoked".to_string()), None]);
+    // The next check does not try the rejected token again.
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["result"]["kind"].as_str(), v["notice"]["kind"].as_str()), (Some("available"), Some("tokenIgnored")));
+    assert_eq!(fake.auths.lock().unwrap().len(), 3);
+    assert_eq!(fake.auths.lock().unwrap()[2], None);
+    // Removing it ends the notice and keeps the update on offer.
+    assert_eq!(call(&app, "DELETE", "/api/host/token", None).await.0, StatusCode::NO_CONTENT);
+    let (_, v) = call(&app, "GET", "/api/host/update", None).await;
+    assert_eq!(
+        (v["state"].as_str(), &v["notice"], v["token"]["state"].as_str()),
+        (Some("available"), &Value::Null, Some("missing"))
+    );
+}
+
+#[tokio::test]
+async fn a_used_up_rate_limit_is_a_try_later_not_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, _, fake) = setup(tmp.path(), true).await;
+    fake.rate_limited.store(true, Ordering::SeqCst);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["result"]["reason"], "rateLimited", "{v}");
+    assert_eq!((v["state"].as_str(), &v["error"]), (Some("idle"), &Value::Null), "{v}");
+    assert_eq!(v["retryAt"], 4_102_444_800_000_i64, "from x-ratelimit-reset: {v}");
+    assert_eq!(v["notice"], json!({"kind": "rateLimited", "message": pdt_api::update::RATE_LIMITED}));
+    fake.rate_limited.store(false, Ordering::SeqCst);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(
+        (v["result"]["kind"].as_str(), &v["retryAt"], &v["notice"]),
+        (Some("available"), &Value::Null, &Value::Null)
+    );
+}
+
+#[tokio::test]
+async fn the_loop_waits_for_the_rate_limit_to_reset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, state, fake) = setup(tmp.path(), true).await;
+    fake.rate_limited.store(true, Ordering::SeqCst);
+    let task = tokio::spawn(pdt_api::run_update_loop(state.clone()));
+    wait_until("the first check", async || {
+        let n = fake.hits.load(Ordering::SeqCst);
+        if n >= 1 { Ok(()) } else { Err(n) }
+    })
+    .await;
+    // The check interval is 50 ms; the reset is years away.
+    still_after("another check", Duration::from_millis(300), async || fake.hits.load(Ordering::SeqCst) > 1).await;
+    task.abort();
 }
 
 #[tokio::test]
@@ -280,6 +369,37 @@ async fn busy_hosts_ask_first_then_the_release_is_handed_off() {
     assert_eq!(v["state"], "installing", "a check does not undo the hand-off");
     let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("update_in_progress")), "{v}");
+}
+
+#[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
+async fn a_host_without_a_token_downloads_and_hands_off_the_update() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!(v["state"], "available", "{v}");
+    let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
+    assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("installing")), "{v}");
+    let req: pdt_core::handoff::UpdateRequest =
+        serde_json::from_slice(&std::fs::read(request_path(&data(tmp.path()))).unwrap()).unwrap();
+    assert_eq!(std::fs::read(&req.asset).unwrap(), if cfg!(windows) { WIN } else { MAC });
+    tokio::time::timeout(Duration::from_secs(1), state.shutdown.notified()).await.expect("pdtd asked to stop");
+}
+
+#[tokio::test]
+#[cfg_attr(not(any(windows, target_os = "macos")), ignore = "releases only ship installers for macOS and Windows")]
+async fn a_token_revoked_before_the_download_is_ignored_with_a_notice() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, state, _) = setup(tmp.path(), true).await;
+    store_token(&state);
+    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
+    assert_eq!((v["state"].as_str(), v["token"]["state"].as_str()), (Some("available"), Some("valid")), "{v}");
+    // Revoked between the check and the install.
+    state.secrets.set(&state.update_token_account, "revoked").unwrap();
+    let (s, v) = call(&app, "POST", "/api/host/update/install", Some(json!({"force": true}))).await;
+    assert_eq!((s, v["state"].as_str()), (StatusCode::OK, Some("installing")), "{v}");
+    assert_eq!((v["token"]["state"].as_str(), v["notice"]["kind"].as_str()), (Some("expired"), Some("tokenIgnored")));
+    assert!(request_path(&data(tmp.path())).exists());
 }
 
 #[tokio::test]
@@ -1016,26 +1136,6 @@ async fn a_check_says_which_update_is_available() {
     let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
     assert_eq!(v["result"], json!({"kind": "available", "version": "0.1.7"}), "{v}");
     assert_eq!(v["latest"]["version"], "0.1.7");
-}
-
-#[tokio::test]
-async fn a_check_without_a_token_says_so() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (app, _, fake) = setup(tmp.path(), true).await;
-    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!((v["result"]["kind"].as_str(), v["result"]["reason"].as_str()), (Some("cannotCheck"), Some("noToken")));
-    assert!(v["result"]["message"].as_str().unwrap().contains("token"), "{v}");
-    assert_eq!(fake.hits.load(Ordering::SeqCst), 0);
-}
-
-#[tokio::test]
-async fn a_check_with_a_rejected_token_says_so() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (app, state, _) = setup(tmp.path(), true).await;
-    state.secrets.set(&state.update_token_account, "revoked").unwrap();
-    let (_, v) = call(&app, "POST", "/api/host/update/check", None).await;
-    assert_eq!(v["result"]["reason"], "tokenRejected", "{v}");
-    assert_eq!(v["token"]["state"], "expired");
 }
 
 #[tokio::test]

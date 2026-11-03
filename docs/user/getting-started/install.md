@@ -50,8 +50,8 @@ $env:PDT_CHANNEL = 'nightly'   # or: $env:PDT_VERSION = '0.3.0'; $env:PDT_FORCE 
 irm https://pdt.dev/install.ps1 | iex
 ```
 
-`PDT_CHANNEL`, `PDT_VERSION`, `PDT_FORCE` and `PDT_YES` work on macOS and Linux too. If downloading the releases needs
-a GitHub token, set `GITHUB_TOKEN` first.
+`PDT_CHANNEL`, `PDT_VERSION`, `PDT_FORCE` and `PDT_YES` work on macOS and Linux too. You don't need a GitHub token.
+Set `GITHUB_TOKEN` only to install from a private fork, or if GitHub says its rate limit is used up.
 
 ## Install by hand
 

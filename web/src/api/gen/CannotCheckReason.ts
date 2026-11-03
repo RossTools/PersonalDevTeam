@@ -3,4 +3,4 @@
 /**
  * Why a check could not tell whether there is an update (each points at what to fix).
  */
-export type CannotCheckReason = "disabled" | "noToken" | "tokenRejected" | "keychain" | "network" | "github" | "unknownVersion" | "busy";
+export type CannotCheckReason = "disabled" | "tokenRejected" | "rateLimited" | "keychain" | "network" | "github" | "unknownVersion" | "busy";
