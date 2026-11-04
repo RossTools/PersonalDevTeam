@@ -84,7 +84,7 @@ async fn add(
     if !has_commits {
         return Err(ApiError::bad_request(
             codes::NO_COMMITS,
-            format!("{} has no commits yet: make a first commit, then add it", info.root.display()),
+            format!("{} has no commits yet: make or push a first commit, then add it", info.root.display()),
         ));
     }
     let base_branch = match base_branch {
