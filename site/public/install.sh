@@ -123,7 +123,8 @@ pdt_install() {
 			say "To install it again anyway, run this with --force."
 			return 0
 		fi
-		if [ -n "$registered" ]; then
+		# macOS: opening the app registers it, so one this script can't replace (/Applications, usually) is just opened.
+		if [ -n "$registered" ] || { [ "$os" = mac ] && [ -n "$existing" ] && [ ! -w "$(dirname "$existing")" ]; }; then
 			say "$product is installed in $existing, but it isn't running."
 			say "Start it with: $start_cmd"
 			say "To install it again instead, run this with --force."
@@ -135,8 +136,8 @@ pdt_install() {
 	if [ "$os" = linux ] && ! systemctl --user show-environment >/dev/null 2>&1; then
 		die "$product for Linux runs as a systemd user service, and this session has no systemd user instance. On WSL, turn systemd on: add the lines [boot] and systemd=true to /etc/wsl.conf, run wsl --shutdown in Windows, then open WSL and run this again. In a container, use one that runs systemd. Nothing was installed."
 	fi
-	# --force replaces the app where it is; one in a folder only an admin can change (/Applications, usually) is left
-	# to the user rather than asking for sudo.
+	# The app is replaced where it is; one in a folder only an admin can change (/Applications, usually) is left to the
+	# user rather than asking for sudo (only --force gets here with one).
 	if [ "$os" = mac ] && [ -n "$existing" ]; then
 		dest="$existing"
 		[ -w "$(dirname "$dest")" ] ||
@@ -238,7 +239,7 @@ install_linux() {
 	say "Installed in $dest. Registering it as a systemd user service..."
 	if [ -n "$force" ]; then set -- --replace; else set --; fi
 	if ! "$dest/$slug-host" install "$@"; then
-		die "$product is in $dest, but registering it as a systemd user service failed (above). Once that is fixed, finish the install with: \"$dest/$slug-host\" install"
+		die "$product is in $dest, but registering it as a systemd user service failed (above). Once that is fixed, finish the install with: \"$dest/$slug-host\" install $*"
 	fi
 	linger
 }

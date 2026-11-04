@@ -337,13 +337,16 @@ test('a failed registration says how to finish, and the next run installs again'
   assert.match(r.stderr, /registering it as a systemd user service failed/);
   assert.match(r.stderr, /finish the install with: ".*\.local\/opt\/pdt\/pdt-host" install/);
   assert.doesNotMatch(r.stdout, /is installed and starts/);
+  const forced = await run(t, ['--yes', '--force']);
+  assert.notEqual(forced.status, 0);
+  assert.match(forced.stderr, /finish the install with: ".*pdt-host" install --replace/);
 
   rmSync(join(t.home, 'host.fail'));
   const again = await run(t, ['--yes']);
   assert.equal(again.status, 0, again.stderr);
   assert.doesNotMatch(again.stdout, /already installed/);
   assert.match(again.stdout, /v0\.3\.0 is installed/);
-  assert.equal(read(join(t.home, 'host.log')), 'install\ninstall\n');
+  assert.equal(read(join(t.home, 'host.log')), 'install\ninstall --replace\ninstall\n');
 });
 
 test('bad options are refused', { skip }, async (ctx) => {
@@ -387,5 +390,25 @@ test('--force on macOS replaces the app where it is, but not in a folder only an
   assert.notEqual(s.status, 0);
   assert.match(s.stderr, /needs admin rights to replace/);
   assert.ok(existsSync(join(system, APP)));
+  assert.ok(!existsSync(join(t.home, 'Applications', APP)));
+});
+
+test('an app that is not running in a folder only an admin can write is opened, not replaced', { skip }, async (ctx) => {
+  const t = setup({ os: 'Darwin', arch: 'arm64' });
+  ctx.after(() => {
+    chmodSync(join(t.root, 'system-apps'), 0o755);
+    t.cleanup();
+  });
+  const app = tarball(t, { [`${APP}/Contents/MacOS/pdt-host`]: hostStub, [`${APP}/Contents/Info.plist`]: 'new' });
+  publish(t, 'v0.3.0', { 'Personal.Dev.Team.app.tar.gz': app });
+  const system = join(t.root, 'system-apps');
+  mkdirSync(join(system, APP), { recursive: true });
+  chmodSync(system, 0o555);
+  const r = await run(t);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /isn't running/);
+  assert.match(r.stdout, new RegExp(`Start it with: open ".*system-apps/${APP}"`));
+  assert.doesNotMatch(r.stdout + r.stderr, /admin rights|keeps itself up to date/);
+  assert.doesNotMatch(r.stdout, /Downloading/);
   assert.ok(!existsSync(join(t.home, 'Applications', APP)));
 });
