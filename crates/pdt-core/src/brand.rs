@@ -1,7 +1,8 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
 //! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe), scripts/release-stable.* (product name, slug, port) and the
-//! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository; a test checks),
+//! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository, HOST_LABEL,
+//! HOST_SYSTEMD_UNIT, HOST_AUTOSTART_NAME; a test checks),
 //! site/src/links.mjs (port; a test checks) only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
@@ -164,6 +165,8 @@ mod tests {
             format!("product=\"{PRODUCT_NAME}\""),
             format!("slug=\"{SLUG}\""),
             format!("port={STABLE_PORT}"),
+            format!("host_label=\"{HOST_LABEL}\""),
+            format!("host_unit=\"{HOST_SYSTEMD_UNIT}\""),
         ] {
             assert!(sh.contains(&line), "install.sh lacks {line}");
         }
@@ -176,6 +179,7 @@ mod tests {
             format!("'{HOST_BIN}.exe'"),
             format!("'{DAEMON_BIN}.exe'"),
             format!("-Name '{DAEMON_BIN}', '{HOST_BIN}'"),
+            format!("-Name '{HOST_AUTOSTART_NAME}'"),
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }

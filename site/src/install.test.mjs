@@ -1,7 +1,8 @@
 // public/install.sh against a fake release: GitHub's API is a local HTTP server answering from a map (PDT_INSTALL_API),
-// HOME is a temp folder, and uname, getconf, loginctl, open and codesign are stubs on PATH (codesign passes unless
-// $HOME/codesign.fail holds its message). The Linux tarball's pdt-host is a
-// stub that records how it was called, so nothing is registered for real, and no running PDT is looked for on 7420.
+// HOME is a temp folder, and uname, getconf, loginctl, systemctl, open and codesign are stubs on PATH (codesign passes
+// unless $HOME/codesign.fail holds its message; systemctl has a user instance unless `systemd: false`). The Linux
+// tarball's pdt-host is a stub that records how it was called (and fails when $HOME/host.fail exists), so nothing is
+// registered for real, and no running PDT is looked for on 7420.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -36,7 +37,7 @@ let tests = 0;
 let assetIds = 100;
 
 /** A temp HOME, stubs for `uname -s`/`uname -m` = os/arch and glibc `glibc`, and an empty fake API. */
-function setup({ os = 'Linux', arch = 'x86_64', glibc = '2.35' } = {}) {
+function setup({ os = 'Linux', arch = 'x86_64', glibc = '2.35', systemd = true } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'pdt-install-test-'));
   const home = join(root, 'home');
   const bin = join(root, 'bin');
@@ -45,6 +46,7 @@ function setup({ os = 'Linux', arch = 'x86_64', glibc = '2.35' } = {}) {
   stub(bin, 'uname', `case "$1" in -s) echo ${os} ;; -m) echo ${arch} ;; *) echo ${os} ;; esac`);
   stub(bin, 'getconf', glibc ? `echo "glibc ${glibc}"` : 'exit 1');
   stub(bin, 'loginctl', `echo "$*" >> "$HOME/loginctl.log"; case "$1" in show-user) echo Linger=no ;; esac`);
+  stub(bin, 'systemctl', systemd ? `echo "$*" >> "$HOME/systemctl.log"` : 'echo "Failed to connect to bus" >&2; exit 1');
   stub(bin, 'open', `echo "$*" >> "$HOME/open.log"`);
   stub(bin, 'codesign', `echo "$*" >> "$HOME/codesign.log"; if [ -f "$HOME/codesign.fail" ]; then cat "$HOME/codesign.fail" >&2; exit 1; fi`);
   return { root, home, bin, api, cleanup: () => rmSync(root, { recursive: true, force: true }) };
@@ -87,14 +89,17 @@ function tarball(t, entries) {
   return readFileSync(out);
 }
 
-const hostStub = '#!/bin/sh\necho "$*" >> "$HOME/host.log"\n';
+const hostStub = '#!/bin/sh\necho "$*" >> "$HOME/host.log"\nif [ -f "$HOME/host.fail" ]; then echo "systemctl --user daemon-reload failed" >&2; exit 1; fi\n';
 const linuxTarball = (t) => tarball(t, { 'pdt/pdt-host': hostStub, 'pdt/pdtd': 'daemon', 'pdt/web/index.html': '<html>' });
 
-/** Runs the script (asynchronously: the fake API answers from this process). No PDT is looked for on 7420. */
-function run(t, args = []) {
+/** Runs the script (asynchronously: the fake API answers from this process). No PDT is looked for on 7420: one answers
+ * on the fake API when `running`. */
+function run(t, args = [], { running = false } = {}) {
   const { port } = server.address();
+  const local = `http://127.0.0.1:${port}${running ? `${t.api}/pdt` : '/no-pdt-running'}`;
+  if (running) routes.set(`${t.api}/pdt/api/health`, '{"name":"Personal Dev Team","version":"0.3.0"}');
   const env = { PATH: `${t.bin}:${process.env.PATH}`, HOME: t.home, USER: 'tester',
-    PDT_INSTALL_API: `http://127.0.0.1:${port}${t.api}`, PDT_INSTALL_LOCAL: `http://127.0.0.1:${port}/no-pdt-running`,
+    PDT_INSTALL_API: `http://127.0.0.1:${port}${t.api}`, PDT_INSTALL_LOCAL: local,
     PDT_INSTALL_SYSTEM_APPS: join(t.root, 'system-apps') };
   const child = spawn('sh', [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
@@ -233,22 +238,112 @@ test('unsupported systems are refused with a clear reason', { skip }, async (ctx
   }
 });
 
-test('an existing install is left alone unless --force', { skip }, async (ctx) => {
+/** An old install's files in ~/.local/opt/pdt, and its systemd unit when `registered`. */
+function oldLinuxInstall(t, { registered }) {
+  mkdirSync(join(t.home, '.local/opt/pdt'), { recursive: true });
+  writeFileSync(join(t.home, '.local/opt/pdt/pdt-host'), 'old');
+  if (registered) {
+    mkdirSync(join(t.home, '.config/systemd/user'), { recursive: true });
+    writeFileSync(join(t.home, '.config/systemd/user/pdt-host.service'), '[Unit]');
+  }
+}
+
+test('a running install is left alone unless --force', { skip }, async (ctx) => {
   const t = setup();
   ctx.after(t.cleanup);
   publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
-  mkdirSync(join(t.home, '.local/opt/pdt'), { recursive: true });
-  writeFileSync(join(t.home, '.local/opt/pdt/pdt-host'), 'old');
-  const r = await run(t, ['--yes']);
+  oldLinuxInstall(t, { registered: true });
+  const r = await run(t, ['--yes'], { running: true });
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /already installed/);
+  assert.match(r.stdout, /already installed in .*, and running/);
   assert.match(r.stdout, /Settings > This host > Updates/);
   assert.equal(read(join(t.home, 'host.log')), '');
 
-  const f = await run(t, ['--yes', '--force']);
+  const f = await run(t, ['--yes', '--force'], { running: true });
   assert.equal(f.status, 0, f.stderr);
   assert.equal(read(join(t.home, 'host.log')), 'install --replace\n');
   assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
+});
+
+test('an install that starts at login but is stopped says how to start it', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  oldLinuxInstall(t, { registered: true });
+  const r = await run(t, ['--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /isn't running/);
+  assert.match(r.stdout, /systemctl --user start pdt-host\.service/);
+  assert.doesNotMatch(r.stdout, /keeps itself up to date/);
+  assert.equal(read(join(t.home, 'host.log')), '');
+
+  const m = setup({ os: 'Darwin', arch: 'arm64' });
+  ctx.after(m.cleanup);
+  mkdirSync(join(m.home, 'Applications', APP), { recursive: true });
+  mkdirSync(join(m.home, 'Library/LaunchAgents'), { recursive: true });
+  writeFileSync(join(m.home, 'Library/LaunchAgents/dev.personaldevteam.host.plist'), '<plist/>');
+  const rm = await run(m);
+  assert.equal(rm.status, 0, rm.stderr);
+  assert.match(rm.stdout, /Start it with: open ".*Personal Dev Team\.app"/);
+  assert.equal(read(join(m.home, 'open.log')), '');
+});
+
+test('files left without a login registration are installed again', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  oldLinuxInstall(t, { registered: false });
+  const r = await run(t, ['--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /isn't set up to start at login/);
+  assert.match(r.stdout, /v0\.3\.0 is installed/);
+  assert.equal(read(join(t.home, 'host.log')), 'install\n');
+  assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
+
+  // macOS: the app kept after `pdt-host uninstall` is replaced and opened.
+  const m = setup({ os: 'Darwin', arch: 'arm64' });
+  ctx.after(m.cleanup);
+  const app = tarball(m, { [`${APP}/Contents/MacOS/pdt-host`]: hostStub, [`${APP}/Contents/Info.plist`]: 'new' });
+  publish(m, 'v0.3.0', { 'Personal.Dev.Team.app.tar.gz': app });
+  const dest = join(m.home, 'Applications', APP);
+  mkdirSync(join(dest, 'Contents'), { recursive: true });
+  writeFileSync(join(dest, 'Contents/Info.plist'), 'old');
+  const rm = await run(m);
+  assert.equal(rm.status, 0, rm.stderr);
+  assert.equal(read(join(dest, 'Contents/Info.plist')), 'new');
+  assert.equal(read(join(m.home, 'open.log')), `${dest}\n`);
+});
+
+test('Linux without a systemd user instance downloads nothing', { skip }, async (ctx) => {
+  const t = setup({ systemd: false });
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  const r = await run(t, ['--yes']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /no systemd user instance/);
+  assert.match(r.stderr, /systemd=true/);
+  assert.match(r.stderr, /Nothing was installed/);
+  assert.doesNotMatch(r.stdout, /Downloading/);
+  assert.ok(!existsSync(join(t.home, '.local/opt/pdt')));
+});
+
+test('a failed registration says how to finish, and the next run installs again', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  writeFileSync(join(t.home, 'host.fail'), '');
+  const r = await run(t, ['--yes']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /registering it as a systemd user service failed/);
+  assert.match(r.stderr, /finish the install with: ".*\.local\/opt\/pdt\/pdt-host" install/);
+  assert.doesNotMatch(r.stdout, /is installed and starts/);
+
+  rmSync(join(t.home, 'host.fail'));
+  const again = await run(t, ['--yes']);
+  assert.equal(again.status, 0, again.stderr);
+  assert.doesNotMatch(again.stdout, /already installed/);
+  assert.match(again.stdout, /v0\.3\.0 is installed/);
+  assert.equal(read(join(t.home, 'host.log')), 'install\ninstall\n');
 });
 
 test('bad options are refused', { skip }, async (ctx) => {

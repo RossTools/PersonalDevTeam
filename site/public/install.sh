@@ -27,6 +27,8 @@ pdt_install() {
 	product="Personal Dev Team"
 	slug="pdt"
 	port=7420
+	host_label="dev.personaldevteam.host"
+	host_unit="pdt-host.service"
 	site="https://pdt.dev"
 	api="${PDT_INSTALL_API:-https://api.github.com}"
 	local_url="${PDT_INSTALL_LOCAL:-http://127.0.0.1:$port}"
@@ -89,6 +91,8 @@ pdt_install() {
 	*) die "$product runs on macOS, Linux and Windows, not $os." ;;
 	esac
 
+	# An install counts as one only when it starts at login (its LaunchAgent or systemd user unit, as `pdt-host install`
+	# writes them) or runs: files left by an install cut short are installed again.
 	if [ "$os" = mac ]; then
 		app_name="$product.app"
 		dest="$HOME/Applications/$app_name"
@@ -96,6 +100,8 @@ pdt_install() {
 		for d in "$HOME/Applications/$app_name" "$sys_apps/$app_name"; do
 			if [ -d "$d" ]; then existing="$d"; break; fi
 		done
+		login_item="$HOME/Library/LaunchAgents/$host_label.plist"
+		start_cmd="open \"$existing\""
 	else
 		dest="$HOME/.local/opt/$slug"
 		data="${XDG_DATA_HOME:-$HOME/.local/share}/$slug"
@@ -103,14 +109,31 @@ pdt_install() {
 		for d in "$dest" "$data/app"; do
 			if [ -e "$d/$slug-host" ]; then existing="$d"; break; fi
 		done
+		login_item="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$host_unit"
+		start_cmd="systemctl --user start $host_unit"
 	fi
+	registered=""
+	if [ -n "$existing" ] && [ -e "$login_item" ]; then registered=1; fi
 	running=""
 	if curl -fsS --max-time 3 "$local_url/api/health" 2>/dev/null | grep -q "\"$product\""; then running=1; fi
-	if [ -z "$force" ] && { [ -n "$existing" ] || [ -n "$running" ]; }; then
-		if [ -n "$existing" ]; then say "$product is already installed in $existing."; else say "$product is already running at $local_url."; fi
-		say "It keeps itself up to date: Settings > This host > Updates shows its version and checks for a new one."
-		say "To install it again anyway, run this with --force."
-		return 0
+	if [ -z "$force" ]; then
+		if [ -n "$running" ]; then
+			if [ -n "$existing" ]; then say "$product is already installed in $existing, and running."; else say "$product is already running at $local_url."; fi
+			say "It keeps itself up to date: Settings > This host > Updates shows its version and checks for a new one."
+			say "To install it again anyway, run this with --force."
+			return 0
+		fi
+		if [ -n "$registered" ]; then
+			say "$product is installed in $existing, but it isn't running."
+			say "Start it with: $start_cmd"
+			say "To install it again instead, run this with --force."
+			return 0
+		fi
+		if [ -n "$existing" ]; then say "$product is in $existing but isn't set up to start at login: installing it again."; fi
+	fi
+	# Linux: pdt-host runs as a systemd user service, so without a systemd user instance nothing is downloaded.
+	if [ "$os" = linux ] && ! systemctl --user show-environment >/dev/null 2>&1; then
+		die "$product for Linux runs as a systemd user service, and this session has no systemd user instance. On WSL, turn systemd on: add the lines [boot] and systemd=true to /etc/wsl.conf, run wsl --shutdown in Windows, then open WSL and run this again. In a container, use one that runs systemd. Nothing was installed."
 	fi
 	# --force replaces the app where it is; one in a folder only an admin can change (/Applications, usually) is left
 	# to the user rather than asking for sudo.
@@ -213,10 +236,9 @@ install_linux() {
 	mv "$dest.new" "$dest"
 	rm -rf "$dest.old"
 	say "Installed in $dest. Registering it as a systemd user service..."
-	if [ -n "$force" ]; then
-		"$dest/$slug-host" install --replace
-	else
-		"$dest/$slug-host" install
+	if [ -n "$force" ]; then set -- --replace; else set --; fi
+	if ! "$dest/$slug-host" install "$@"; then
+		die "$product is in $dest, but registering it as a systemd user service failed (above). Once that is fixed, finish the install with: \"$dest/$slug-host\" install"
 	fi
 	linger
 }
