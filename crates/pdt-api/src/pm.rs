@@ -87,7 +87,8 @@ async fn pm_state(st: &AppState) -> Result<PmState, ApiError> {
         let Some(session) = st.store.get_session(&row.session_id).await? else { continue };
         // One being reset stays listed (and in place) while its reset runs, until the fresh one takes its place
         // (PDT-308). One whose reset never finished (pdtd stopped mid-way) is an ended conversation like a closed one.
-        let resetting = in_flight.contains(&row.session_id);
+        let replaced = rows.iter().any(|r| r.reset_from.as_deref() == Some(row.session_id.as_str()));
+        let resetting = in_flight.contains(&row.session_id) && !replaced;
         let is_open = row.rotation != Rotation::Done || resetting;
         if is_open && current.is_none() {
             current = Some(session.clone());

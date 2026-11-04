@@ -118,7 +118,7 @@ names another (below, "Runners").
 | test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | a Rust change | unless docs only |
 | web (linux) | web typecheck, knip and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
 | build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
-| build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
+| build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | unless docs only |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | secrets | gitleaks over the commits the PR (or the queued group) adds | always | always |
 | changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
@@ -141,8 +141,8 @@ names another (below, "Runners").
   when the dependencies change (below, "Caching").
 - **macOS waits for the queue** because macOS minutes cost the most (on Namespace, 10× Linux); a macOS-only break
   shows when the PR enters the queue. Label a PR `macos` to see it earlier.
-- **Windows runs only when asked**: a Windows-only break in a PR without the `windows` label or Windows files is not
-  caught before it merges. Label any path, process or file-system change `windows`.
+- **Windows waits for the queue** like macOS: a Windows-only break in a PR without the `windows` label or Windows files
+  shows when the PR enters the queue. Label any path, process or file-system change `windows` to see it earlier.
 - **Bundles by hand**: `gh workflow run ci --ref <branch>` (or Actions → ci → Run workflow, "Build bundles") runs
   every check and builds every bundle at `<version>-local`, kept as artifacts for 5 days and published nowhere: use
   it to try a packaging change.
