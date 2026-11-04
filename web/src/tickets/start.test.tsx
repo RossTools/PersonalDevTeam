@@ -97,6 +97,8 @@ describe('Start dialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
     // The default Devin is missing: the first agent the host has instead.
     await waitFor(() => expect(agentPicker(dialog)).toHaveTextContent('Claude · not logged in'));
+    // It says so, rather than picking another agent silently.
+    expect(within(dialog).getByText('Devin, the default, is not installed here, so Claude is picked.')).toBeInTheDocument();
     await userEvent.click(agentPicker(dialog));
     expect(within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude · not logged in', 'Codex']);
     await userEvent.keyboard('{Escape}');

@@ -197,6 +197,29 @@ describe('Get started', () => {
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ defaultAgent: 'codex' }));
   });
 
+  it('counts an ACP agent found here: listed, in the summary, and offered as the default', async () => {
+    const onlyAcp = { ...checks({ claude: false }), acp: { 'acp:omp': tool(true, '/u/bin/omp'), 'acp:cursor': tool(false) } };
+    const acpAgents = [{ agent: 'acp:omp', label: 'OhMyPi' }, { agent: 'acp:cursor', label: 'Cursor' }];
+    expect(foundAgents(onlyAcp)).toEqual(['acp:omp']);
+    expect(foundAgents(onlyAcp, ['acp:omp'])).toEqual([]);
+    expect(agentsSummary(onlyAcp, [], acpAgents as never)).toBe('Found OhMyPi, logged in. PDT needs at least one, and git.');
+    const calls = stub(view({ steps: { agents: 'done', github: 'skipped', project: 'done' } }), {
+      'GET /api/host/checks': onlyAcp,
+      'GET /api/host/settings': { settings: { defaultAgent: 'claude' }, projectsDir: '/u/work', programs: [], acpAgents },
+    });
+    renderWithQuery(<SetupPage {...props()} />);
+    const def = await step('Pick a default agent');
+    const group = within(def).getByRole('radiogroup', { name: 'Default agent' });
+    expect(await within(group).findByRole('radio', { name: /OhMyPi/ })).toBeChecked();
+    await userEvent.click(within(def).getByRole('button', { name: 'Use OhMyPi' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ defaultAgent: 'acp:omp' }));
+    const agents = await step('Agents on this machine');
+    await userEvent.click(within(agents).getByRole('button', { expanded: false }));
+    expect(await within(agents).findByTitle('/u/bin/omp')).toBeInTheDocument();
+    // One not found isn't listed.
+    expect(within(agents).queryByRole('row', { name: /Cursor/ })).toBeNull();
+  });
+
   it('says so when every step is done, with the board and the PM', async () => {
     const p = props();
     stub(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }));

@@ -94,7 +94,8 @@ plus at most one line in a central list (docs/dev/architecture.md "Adding to the
 - Throwaway daemon for an agent to look at (screenshots, Playwright): build `target/debug/pdtd` and `web/dist`, then
   `scripts/scratch-daemon.sh start` (Windows: `scripts\scratch-daemon.ps1 start`); it prints `port=`, `dir=`, `url=`.
   Stop it with `scripts/scratch-daemon.sh stop <port>`. Set `PDT_CLAUDE_PROGRAM` / `PDT_CODEX_PROGRAM` /
-  `PDT_DEVIN_PROGRAM` to a stand-in, or new sessions start the real agents (docs/dev/testing.md "Looking at the app").
+  `PDT_DEVIN_PROGRAM` to a stand-in, or new sessions start the real agents; the script turns the ACP agents off unless
+  `PDT_ACP_PROGRAM` names one (docs/dev/testing.md "Looking at the app").
 - Logs: `<data dir>/logs/pdtd.<date>.log`, `pdt-host.log`, `pdtd-launch.log`. Data lives in `<local data dir>/pdt` or `pdt-dev`.
 - The shell is zsh: quote globs (`grep -r --include='*.ts'`).
 

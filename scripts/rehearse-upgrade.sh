@@ -107,6 +107,7 @@ env $(env | sed -n 's/^\(PDT_[A-Za-z0-9_]*\)=.*/-u \1/p') \
   PDT_PROFILE=dev PDT_PORT="$PORT" PDT_DATA_DIR="$DATA" PDT_REHEARSAL=1 PDT_SECRET_STORE=memory \
   PDT_TAILSCALE_BIN="$WORK/no-tailscale" PDT_WEB_DIR="$WEB_DIR" \
   PDT_CLAUDE_PROGRAM="$WORK/no-claude" PDT_CODEX_PROGRAM="$WORK/no-codex" PDT_DEVIN_PROGRAM="$WORK/no-devin" \
+  PDT_ACP_PROGRAM="$WORK/no-acp-agent" \
   "$BIN" >"$LOG" 2>&1 &
 PID=$!
 

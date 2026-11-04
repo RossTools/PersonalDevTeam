@@ -41,7 +41,7 @@ for (const [path, build] of [['target/debug/pdtd', 'cargo build -p pdtd'], ['web
   }
 }
 
-// The stand-in for claude, codex and devin: a terminal that says it's working, and stays up for an hour at most.
+// The stand-in for claude, codex and devin (the scratch daemon turns the ACP agents off): a terminal that says it's working, and stays up for an hour at most.
 const scratch = mkdtempSync(join(tmpdir(), 'pdt-site-shots-'));
 const agent = join(scratch, 'agent.sh');
 writeFileSync(agent, '#!/bin/sh\nprintf "Working on it…\\r\\n"\nexec sleep 3600\n');

@@ -22,6 +22,9 @@ pub struct HostEnv {
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
     pub devin_program: Option<String>,
+    /// `PDT_ACP_PROGRAM`: the program every ACP agent runs instead of its own (a stand-in, or a missing path so none
+    /// is found).
+    pub acp_program: Option<String>,
     /// `network.json` when pdtd started: a setting that differs from it applies after a restart.
     pub network_at_start: NetworkSettings,
     /// pdt-host started this pdtd, so it starts it again when it exits (Restart now).
@@ -183,6 +186,7 @@ pub(crate) async fn acp_agent_views(st: &AppState, s: &HostSettings) -> Vec<AcpA
     let search = st.platform.login_path.clone();
     let home = st.home_dir.clone();
     let data_dir = st.data_dir.clone();
+    let env_program = st.host_env.acp_program.clone();
     let s = s.clone();
     tokio::task::spawn_blocking(move || {
         defs.into_iter()
@@ -195,7 +199,8 @@ pub(crate) async fn acp_agent_views(st: &AppState, s: &HostSettings) -> Vec<AcpA
                     .map(|i| i.version);
                 let program = def.installer.as_ref().and_then(|_| s.acp_programs.get(&def.id).cloned());
                 let signed_in = crate::toolchains::signed_in(def.flavor, home.as_deref());
-                let launch = crate::toolchains::launch_def(&data_dir, home.as_deref(), &s, def.clone());
+                let launch =
+                    crate::toolchains::launch_def(&data_dir, home.as_deref(), &s, def.clone(), env_program.as_deref());
                 let found = found(&expand_home(&launch.command, home.as_deref()), search.as_deref());
                 Some(AcpAgentView { agent, def, found, installed_version, program, signed_in })
             })

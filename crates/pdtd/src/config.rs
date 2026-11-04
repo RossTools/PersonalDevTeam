@@ -50,6 +50,9 @@ pub struct Config {
     pub claude_program: Option<String>,
     pub codex_program: Option<String>,
     pub devin_program: Option<String>,
+    /// `PDT_ACP_PROGRAM`: the program every ACP agent (OhMyPi, Cursor, Grok, …) runs instead of its own; a missing
+    /// path turns them all off (scratch daemons, screenshots).
+    pub acp_program: Option<String>,
     /// `PDT_SUPERVISED=1`: pdt-host started this pdtd. Only a supervised stable instance offers and hands off updates
     /// (`update_disabled_reason`).
     pub supervised: bool,
@@ -155,6 +158,7 @@ impl Config {
         let claude_program = lookup("PDT_CLAUDE_PROGRAM");
         let codex_program = lookup("PDT_CODEX_PROGRAM");
         let devin_program = lookup("PDT_DEVIN_PROGRAM");
+        let acp_program = lookup("PDT_ACP_PROGRAM");
         let supervised = lookup("PDT_SUPERVISED").as_deref() == Some("1");
         let updates_unsupported = lookup("PDT_UPDATES_UNSUPPORTED").map(|v| v.trim().to_string());
         let seed = match lookup("PDT_SEED").as_deref().map(str::trim) {
@@ -184,6 +188,7 @@ impl Config {
             claude_program,
             codex_program,
             devin_program,
+            acp_program,
             supervised,
             updates_unsupported,
             seed,
@@ -406,11 +411,13 @@ mod tests {
     fn agent_programs_from_env() {
         let c = Config::from_lookup(lookup(&[]), Some("/d".into()), None).unwrap();
         assert_eq!((c.claude_program, c.codex_program, c.devin_program), (None, None, None));
+        assert_eq!(c.acp_program, None);
         let c = Config::from_lookup(
             lookup(&[
                 ("PDT_CLAUDE_PROGRAM", "/x/claude"),
                 ("PDT_CODEX_PROGRAM", "/x/codex"),
                 ("PDT_DEVIN_PROGRAM", "/x/devin"),
+                ("PDT_ACP_PROGRAM", "/x/acp"),
             ]),
             Some("/d".into()),
             None,
@@ -418,6 +425,7 @@ mod tests {
         .unwrap();
         assert_eq!((c.claude_program.as_deref(), c.codex_program.as_deref()), (Some("/x/claude"), Some("/x/codex")));
         assert_eq!(c.devin_program.as_deref(), Some("/x/devin"));
+        assert_eq!(c.acp_program.as_deref(), Some("/x/acp"));
     }
 
     #[test]

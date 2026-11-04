@@ -64,6 +64,10 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const offeredAgents = agents.all.some(availability.offered) ? agents.all.filter(availability.offered) : agents.all;
   // The chosen agent unless this host lacks it (then the first it has); every agent until the checks load.
   const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
+  // Said under the agent when it isn't the chosen one (PDT-561): the user sees which agent will run before Start.
+  const fellBack = agent !== chosenAgent
+    ? `${agents.label(chosenAgent)}${pickedAgent ? '' : ', the default,'} is ${availability.of(chosenAgent) === 'off' ? 'switched off' : 'not installed'} here, so ${agents.label(agent)} is picked.`
+    : undefined;
   // 'none': no agent session (PDT-72), only the branch, worktree and the ticket's tab.
   const [pickedMode, setMode] = useState<SessionMode | 'none' | null>(null);
   // An ACP agent has only its conversation.
@@ -233,7 +237,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
             />
           </Field>
           {!noSession && (
-            <Field label="Agent">
+            <Field label="Agent" hint={fellBack}>
               {/* A Select, not a segmented control: the agents (with ACP ones and login hints) outgrow the dialog's width (PDT-470). */}
               <Select<AgentKind>
                 options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${agents.label(a)} · ${availability.hint(a)}` : agents.label(a) }))}

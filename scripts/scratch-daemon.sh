@@ -10,6 +10,7 @@
 #
 # Run from the checkout (it starts target/debug/pdtd and serves web/dist; build them first). Set PDT_SCRATCH_BIN for
 # another pdtd. PDT_CLAUDE_PROGRAM / PDT_CODEX_PROGRAM / PDT_DEVIN_PROGRAM pass through, to avoid the real agents.
+# The ACP agents (OhMyPi, Cursor, Grok, …) are off unless PDT_ACP_PROGRAM names a stand-in for them.
 # `start` also removes scratch folders older than a day whose daemon is gone.
 set -euo pipefail
 
@@ -87,6 +88,7 @@ start() {
   local dir="$parent/$port"
   PDT_PROFILE=dev PDT_PORT="$port" PDT_DATA_DIR="$dir/data" PDT_WEB_DIR="$root/web/dist" PDT_SECRET_STORE=memory \
     PDT_SEED="$seed" PDT_TAILSCALE_BIN=/nonexistent PDT_GITHUB_OFFLINE=1 \
+    PDT_ACP_PROGRAM="${PDT_ACP_PROGRAM:-/nonexistent/acp-agent}" \
     nohup "$bin" >"$dir/pdtd.out" 2>&1 </dev/null &
   local url="http://127.0.0.1:$port"
   for _ in $(seq 1 150); do
