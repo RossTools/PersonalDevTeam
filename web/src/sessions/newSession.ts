@@ -39,7 +39,7 @@ export interface AgentDefaults {
  * What the app offers before the host settings load (or when they fail): a Claude conversation; Bypass for a ticket
  * (its agent works on its own branch), Ask for a new session.
  */
-export const FALLBACK_DEFAULTS: AgentDefaults = { agent: 'claude', mode: 'conversation', ticketPermissionMode: 'bypass', sessionPermissionMode: 'ask' };
+export const FALLBACK_DEFAULTS: AgentDefaults = { agent: 'claude', mode: 'conversation', ticketPermissionMode: 'ask', sessionPermissionMode: 'ask' };
 
 const LABEL: Record<string, 'Claude' | 'Codex' | 'Devin'> = { claude: 'Claude', codex: 'Codex', devin: 'Devin' };
 

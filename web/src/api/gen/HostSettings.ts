@@ -32,7 +32,8 @@ defaultAgent: AgentKind,
  */
 defaultSessionMode: SessionMode, 
 /**
- * The permission mode a ticket's Start offers first (bypass: the agent works on its own branch, PDT-75).
+ * The permission mode a ticket's Start offers first. Ask on a new install (PDT-562): Bypass only once the user
+ * picks it (Get started, Settings). Installs from before keep Bypass, the old default (a migration pins it).
  */
 ticketPermissionMode: PermissionMode, 
 /**

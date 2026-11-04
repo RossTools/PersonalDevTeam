@@ -6,6 +6,7 @@ import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { HostChecks } from '../api/gen/HostChecks';
+import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { SetupView } from '../api/gen/SetupView';
 import type { StepState } from '../api/gen/StepState';
 import type { AddProjectMode } from '../projects/AddProjectForm';
@@ -19,7 +20,8 @@ import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../ho
 import { POLL } from '../common/poll';
 import { QueryStatus } from '../common/QueryStatus';
 
-export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent';
+export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent' | 'permissions';
+export const STEPS: StepId[] = ['agents', 'github', 'project', 'defaultAgent', 'permissions'];
 
 const AGENTS: { id: BuiltinAgent; name: string; install: string; env: string }[] = [
   { id: 'claude', name: 'Claude Code', install: 'https://code.claude.com/docs/en/setup', env: 'PDT_CLAUDE_PROGRAM' },
@@ -29,11 +31,18 @@ const AGENTS: { id: BuiltinAgent; name: string; install: string; env: string }[]
 /** Each agent's program in the host settings (Settings › This host › Agents › Programs). */
 const PROGRAM = { claude: 'claudeProgram', codex: 'codexProgram', devin: 'devinProgram' } as const;
 const GIT_INSTALL = 'https://git-scm.com/downloads';
+/** The modes the permissions step offers tickets (Plan changes nothing, so a ticket's agent couldn't build it). */
+const TICKET_MODES: { mode: PermissionMode; title: string; description: string }[] = [
+  { mode: 'ask', title: 'Ask', description: 'Asks you before it edits a file or runs a command. Agents working on their own wait for your answer.' },
+  { mode: 'accept_edits', title: 'Accept edits', description: 'Edits files in the ticket’s worktree freely, asks before running a command.' },
+  { mode: 'bypass', title: 'Bypass (dangerous)', description: 'Never asks. The agent works on its own branch and folder, but can run any command as you.' },
+];
+const modeTitle = (m: PermissionMode) => TICKET_MODES.find((x) => x.mode === m)?.title ?? m;
 const agentName = (a: AgentKind, acp?: AcpAgentView[]) => AGENTS.find((x) => x.id === a)?.name ?? agentLabel(a, acp);
 
 /** Pure: the step to open first: the first one not done, in page order. */
 export function firstOpenStep(v: SetupView): StepId | null {
-  return (['agents', 'github', 'project', 'defaultAgent'] as const).find((k) => v.steps[k] === 'todo') ?? null;
+  return STEPS.find((k) => v.steps[k] === 'todo') ?? null;
 }
 
 /** Pure: the agents the checks found, in page order, less the ones switched off (PDT-270). */
@@ -63,8 +72,9 @@ export interface SetupPageProps {
 }
 
 /**
- * Get started (PDT-230): four steps PDT needs before agents can work on the user's code, in any order. Each ticks
- * itself off from the host's real state (the checks, the GitHub login, the projects, the default agent).
+ * Get started (PDT-230): five steps PDT needs before agents can work on the user's code, in any order. Each ticks
+ * itself off from the host's real state (the checks, the GitHub login, the projects, the default agent, tickets'
+ * permission mode).
  */
 export function SetupPage(props: SetupPageProps) {
   const qc = useQueryClient();
@@ -93,8 +103,7 @@ export function SetupPage(props: SetupPageProps) {
   const toggle = (k: StepId) => setOpen(shown === k ? null : k);
   const step = (k: StepId) => ({ id: k, state: v.steps[k], open: shown === k, onToggle: () => toggle(k) });
   const next = (after: StepId) => {
-    const order: StepId[] = ['agents', 'github', 'project', 'defaultAgent'];
-    setOpen(order.slice(order.indexOf(after) + 1).find((k) => v.steps[k] === 'todo') ?? null);
+    setOpen(STEPS.slice(STEPS.indexOf(after) + 1).find((k) => v.steps[k] === 'todo') ?? null);
   };
   return (
     <Shell>
@@ -104,7 +113,7 @@ export function SetupPage(props: SetupPageProps) {
         <p className="text-muted-foreground">A few things PDT needs before agents can work on your code. Do them in any order. Each one ticks itself off.</p>
       </div>
       <Progress done={v.done} />
-      {v.done === 4 && (
+      {v.done === STEPS.length && (
         <div role="status" className="flex flex-col gap-3 rounded-lg border border-running bg-running-soft p-4">
           <p><b>You’re set up.</b> Create a ticket and click Start on it, or open the PM and ask it to plan something.</p>
           <div className="flex flex-wrap gap-2">
@@ -118,6 +127,7 @@ export function SetupPage(props: SetupPageProps) {
         <GithubStep {...step('github')} onDone={() => next('github')} />
         <ProjectStep {...step('project')} {...props} />
         <DefaultAgentStep {...step('defaultAgent')} v={v} checks={checks.data} />
+        <PermissionsStep {...step('permissions')} />
       </div>
       <footer className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground">
         <span>Reopen this any time from Settings › This host › Setup.</span>
@@ -151,10 +161,10 @@ function Logo() {
 function Progress({ done }: { done: number }) {
   return (
     <div className="flex items-center gap-3 text-muted-foreground">
-      <div role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={4} aria-valuenow={done} className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-        <div className="h-full bg-running transition-[width] motion-reduce:transition-none" style={{ width: `${(done / 4) * 100}%` }} />
+      <div role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={STEPS.length} aria-valuenow={done} className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+        <div className="h-full bg-running transition-[width] motion-reduce:transition-none" style={{ width: `${(done / STEPS.length) * 100}%` }} />
       </div>
-      <span>{done} of 4</span>
+      <span>{done} of {STEPS.length}</span>
     </div>
   );
 }
@@ -423,6 +433,45 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
           Use {agentName(agent, acp)}
         </Button>
       </div>
+      {save.error && <Alert tone="error">{save.error.message}</Alert>}
+    </Step>
+  );
+}
+
+/** Tickets' permission mode (PDT-562): Ask on a new install until the user picks another here or in Settings. */
+function PermissionsStep(step: StepProps) {
+  const qc = useQueryClient();
+  const host = useHostSettings();
+  const current = host.data?.settings.ticketPermissionMode ?? 'ask';
+  const [picked, setPicked] = useState<PermissionMode | null>(null);
+  const mode = picked ?? current;
+  const save = useMutation({
+    meta: { errorShown: true },
+    mutationFn: () => api.saveHostSettings({ ticketPermissionMode: mode }),
+    onSuccess: (s) => {
+      setHostSettings(qc, s);
+      void qc.invalidateQueries({ queryKey: hostKeys.setup });
+    },
+  });
+  const summary = step.state === 'done' ? `Tickets’ agents start in ${modeTitle(current)}. You can change it for each start.`
+    : 'What an agent working on a ticket may do without asking you.';
+  // A mode set elsewhere that the step doesn't offer (Plan) still shows, so the pick matches the setting.
+  const modes = TICKET_MODES.some((m) => m.mode === current) ? TICKET_MODES : [...TICKET_MODES, { mode: current, title: modeTitle(current), description: 'Set in Settings.' }];
+  return (
+    <Step {...step} title="Choose tickets’ permissions" summary={summary}>
+      <ChoiceCardGroup
+        aria-label="Ticket permissions"
+        size="sm"
+        value={mode}
+        onChange={(m) => setPicked(m)}
+        options={modes.map((m) => ({ value: m.mode, title: m.title, description: m.description }))}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant={mode === 'bypass' ? 'danger' : 'primary'} pending={save.isPending} onClick={() => save.mutate()}>
+          Use {modeTitle(mode)}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">Settings › This host › Agents › Ticket permissions changes it later; a persona or project can set its own.</p>
       {save.error && <Alert tone="error">{save.error.message}</Alert>}
     </Step>
   );

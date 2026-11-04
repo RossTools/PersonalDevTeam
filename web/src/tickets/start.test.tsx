@@ -58,7 +58,7 @@ describe('Start dialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
     expect(starts(calls)).toEqual([{
-      agent: 'codex', sessionMode: 'conversation', branch: 'feat/login', permissionMode: 'bypass', tab: { workspaceId: 'w1', position: 2 },
+      agent: 'codex', sessionMode: 'conversation', branch: 'feat/login', permissionMode: 'ask', tab: { workspaceId: 'w1', position: 2 },
       mode: 'check', cols: 120, rows: 32,
     }]);
     expect(onClose).toHaveBeenCalled();
@@ -183,19 +183,28 @@ describe('Start dialog', () => {
     expect(starts(calls).map((b) => (b as { mode: string }).mode)).toEqual(['check', 'force']);
   });
 
-  it('defaults to bypassing permission prompts and a new workspace instead of the placement', async () => {
+  it('defaults to asking for permission and a new workspace instead of the placement', async () => {
     const calls = stub(ready);
     open({ placement: { workspaceId: 'w1', position: 0 } });
     const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
-    expect(within(dialog).getByRole('button', { name: /Permission mode/ })).toHaveTextContent('Bypass (dangerous)');
+    expect(within(dialog).getByRole('button', { name: /Permission mode/ })).toHaveTextContent('Ask');
     expect(within(dialog).getByRole('switch', { name: 'Open in a new workspace' })).toBeChecked();
-    // In the terminal it is a checkbox, on for Bypass.
+    // In the terminal it is a checkbox, on only for Bypass.
     await userEvent.click(within(dialog).getByRole('radio', { name: 'Terminal' }));
-    expect(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ })).not.toBeChecked();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
     await waitFor(() => expect(starts(calls)).toHaveLength(1));
-    expect(starts(calls)[0]).toMatchObject({ newWorkspace: true, sessionMode: 'terminal', permissionMode: 'bypass' });
+    expect(starts(calls)[0]).toMatchObject({ newWorkspace: true, sessionMode: 'terminal', permissionMode: 'ask' });
     expect(starts(calls)[0]).not.toHaveProperty('tab');
+  });
+
+  it('offers Skip permission prompts checked in the terminal when tickets default to Bypass', async () => {
+    stub(ready, undefined, { settings: { defaultAgent: 'claude', defaultSessionMode: 'conversation', ticketPermissionMode: 'bypass' } });
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: /Permission mode/ })).toHaveTextContent('Bypass (dangerous)'));
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Terminal' }));
+    expect(within(dialog).getByRole('checkbox', { name: /Skip permission prompts/ })).toBeChecked();
   });
 
   it("starts with the host's permission mode for tickets", async () => {

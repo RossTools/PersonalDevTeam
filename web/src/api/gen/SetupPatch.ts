@@ -3,4 +3,4 @@
 /**
  * A change to the checklist's state.
  */
-export type SetupPatch = { dismissed?: boolean, githubSkipped?: boolean, defaultAgentConfirmed?: boolean, };
+export type SetupPatch = { dismissed?: boolean, githubSkipped?: boolean, defaultAgentConfirmed?: boolean, permissionsConfirmed?: boolean, };

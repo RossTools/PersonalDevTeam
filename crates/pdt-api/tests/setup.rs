@@ -1,5 +1,5 @@
-//! Get started (PDT-230): first-run detection, steps ticked off from real state, skipping GitHub, dismissing, and the
-//! agent program set by hand.
+//! Get started (PDT-230): first-run detection, steps ticked off from real state, skipping GitHub, dismissing, the
+//! agent program set by hand, and tickets' permission mode (Ask on a new install, PDT-562).
 
 use crate::common;
 
@@ -70,7 +70,13 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
     assert_eq!(v["opensOnLaunch"], true, "{v}");
     assert_eq!(v["state"]["needed"], true);
     assert_eq!(v["done"], 0);
-    assert_eq!(v["steps"], json!({"agents": "todo", "github": "todo", "project": "todo", "defaultAgent": "todo"}));
+    assert_eq!(
+        v["steps"],
+        json!({"agents": "todo", "github": "todo", "project": "todo", "defaultAgent": "todo", "permissions": "todo"})
+    );
+    // A new install's tickets start in Ask until the user picks another mode.
+    let (_, h) = call(&app, "GET", "/api/host/settings", None).await;
+    assert_eq!(h["settings"]["ticketPermissionMode"], "ask", "{h}");
 
     // Skipping GitHub counts as done.
     let (s, v) = call(&app, "PUT", "/api/host/setup", Some(json!({"githubSkipped": true}))).await;
@@ -98,13 +104,20 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
     assert!(checks["codex"]["path"].as_str().unwrap().contains("my-codex"), "{checks}");
     let v = setup(&app).await;
     assert_eq!(v["steps"]["agents"], "done", "{v}");
-    assert_eq!(v["done"], 4);
+    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(4), Some(true)), "permissions to do");
+
+    // Picking tickets' permission mode (the same call Settings makes) confirms it.
+    let (s, h) = call(&app, "PUT", "/api/host/settings", Some(json!({"ticketPermissionMode": "bypass"}))).await;
+    assert_eq!(s, StatusCode::OK, "{h}");
+    let v = setup(&app).await;
+    assert_eq!(v["steps"]["permissions"], "done", "{v}");
+    assert_eq!(v["done"], 5);
     assert_eq!((v["state"]["finished"].as_bool(), v["opensOnLaunch"].as_bool()), (Some(true), Some(false)));
 
     // Finished stays finished, even when a step comes undone.
     call(&app, "PUT", "/api/host/setup", Some(json!({"githubSkipped": false}))).await;
     let v = setup(&app).await;
-    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(3), Some(false)));
+    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(4), Some(false)));
 }
 
 #[tokio::test]
