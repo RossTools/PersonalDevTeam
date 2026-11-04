@@ -16,6 +16,8 @@ pub struct GithubIssueOpened {
     pub body: String,
     pub url: String,
     pub author: String,
+    /// Its labels, and `from-pdt` on a report filed with Report a bug (GitHub drops the labels of someone without
+    /// push access).
     pub labels: Vec<String>,
     pub created_at: String,
 }
