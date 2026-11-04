@@ -427,7 +427,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'ticket_proposal': {
-        const by = proposed.persona ?? item.personaName ?? 'An agent';
+        const named = proposed.persona ?? item.personaName;
+        // Mid-sentence an unnamed proposer is "the agent", not "An agent".
+        const by = named ?? 'An agent';
+        const them = named ?? 'the agent';
         const edits = editing ? { title: draft.title, description: draft.description, priority: draft.priority, labels: draft.labels } : {};
         // Reject takes only the reason; Accept and Duplicate of… the edits and the box.
         const decide = (choice: string, extra: Record<string, unknown> = {}) =>
@@ -435,7 +438,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         const set = (patch: Partial<typeof draft>) => setDraft((d) => ({ ...d, ...patch }));
         return {
           region: 'Ticket proposal',
-          why: `${by} proposed this ticket${proposed.fromTicket ? ` while working on ${proposed.fromTicket}` : ''}. It waits in Draft, off the board, until you decide; ${by} hears what you choose.`,
+          why: `${by} proposed this ticket${proposed.fromTicket ? ` while working on ${proposed.fromTicket}` : ''}. It waits in Draft, off the board, until you decide; ${them} hears what you choose.`,
           content: (
             <>
               {editing ? (
@@ -458,7 +461,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
                   )}
                 </div>
               )}
-              {proposed.reason && <AgentMessage name={by} label={`Why ${by} proposed it`}><Markdown>{proposed.reason}</Markdown></AgentMessage>}
+              {proposed.reason && <AgentMessage name={by} label={`Why ${them} proposed it`}><Markdown>{proposed.reason}</Markdown></AgentMessage>}
               <Checkbox checked={agentic} onChange={setAgentic} disabled={busy}>Label it agentic, so agents can pick it up</Checkbox>
               {duplicating && (
                 <TicketPicker projectId={item.projectId} label="Duplicate of" placeholder="The ticket it repeats: key or title…"

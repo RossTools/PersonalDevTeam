@@ -473,6 +473,19 @@ describe('inbox', () => {
     expect(openTicket).toHaveBeenCalledWith(expect.objectContaining({ id: 't3', projectId: 'p' }));
   });
 
+  it('names a ticket proposal from a session without a persona "an agent" mid-sentence (PDT-518)', () => {
+    const proposal = item('tp', {
+      kind: 'ticket_proposal', group: 'ticket_proposal', ticketId: 't9', ticketKey: 'PDT-9', ticketTitle: 'Flaky test', sessionId: 'sess', stepId: null,
+      personaName: null, title: 'Flaky test', body: { reason: 'It failed twice today.' },
+      choices: [{ id: 'accept_todo', title: 'Accept to Todo', primary: true }, { id: 'reject', title: 'Reject', primary: false }],
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[proposal]} selectedId="tp" onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Ticket proposal' });
+    expect(region).toHaveTextContent('An agent proposed this ticket. It waits in Draft, off the board, until you decide; the agent hears what you choose.');
+    expect(region).toHaveTextContent('Why the agent proposed it');
+  });
+
   it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it (PDT-256)', async () => {
     const call = item('c', {
       kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',
