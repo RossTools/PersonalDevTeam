@@ -26,6 +26,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   against `brand::MACOS_TEAM_ID` on the extracted `.app` before it removes quarantine and swaps it in. The install
   scripts pin the same key (a test checks) and check the same signature. Pinning a key or changing it:
   [SDLC.md](../SDLC.md) "Release signing".
+- **CI and the release build run third-party actions only by commit SHA.** A tag can be moved to other code, which
+  would build or upload a different release whose checksums still match. `scripts/check-action-pins.sh` enforces it;
+  [SDLC.md](../SDLC.md) "Dependabot" says how to pin one.
 
 ## Talking to agents
 
