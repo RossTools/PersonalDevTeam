@@ -1368,7 +1368,11 @@ async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
     assert_eq!((fresh["open"].as_bool(), fresh["title"].as_str()), (Some(true), Some("hello")));
-    assert_eq!(pm_info(&env, &first).await["open"], false);
+    // The fresh conversation is listed before the reset ends the old one.
+    while pm_info(&env, &first).await["open"] != false {
+        assert!(Instant::now() < deadline, "the abandoned reset never ended the old conversation");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 
     // A reset cut short after its conversation ended, with no fresh one: ended, not "resetting".
     let other = start_pm(&env, "again").await;
