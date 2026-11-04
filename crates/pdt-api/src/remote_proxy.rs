@@ -170,7 +170,7 @@ mod tests {
     async fn state(owner: Option<&str>) -> (AppState, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-        let st = AppState::new(store, tmp.path().join("data"));
+        let st = AppState::with_platform(store, tmp.path().join("data"), crate::isolated_platform(tmp.path()));
         *st.owner_cache.write().unwrap() = owner.map(str::to_string);
         (st, tmp)
     }

@@ -540,7 +540,7 @@ mod tests {
     async fn input_is_applied_before_the_output_it_causes() {
         let tmp = tempfile::tempdir().unwrap();
         let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-        let st = AppState::new(store.clone(), tmp.path().join("data"));
+        let st = AppState::with_platform(store.clone(), tmp.path().join("data"), crate::isolated_platform(tmp.path()));
         let repo = tmp.path().join("repo");
         let project = pdt_core::project::Project {
             id: "p".into(),
