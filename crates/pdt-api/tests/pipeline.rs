@@ -2537,6 +2537,44 @@ async fn wont_do_stops_the_work_closes_the_pr_and_removes_the_worktree_and_branc
     );
 }
 
+/// PDT-594: a branch named from the project's template (no `pdt-` prefix, a `/`) is still PDT's: Won't do deletes it
+/// here and on origin. A branch the user named is left on origin.
+#[tokio::test]
+async fn wont_do_deletes_a_templated_branch_from_origin_but_not_one_the_user_named() {
+    let gh = std::sync::Arc::new(FakeForge::default());
+    let env = setup_with(Some(gh.clone())).await;
+    let remote = env._tmp.path().join("remote.git");
+    git(env._tmp.path(), &["init", "-q", "--bare", "-b", "main", &remote.to_string_lossy()]);
+    git(&env.repo, &["config", "remote.origin.pushurl", &remote.to_string_lossy()]);
+    let uri = format!("/api/projects/{}/branch-names", env.project);
+    let (s, v) = call(&env.app, "PUT", &uri, Some(json!({"template": "{type}/{key}-{slug}"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    for (title, given) in [("Not wanted", None), ("Mine", Some("feature/mine"))] {
+        let t = ticket(&env, title).await;
+        let mut body = json!({"agent": "claude", "noSession": true});
+        if let Some(b) = given {
+            body["branch"] = json!(b);
+        }
+        let (s, started) = call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{started}");
+        let branch = started["attempt"]["branch"].as_str().unwrap().to_string();
+        if given.is_none() {
+            assert!(branch.starts_with("feat/PX-1-"), "{branch}");
+        }
+        let worktree = env.repo.join(".worktrees").join(branch.replace('/', "-"));
+        std::fs::write(worktree.join("w.txt"), "w\n").unwrap();
+        git(&worktree, &["add", "."]);
+        git(&worktree, &["commit", "-q", "-m", "work"]);
+        git(&worktree, &["push", "-q", "-u", "origin", &branch]);
+
+        move_to(&env, &t, "wont_do").await;
+        assert!(!worktree.exists(), "the worktree is removed");
+        assert!(!has_branch(&env.repo, &branch), "the local branch is deleted");
+        assert_eq!(has_branch(&remote, &branch), given.is_some(), "{branch} on origin");
+    }
+}
+
 /// PDT-339: Won't do keeps a worktree with uncommitted changes (and says so), and leaves a merged pull request alone;
 /// Clean up then removes it anyway.
 #[tokio::test]

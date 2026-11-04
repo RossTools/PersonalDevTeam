@@ -174,6 +174,13 @@ pub(crate) fn validate_overrides(text: &str) -> Result<(), ApiError> {
             format!("{} is not valid: unknown section `{s}` (expected run, test or area)", Source::Overrides),
         ));
     }
+    // Branch names on this host are the project's Branch names setting; only the repository's file names them too.
+    if o.branch.is_some() {
+        return Err(ApiError::bad_request(
+            codes::INVALID_RUN_CONFIG,
+            format!("{} is not valid: [branch] goes in the project's Branch names setting", Source::Overrides),
+        ));
+    }
     Ok(())
 }
 

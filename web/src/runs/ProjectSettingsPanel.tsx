@@ -10,6 +10,7 @@ import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSessio
 import { useOpenSession } from '../common/open';
 import { AreasEditor } from '../tickets/Areas';
 import { ConfigCommands } from './ApproveCommands';
+import { BranchNames } from './BranchNames';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { AutoStart } from '../api/gen/AutoStart';
@@ -111,6 +112,7 @@ export function useProjectSettingsSections(project: Project): { notice: ReactNod
     });
   const sections: (SettingsSection | false)[] = [
     !personal && { label: 'Runs on this host', node: <RunConfiguration project={project} settings={settings.data} setUpEntries={agentEntries('set-up-project')} /> },
+    !personal && { label: 'Branch names', node: <BranchNames project={project} /> },
     { label: 'Agent instructions', node: <Instructions project={project} settings={settings.data} writeEntries={agentEntries('set-up-workflow')} /> },
     { label: 'Agents', node: <Agents project={project} settings={settings.data} /> },
     !personal && { label: 'Review', node: <Merging project={project} settings={settings.data} /> },
@@ -165,6 +167,7 @@ function RunConfiguration({ project, settings, setUpEntries }: { project: Projec
             <p className="text-xs text-muted-foreground">This repository has no run configuration file.</p>
           )}
           {config.data?.error && <Alert tone="error">{config.data.error}</Alert>}
+          {config.data?.effective?.branchError && <Alert tone="error">{config.data.effective.branchError}</Alert>}
           {ignored && <Alert>{ignored}</Alert>}
         </SettingsRow>
         <SettingsRow
