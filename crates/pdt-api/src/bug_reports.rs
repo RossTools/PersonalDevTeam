@@ -200,6 +200,46 @@ async fn hostnames(st: &AppState) -> Vec<String> {
     names
 }
 
+/// The user's own names, for redaction: each project's name, key and folder, its origin's `owner/repo` (and each
+/// part), and its git worktrees' branches and folders. The project of the release repository is left out: its names
+/// are PDT's own.
+async fn own_names(st: &AppState) -> Vec<String> {
+    let release = st.update.client.repo();
+    let mut names = vec![];
+    for p in st.store.list_projects().await.unwrap_or_default() {
+        let repo = std::path::PathBuf::from(&p.repo_path);
+        let folder = |path: &std::path::Path| path.file_name().map(|n| n.to_string_lossy().into_owned());
+        let git = p.has_repo().then_some(repo.clone());
+        let (remote, worktrees) = tokio::task::spawn_blocking(move || match git {
+            Some(r) => (pdt_git::remote_url(&r, "origin"), pdt_git::list_worktrees(&r).unwrap_or_default()),
+            None => (None, vec![]),
+        })
+        .await
+        .unwrap_or_default();
+        let remote = remote.as_deref().and_then(pdt_core::git_url::parse_remote).map(|r| r.path);
+        if remote.as_ref().is_some_and(|path| path.join("/").eq_ignore_ascii_case(&release)) {
+            continue;
+        }
+        names.extend([p.name, p.key]);
+        names.extend(folder(&repo));
+        if let Some(path) = remote {
+            names.push(path.join("/"));
+            names.extend(path);
+        }
+        for w in worktrees {
+            names.extend(w.branch);
+            names.extend(folder(&w.path));
+        }
+        for w in st.store.list_worktrees(&p.id).await.unwrap_or_default() {
+            names.extend(folder(std::path::Path::new(&w.path)));
+            names.push(w.branch);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// The newest pdtd log's last lines (`<data dir>/logs/pdtd.<date>.log`).
 async fn log_tail(st: &AppState) -> Vec<String> {
     let dir = st.data_dir.join("logs");
@@ -221,22 +261,28 @@ async fn log_tail(st: &AppState) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// The diagnostics as they are shown and sent: everything that could be private redacted.
-async fn diagnostics(st: &AppState) -> String {
+/// What a report sent off this machine is redacted of: the update token, the owner's login, the home folder, this
+/// machine's names and the user's own names.
+async fn redactions(st: &AppState) -> Redactions {
     let token = crate::update::read_token(st).await.ok().flatten();
     let mut secrets: Vec<String> = token.into_iter().collect();
     let owner = st.store.get_host_settings().await.ok().and_then(|s| s.owner_login);
     secrets.extend(owner.into_iter().chain(st.owner_from_env.clone()));
-    let r = Redactions {
+    Redactions {
         secrets,
         home: st.home_dir.as_ref().map(|h| h.to_string_lossy().into_owned()),
         hostnames: hostnames(st).await,
-    };
+        names: own_names(st).await,
+    }
+}
+
+/// The diagnostics as they are shown and sent: everything that could be private redacted.
+async fn diagnostics(st: &AppState, r: &Redactions) -> String {
     let status = st.update.snapshot();
     let mut update =
         serde_json::to_value(status.state).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
     if let Some(e) = status.error.as_deref().or(status.disabled_reason.as_deref()) {
-        update.push_str(&format!(" ({})", br::redact(e, &r)));
+        update.push_str(&format!(" ({})", br::redact(e, r)));
     }
     let d = Diagnostics {
         version: pdt_core::BUILD_VERSION.into(),
@@ -247,7 +293,7 @@ async fn diagnostics(st: &AppState) -> String {
         supervised: st.update.enabled,
         update,
         token: token_word(&status.token).into(),
-        log_tail: log_tail(st).await.iter().map(|l| br::redact(l, &r)).collect(),
+        log_tail: log_tail(st).await.iter().map(|l| br::redact(l, r)).collect(),
     };
     d.render()
 }
@@ -271,7 +317,7 @@ pub(crate) async fn preview(State(st): State<AppState>) -> Result<Json<BugReport
         },
         version: pdt_core::BUILD_VERSION.into(),
         os: os(),
-        diagnostics: diagnostics(&st).await,
+        diagnostics: diagnostics(&st, &redactions(&st).await).await,
     }))
 }
 
@@ -334,14 +380,30 @@ pub(crate) async fn file(
     crate::update::refresh_settings(st).await;
     let setting = st.store.get_host_settings().await?.bug_reports;
     let project = release_project(st).await?;
+    let route = setting.route(project.is_some());
+    let redact = redactions(st).await;
+    // What an agent wrote is redacted as the log is when it goes to GitHub: the user confirms the call, but may not
+    // spot a branch or folder name in it. What the user writes in the dialog goes as they wrote it.
+    let (title, report) = match (by_session, route) {
+        (Some(_), BugReportRoute::Github) => {
+            let r = |s: &str| br::redact(s, &redact);
+            let report = br::Report {
+                what_happened: r(&report.what_happened),
+                expected: r(&report.expected),
+                steps: r(&report.steps),
+            };
+            (r(&title), report)
+        }
+        _ => (title, report),
+    };
     let diagnostics = match r.include_diagnostics.unwrap_or(false) {
-        true => Some(diagnostics(st).await),
+        true => Some(diagnostics(st, &redact).await),
         false => None,
     };
     // The OS is part of the diagnostics: shared only with them.
     let os = diagnostics.as_ref().map(|_| os());
     let body = br::body(&report, diagnostics.as_deref(), pdt_core::BUILD_VERSION, os.as_deref());
-    let filed = match setting.route(project.is_some()) {
+    let filed = match route {
         BugReportRoute::Off => {
             return Err(ApiError::conflict(
                 codes::BUG_REPORTS_OFF,

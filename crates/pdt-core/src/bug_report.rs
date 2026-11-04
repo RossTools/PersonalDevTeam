@@ -110,7 +110,8 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    /// The diagnostics as text. Only `log_tail` can hold anything private: redact it before it goes in.
+    /// The diagnostics as text. Only `log_tail` (and the update error) can hold anything private: redact it before it
+    /// goes in.
     pub fn render(&self) -> String {
         let mut out = format!(
             "PDT version: {}\nProfile: {}{}\nOS: {} ({})\nSupervised by pdt-host: {}\nUpdates: {}\nUpdate token: {}\n",
@@ -180,10 +181,17 @@ pub struct Redactions {
     pub home: Option<String>,
     /// This machine's names (hostname, tailnet name): written as `[host]`.
     pub hostnames: Vec<String>,
+    /// The user's own names: projects, repositories (`owner/name`), branches, worktree and repository folders. Written
+    /// as `[name]` where they stand as a whole word (case as written), so a project called `web` leaves `website` be.
+    pub names: Vec<String>,
 }
 
 pub const REDACTED: &str = "[redacted]";
 const HOST: &str = "[host]";
+pub const NAME: &str = "[name]";
+/// Names too common to take out: default branches and PDT's own.
+const KEEP_NAMES: [&str; 8] =
+    ["main", "master", "develop", "trunk", "HEAD", "origin", crate::brand::SLUG, crate::brand::DAEMON_BIN];
 /// Prefixes of well-known token formats (GitHub, OpenAI/Anthropic, Slack, AWS).
 const TOKEN_PREFIXES: [&str; 10] =
     ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk-", "xoxb-", "xoxp-", "AKIA"];
@@ -205,6 +213,17 @@ pub fn redact(text: &str, r: &Redactions) -> String {
     for host in r.hostnames.iter().map(|h| h.trim()).filter(|h| h.len() >= 2) {
         s = replace_ignore_case(&s, host, HOST);
     }
+    let mut names: Vec<&str> = r
+        .names
+        .iter()
+        .map(|n| n.trim())
+        .filter(|n| n.chars().count() >= 3 && !KEEP_NAMES.iter().any(|k| k.eq_ignore_ascii_case(n)))
+        .collect();
+    // Longest first, so `owner/repo` goes before `repo` and a branch before the ticket key in it.
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    for name in names {
+        s = replace_word(&s, name, NAME);
+    }
     s = user_folders(&s);
     s.lines().map(redact_line).collect::<Vec<_>>().join("\n") + if text.ends_with('\n') { "\n" } else { "" }
 }
@@ -217,6 +236,35 @@ fn replace_ignore_case(hay: &str, needle: &str, with: &str) -> String {
         out.push_str(&hay[at..at + i]);
         out.push_str(with);
         at += i + n.len();
+    }
+    out.push_str(&hay[at..]);
+    out
+}
+
+/// `needle` replaced where it isn't part of a longer word (letters, digits, `_` and `-` either side; `.` and `/`
+/// end a word, so `repo` goes from `repo.git` and `owner/repo`, and `-<digit>` after it does too, so a project key
+/// goes from its ticket keys).
+fn replace_word(hay: &str, needle: &str, with: &str) -> String {
+    let joined = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    let before = |s: &str| s.chars().next_back().is_some_and(joined);
+    let after = |s: &str| {
+        let mut cs = s.chars();
+        match cs.next() {
+            Some('-') => !cs.next().is_some_and(|c| c.is_ascii_digit()),
+            c => c.is_some_and(joined),
+        }
+    };
+    let mut out = String::with_capacity(hay.len());
+    let mut at = 0;
+    while let Some(i) = hay[at..].find(needle) {
+        let (start, end) = (at + i, at + i + needle.len());
+        out.push_str(&hay[at..start]);
+        if before(&hay[..start]) || after(&hay[end..]) {
+            out.push_str(needle);
+        } else {
+            out.push_str(with);
+        }
+        at = end;
     }
     out.push_str(&hay[at..]);
     out
@@ -400,6 +448,7 @@ mod tests {
             secrets: vec!["github_pat_11ABCDEF0123456789_secretvalue".into()],
             home: Some("/Users/alex".into()),
             hostnames: vec!["alexs-mac-mini".into()],
+            ..Default::default()
         };
         let text = "loaded github_pat_11ABCDEF0123456789_secretvalue from keychain\n\
                     opened /Users/alex/work/repo/file.rs\n\
@@ -440,6 +489,35 @@ mod tests {
             assert!(out.contains(kept), "{kept} missing:\n{out}");
         }
         assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn the_users_own_names_go_as_whole_words() {
+        let r = Redactions {
+            home: Some("/Users/alex".into()),
+            names: vec![
+                "Acme Billing".into(),
+                "acme-co/billing".into(),
+                "billing".into(),
+                "ACME".into(),
+                "pdt-ACME-12-fix-the-invoice-total".into(),
+                "web".into(),
+                "main".into(),
+                "pdt".into(),
+                "x".into(),
+            ],
+            ..Default::default()
+        };
+        let text = "project Acme Billing at /Users/alex/work/billing/.worktrees/pdt-ACME-12-fix-the-invoice-total\n\
+                    pushed to git@github.com:acme-co/billing.git for ACME-12 on main\n\
+                    served web/dist from website pdtd for pdt; billing-old and rebilling stay\n";
+        let out = redact(text, &r);
+        assert_eq!(
+            out,
+            "project [name] at ~/work/[name]/.worktrees/[name]\n\
+             pushed to git@github.com:[name].git for [name]-12 on main\n\
+             served [name]/dist from website pdtd for pdt; billing-old and rebilling stay\n"
+        );
     }
 
     #[test]
