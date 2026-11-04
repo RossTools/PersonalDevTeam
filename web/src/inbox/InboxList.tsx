@@ -4,7 +4,7 @@ import { Badge, Button, EmptyState, IconButton, List, ListHeading, ListRow, Rela
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
-import { grouped, KIND_LABEL, selectedUpdate, updateSelection } from './model';
+import { grouped, KIND_LABEL, selectedUpdate, shownKind, updateSelection } from './model';
 import { KindIcon } from './kinds';
 
 /** Rows a Needs-you section shows before its Show all. */
@@ -13,7 +13,7 @@ const GROUP_ROWS = 50;
 /** What a row says under its title: who asks (or which workflow) and the ticket's title. */
 function context(i: InboxItem): string {
   const who = i.personaName ?? (typeof i.body.workflow === 'string' ? i.body.workflow : null);
-  return [who, i.ticketTitle ?? (i.ticketKey ? null : KIND_LABEL[i.kind])].filter(Boolean).join(' · ');
+  return [who, i.ticketTitle ?? (i.ticketKey ? null : KIND_LABEL[shownKind(i)])].filter(Boolean).join(' · ');
 }
 
 /** An empty list's line: what it says when empty, or that `what` can't be loaded. */

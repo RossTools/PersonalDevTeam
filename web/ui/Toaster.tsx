@@ -11,6 +11,8 @@ export interface ToastOptions {
   /** One button on the toast ("Retry", "Open settings"). */
   action?: { label: string; onClick: () => void };
   description?: ReactNode;
+  /** Replaces the kind's icon (a question's "?"). */
+  icon?: ReactNode;
   /** Milliseconds; errors stay longer by default. */
   duration?: number;
 }
@@ -18,6 +20,7 @@ export interface ToastOptions {
 function opts(o: ToastOptions | undefined, defaultDuration?: number) {
   return {
     description: o?.description,
+    icon: o?.icon,
     duration: o?.duration ?? defaultDuration,
     action: o?.action ? { label: o.action.label, onClick: () => o.action!.onClick() } : undefined,
   };

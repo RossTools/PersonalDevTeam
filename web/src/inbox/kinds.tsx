@@ -8,7 +8,7 @@ import { Badge, type BadgeTone } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
-import { itemLabel } from './model';
+import { itemLabel, shownKind } from './model';
 
 type Tone = Exclude<BadgeTone, 'neutral' | 'solid'>;
 
@@ -35,7 +35,7 @@ const KINDS: Record<InboxKind, { icon: ComponentType<LucideProps>; tone: Tone }>
 
 /** An item's icon and colour: a gate under Ready to accept is green, a disk nearly full red. */
 function kindStyle(item: InboxItem): { icon: ComponentType<LucideProps>; tone: Tone } {
-  const k = KINDS[item.kind];
+  const k = KINDS[shownKind(item)];
   if (item.kind === 'gate' && item.group === 'accept') return { ...k, tone: 'running' };
   if (item.kind === 'low_disk' && item.body.critical === true) return { ...k, tone: 'failed' };
   return k;

@@ -297,7 +297,9 @@ impl NotificationKind {
     /// The kind an Inbox item notifies as.
     pub fn of_inbox(kind: InboxKind, group: InboxGroup) -> Self {
         match (kind, group) {
-            (InboxKind::Question | InboxKind::Secret, _) => K::InboxQuestion,
+            (InboxKind::Question | InboxKind::Secret, _) | (InboxKind::Approval, InboxGroup::Question) => {
+                K::InboxQuestion
+            }
             (InboxKind::Approval | InboxKind::Confirm, _) => K::InboxApproval,
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
@@ -801,6 +803,8 @@ mod tests {
         assert_eq!(NotificationKind::of_inbox(InboxKind::Gate, InboxGroup::Accept), K::InboxGate);
         assert_eq!(NotificationKind::of_inbox(InboxKind::Manual, InboxGroup::Gate), K::InboxManual);
         assert_eq!(NotificationKind::of_inbox(InboxKind::Approval, InboxGroup::Approval), K::InboxApproval);
+        // A conversation's own question notifies as a question.
+        assert_eq!(NotificationKind::of_inbox(InboxKind::Approval, InboxGroup::Question), K::InboxQuestion);
         assert_eq!(inbox_key("i1"), "inbox:i1");
         assert_eq!(session_key("s", K::SessionNeedsYou), "session:s:needs_you");
         assert_eq!(attempt_key("a", K::PrCiFailed), "attempt:a:ci_failed");
