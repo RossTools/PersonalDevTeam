@@ -118,7 +118,7 @@ names another (below, "Runners").
 | test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | a Rust change | unless docs only |
 | web (linux) | web typecheck, knip and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
 | build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |
-| build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | same |
+| build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | unless docs only |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | secrets | gitleaks over the commits the PR (or the queued group) adds | always | always |
 | changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
@@ -141,8 +141,8 @@ names another (below, "Runners").
   when the dependencies change (below, "Caching").
 - **macOS waits for the queue** because macOS minutes cost the most (on Namespace, 10× Linux); a macOS-only break
   shows when the PR enters the queue. Label a PR `macos` to see it earlier.
-- **Windows runs only when asked**: a Windows-only break in a PR without the `windows` label or Windows files is not
-  caught before it merges. Label any path, process or file-system change `windows`.
+- **Windows waits for the queue** like macOS: a Windows-only break in a PR without the `windows` label or Windows files
+  shows when the PR enters the queue. Label any path, process or file-system change `windows` to see it earlier.
 - **Bundles by hand**: `gh workflow run ci --ref <branch>` (or Actions → ci → Run workflow, "Build bundles") runs
   every check and builds every bundle at `<version>-local`, kept as artifacts for 5 days and published nowhere: use
   it to try a packaging change.
@@ -312,10 +312,10 @@ Releases are deliberate: merges don't ship. Stable releases happen when the user
    itself once its checks pass. A failed check leaves it open: push a fix to `release` (and turn auto-merge on again
    once the queue dropped it), or close it, which releases nothing.
 3. **Tag and publish**: on merge, the workflow tags `vX.Y.Z` on the merge commit, builds the bundles again from it (the
-   queue squashed the PR's commit away), and publishes the GitHub release with `SHA256SUMS` and the version's
-   `CHANGELOG.md` section. Then `check-macos-download` downloads the published `.app.tar.gz` on macOS and fails
-   unless Gatekeeper accepts it (`spctl -a -t exec`, a stapled ticket). Re-running a failed job reuses the tag and
-   release and replaces re-uploaded assets.
+   queue squashed the PR's commit away), and publishes the GitHub release with `SHA256SUMS` (signed: "Release
+   signing") and the version's `CHANGELOG.md` section. Then `check-macos-download` downloads the published
+   `.app.tar.gz` on macOS and fails unless Gatekeeper accepts it (`spctl -a -t exec`, a stapled ticket). Re-running a
+   failed job reuses the tag and release and replaces re-uploaded assets.
 
 Setup: the `PDT_RELEASE_TOKEN` secret (fine-grained: Contents and Pull requests, read and write) and auto-merge
 allowed in the repository's settings; without the token the workflow stops before opening anything. **Dry run**: on
@@ -369,6 +369,30 @@ Application** certificate carries a Team ID, so the keychain's partition list tr
 and the update token is read without a prompt once allowed. A self-signed one (`scripts/make-signing-cert.sh`, a
 stopgap) has no Team ID: the keychain then trusts each build's exact code hash, so every update asks again, and
 Gatekeeper warns. Check a host with `security dump-keychain -a`: the item's partition list should show `teamid:`.
+
+### Release signing
+
+Each release's `SHA256SUMS` is signed: the `publish` job runs `scripts/release-sign.sh`, which writes
+`SHA256SUMS.sig`, an ECDSA P-256 signature (`openssl dgst -sha256 -sign`, DER) over the tag, a newline, then
+`SHA256SUMS`. The private key is the `PDT_RELEASE_SIGNING_KEY` secret of the `release-signing` environment, which only
+the `publish` job uses, so a leaked `PDT_RELEASE_TOKEN` can't sign. Its public key is pinned as `RELEASE_SIGNING_KEY` in
+`crates/pdt-core/src/brand.rs` and as `signing_key` / `$signingKey` in `site/public/install.sh` and `install.ps1`.
+Once it is pinned, updates and the install scripts refuse a release without a valid signature. On macOS, pdt-host
+also checks that an update's `.app` is signed by `MACOS_TEAM_ID` before swapping it in.
+
+- **No key yet** (`RELEASE_SIGNING_KEY` is `None`): releases go out unsigned, and the `Sign` step warns.
+- **Setting it up**: `scripts/release-signing-key.sh <backup file>` on your machine. It makes the key, stores it as
+  the environment's secret, writes the private key to the backup file (keep it offline: GitHub never shows it again)
+  and prints the lines to pin. Then:
+  1. Cut a release so a signed one exists.
+  2. Merge the pins, with docs/user saying updates and the one-command install check the release signature
+     (`your-machine/updates.md`, `getting-started/install.md`).
+  3. Cut the next release. The website serves the new install scripts on merge, and they need a signed latest release.
+- **With a key pinned**, a release without the secret, or with another key, fails at `Sign`: hosts would refuse it.
+  A dry run on a fork needs its own key pinned on that fork.
+- **Changing the key**: hosts check with the key their version pins, so ship a release signed by the old key that
+  pins the new one, then change the secret. A lost key leaves hosts unable to update by themselves: they need
+  reinstalling.
 
 ### Google sign-in
 

@@ -470,8 +470,9 @@ pub struct Health {
     pub profile: pdt_core::brand::Profile,
     pub port: u16,
     pub dev: bool,
-    /// A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
-    /// `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).
+    /// The build of the index.html pdtd serves now (the id its `web-build` meta names, else a short hash of it), or
+    /// null without a web dir. The page compares it with its own id and reloads when they differ: a new release, or a
+    /// dev instance restarted with a rebuilt web/dist (every dev build reports the same `version`).
     pub web_build: Option<String>,
     /// pdtd's background loops (PDT-127): each one's last finished pass and whether it is stale.
     pub loops: Vec<pdt_core::liveness::LoopHealth>,
@@ -609,9 +610,20 @@ async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Heal
     })
 }
 
-/// The first 12 hex digits of index.html's SHA-256. Vite names every asset by its content hash and index.html links
-/// them, so any change to the bundle changes it.
+/// The build id index.html names in its `<meta name="web-build" content="…">` (web/vite.config.ts writes it, and the
+/// page compares health against it), else the first 12 hex digits of index.html's SHA-256. Vite names every asset by
+/// its content hash and index.html links them, so any change to the bundle changes either.
 fn web_build_id(index_html: &[u8]) -> String {
     use sha2::Digest;
+    if let Some(id) = meta_web_build(&String::from_utf8_lossy(index_html)) {
+        return id;
+    }
     sha2::Sha256::digest(index_html).iter().take(6).map(|b| format!("{b:02x}")).collect()
+}
+
+fn meta_web_build(html: &str) -> Option<String> {
+    const TAG: &str = r#"<meta name="web-build" content=""#;
+    let rest = &html[html.find(TAG)? + TAG.len()..];
+    let id = &rest[..rest.find('"')?];
+    (!id.is_empty()).then(|| id.to_owned())
 }

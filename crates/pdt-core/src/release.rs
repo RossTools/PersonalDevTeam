@@ -337,6 +337,8 @@ pub fn select_asset<'a>(names: &[&'a str], os: HostOs) -> Option<&'a str> {
 }
 
 pub const SUMS_ASSET: &str = "SHA256SUMS";
+/// The signature of SHA256SUMS (PDT-531): checked whenever a release signing key is pinned.
+pub const SIG_ASSET: &str = "SHA256SUMS.sig";
 
 /// `sha256sum` output: `<64 hex>  <name>` or `<64 hex> *<name>` → name → lower-case hex. Other lines are ignored.
 pub fn parse_sums(text: &str) -> BTreeMap<String, String> {

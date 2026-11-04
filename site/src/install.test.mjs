@@ -5,7 +5,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { createServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -50,12 +50,24 @@ function setup({ os = 'Linux', arch = 'x86_64', glibc = '2.35' } = {}) {
   return { root, home, bin, api, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
+/** A release signing key: `key` as install.sh pins it (base64 SPKI DER), `sig(tag, sums)` SHA256SUMS.sig as the
+ * release workflow makes it (DER, over "<tag>\n" + SHA256SUMS). */
+function releaseKey() {
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  return {
+    key: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    sig: (tag, sums) => sign('sha256', Buffer.from(`${tag}\n${sums}`), { key: privateKey, dsaEncoding: 'der' }),
+  };
+}
+
 /** Publishes a release with `files` (name → contents) and SHA256SUMS (from `sums`, or computed), as GitHub's API would
- * list it: `latest`, and `tags/<tag>`. */
-function publish(t, tag, files, { sums, pretty = true, latest = true } = {}) {
+ * list it: `latest`, and `tags/<tag>`. With `signedBy` (a `releaseKey()`), SHA256SUMS.sig too, signed for `signedTag`
+ * (default `tag`). */
+function publish(t, tag, files, { sums, pretty = true, latest = true, signedBy, signedTag = tag } = {}) {
   const rel = `${t.api}/repos/${REPO}/releases`;
   const all = { ...files };
   all.SHA256SUMS = sums ?? Object.entries(files).map(([n, b]) => `${createHash('sha256').update(b).digest('hex')}  ${n}\n`).join('');
+  if (signedBy) all['SHA256SUMS.sig'] = signedBy.sig(signedTag, all.SHA256SUMS);
   const assets = Object.entries(all).map(([name, body]) => {
     const id = assetIds++;
     routes.set(`${rel}/assets/${id}`, body);
@@ -91,11 +103,11 @@ const hostStub = '#!/bin/sh\necho "$*" >> "$HOME/host.log"\n';
 const linuxTarball = (t) => tarball(t, { 'pdt/pdt-host': hostStub, 'pdt/pdtd': 'daemon', 'pdt/web/index.html': '<html>' });
 
 /** Runs the script (asynchronously: the fake API answers from this process). No PDT is looked for on 7420. */
-function run(t, args = []) {
+function run(t, args = [], extraEnv = {}) {
   const { port } = server.address();
   const env = { PATH: `${t.bin}:${process.env.PATH}`, HOME: t.home, USER: 'tester',
     PDT_INSTALL_API: `http://127.0.0.1:${port}${t.api}`, PDT_INSTALL_LOCAL: `http://127.0.0.1:${port}/no-pdt-running`,
-    PDT_INSTALL_SYSTEM_APPS: join(t.root, 'system-apps') };
+    PDT_INSTALL_SYSTEM_APPS: join(t.root, 'system-apps'), ...extraEnv };
   const child = spawn('sh', [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
   let stderr = '';
@@ -203,6 +215,41 @@ test('a release without SHA256SUMS aborts', { skip }, async (ctx) => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /no SHA256SUMS/);
   assert.ok(!existsSync(join(t.home, '.local/opt/pdt')));
+});
+
+test('with a pinned key, only a release whose SHA256SUMS it signed is installed', { skip }, async (ctx) => {
+  const release = releaseKey();
+  const env = { PDT_INSTALL_SIGNING_KEY: release.key };
+  const cases = [
+    ['signed', { signedBy: release }, null],
+    ['unsigned', {}, /is not signed/],
+    ['signed for another release', { signedBy: release, signedTag: 'v0.2.0' }, /does not match .* release key/],
+    ['signed by another key', { signedBy: releaseKey() }, /does not match .* release key/],
+  ];
+  for (const [name, opts, refused] of cases) {
+    const t = setup();
+    ctx.after(t.cleanup);
+    publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) }, opts);
+    const r = await run(t, ['--yes'], env);
+    if (refused) {
+      assert.notEqual(r.status, 0, name);
+      assert.match(r.stderr, refused, name);
+      assert.match(r.stderr, /Nothing was installed/, name);
+      assert.ok(!existsSync(join(t.home, '.local/opt/pdt')), `${name}: nothing installed`);
+    } else {
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, /Signature verified[\s\S]*Checksum verified/);
+      assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
+    }
+  }
+  // A signed SHA256SUMS whose entry was changed (a swapped asset) fails the signature, not just the checksum.
+  const t = setup();
+  ctx.after(t.cleanup);
+  const tarball = linuxTarball(t);
+  const sums = `${createHash('sha256').update(tarball).digest('hex')}  pdt-linux-x86_64.tar.gz\n`;
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': tarball }, { sums, signedBy: { sig: (tag) => release.sig(tag, sums.replace(/^./, (c) => (c === '0' ? '1' : '0'))) } });
+  const r = await run(t, ['--yes'], env);
+  assert.match(r.stderr, /does not match .* release key/);
 });
 
 test('installs the universal app on an Intel Mac', { skip }, async (ctx) => {

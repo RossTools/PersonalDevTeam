@@ -79,6 +79,10 @@ async fn setup_with(template: Option<Option<bool>>) -> Env {
     let project = p["id"].as_str().unwrap().to_string();
     // Several pull requests by one author: no triage cap here.
     call(&app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 0}))).await;
+    // The fake reviewer's first turn (its prompt's echo) ends without an outcome. With "When an agent is stuck" on, each
+    // engine tick before the test's `submit_outcome` arrives moves it on: two nudges, then a restart in a fresh session,
+    // which ends the step this session had (a slow runner, PDT-593). Off, the step stalls and still takes the outcome.
+    common::stuck_agents_off(&app).await;
     pdt_api::run_workflows(&state).await;
     let wf = match template {
         None => {

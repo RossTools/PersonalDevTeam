@@ -207,7 +207,9 @@ pub async fn refresh_issues(st: &AppState) {
                     body: i.body.clone(),
                     url: i.url.clone(),
                     author: i.author.clone(),
-                    labels: i.labels.clone(),
+                    // A report filed from PDT by someone without push access has lost its labels: its body says
+                    // where it came from (PDT-567).
+                    labels: pdt_core::bug_report::issue_labels(&i.labels, &i.body),
                     created_at: i.created_at.clone(),
                 };
                 let e = NewLogEvent::new(

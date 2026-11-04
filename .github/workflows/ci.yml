@@ -41,7 +41,8 @@ env:
 #   pdtd also without its integration features) and web (typecheck, vitest, build). None of it depends on the OS.
 # - build (macos-latest): only what macOS can break: clippy, nextest and the desktop crate. It runs in the merge
 #   queue, and on a PR only with the `macos` label or a change under `.github/`.
-# - build (windows-latest): clippy and nextest only; with the `windows` label or a change to Windows-specific files.
+# - build (windows-latest): clippy and nextest only. It runs in the merge queue, and on a PR only with the `windows`
+#   label or a change to Windows-specific files.
 # - The Rust tests (rust.yml) build once per OS into nextest archives and run them in parallel partition jobs; Linux
 #   and Windows build the unit and integration tests in two jobs side by side (`split`), macOS in one (its minutes
 #   cost the most). The `test (linux)` and `build (…)` jobs here only report rust.yml's result under the required
@@ -156,8 +157,10 @@ jobs:
             if ! printf '%s\n' "$files" | grep -vE '^web/|^(docs|site)/|\.md$' | grep -q . \
               && ! printf '%s\n' "$files" | grep -qE "$builtin"; then rust=false; fi
           fi
+          # Windows: always in the queue (a Windows-only break otherwise reaches main); on a PR only with the label or
+          # a change to Windows-specific files or CI.
           windows=false
-          if has windows || { [ "$rust" = true ] && printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; then windows=true; fi
+          if has windows || { [ "$rust" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qiE '(^|/)windows/|\.ps1$|\.cmd$|^\.github/'; }; }; then windows=true; fi
           # macOS: always in the queue; on a PR only with the label or a change to CI itself.
           macos=false
           if has macos || { [ "$rust" = true ] && { [ "$EVENT" = merge_group ] || printf '%s\n' "$files" | grep -qE '^\.github/'; }; }; then macos=true; fi
@@ -181,6 +184,7 @@ jobs:
       - run: scripts/release-tag.test.sh
       - run: scripts/nightly-tag.test.sh
       - run: scripts/google-build-values.test.sh
+      - run: scripts/release-sign.test.sh
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
       - name: The pull request adds a changelog fragment
@@ -279,6 +283,7 @@ jobs:
           $found = Invoke-ScriptAnalyzer -Path site/public/install.ps1 -ExcludeRule PSAvoidUsingWriteHost
           $found | Format-Table -AutoSize -Wrap
           if ($found) { exit 1 }
+      - run: pwsh site/src/install.test.ps1
       - run: pnpm --filter site test
       - run: pnpm --filter site build
 

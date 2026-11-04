@@ -8,8 +8,9 @@ export type Health = { status: string, name: string,
  */
 website: string, version: string, profile: Profile, port: number, dev: boolean, 
 /**
- * A short hash of the index.html pdtd serves now, or null without a web dir. Every dev build reports the same
- * `version`, so the UI reloads itself when this changes (a dev instance restarted with a rebuilt web/dist).
+ * The build of the index.html pdtd serves now (the id its `web-build` meta names, else a short hash of it), or
+ * null without a web dir. The page compares it with its own id and reloads when they differ: a new release, or a
+ * dev instance restarted with a rebuilt web/dist (every dev build reports the same `version`).
  */
 webBuild: string | null, 
 /**

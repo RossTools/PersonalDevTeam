@@ -74,6 +74,10 @@ a day). Choose what it does in **Settings › This host › Updates › Install 
 
 If you install an update while agents are busy, PDT says what's busy and asks first. Sessions resume afterwards.
 
+Once PDT runs the new version, every open page reloads itself, including one on your phone as soon as you come back
+to it. A page where you're typing a message or have a dialog open waits: a banner says **PDT was updated**, with
+**Reload**, and the page reloads by itself once you send or clear the message.
+
 ### Installing updates by themselves
 
 With **Install automatically when idle**, the built-in **Install updates** workflow does the installing. Set it in
@@ -98,7 +102,8 @@ To add steps of your own, click **Customize as a workflow →**. Once you change
 Settings says **Updates follow your customized workflow** and offers **Open** and **Reset to default**. Turned off, no
 update installs by itself.
 
-Each update is checked against the release's checksums, and PDT copies its database before installing. If the new
+Each update is checked against the release's checksums (on a Mac, the new app must also carry PDT's developer
+signature), and PDT copies its database before installing. If the new
 version doesn't start properly, PDT puts back the version you had (on Windows, with its entry in **Settings › Apps**)
 and the database copy, and a banner says **Update to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its
 own. See [An update rolled back](../troubleshooting/troubleshooting.md#an-update-rolled-back).
