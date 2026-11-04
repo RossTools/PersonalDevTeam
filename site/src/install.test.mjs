@@ -247,7 +247,7 @@ test('with a pinned key, only a release whose SHA256SUMS it signed is installed'
   ctx.after(t.cleanup);
   const tarball = linuxTarball(t);
   const sums = `${createHash('sha256').update(tarball).digest('hex')}  pdt-linux-x86_64.tar.gz\n`;
-  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': tarball }, { sums, signedBy: { sig: (tag) => release.sig(tag, sums.replace(/^./, '0')) } });
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': tarball }, { sums, signedBy: { sig: (tag) => release.sig(tag, sums.replace(/^./, (c) => (c === '0' ? '1' : '0'))) } });
   const r = await run(t, ['--yes'], env);
   assert.match(r.stderr, /does not match .* release key/);
 });
