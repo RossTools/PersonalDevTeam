@@ -191,6 +191,24 @@ async fn ids_are_checked() {
     assert!(matches!(m.attach("a"), Err(PtyError::NotFound(_))));
 }
 
+/// A process starts outside the manager's lock, so two spawns of one id can overlap: the id is reserved, and only
+/// one of them starts.
+#[tokio::test]
+async fn concurrent_spawns_of_one_id_start_one_process() {
+    let m = PtyManager::new();
+    let spawns: Vec<_> = (0..8)
+        .map(|_| {
+            let m = m.clone();
+            std::thread::spawn(move || m.spawn(interactive("a")))
+        })
+        .collect();
+    let results: Vec<_> = spawns.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1, "{results:?}");
+    assert!(results.iter().all(|r| matches!(r, Ok(_) | Err(PtyError::AlreadyExists(_)))), "{results:?}");
+    assert!(m.is_running("a"));
+    tokio::time::timeout(WAIT, m.shutdown()).await.unwrap();
+}
+
 #[tokio::test]
 async fn shutdown_kills_everything() {
     let m = PtyManager::new();

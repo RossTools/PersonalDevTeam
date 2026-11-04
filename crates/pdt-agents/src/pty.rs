@@ -2,7 +2,7 @@
 //! to any number of attached clients, so terminals outlive the windows that show them.
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
@@ -239,10 +239,177 @@ pub(crate) fn kill_tree(pid: u32) {
     }
 }
 
+/// A process [`PtyManager::spawn`] started, not yet in the manager's map.
+struct Started {
+    handle: Arc<Handle>,
+    exit: oneshot::Receiver<i32>,
+    #[cfg(windows)]
+    job: Option<Arc<job::Job>>,
+}
+
+/// Opens the PTY and starts `spec`'s process in it, with its reader, writer and waiter threads. Blocking.
+fn start(spec: SpawnSpec) -> Result<Started, PtyError> {
+    if !spec.cwd.is_dir() {
+        return Err(PtyError::Spawn(format!("working directory does not exist: {}", spec.cwd.display())));
+    }
+    let spawn_err = |e: &dyn std::fmt::Display| PtyError::Spawn(e.to_string());
+    let size = PtySize { rows: spec.rows, cols: spec.cols, pixel_width: 0, pixel_height: 0 };
+    let pair = native_pty_system().openpty(size).map_err(|e| spawn_err(&e))?;
+    let mut cmd = CommandBuilder::new(&spec.program);
+    cmd.args(&spec.args);
+    cmd.cwd(&spec.cwd);
+    for key in &spec.env_remove {
+        cmd.env_remove(key);
+    }
+    for (k, v) in &spec.env {
+        cmd.env(k, v);
+    }
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| spawn_err(&e))?;
+    drop(pair.slave);
+    let killer = child.clone_killer();
+    let pid = child.process_id();
+    #[cfg(windows)]
+    let job = match pid.map(job::Job::assign) {
+        Some(Ok(job)) => Some(Arc::new(job)),
+        Some(Err(e)) => {
+            tracing::warn!(session = %spec.id, error = %e, "could not put the terminal in a job; its processes may outlive pdtd");
+            None
+        }
+        None => None,
+    };
+    let io = pair.master.try_clone_reader().and_then(|r| Ok((r, pair.master.take_writer()?)));
+    let (mut reader, mut writer) = match io {
+        Ok(rw) => rw,
+        Err(e) => {
+            let _ = child.kill();
+            return Err(spawn_err(&e));
+        }
+    };
+
+    let mut scrollback = Scrollback::new(SCROLLBACK_BYTES);
+    let mut output_file = spec.output_file.and_then(|path| earlier_output(path, &mut scrollback));
+
+    let (events, _) = broadcast::channel(1024);
+    let (input_tx, input_rx) = std_mpsc::channel::<Vec<u8>>();
+    let handle = Arc::new(Handle {
+        state: Mutex::new(State { scrollback, exited: None }),
+        events,
+        proc: Some(Proc {
+            input: input_tx,
+            queued: Default::default(),
+            closed: Default::default(),
+            master: Mutex::new(Some(pair.master)),
+            killer: Mutex::new(killer),
+            pid,
+            #[cfg(windows)]
+            job: job.as_ref().map(Arc::downgrade).unwrap_or_default(),
+        }),
+        follow: Follow::default(),
+    });
+
+    let h = handle.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        let mut first = cfg!(windows);
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    // unix: every slave fd closed (EIO), so the child exited; Windows: the master closed.
+                    if let Some(p) = &h.proc {
+                        p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    break;
+                }
+                Ok(n) => {
+                    let mut chunk = &buf[..n];
+                    if std::mem::take(&mut first)
+                        && let Some(rest) = strip_cursor_query(chunk)
+                    {
+                        if let Some(p) = &h.proc {
+                            // Counted like any input: the writer takes every write it makes off `queued`.
+                            p.queued.fetch_add(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
+                            if p.input.send(CURSOR_REPLY.to_vec()).is_err() {
+                                p.queued.fetch_sub(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
+                            }
+                        }
+                        chunk = rest;
+                    }
+                    if chunk.is_empty() {
+                        continue;
+                    }
+                    {
+                        // Append and broadcast under one lock so `attach` sees each byte exactly once.
+                        let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
+                        st.scrollback.push(chunk);
+                        let _ = h.events.send(PtyEvent::Output(Arc::from(chunk)));
+                    }
+                    if let Some(f) = output_file.as_mut()
+                        && let Err(e) = f.write(chunk)
+                    {
+                        tracing::warn!(error = %e, "could not keep the terminal's output; carrying on without");
+                        output_file = None;
+                    }
+                }
+            }
+        }
+    });
+
+    let h = handle.clone();
+    std::thread::spawn(move || {
+        while let Ok(bytes) = input_rx.recv() {
+            let written = writer.write_all(&bytes).and_then(|_| writer.flush());
+            if let Some(p) = &h.proc {
+                p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
+            }
+            if written.is_err() {
+                if let Some(p) = &h.proc {
+                    p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                break;
+            }
+        }
+    });
+
+    let (exit_tx, exit_rx) = oneshot::channel();
+    let h = handle.clone();
+    let id = spec.id.clone();
+    std::thread::spawn(move || {
+        let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
+        std::thread::sleep(FLUSH_GRACE);
+        {
+            let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
+            st.exited = Some(code);
+            let _ = h.events.send(PtyEvent::Exit(code));
+        }
+        // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then).
+        if let Some(p) = &h.proc {
+            p.master.lock().unwrap_or_else(|e| e.into_inner()).take();
+        }
+        tracing::debug!(session = %id, code, "terminal exited");
+        let _ = exit_tx.send(code);
+    });
+
+    Ok(Started {
+        handle,
+        exit: exit_rx,
+        #[cfg(windows)]
+        job,
+    })
+}
+
+/// The terminals by id, and the ids whose process is being started (reserved, so a second spawn of one fails).
+#[derive(Default)]
+struct Sessions {
+    live: HashMap<String, Arc<Handle>>,
+    starting: HashSet<String>,
+}
+
 #[derive(Clone, Default)]
 pub struct PtyManager {
-    sessions: Arc<Mutex<HashMap<String, Arc<Handle>>>>,
-    /// Set by `shutdown`, under the `sessions` lock, so no process can start after the snapshot it kills.
+    /// Held only to look up, reserve or insert: never while a process starts or is killed (both can take a second
+    /// or more on Windows), so attaching, writing and resizing never wait on them.
+    sessions: Arc<Mutex<Sessions>>,
+    /// Set by `shutdown`, under the `sessions` lock: a process that finishes starting after it is killed at once.
     shut_down: Arc<std::sync::atomic::AtomicBool>,
     /// Each session's job, by id: dropping the last clone of the manager ends every session's process tree.
     #[cfg(windows)]
@@ -254,172 +421,45 @@ impl PtyManager {
         Self::default()
     }
 
-    /// Starts the process. The receiver resolves with the exit code once it has ended.
+    /// Starts the process. The receiver resolves with the exit code once it has ended. Blocking (it opens a PTY and
+    /// starts a process): call it from the blocking pool in async code.
     pub fn spawn(&self, spec: SpawnSpec) -> Result<oneshot::Receiver<i32>, PtyError> {
+        let id = spec.id.clone();
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+            if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(PtyError::ShuttingDown);
+            }
+            if sessions.live.contains_key(&id) || !sessions.starting.insert(id.clone()) {
+                return Err(PtyError::AlreadyExists(id));
+            }
+        }
+        let started = start(spec);
         let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+        sessions.starting.remove(&id);
+        let started = started?;
         if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
+            drop(sessions);
+            let _ = started.handle.kill();
             return Err(PtyError::ShuttingDown);
         }
-        if sessions.contains_key(&spec.id) {
-            return Err(PtyError::AlreadyExists(spec.id));
-        }
-        if !spec.cwd.is_dir() {
-            return Err(PtyError::Spawn(format!("working directory does not exist: {}", spec.cwd.display())));
-        }
-        let spawn_err = |e: &dyn std::fmt::Display| PtyError::Spawn(e.to_string());
-        let size = PtySize { rows: spec.rows, cols: spec.cols, pixel_width: 0, pixel_height: 0 };
-        let pair = native_pty_system().openpty(size).map_err(|e| spawn_err(&e))?;
-        let mut cmd = CommandBuilder::new(&spec.program);
-        cmd.args(&spec.args);
-        cmd.cwd(&spec.cwd);
-        for key in &spec.env_remove {
-            cmd.env_remove(key);
-        }
-        for (k, v) in &spec.env {
-            cmd.env(k, v);
-        }
-        let mut child = pair.slave.spawn_command(cmd).map_err(|e| spawn_err(&e))?;
-        drop(pair.slave);
-        let killer = child.clone_killer();
-        let pid = child.process_id();
         #[cfg(windows)]
-        let job = match pid.map(job::Job::assign) {
-            Some(Ok(job)) => Some(Arc::new(job)),
-            Some(Err(e)) => {
-                tracing::warn!(session = %spec.id, error = %e, "could not put the terminal in a job; its processes may outlive pdtd");
-                None
-            }
-            None => None,
-        };
-        let io = pair.master.try_clone_reader().and_then(|r| Ok((r, pair.master.take_writer()?)));
-        let (mut reader, mut writer) = match io {
-            Ok(rw) => rw,
-            Err(e) => {
-                let _ = child.kill();
-                return Err(spawn_err(&e));
-            }
-        };
-
-        let mut scrollback = Scrollback::new(SCROLLBACK_BYTES);
-        let mut output_file = spec.output_file.and_then(|path| earlier_output(path, &mut scrollback));
-
-        let (events, _) = broadcast::channel(1024);
-        let (input_tx, input_rx) = std_mpsc::channel::<Vec<u8>>();
-        let handle = Arc::new(Handle {
-            state: Mutex::new(State { scrollback, exited: None }),
-            events,
-            proc: Some(Proc {
-                input: input_tx,
-                queued: Default::default(),
-                closed: Default::default(),
-                master: Mutex::new(Some(pair.master)),
-                killer: Mutex::new(killer),
-                pid,
-                #[cfg(windows)]
-                job: job.as_ref().map(Arc::downgrade).unwrap_or_default(),
-            }),
-            follow: Follow::default(),
-        });
-
-        let h = handle.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 8192];
-            let mut first = cfg!(windows);
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => {
-                        // unix: every slave fd closed (EIO), so the child exited; Windows: the master closed.
-                        if let Some(p) = &h.proc {
-                            p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
-                        }
-                        break;
-                    }
-                    Ok(n) => {
-                        let mut chunk = &buf[..n];
-                        if std::mem::take(&mut first)
-                            && let Some(rest) = strip_cursor_query(chunk)
-                        {
-                            if let Some(p) = &h.proc {
-                                // Counted like any input: the writer takes every write it makes off `queued`.
-                                p.queued.fetch_add(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
-                                if p.input.send(CURSOR_REPLY.to_vec()).is_err() {
-                                    p.queued.fetch_sub(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
-                                }
-                            }
-                            chunk = rest;
-                        }
-                        if chunk.is_empty() {
-                            continue;
-                        }
-                        {
-                            // Append and broadcast under one lock so `attach` sees each byte exactly once.
-                            let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
-                            st.scrollback.push(chunk);
-                            let _ = h.events.send(PtyEvent::Output(Arc::from(chunk)));
-                        }
-                        if let Some(f) = output_file.as_mut()
-                            && let Err(e) = f.write(chunk)
-                        {
-                            tracing::warn!(error = %e, "could not keep the terminal's output; carrying on without");
-                            output_file = None;
-                        }
-                    }
-                }
-            }
-        });
-
-        let h = handle.clone();
-        std::thread::spawn(move || {
-            while let Ok(bytes) = input_rx.recv() {
-                let written = writer.write_all(&bytes).and_then(|_| writer.flush());
-                if let Some(p) = &h.proc {
-                    p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
-                }
-                if written.is_err() {
-                    if let Some(p) = &h.proc {
-                        p.closed.store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    break;
-                }
-            }
-        });
-
-        let (exit_tx, exit_rx) = oneshot::channel();
-        let h = handle.clone();
-        let id = spec.id.clone();
-        std::thread::spawn(move || {
-            let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(-1);
-            std::thread::sleep(FLUSH_GRACE);
-            {
-                let mut st = h.state.lock().unwrap_or_else(|e| e.into_inner());
-                st.exited = Some(code);
-                let _ = h.events.send(PtyEvent::Exit(code));
-            }
-            // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then).
-            if let Some(p) = &h.proc {
-                p.master.lock().unwrap_or_else(|e| e.into_inner()).take();
-            }
-            tracing::debug!(session = %id, code, "terminal exited");
-            let _ = exit_tx.send(code);
-        });
-
-        #[cfg(windows)]
-        if let Some(job) = job {
-            self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(spec.id.clone(), job);
+        if let Some(job) = started.job {
+            self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), job);
         }
-        sessions.insert(spec.id, handle);
-        Ok(exit_rx)
+        sessions.live.insert(id, started.handle);
+        Ok(started.exit)
     }
 
     fn get(&self, id: &str) -> Result<Arc<Handle>, PtyError> {
         self.sessions
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .live
             .get(id)
             .cloned()
             .ok_or_else(|| PtyError::NotFound(id.to_string()))
     }
-
     pub fn attach(&self, id: &str) -> Result<Attachment, PtyError> {
         let h = self.get(id)?;
         let st = h.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -473,9 +513,11 @@ impl PtyManager {
         self.get(id).is_ok_and(|h| !h.exited())
     }
 
-    /// Forgets a session, killing it first if it is still running (or stops following its log).
+    /// Forgets a session, killing it first if it is still running (or stops following its log). Blocking on Windows
+    /// (it waits for taskkill when the session has no job).
     pub fn remove(&self, id: &str) {
-        if let Some(h) = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).remove(id) {
+        let removed = self.sessions.lock().unwrap_or_else(|e| e.into_inner()).live.remove(id);
+        if let Some(h) = removed {
             h.follow.stop.store(true, std::sync::atomic::Ordering::SeqCst);
             if !h.exited() {
                 let _ = h.kill();
@@ -494,7 +536,7 @@ impl PtyManager {
         if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(PtyError::ShuttingDown);
         }
-        if sessions.contains_key(id) {
+        if sessions.live.contains_key(id) || sessions.starting.contains(id) {
             return Err(PtyError::AlreadyExists(id.to_string()));
         }
         let (events, _) = broadcast::channel(1024);
@@ -506,7 +548,7 @@ impl PtyManager {
         });
         let h = handle.clone();
         std::thread::spawn(move || follow(&h, &log));
-        sessions.insert(id.to_string(), handle);
+        sessions.live.insert(id.to_string(), handle);
         Ok(())
     }
 
@@ -518,25 +560,32 @@ impl PtyManager {
         }
     }
 
-    /// Kills every running session and waits (up to 5 s) for them to report their exit. Afterwards `spawn` refuses
-    /// to start anything. Followed logs just stop: the processes behind them carry on.
+    /// Kills every running session and waits (up to 5 s) for them to report their exit, and for any still starting
+    /// (each kills itself once started). Afterwards `spawn` refuses to start anything. Followed logs just stop: the
+    /// processes behind them carry on.
     pub async fn shutdown(&self) {
         let handles: Vec<Arc<Handle>> = {
             let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
             self.shut_down.store(true, std::sync::atomic::Ordering::SeqCst);
-            sessions.values().cloned().collect()
+            sessions.live.values().cloned().collect()
         };
         for h in &handles {
             h.follow.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         }
         let handles: Vec<Arc<Handle>> = handles.into_iter().filter(|h| h.proc.is_some()).collect();
-        for h in &handles {
-            if !h.exited() {
-                let _ = h.kill();
+        // Killing runs taskkill on Windows: off the runtime's threads.
+        let killing = handles.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            for h in &killing {
+                if !h.exited() {
+                    let _ = h.kill();
+                }
             }
-        }
+        })
+        .await;
+        let starting = || !self.sessions.lock().unwrap_or_else(|e| e.into_inner()).starting.is_empty();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while handles.iter().any(|h| !h.exited()) && tokio::time::Instant::now() < deadline {
+        while (starting() || handles.iter().any(|h| !h.exited())) && tokio::time::Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
