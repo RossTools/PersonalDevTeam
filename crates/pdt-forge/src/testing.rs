@@ -39,8 +39,7 @@ pub struct FakeForge {
     /// Comments and reviews by change request number.
     pub comments: Mutex<HashMap<u32, Vec<ChangeComment>>>,
     pub reviews: Mutex<HashMap<u32, Vec<ChangeReview>>>,
-    /// Issues closed (by `close_issue` or [`FakeForge::set_closed`]): by repo and number, the reason and the
-    /// duplicate's canonical issue id.
+    /// Issues closed by `close_issue`: by repo and number, the reason and the duplicate's canonical issue id.
     pub closed: Mutex<HashMap<(String, u64), Closed>>,
     /// Comments added to change requests: number, the review comment replied to, body.
     pub change_comments_added: Mutex<Vec<(u32, Option<u64>, String)>>,
@@ -166,9 +165,6 @@ impl FakeForge {
     }
     pub fn set_reviews(&self, pr: u32, reviews: Vec<ChangeReview>) {
         self.reviews.lock().unwrap().insert(pr, reviews);
-    }
-    pub fn set_closed(&self, repo: &str, number: u64, reason: CloseReason) {
-        self.closed.lock().unwrap().insert((repo.into(), number), (reason, None));
     }
     /// Publishes `release` in `repo`: it becomes the latest.
     pub fn publish(&self, repo: &str, release: Release) {

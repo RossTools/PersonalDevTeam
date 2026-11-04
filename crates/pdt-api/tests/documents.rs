@@ -293,6 +293,19 @@ async fn a_tickets_design_doc_is_made_linked_and_listed_by_get_ticket() {
     }
     let (s, _) = call(&env.app, "POST", "/api/tickets/X-404/design-doc", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
+    // A body that isn't JSON by its content type (a cross-site form or `text/plain` fetch) is refused, here and on
+    // refine, which also take an optional body (PDT-419).
+    for route in ["design-doc", "refine"] {
+        use tower::ServiceExt;
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri(format!("/api/tickets/{key}/{route}"))
+            .header("content-type", "text/plain")
+            .body(axum::body::Body::from(r#"{"by":"user"}"#))
+            .unwrap();
+        let res = env.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE, "{route}");
+    }
 
     let (s, started) = call(
         &env.app,
