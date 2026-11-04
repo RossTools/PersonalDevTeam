@@ -35,7 +35,7 @@ describe('ForgeLogin', () => {
     expect(screen.getByRole('link', { name: /github.com\/login\/device/ })).toHaveAttribute('href', 'https://github.com/login/device');
     expect(calls.filter((c) => c.method === 'POST')[0].body).toEqual({});
     entered = true;
-    expect(await screen.findByText('alex', {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByText('alex', {})).toBeInTheDocument();
   });
 
   it('says which host no longer accepts its login, and reconnects', async () => {

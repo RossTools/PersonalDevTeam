@@ -5,8 +5,9 @@ import { afterEach } from 'vitest';
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
 
-// findBy* / waitFor give up after this long. Lazy chunks and a slow CI runner (Windows) can take over the default 1 s.
-configure({ asyncUtilTimeout: process.env.CI ? 10_000 : 3_000 });
+// findBy* / waitFor give up after this long. Lazy chunks, the app's 2 s polls and a busy runner can take over the
+// default 1 s. Tests don't pass a shorter `timeout` of their own: it would cut CI's margin.
+configure({ asyncUtilTimeout: process.env.CI ? 10_000 : 5_000 });
 
 // jsdom gaps that React Aria and Sonner touch (skipped in node-environment tests such as lint.test.ts).
 if (typeof window !== 'undefined') {
@@ -33,6 +34,14 @@ if (typeof window !== 'undefined') {
     dispatchEvent: () => false,
   })) as unknown as typeof window.matchMedia;
 }
+
+// Nothing a test stubs, spies on or stores outlives it (`unstubGlobals` and `restoreMocks` in vite.config.ts undo the
+// stubs and spies).
+afterEach(() => {
+  if (typeof window === 'undefined') return;
+  localStorage.clear();
+  sessionStorage.clear();
+});
 
 // The app keeps what is on screen in the path (PDT-111): every test starts at `/`.
 afterEach(() => {
