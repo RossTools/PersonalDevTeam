@@ -133,3 +133,26 @@ describe('accent and status text contrast (PDT-449)', () => {
     }
   }
 });
+
+describe('switch contrast (PDT-578)', () => {
+  // An off switch is a control: its track 3:1 on every surface it sits on (WCAG 1.4.11), and its thumb 3:1 on the
+  // track and on the accent it slides over when on.
+  const surfaces = ['--pdt-bg', '--pdt-surface', '--pdt-surface-2'];
+  for (const [theme, marker] of [
+    ['light', ':root {'],
+    ['dark', ":root[data-theme='dark']"],
+  ] as const) {
+    const palette = block(marker);
+    const get = (t: string) => {
+      const v = palette.get(t);
+      expect(v, `${theme} ${t}`).toMatch(/^#[0-9a-f]{6}$/i);
+      return v!;
+    };
+    it.each(surfaces)(`${theme}: the off track passes 3:1 on %s`, (bg) => {
+      expect(contrast(get('--pdt-switch-off'), get(bg))).toBeGreaterThanOrEqual(3);
+    });
+    it.each(['--pdt-switch-off', '--pdt-accent'])(`${theme}: the thumb passes 3:1 on %s`, (track) => {
+      expect(contrast(get('--pdt-switch-thumb'), get(track))).toBeGreaterThanOrEqual(3);
+    });
+  }
+});
