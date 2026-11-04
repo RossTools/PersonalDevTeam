@@ -13,6 +13,7 @@ mod conversations;
 pub mod documents;
 mod error;
 mod files;
+mod files_search;
 mod finish;
 mod folders;
 mod forge;

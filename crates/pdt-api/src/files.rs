@@ -22,9 +22,9 @@ pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FilesQuery {
     #[serde(default)]
-    worktree_id: Option<String>,
+    pub(crate) worktree_id: Option<String>,
     #[serde(default)]
-    path: String,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, TS)]
@@ -161,7 +161,11 @@ fn plain_files(dir: &Dir, rel: &str) -> Vec<String> {
 
 /// The checkout (project root or one of its worktrees), the cleaned path inside it, and whether it is a Personal
 /// project's plain folder (no git).
-async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(PathBuf, String, bool), ApiError> {
+pub(crate) async fn resolve(
+    st: &AppState,
+    project_id: &str,
+    q: &FilesQuery,
+) -> Result<(PathBuf, String, bool), ApiError> {
     let project = st.project(project_id).await?;
     let checkout = match q.worktree_id.as_deref().filter(|w| !w.is_empty()) {
         Some(wid) => {

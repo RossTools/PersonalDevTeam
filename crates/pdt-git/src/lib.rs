@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod changes;
+mod grep;
 mod manage;
 mod merge;
 mod pull;
@@ -12,6 +13,7 @@ mod remote;
 mod review;
 mod update;
 pub use changes::*;
+pub use grep::*;
 pub use manage::*;
 pub use merge::*;
 pub use pull::*;
@@ -41,6 +43,9 @@ pub enum GitError {
     BranchExists(String),
     #[error("unknown base branch or commit: {0}")]
     UnknownRef(String),
+    /// A search pattern or path filter git can't read (an unbalanced regex, a path outside the checkout).
+    #[error("{0}")]
+    BadPattern(String),
 }
 
 /// Settings for every git command PDT runs: a repository's own `core.fsmonitor` is a command git runs on `git status`

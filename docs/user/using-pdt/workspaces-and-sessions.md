@@ -39,6 +39,25 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
   toggles are where they were. The Backlog, documents, files, workflows and Settings do the same. This lasts while
   the browser tab is open; closing a tab forgets it.
 
+## Files
+
+**Files** shows a checkout's files as git sees them (ignored files are left out): pick the project or worktree at the
+top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves.
+
+### Search in files
+
+Type in **Search in files** above the tree to search the text of the checkout's files. Ignored and binary files are
+left out.
+
+- **Match case**, **Whole word** and **Regular expression** are the buttons in the search box.
+- **Files to search** narrows the search: globs separated by commas, such as `docs/**/*.md` or `docs`. A name
+  without a `/` matches at any depth; start one with `!` to leave those files out (`!*.log`).
+- Matches are grouped by file, with each file's number of matching lines; click a file's name to fold it. Click a
+  match to open the file at that line, the match marked.
+- A search shows at most 2,000 matching lines, 50 per file, and stops after 10 seconds; the line above the results
+  says when it shows only the first ones.
+- **Escape** or the **×** clears the search and brings back the tree.
+
 ## Start something new
 
 Click **+** at the end of the tab bar (or **Ctrl+]** then **c**). The **New tab** chooser offers:
