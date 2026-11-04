@@ -18,6 +18,12 @@ const restartChoices = [0, 1, 2, 3].map((n) => ({
   label: n === 0 ? 'Ask me' : n === 1 ? 'Restart once, then ask me' : `Restart ${n} times, then ask me`,
 }));
 const loopChoices = [{ value: 'ask', label: 'Ask me' }, { value: 'stop', label: 'Stop the step' }];
+/** Idle tickets' minutes; a value set in the workflow editor is offered too. */
+const idleChoices = (now: number) =>
+  [...new Set([0, 10, 20, 30, 60, 120, now])].sort((a, b) => a - b).map((n) => ({
+    value: String(n),
+    label: n === 0 ? 'Never' : `After ${n} minutes`,
+  }));
 
 /**
  * Settings → Agents → When an agent is stuck (PDT-367): the built-in workflow's inputs. A workflow changed beyond them
@@ -104,6 +110,12 @@ function Inputs({ v, put }: { v: BuiltinSettingsView; put: PutInputs }) {
         {(track) => (
           <Select<string> aria-label="At a time limit" className="w-64 max-w-full" options={restartChoices} value={String(num(value('timeoutRestarts')))}
             onChange={(n) => void track(put({ timeoutRestarts: Number(n) }))} />
+        )}
+      </AutoSaveRow>
+      <AutoSaveRow label="Idle tickets" description="A ticket in progress that waits on nothing (its workflow unfinished, but no agent at work or waiting, nothing in the Inbox, no CI running) goes to the Inbox as stalled.">
+        {(track) => (
+          <Select<string> aria-label="Idle tickets" className="w-48" options={idleChoices(num(value('idleMinutes')))} value={String(num(value('idleMinutes')))}
+            onChange={(n) => void track(put({ idleMinutes: Number(n) }))} />
         )}
       </AutoSaveRow>
     </>

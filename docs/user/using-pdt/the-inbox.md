@@ -56,6 +56,9 @@ your ticket proposals, they wait here and in the PM's conversation as one table:
   **Nudge** reminds it (optionally in your words); **Take over** finishes the step with the outcome you pick.
 - **Loop limit**: a step has gone round as often as it may (a review that keeps sending work back, say). Its passes are
   listed with each one's outcome. Allow one more round, pick the outcome yourself, or stop.
+- **Stalled tickets**: nothing moves a ticket on. Its pull request's CI was cancelled and re-running it once didn't
+  help (**Re-run CI** runs it again), or the ticket has waited on nothing for a while. The pull request is a link away,
+  and the item goes by itself once something happens on the ticket again.
 - **Timed out**: a step ran out of time. **Resume** runs it again (with an optional note), **Stop** leaves it.
 
 ### To act on
