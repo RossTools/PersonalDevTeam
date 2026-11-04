@@ -73,24 +73,31 @@ pub(crate) async fn open_terminal(
         "--remote-auth-token-env".into(),
         TOKEN_ENV.into(),
     ];
-    let resolved =
-        pdt_agents::launch::resolve_launch(&st.platform.codex_program, &args, st.platform.login_path.as_deref())?;
     let mut env = pdt_core::session::terminal_env();
     env.extend(login_path_env(&st));
     env.push((TOKEN_ENV.to_string(), endpoint.token));
     let creds = st.store.get_host_settings().await?.agent_credentials;
     st.remove_pty(&id).await;
-    let exit = st.ptys.spawn(pdt_agents::SpawnSpec {
-        id: id.clone(),
-        program: resolved.program,
-        args: resolved.args,
-        cwd: PathBuf::from(&session.cwd),
-        env_remove: scrubbed(creds),
-        env,
-        cols: size.cols,
-        rows: size.rows,
-        output_file: None,
-    })?;
+    // Finding Codex and starting it can take a while on a loaded Windows host (PDT-48): off the runtime's threads.
+    let (ptys, program, login_path) =
+        (st.ptys.clone(), st.platform.codex_program.clone(), st.platform.login_path.clone());
+    let (pty, cwd) = (id.clone(), PathBuf::from(&session.cwd));
+    let exit = tokio::task::spawn_blocking(move || {
+        let resolved = pdt_agents::launch::resolve_launch(&program, &args, login_path.as_deref())?;
+        ptys.spawn(pdt_agents::SpawnSpec {
+            id: pty,
+            program: resolved.program,
+            args: resolved.args,
+            cwd,
+            env_remove: scrubbed(creds),
+            env,
+            cols: size.cols,
+            rows: size.rows,
+            output_file: None,
+        })
+    })
+    .await
+    .map_err(ApiError::internal)??;
     c.state().terminal_open = true;
     c.push_state();
     let c2 = c.clone();

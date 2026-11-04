@@ -253,6 +253,25 @@ pub fn resolve(program: &str, args: &[String], search_path: Option<&str>) -> Res
     resolve_launch(program, args, search_path).map(|r| (r.program, r.args))
 }
 
+/// [`resolve_launch`] on the blocking pool, for async code: scanning the search path can take a while on a loaded
+/// Windows host.
+pub async fn find_launch(
+    program: &str,
+    args: &[String],
+    search_path: Option<&str>,
+) -> Result<ResolvedLaunch, PtyError> {
+    let (program, args, search_path) = (program.to_string(), args.to_vec(), search_path.map(str::to_string));
+    tokio::task::spawn_blocking(move || resolve_launch(&program, &args, search_path.as_deref()))
+        .await
+        .map_err(|e| PtyError::Spawn(e.to_string()))?
+}
+
+/// Starts `cmd` on the blocking pool, for async code: creating a process can take a second or more on a loaded
+/// Windows host, and tokio's `spawn` does it inline.
+pub async fn spawn_child(mut cmd: tokio::process::Command) -> std::io::Result<tokio::process::Child> {
+    tokio::task::spawn_blocking(move || cmd.spawn()).await.map_err(std::io::Error::other)?
+}
+
 /// [`resolve`], also saying whether the program goes through `cmd.exe`.
 pub fn resolve_launch(program: &str, args: &[String], search_path: Option<&str>) -> Result<ResolvedLaunch, PtyError> {
     let not_found = || PtyError::ProgramNotFound(program.to_string());

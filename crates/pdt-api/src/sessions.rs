@@ -178,6 +178,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
             mcp.as_ref(),
             st.store.get_host_settings().await?.model_for(session.agent, session.model.as_deref()).as_deref(),
         )
+        .await
         .map_err(ApiError::from),
         Err(e) => Err(e),
     };
@@ -195,6 +196,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
 }
 
 /// A new session's first prompt.
+#[derive(Clone)]
 pub(crate) struct InitialPrompt {
     pub text: String,
     /// The ticket it is about (`PDT-4`), if any.
@@ -433,8 +435,11 @@ async fn bind_codex_with(
 /// creation only) is its last argument; an agent run through `cmd.exe` (a Windows `.cmd` shim, which would interpret
 /// the prompt's text) gets the prompt in `<session dir>/prompt.md` and a short prompt naming that file instead. `model`
 /// (fresh launches only: a resumed conversation keeps its own) goes to the agents whose terminal takes one.
+///
+/// Writing the session's files, finding the program and starting it can each take a while on a loaded Windows host
+/// (PDT-48), so they run on the blocking pool.
 #[allow(clippy::too_many_arguments)]
-fn start_pty(
+async fn start_pty(
     st: &AppState,
     platform: &pdt_core::session::Platform,
     s: &Session,
@@ -446,6 +451,63 @@ fn start_pty(
     mcp: Option<&pdt_agents::mcp::McpServer>,
     model: Option<&str>,
 ) -> Result<(), PtyError> {
+    let exit = {
+        let (st, platform, s, resume) = (st.clone(), platform.clone(), s.clone(), resume.clone());
+        let (prompt, instructions, mcp) = (prompt.cloned(), instructions.cloned(), mcp.cloned());
+        let model = model.map(str::to_string);
+        tokio::task::spawn_blocking(move || {
+            let spec = pty_spec(
+                &st,
+                &platform,
+                &s,
+                size,
+                &resume,
+                creds,
+                prompt.as_ref(),
+                instructions.as_ref(),
+                mcp.as_ref(),
+                model.as_deref(),
+            )?;
+            st.ptys.spawn(spec)
+        })
+        .await
+        .map_err(|e| PtyError::Spawn(e.to_string()))??
+    };
+    let (store, id, st2) = (st.store.clone(), s.id.clone(), st.clone());
+    let codex_home = is_codex(s).then(|| st.platform.codex_home.clone()).flatten();
+    let spacing = st.codex_spawn_spacing;
+    let handle = tokio::spawn(async move {
+        if let Ok(code) = exit.await {
+            if let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await {
+                tracing::warn!(session = %id, error = %e, "failed to record session exit");
+            }
+            let stopped = st2.notifier.take_expected_exit(&id);
+            crate::notifications::session_exited(&st2, &id, code, stopped).await;
+            crate::workflow::sensors::session_exited(&st2, &id, Some(code), stopped).await;
+            // Remember which Codex conversation this was while its start time is still fresh.
+            if codex_home.is_some() {
+                bind_codex_with(&store, codex_home.as_deref(), spacing, &id).await;
+            }
+        }
+    });
+    st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).insert(s.id.clone(), handle);
+    Ok(())
+}
+
+/// The session's launch: writes its hook settings (and a prompt file), finds its program. Blocking.
+#[allow(clippy::too_many_arguments)]
+fn pty_spec(
+    st: &AppState,
+    platform: &pdt_core::session::Platform,
+    s: &Session,
+    size: TerminalSize,
+    resume: &Resume,
+    creds: pdt_core::host::CredentialPolicy,
+    prompt: Option<&InitialPrompt>,
+    instructions: Option<&pdt_agents::adapter::SessionInstructions>,
+    mcp: Option<&pdt_agents::mcp::McpServer>,
+    model: Option<&str>,
+) -> Result<SpawnSpec, PtyError> {
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
     let l = launch(s.kind, s.agent, platform, resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
@@ -521,7 +583,7 @@ fn start_pty(
             env.extend(pdt_agents::mcp::codex_tui_env(m));
         }
     }
-    let spec = SpawnSpec {
+    Ok(SpawnSpec {
         id: s.id.clone(),
         program,
         args,
@@ -535,27 +597,7 @@ fn start_pty(
         rows: size.rows,
         // A shell's output, shown when it starts again (PDT-352). An agent redraws its own conversation instead.
         output_file: (s.kind == SessionKind::Shell).then(|| session_data_dir(st, &s.id).join("output.log")),
-    };
-    let exit = st.ptys.spawn(spec)?;
-    let (store, id, st2) = (st.store.clone(), s.id.clone(), st.clone());
-    let codex_home = is_codex(s).then(|| st.platform.codex_home.clone()).flatten();
-    let spacing = st.codex_spawn_spacing;
-    let handle = tokio::spawn(async move {
-        if let Ok(code) = exit.await {
-            if let Err(e) = store.end_session(&id, SessionStatus::Finished, Some(code), now_ms()).await {
-                tracing::warn!(session = %id, error = %e, "failed to record session exit");
-            }
-            let stopped = st2.notifier.take_expected_exit(&id);
-            crate::notifications::session_exited(&st2, &id, code, stopped).await;
-            crate::workflow::sensors::session_exited(&st2, &id, Some(code), stopped).await;
-            // Remember which Codex conversation this was while its start time is still fresh.
-            if codex_home.is_some() {
-                bind_codex_with(&store, codex_home.as_deref(), spacing, &id).await;
-            }
-        }
-    });
-    st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).insert(s.id.clone(), handle);
-    Ok(())
+    })
 }
 
 /// The agent's launch arguments plus its activity hooks: Claude gets a per-session
@@ -763,7 +805,8 @@ pub(crate) async fn restart_locked(
         _ => None,
     };
     let (instructions, mcp) = (instructions.as_ref(), mcp.as_ref());
-    if let Err(e) = start_pty(st, &platform, &session, size, &resume, creds, None, instructions, mcp, model.as_deref())
+    if let Err(e) =
+        start_pty(st, &platform, &session, size, &resume, creds, None, instructions, mcp, model.as_deref()).await
     {
         // AlreadyExists means another run owns the session (it is running), so leave its status alone.
         if !matches!(e, PtyError::AlreadyExists(_)) {

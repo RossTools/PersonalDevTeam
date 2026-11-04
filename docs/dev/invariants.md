@@ -322,6 +322,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   The pool's `after_release` closes any connection still in a transaction (pdt-store `health.rs`): after a full disk
   SQLite rolls a transaction back itself, sqlx's own ROLLBACK then fails, and the connection would refuse every later
   `BEGIN`.
+- **Processes start off the runtime's threads.** Creating a process (and scanning the search path for it) can take a
+  second or more on a loaded Windows host, and tokio's `Command::spawn` does it inline in the poll. Async code starts
+  them on the blocking pool: pdt-agents `launch::find_launch` and `launch::spawn_child`, `spawn_blocking` around
+  `PtyManager::spawn`/`remove`/`kill` (`AppState::kill_pty`/`remove_pty`). `PtyManager` holds its map lock only to look
+  up, reserve an id or insert, never while a PTY opens, a process starts or one is killed, so attaching, writing and
+  resizing other terminals never wait on them.
 - **Never edit an applied migration** (sqlx checksums them); add a new one named by its UTC creation time. Data
   backfills that run when the store opens go in `Store::open`.
 - **`.pdt/project.toml` must stay readable by the stable release.** Unknown top-level sections are skipped, but unknown
