@@ -138,6 +138,7 @@ async fn run() -> anyhow::Result<()> {
         claude_program: cfg.claude_program.clone(),
         codex_program: cfg.codex_program.clone(),
         devin_program: cfg.devin_program.clone(),
+        acp_program: cfg.acp_program.clone(),
         network_at_start: cfg.network.clone(),
         supervised: cfg.supervised,
         default_port: cfg.profile.port(),

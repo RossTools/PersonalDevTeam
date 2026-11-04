@@ -45,19 +45,32 @@ export function firstOpenStep(v: SetupView): StepId | null {
   return STEPS.find((k) => v.steps[k] === 'todo') ?? null;
 }
 
-/** Pure: the agents the checks found, in page order, less the ones switched off (PDT-270). */
-export function foundAgents(checks: HostChecks | undefined, off: readonly AgentKind[] = []): BuiltinAgent[] {
-  return AGENTS.map((a) => a.id).filter((a) => checks?.[a].found && !off.includes(a));
+/** Pure: the ACP agents the checks found (OhMyPi, Cursor, Grok, …), less the ones switched off (PDT-561). */
+function foundAcpAgents(checks: HostChecks | undefined, off: readonly AgentKind[] = []): AgentKind[] {
+  return Object.entries(checks?.acp ?? {}).filter(([a, c]) => c.found && !off.includes(a as AgentKind)).map(([a]) => a as AgentKind);
 }
 
-/** Pure: the step's summary: the agents found and logged in, else the ones found but logged out (PDT-556). */
-export function agentsSummary(checks: HostChecks | undefined, off: readonly AgentKind[] = []): string {
-  const list = (as: BuiltinAgent[]) => new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(as.map((a) => agentName(a)));
+/** Pure: the agents the checks found, in page order (the built-ins, then the ACP agents), less the ones switched off (PDT-270). */
+export function foundAgents(checks: HostChecks | undefined, off: readonly AgentKind[] = []): AgentKind[] {
+  const builtin = AGENTS.map((a) => a.id).filter((a) => checks?.[a].found && !off.includes(a));
+  return [...builtin, ...foundAcpAgents(checks, off)];
+}
+
+/**
+ * Pure: the step's summary: the agents found and logged in, else the ones found but logged out (PDT-556). An ACP agent
+ * found counts but is only "found": PDT can't tell whether it is logged in (PDT-561).
+ */
+export function agentsSummary(checks: HostChecks | undefined, off: readonly AgentKind[] = [], acp?: AcpAgentView[]): string {
+  const list = (as: AgentKind[]) => new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(as.map((a) => agentName(a, acp)));
   const found = foundAgents(checks, off);
-  const ready = found.filter((a) => checks?.[a].ok);
-  if (ready.length > 0) return `Found ${list(ready)}, logged in. PDT needs at least one, and git.`;
+  const loggedIn = found.filter((a) => !isAcp(a) && checks?.[a].ok);
+  const acpFound = found.filter(isAcp);
+  const needs = 'PDT needs at least one, and git.';
+  if (loggedIn.length > 0 && acpFound.length > 0) return `Found ${list(loggedIn)}, logged in, and ${list(acpFound)}. ${needs}`;
+  if (loggedIn.length > 0) return `Found ${list(loggedIn)}, logged in. ${needs}`;
+  if (acpFound.length > 0) return `Found ${list(acpFound)}. ${needs}`;
   if (found.length > 0) return `Found ${list(found)}, but not logged in. Log in to one, then Check again.`;
-  return 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
+  return 'No agent found yet. PDT needs at least one (Claude Code, Codex, Devin or an ACP agent such as Grok or Cursor), and git.';
 }
 
 export interface SetupPageProps {
@@ -213,18 +226,25 @@ function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { 
     await qc.invalidateQueries({ queryKey: hostKeys.setup });
   });
   const off = useAgentsOff();
-  const summary = loading ? 'Looking for git and the agents…' : agentsSummary(checks, off);
+  const acp = useAcpAgents();
+  const summary = loading ? 'Looking for git and the agents…' : agentsSummary(checks, off, acp);
   // Installed but logged out: each gets how to log in under the table (PDT-556).
-  const loggedOut = foundAgents(checks, off).filter((a) => !checks?.[a].ok);
-  // An agent switched off in Settings → Agents isn't one PDT needs (PDT-270).
-  const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS.filter((a) => !off.includes(a.id))];
+  // An ACP agent found is always ready: PDT can't tell whether one is logged in.
+  const loggedOut = foundAgents(checks, off).filter((a): a is BuiltinAgent => !isAcp(a) && !checks?.[a].ok);
+  // An agent switched off in Settings → Agents isn't one PDT needs (PDT-270). The ACP agents this host has follow the
+  // built-ins (PDT-561); one not found isn't listed, as most hosts have none of them.
+  const rows: { id: 'git' | AgentKind; name: string; install?: string }[] = [
+    { id: 'git', name: 'git', install: GIT_INSTALL },
+    ...AGENTS.filter((a) => !off.includes(a.id)),
+    ...foundAcpAgents(checks, off).map((a) => ({ id: a, name: agentName(a, acp) })),
+  ];
   return (
     <Step {...step} title="Agents on this machine" summary={checks && !checks.git.found ? 'git is missing. PDT needs it, and at least one agent.' : summary}>
       {loading ? <Skeleton lines={4} label="Loading checks" /> : (
         <table className="w-full border-collapse">
           <tbody>
             {rows.map((r) => {
-              const c = checks?.[r.id];
+              const c = r.id === 'git' ? checks?.git : checkOf(checks, r.id);
               return (
                 <tr key={r.id} className="border-t border-border first:border-t-0">
                   <td className="py-1.5 pr-3 font-medium whitespace-nowrap">{r.name}</td>
@@ -234,10 +254,10 @@ function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { 
                   </td>
                   <td className="py-1.5 text-right whitespace-nowrap">
                     {c?.found && !c.ok && r.id !== 'git' ? <span className="text-waiting" title={c.detail}>Not logged in</span>
-                      : c?.found ? <span className="text-running">{r.id === 'git' ? 'Found' : 'Logged in'}</span> : (
+                      : c?.found ? <span className="text-running">{r.id === 'git' || isAcp(r.id) ? 'Found' : 'Logged in'}</span> : (
                       // git is needed; each agent is optional (one is enough), so a missing one isn't an error.
                       <span className={r.id === 'git' ? 'text-destructive' : 'text-muted-foreground'}>
-                        {r.id === 'git' ? 'Missing' : 'Not installed'} · <Link href={r.install} external>How to install</Link>
+                        {r.id === 'git' ? 'Missing' : 'Not installed'}{r.install && <> · <Link href={r.install} external>How to install</Link></>}
                       </span>
                     )}
                   </td>
@@ -249,7 +269,7 @@ function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { 
       )}
       {!loading && loggedOut.map((a) => (
         <p key={a} className="text-xs text-muted-foreground">
-          <b className="text-foreground">{agentName(a)}</b>: <LoginHint agent={a} onAgentSettings={() => onHostSettings('agents')} />
+          <b className="text-foreground">{agentName(a, acp)}</b>: <LoginHint agent={a} onAgentSettings={() => onHostSettings('agents')} />
         </p>
       ))}
       {checks?.gitIdentity && checks.gitIdentity.found && !checks.gitIdentity.ok && (
@@ -422,11 +442,18 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
         size="sm"
         value={agent}
         onChange={(a) => setPicked(a)}
-        options={AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
-          const c = checks?.[a.id];
-          const there = !c || c.found;
-          return { value: a.id, title: a.name, description: !there ? 'Not installed' : c && !c.ok ? 'Not logged in' : 'Found', disabled: !there };
-        })}
+        options={[
+          ...AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
+            const c = checks?.[a.id];
+            const there = !c || c.found;
+            return { value: a.id as AgentKind, title: a.name, description: !there ? 'Not installed' : c && !c.ok ? 'Not logged in' : 'Found', disabled: !there };
+          }),
+          // The ACP agents found here (PDT-561), and the one already the default.
+          ...[...new Set([...foundAcpAgents(checks, off), ...(isAcp(v.defaultAgent) ? [v.defaultAgent] : [])])].map((a) => {
+            const there = !checks || !!checkOf(checks, a)?.found;
+            return { value: a, title: agentName(a, acp), description: there ? 'Found' : 'Not installed', disabled: !there };
+          }),
+        ]}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="primary" pending={save.isPending} disabled={checks !== undefined && !checkOf(checks, agent)?.found} onClick={() => save.mutate()}>

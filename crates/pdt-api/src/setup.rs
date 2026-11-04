@@ -50,6 +50,8 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
         claude: c.claude.usable() && host.agent_on(AgentKind::Claude),
         codex: c.codex.usable() && host.agent_on(AgentKind::Codex),
         devin: c.devin.usable() && host.agent_on(AgentKind::Devin),
+        // An ACP agent counts too (PDT-561): a host with only Cursor, Grok or OhMyPi can finish this step.
+        acp: host.enabled_agents().into_iter().any(|a| c.acp.get(a.as_str()).is_some_and(|chk| chk.usable())),
         github_connected: crate::forge_login::connected(st, &pdt_core::forge::ForgeKind::GITHUB),
         github_off: !st.integrations.is_enabled("github"),
         projects: st.store.list_projects().await?.len(),

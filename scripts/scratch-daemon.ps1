@@ -7,7 +7,8 @@
 #   scripts\scratch-daemon.ps1 stop <port>            stop it by port and delete its scratch folder
 #   scripts\scratch-daemon.ps1 list                   the scratch folders and whether each daemon is up
 #
-# Set PDT_SCRATCH_BIN for another pdtd than target\debug\pdtd.exe. `start` also removes scratch folders older than a
+# Set PDT_SCRATCH_BIN for another pdtd than target\debug\pdtd.exe. The ACP agents (OhMyPi, Cursor, Grok, …) are off
+# unless PDT_ACP_PROGRAM names a stand-in for them. `start` also removes scratch folders older than a
 # day whose daemon is gone.
 param(
     [Parameter(Position = 0)][string]$Command = '',
@@ -86,6 +87,7 @@ function Start-Scratch {
         PDT_PROFILE = 'dev'; PDT_PORT = "$port"; PDT_DATA_DIR = (Join-Path $dir 'data')
         PDT_WEB_DIR = (Join-Path $root 'web\dist'); PDT_SECRET_STORE = 'memory'; PDT_SEED = $Seed
         PDT_TAILSCALE_BIN = 'C:\nonexistent'; PDT_GITHUB_OFFLINE = '1'
+        PDT_ACP_PROGRAM = if ($env:PDT_ACP_PROGRAM) { $env:PDT_ACP_PROGRAM } else { 'C:\nonexistent\acp-agent' }
     }
     $saved = @{}
     foreach ($k in $vars.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k); [Environment]::SetEnvironmentVariable($k, $vars[$k]) }
