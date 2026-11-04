@@ -25,7 +25,7 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
 - **Check for updates**: how often PDT looks.
 - **Release repository**: where updates come from. Leave it empty.
 - **Advanced › GitHub token**: only for a private repository or a fork, or a higher rate limit; PDT reads its
-  releases without one. Bug reports are filed with it. Kept in your keychain.
+  releases without one. Kept in your keychain.
 
 ### Agents
 
@@ -127,10 +127,11 @@ change it). A project can set its own.
 ### Bug reports
 
 **Send reports to**: where **Report a bug…** sends a report about PDT: **Automatic** (a GitHub issue on PDT's
-repository, which needs the [GitHub token](updates.md#the-github-token-for-updates)), **GitHub issue**, **Local ticket**
-(a draft ticket here, nothing sent anywhere) or **Off**. The report form shows what it includes before you send it. Its
-log excerpt is cleaned of secrets, tokens and your machine's names, but can still name repositories, branches and
-folders.
+repository), **GitHub issue**, **Local ticket** (a draft ticket here, nothing sent anywhere) or **Off**. A GitHub issue is
+filed as your GitHub login once you've connected GitHub in **Settings › Plugins › GitHub** (or with the update
+token, if you've saved one). Without either, **Open on GitHub** opens PDT's bug form on GitHub with your report filled in, and copies the diagnostics for you to paste, so you
+send it yourself. The report form shows what it includes before you send it. Its log excerpt is cleaned of secrets,
+tokens and your machine's names, but can still name repositories, branches and folders.
 
 ### Checks
 

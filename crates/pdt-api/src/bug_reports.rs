@@ -1,7 +1,9 @@
 //! Report a bug (PDT-153): `GET /api/bug-reports/preview` says where a report would go and shows the redacted
-//! diagnostics; `POST /api/bug-reports` files it, as an issue on the release repository (with the update token) or,
-//! on the instance PDT is developed on, as a Draft `bug` ticket, which never makes a GitHub request. pdt-mcp's
-//! `report_bug` runs the same code.
+//! diagnostics; `POST /api/bug-reports` files it, as an issue on the release repository or, on the instance PDT is
+//! developed on, as a Draft `bug` ticket, which never makes a GitHub request. An issue is filed as the user's GitHub
+//! login (Connect GitHub), else with the update token (PDT-559: updates need none, so most hosts have neither); with
+//! neither, the dialog opens GitHub's bug form filled in ([`BugReportVia::Browser`]). pdt-mcp's `report_bug` runs the
+//! same code.
 
 use crate::error::{ApiError, codes};
 use crate::routes::{AppState, now_ms};
@@ -11,10 +13,14 @@ use axum::extract::rejection::JsonRejection;
 use pdt_core::bug_report::{
     self as br, BugReportRoute, BugReportSetting, Diagnostics, ISSUE_LABELS, NONCE_TTL_MS, Redactions, TICKET_LABEL,
 };
+use pdt_core::forge::ForgeKind;
 use pdt_core::release::TokenState;
+use pdt_forge::{Forge, ForgeError, NewIssue};
+use pdt_github::login::GITHUB_HOST;
 use pdt_update::UpdateError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use ts_rs::TS;
 
 #[derive(Debug, Clone, Deserialize, TS, schemars::JsonSchema)]
@@ -63,6 +69,19 @@ pub enum BugReportFiled {
     },
 }
 
+/// How an issue on the release repository is filed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum BugReportVia {
+    /// As the user's GitHub login on github.com.
+    Login,
+    /// With the update token.
+    Token,
+    /// By the user, on GitHub's bug form: PDT has neither a login nor a token to file it with.
+    Browser,
+}
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -83,6 +102,13 @@ pub struct BugReportPreview {
     /// The project local reports go to: the one whose origin is `repo`.
     pub project: Option<BugReportProject>,
     pub token_present: bool,
+    /// How an issue is filed (on the GitHub route).
+    pub via: BugReportVia,
+    /// Who the GitHub login signs in as, when `via` is `login`.
+    pub github_login: Option<String>,
+    /// This build's version and OS, for GitHub's bug form when `via` is `browser`.
+    pub version: String,
+    pub os: String,
     /// What `includeDiagnostics` adds, as it would be sent (redacted).
     pub diagnostics: String,
 }
@@ -100,6 +126,49 @@ async fn release_project(st: &AppState) -> Result<Option<BugReportProject>, ApiE
         }
     }
     Ok(None)
+}
+
+/// The GitHub forge as the user's login on github.com, while the GitHub plugin is on and GitHub accepts it, with who
+/// it signs in as. A forge with no login of its own (a test's fake) is always signed in.
+fn github_login(st: &AppState) -> Option<(Arc<dyn Forge>, Option<String>)> {
+    let plugin = st.forge_plugin(&ForgeKind::GITHUB)?;
+    let Some(login) = plugin.login() else { return Some((plugin.forge(), None)) };
+    let account = login.accounts().into_iter().find(|a| a.host == GITHUB_HOST && a.rejected_at.is_none())?;
+    Some((plugin.forge_on(GITHUB_HOST), Some(account.account.login)))
+}
+
+/// What an issue would be filed with now.
+enum Filer {
+    /// The GitHub forge as the user's login, and who it signs in as.
+    Login(Arc<dyn Forge>, Option<String>),
+    Token(String),
+    None,
+}
+
+impl Filer {
+    /// The login, else the update token.
+    async fn find(st: &AppState) -> Filer {
+        if let Some((forge, name)) = github_login(st) {
+            return Filer::Login(forge, name);
+        }
+        match crate::update::read_token(st).await.ok().flatten() {
+            Some(t) => Filer::Token(t),
+            None => Filer::None,
+        }
+    }
+
+    fn via(&self) -> BugReportVia {
+        match self {
+            Filer::Login(..) => BugReportVia::Login,
+            Filer::Token(_) => BugReportVia::Token,
+            Filer::None => BugReportVia::Browser,
+        }
+    }
+}
+
+/// This machine's OS as a report gives it.
+fn os() -> String {
+    format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 fn token_word(t: &TokenState) -> &'static str {
@@ -188,12 +257,20 @@ pub(crate) async fn preview(State(st): State<AppState>) -> Result<Json<BugReport
     let setting = st.store.get_host_settings().await?.bug_reports;
     let project = release_project(&st).await?;
     let token_present = crate::update::read_token(&st).await.ok().flatten().is_some();
+    let filer = Filer::find(&st).await;
     Ok(Json(BugReportPreview {
         setting,
         route: setting.route(project.is_some()),
         repo: st.update.client.repo(),
         project,
         token_present,
+        via: filer.via(),
+        github_login: match filer {
+            Filer::Login(_, name) => name,
+            _ => None,
+        },
+        version: pdt_core::BUILD_VERSION.into(),
+        os: os(),
         diagnostics: diagnostics(&st).await,
     }))
 }
@@ -217,14 +294,24 @@ fn issue_error(e: UpdateError, repo: &str) -> ApiError {
         UpdateError::NotFound | UpdateError::Http(403, _) => ApiError::conflict(
             codes::TOKEN_NO_ISSUE_ACCESS,
             format!(
-                "The update token can't create issues on {repo}. Give it Issues: write access, or set a new one in \
-                 {SETTINGS} → Updates."
+                "The update token can't create issues on {repo}. Connect GitHub in Settings › Plugins › GitHub to \
+                 file reports as your GitHub login instead."
             ),
         ),
         UpdateError::Network(m) => {
             ApiError::upstream(codes::GITHUB_UNREACHABLE, format!("Could not reach GitHub ({m}). Try again."))
         }
         other => ApiError::upstream(codes::GITHUB_ERROR, format!("GitHub did not take the report: {other}")),
+    }
+}
+
+fn login_error(e: ForgeError, repo: &str) -> ApiError {
+    match e {
+        ForgeError::Unavailable(m) => ApiError::unavailable(codes::FORGE_UNAVAILABLE, m),
+        ForgeError::Unsupported(m) => ApiError::bad_request(codes::UNSUPPORTED, m),
+        ForgeError::Failed(m) | ForgeError::NotReady(m) => {
+            ApiError::upstream(codes::GITHUB_ERROR, format!("GitHub did not take the report on {repo}: {m}"))
+        }
     }
 }
 
@@ -252,7 +339,7 @@ pub(crate) async fn file(
         false => None,
     };
     // The OS is part of the diagnostics: shared only with them.
-    let os = diagnostics.as_ref().map(|_| format!("{} ({})", std::env::consts::OS, std::env::consts::ARCH));
+    let os = diagnostics.as_ref().map(|_| os());
     let body = br::body(&report, diagnostics.as_deref(), pdt_core::BUILD_VERSION, os.as_deref());
     let filed = match setting.route(project.is_some()) {
         BugReportRoute::Off => {
@@ -300,17 +387,33 @@ pub(crate) async fn file(
             BugReportFiled::Ticket { key: t.summary.key, id: t.summary.id, project_id: p.id }
         }
         BugReportRoute::Github => {
-            let Some(token) = crate::update::read_token(st).await? else {
-                return Err(ApiError::conflict(
-                    codes::NO_TOKEN,
-                    format!("Reporting a bug needs the update token. Add it in {SETTINGS} → Updates."),
-                ));
-            };
             let client = &st.update.client;
-            let issue = client
-                .create_issue(&token, &title, &body, &ISSUE_LABELS)
-                .await
-                .map_err(|e| issue_error(e, &client.repo()))?;
+            let repo = client.repo();
+            let issue = match Filer::find(st).await {
+                Filer::Login(forge, _) => {
+                    let labels = ISSUE_LABELS.iter().map(|l| l.to_string()).collect();
+                    let new = NewIssue { title, body, labels };
+                    let r = repo.clone();
+                    let issue = tokio::task::spawn_blocking(move || forge.create_issue(&r, &new))
+                        .await
+                        .map_err(ApiError::internal)?
+                        .map_err(|e| login_error(e, &repo))?;
+                    pdt_update::Issue { number: issue.number, url: issue.url }
+                }
+                Filer::Token(token) => client
+                    .create_issue(&token, &title, &body, &ISSUE_LABELS)
+                    .await
+                    .map_err(|e| issue_error(e, &repo))?,
+                Filer::None => {
+                    return Err(ApiError::conflict(
+                        codes::NO_GITHUB_LOGIN,
+                        format!(
+                            "PDT has no GitHub login to file the report with. Connect GitHub in Settings › Plugins › \
+                             GitHub, or open the bug form at https://github.com/{repo}/issues/new?template=bug.yml"
+                        ),
+                    ));
+                }
+            };
             tracing::info!(number = issue.number, "filed a bug report");
             BugReportFiled::Issue { number: issue.number, url: issue.url }
         }

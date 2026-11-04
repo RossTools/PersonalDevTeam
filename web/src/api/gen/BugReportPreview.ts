@@ -2,6 +2,7 @@
 import type { BugReportProject } from "./BugReportProject";
 import type { BugReportRoute } from "./BugReportRoute";
 import type { BugReportSetting } from "./BugReportSetting";
+import type { BugReportVia } from "./BugReportVia";
 
 export type BugReportPreview = { setting: BugReportSetting, route: BugReportRoute, 
 /**
@@ -12,6 +13,18 @@ repo: string,
  * The project local reports go to: the one whose origin is `repo`.
  */
 project: BugReportProject | null, tokenPresent: boolean, 
+/**
+ * How an issue is filed (on the GitHub route).
+ */
+via: BugReportVia, 
+/**
+ * Who the GitHub login signs in as, when `via` is `login`.
+ */
+githubLogin: string | null, 
+/**
+ * This build's version and OS, for GitHub's bug form when `via` is `browser`.
+ */
+version: string, os: string, 
 /**
  * What `includeDiagnostics` adds, as it would be sent (redacted).
  */
