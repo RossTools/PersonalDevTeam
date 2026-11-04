@@ -59,6 +59,13 @@ left out.
   says when it shows only the first ones.
 - **Escape** or the **×** clears the search and brings back the tree.
 
+### Find a file by name
+
+Open the command palette (**Ctrl+]** then **k**, or **⌘K** on a Mac) and type at least two letters of a file's name.
+Matching files are listed under **Files**, after everything else, each with its folder and its checkout (a ticket's
+key or a branch for a worktree, else the project). It looks in the worktree of the tab on screen, else the current
+project; with no project open, in every project. **Enter** opens the file in **Files**.
+
 ## Start something new
 
 Click **+** at the end of the tab bar (or **Ctrl+]** then **c**). The **New tab** chooser offers:

@@ -247,3 +247,112 @@ async fn a_terminal_call_waits_on_its_inbox_item() {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     env.state.ptys.shutdown().await;
 }
+
+/// Waits for what the agent said after its first `n` things that starts with `prefix`, moving the workflows (and the
+/// outbox's messages) on meanwhile.
+async fn told_after(env: &Env, session: &str, n: usize, prefix: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        pdt_api::run_workflows(&env.state).await;
+        if let Some(m) = agent_says(env, session).await[n..].iter().find(|m| m.starts_with(prefix)) {
+            return m.clone();
+        }
+        assert!(Instant::now() < deadline, "the agent never said {prefix}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Waits until the session's last turn has ended, and what that sets off has run.
+async fn turn_over(env: &Env, session: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let all = events(env, session).await;
+        let last = all.iter().rev().find(|e| e["event"]["kind"] == "turn");
+        if last.is_some_and(|e| e["event"]["phase"] == "ended") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the turn never ended");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+/// PDT-589: Claude gets PDT's budget for its tools (`MCP_TOOL_TIMEOUT`, in ms), so an asking call can wait for the
+/// user; a value the user exported themselves is kept.
+#[tokio::test]
+async fn a_claude_conversation_gets_pdt_s_tool_timeout() {
+    let env = setup().await;
+    pm_on(&env, "claude", "bypass").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let said = common::pm::ask(&env, &id, "env: MCP_TOOL_TIMEOUT").await;
+    let want = std::env::var("MCP_TOOL_TIMEOUT").unwrap_or_else(|_| (24 * 60 * 60 * 1000).to_string());
+    assert_eq!(said, format!("MCP_TOOL_TIMEOUT is {want}"));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-589: a call the user hasn't answered within the agent's budget (shortened here) returns "still waiting" before
+/// the agent would time out. Its card stays open past the turn, and the user's later Allow runs the call and tells
+/// the session the result; a later Deny tells it too.
+#[tokio::test]
+async fn a_card_still_unanswered_at_the_budget_returns_and_its_answer_comes_as_a_message() {
+    let env = setup_with(|st| st.ask_wait = Duration::from_millis(300)).await;
+    pm_on(&env, "claude", "bypass").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Later on"}"#).await;
+    let said = said_after(&env, &id, n, "mcp create_ticket").await;
+    assert!(said.contains("Still waiting") && said.contains("Don't call create_ticket again"), "{said}");
+    turn_over(&env, &id).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    assert!(inbox(&env).await.iter().any(|i| i["kind"] == "approval"), "still in the Inbox");
+    assert!(!ticket_titles(&env).await.contains(&"Later on".to_string()), "nothing before the yes");
+    let n = agent_says(&env, &id).await.len();
+    answer(&env, &id, &rid, json!({"type": "approve"})).await;
+    let told = told_after(&env, &id, n, "echo: [PDT] The user allowed your create_ticket").await;
+    assert!(told.contains("\"created\":true"), "{told}");
+    assert!(ticket_titles(&env).await.contains(&"Later on".to_string()));
+    assert_eq!(card(&env, &id, &rid).await["state"], "answered");
+
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Never"}"#).await;
+    said_after(&env, &id, n, "mcp create_ticket failed: Still waiting").await;
+    turn_over(&env, &id).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    let n = agent_says(&env, &id).await.len();
+    answer(&env, &id, &rid, json!({"type": "deny", "message": "Not now"})).await;
+    let told = told_after(&env, &id, n, "echo: [PDT] The user denied your create_ticket").await;
+    assert!(told.contains("Not now"), "{told}");
+    assert!(!ticket_titles(&env).await.contains(&"Never".to_string()));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-589: a terminal's call waiting on its Inbox item returns "still waiting" at the budget too; the item stays
+/// open, and the user's Allow then runs the call itself and tells the session.
+#[tokio::test]
+async fn a_terminal_call_still_unanswered_at_the_budget_returns() {
+    let env = setup_with(|st| st.ask_wait = Duration::from_millis(300)).await;
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "codex", "mode": "terminal",
+                      "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let bearer = format!("Bearer {}", pdt_api::mcp_token(&env.state, &id).unwrap());
+    let rpc = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run_with_secrets",
+                     "arguments": {"command": "echo hi", "env": {"KEY": "secret:pdt-589-none"}}}});
+    let (s, v) = common::call_with(&env.app, "POST", "/api/mcp", Some(rpc), &[("authorization", &bearer)]).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let said = v["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(said.contains("Still waiting") && v["result"]["isError"] == true, "{v}");
+    let item = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm" && i["sessionId"] == id.as_str());
+    let item = item.expect("the item stays open")["id"].as_str().unwrap().to_string();
+    let (s, v) =
+        call_as_ui(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["waited"].is_null() && v["allowed"] == true, "PDT ran it itself: {v}");
+    assert!(v["error"].as_str().is_some_and(|e| e.contains("pdt-589-none")), "{v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    env.state.ptys.shutdown().await;
+}

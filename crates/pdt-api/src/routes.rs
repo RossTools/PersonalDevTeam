@@ -98,6 +98,10 @@ pub struct AppState {
     pub(crate) grants: std::sync::Arc<crate::untrusted::Grants>,
     /// Asking-tool calls waiting on their Inbox item for the user's answer (PDT-492).
     pub(crate) confirm_waits: std::sync::Arc<crate::workflow::agent::ConfirmWaits>,
+    /// How long an asking tool's call waits for the user's answer before it returns "still waiting" (PDT-589): a
+    /// little under the agent's own budget for PDT's tools, so the agent never sees the call time out. The answer
+    /// then comes as a message. Tests shorten it.
+    pub ask_wait: std::time::Duration,
     /// This pdtd's UI token (PDT-204): PDT's web client sends it, an agent's curl doesn't.
     pub(crate) ui_token: crate::untrusted::UiToken,
     /// The HTTPS port remote access claims on the tailnet name: 443 for the stable instance (the default), the
@@ -308,6 +312,7 @@ impl AppState {
             local_ci: Default::default(),
             grants: Default::default(),
             confirm_waits: Default::default(),
+            ask_wait: crate::workflow::agent::ASK_WAIT,
             ui_token: Default::default(),
             remote_https_port: crate::remote::HOST_HTTPS_PORT,
             tailscale_timeout: pdt_tailscale::DEFAULT_TIMEOUT,
@@ -494,6 +499,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::conversations::router())
         .merge(crate::documents::routes::router())
         .merge(crate::files::router())
+        .merge(crate::files_find::router())
         .merge(crate::files_search::router())
         .merge(crate::finish::router())
         .merge(crate::folders::router())

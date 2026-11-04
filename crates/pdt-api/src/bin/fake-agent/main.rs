@@ -445,8 +445,10 @@ impl Agent {
             std::process::exit(3);
         } else if let Some(name) = text.strip_prefix("env:") {
             let name = name.trim();
-            let set = std::env::var_os(name).is_some();
-            self.say(&format!("{name} is {}", if set { "set" } else { "unset" }));
+            match std::env::var(name) {
+                Ok(v) => self.say(&format!("{name} is {v}")),
+                Err(_) => self.say(&format!("{name} is unset")),
+            }
         } else if text == "where" {
             let cwd = std::env::current_dir().unwrap_or_default();
             self.say(&format!("cwd={} tools={:?}", cwd.display(), self.tools.as_deref().unwrap_or("all")));

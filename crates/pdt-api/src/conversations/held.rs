@@ -28,9 +28,17 @@ type Reply = (Answer, bool, Option<Vec<u32>>);
 /// Counts the requests PDT opened, so a turn's end can tell the ones opened before it from the next turn's ([`mark`]).
 static OPENED: AtomicU64 = AtomicU64::new(0);
 
-/// A request waiting for its answer: its place in [`OPENED`]'s count, how many rows its card has (None: no rows), and
-/// where the answer goes.
-type Waiting = (u64, Option<usize>, oneshot::Sender<Reply>);
+/// A request waiting for its answer.
+struct Waiting {
+    /// Its place in [`OPENED`]'s count.
+    n: u64,
+    /// How many rows its card has (None: no rows).
+    rows: Option<usize>,
+    /// Where the answer goes.
+    tx: oneshot::Sender<Reply>,
+    /// Its call returned "still waiting" (PDT-589): the card outlives the turn, and the answer comes as a message.
+    detached: bool,
+}
 
 /// PDT's requests waiting for an answer, by `(session, request)`, and the tools the user always allowed in a session.
 #[derive(Default)]
@@ -41,10 +49,18 @@ pub(crate) struct Held {
 
 impl Held {
     /// Drops the session's waiting requests opened before `before` ([`mark`]), or all of them: their calls go on
-    /// without running.
+    /// without running. A turn's end keeps the ones whose call no longer waits: the user still answers them.
     fn expire(&self, session_id: &str, before: Option<u64>) {
         let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
-        waiting.retain(|(s, _), (n, _, _)| s != session_id || before.is_some_and(|b| *n >= b));
+        waiting.retain(|(s, _), w| s != session_id || before.is_some_and(|b| w.n >= b || w.detached));
+    }
+
+    /// Marks a request whose call stops waiting (PDT-589): false when it is no longer waiting (just answered or
+    /// expired), and its reply is in.
+    fn detach(&self, session_id: &str, request_id: &str) -> bool {
+        let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+        let key = (session_id.to_string(), request_id.to_string());
+        waiting.get_mut(&key).map(|w| w.detached = true).is_some()
     }
 }
 
@@ -63,6 +79,9 @@ pub(crate) enum Asked {
     Denied(Option<String>),
     /// The turn or the agent ended before the user answered.
     Ended,
+    /// The user hasn't answered within `AppState::ask_wait` (PDT-589): the card stays open, and once they answer PDT
+    /// runs the call (or not) and messages the session.
+    Waiting,
 }
 
 /// Whether a request is one of PDT's own (not the agent's).
@@ -100,7 +119,8 @@ pub(crate) async fn ask(
         .waiting
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert((s.id.clone(), id.clone()), (n, count, tx));
+        .insert((s.id.clone(), id.clone()), Waiting { n, rows: count, tx, detached: false });
+    let keys: Vec<String> = rows.iter().flatten().map(|r| r.ticket_key.clone()).collect();
     let title = st
         .registry()
         .tool_infos()
@@ -124,7 +144,7 @@ pub(crate) async fn ask(
             id: id.clone(),
             request_kind: RequestKind::Approval,
             tool: format!("mcp__{}__{tool}", pdt_core::mcp::SERVER_NAME),
-            title,
+            title: title.clone(),
             description: None,
             input: st.store.redactor().json(input),
             tool_call_id: None,
@@ -140,8 +160,36 @@ pub(crate) async fn ask(
     crate::notifications::kick(st);
     // Dropped unanswered (the agent gave up on the call), the card expires ([`Card`]'s drop).
     let mut open = open;
-    let reply = rx.await;
+    let mut rx = rx;
+    let reply = match tokio::time::timeout(st.ask_wait, &mut rx).await {
+        Ok(reply) => reply,
+        Err(_) if st.conversations.held.detach(&s.id, &id) => {
+            // Back to the agent before its own timeout; the card stays for the user (PDT-589).
+            let (st, s, tool, input) = (st.clone(), s.clone(), tool.to_string(), input.clone());
+            tokio::spawn(async move {
+                let reply = rx.await;
+                let asked = settle(&st, &s, &mut open, reply, &tool, &input, can_always).await;
+                answered_late(&st, &s, &tool, &title, input, &keys, asked).await;
+            });
+            return Some(Asked::Waiting);
+        }
+        Err(_) => rx.await,
+    };
+    Some(settle(st, s, &mut open, reply, tool, input, can_always).await)
+}
+
+/// Shows the card answered (or expired) and reads the answer.
+async fn settle(
+    st: &AppState,
+    s: &Session,
+    open: &mut Card,
+    reply: Result<Reply, oneshot::error::RecvError>,
+    tool: &str,
+    input: &Value,
+    can_always: bool,
+) -> Asked {
     open.done = true;
+    let id = open.id.clone();
     let asked = match reply {
         Ok((answer, by_user, kept)) => {
             open.show(RequestState::Answered, Some(answer.clone())).await;
@@ -168,7 +216,41 @@ pub(crate) async fn ask(
         }
     };
     crate::notifications::kick(st);
-    Some(asked)
+    asked
+}
+
+/// The user's answer to a card whose call stopped waiting (PDT-589): an Allow runs the call with the rows they kept
+/// (`keys`: its rows' tickets), and the session hears the result or the Deny as a message.
+async fn answered_late(
+    st: &AppState,
+    s: &Session,
+    tool: &str,
+    title: &str,
+    input: Value,
+    keys: &[String],
+    asked: Asked,
+) {
+    use crate::workflow::agent as steps;
+    let text = match asked {
+        Asked::Allowed(kept) => {
+            let narrowed =
+                if keys.is_empty() { Ok((input, vec![])) } else { steps::keep_rows(input, keys, kept.as_deref()) };
+            match narrowed {
+                Ok((input, dropped)) => steps::run_allowed(st, s, tool, title, input, &dropped).await.0,
+                Err(e) => format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}"),
+            }
+        }
+        Asked::Denied(why) => {
+            let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
+            format!("{}{why}", steps::denied_text(tool, title))
+        }
+        // The agent ended: nothing to run, and no one to tell.
+        Asked::Ended | Asked::Waiting => return,
+    };
+    let ticket = crate::mcp::tools::session_ticket(st, s).await;
+    if let Err(e) = steps::queue_message(st, s, &text, None, ticket, steps::USER).await {
+        tracing::warn!(session = %s.id, error = %e, "could not tell the session the user's late answer");
+    }
 }
 
 /// Answers one of PDT's requests in a session. `by_user`: the user gave the answer (not an agent's curl). `rows`: the
@@ -190,7 +272,7 @@ pub(crate) fn answer(
     }
     let key = (session_id.to_string(), request_id.to_string());
     let mut waiting = st.conversations.held.waiting.lock().unwrap_or_else(|e| e.into_inner());
-    let count = waiting.get(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?.1;
+    let count = waiting.get(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?.rows;
     // The kept rows are checked before the request is answered, so a wrong pick leaves the card open.
     let kept = match (answer, count) {
         (Answer::Approve { .. }, Some(n)) => {
@@ -200,7 +282,7 @@ pub(crate) fn answer(
         _ if rows.is_some() => return Err(ApiError::invalid("only an Allow of a request with rows keeps rows")),
         _ => None,
     };
-    let (_, _, tx) = waiting.remove(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?;
+    let tx = waiting.remove(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?.tx;
     drop(waiting);
     tx.send((answer.clone(), by_user, kept)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
 }
@@ -270,7 +352,10 @@ mod tests {
     fn wait(held: &Held, session: &str, request: &str) -> oneshot::Receiver<Reply> {
         let (tx, rx) = oneshot::channel();
         let n = OPENED.fetch_add(1, Ordering::SeqCst);
-        held.waiting.lock().unwrap().insert((session.into(), request.into()), (n, None, tx));
+        held.waiting
+            .lock()
+            .unwrap()
+            .insert((session.into(), request.into()), Waiting { n, rows: None, tx, detached: false });
         rx
     }
 

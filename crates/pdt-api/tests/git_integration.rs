@@ -650,3 +650,43 @@ async fn the_files_view_searches_inside_files() {
     assert_eq!(sent, 2000);
     assert_eq!(r["capped"], true);
 }
+
+#[tokio::test]
+async fn the_palette_finds_files_by_name() {
+    let env = setup().await;
+    std::fs::create_dir_all(env.repo.join("web/src/palette")).unwrap();
+    std::fs::create_dir_all(env.repo.join("build")).unwrap();
+    std::fs::write(env.repo.join(".gitignore"), "build/\n").unwrap();
+    std::fs::write(env.repo.join("build").join("palette.js"), "").unwrap();
+    std::fs::write(env.repo.join("web/src/palette/CommandPalette.tsx"), "").unwrap();
+    std::fs::write(env.repo.join("docs-palette-notes.md"), "").unwrap();
+    for i in 0..30 {
+        std::fs::write(env.repo.join(format!("pal{i:02}.txt")), "").unwrap();
+    }
+    let base = format!("/api/projects/{}/files/find", env.pid);
+
+    let (s, r) = call(&env.app, "GET", &format!("{base}?q=palette"), None).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    assert_eq!(r, json!(["docs-palette-notes.md", "web/src/palette/CommandPalette.tsx"]), "ignored files are left out");
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=command"), None).await;
+    assert_eq!(r, json!(["web/src/palette/CommandPalette.tsx"]));
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=pal"), None).await;
+    let found = r.as_array().unwrap();
+    assert_eq!(found.len(), 20, "capped");
+    assert_eq!(found[0], "pal00.txt", "names that start with the query first");
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=%20"), None).await;
+    assert_eq!(r, json!([]));
+
+    // A worktree's own files; the list is kept for a few seconds, so a file added now isn't found yet.
+    let w = worktree(&env, "feature-find").await;
+    let wt = std::path::PathBuf::from(w["path"].as_str().unwrap());
+    let at = format!("{base}?q=readme&worktreeId={}", w["id"].as_str().unwrap());
+    let (s, r) = call(&env.app, "GET", &at, None).await;
+    assert_eq!((s, r.clone()), (StatusCode::OK, json!(["README.md"])), "{r}");
+    std::fs::write(wt.join("readme-too.md"), "").unwrap();
+    let (_, r) = call(&env.app, "GET", &at, None).await;
+    assert_eq!(r, json!(["README.md"]), "the kept list");
+
+    let (s, _) = call(&env.app, "GET", &format!("{base}?q=x&worktreeId=nope"), None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+}
