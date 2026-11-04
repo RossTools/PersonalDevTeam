@@ -1,10 +1,11 @@
 //! PDT-431: a pass of the engine that can't read the enabled workflows or the steps waiting for events leaves the new
-//! events new, so they start their runs and resume their steps once reads work.
+//! events new, so they start their runs and resume their steps once reads work. PDT-524: a failed read isn't taken for
+//! "not there": pdt-mcp answers 503, not a sign-in challenge, and the outbox keeps a message it can't check.
 
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::{call, call_with, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -130,4 +131,91 @@ async fn a_waiting_step_resumes_once_the_waiting_steps_can_be_read() {
     let r = call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
     assert_eq!(r["status"], "succeeded", "{r}");
     assert_eq!(new_comments(&env).await, 0);
+}
+
+fn session(project: &str, cwd: &std::path::Path) -> pdt_core::session::Session {
+    use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
+    Session {
+        id: "s1".into(),
+        project_id: project.into(),
+        worktree_id: None,
+        kind: SessionKind::AgentTui,
+        agent: Some(AgentKind::Claude),
+        bypass_permissions: false,
+        title: "t".into(),
+        cwd: cwd.to_string_lossy().into(),
+        status: SessionStatus::Running,
+        exit_code: None,
+        created_at: 1,
+        ended_at: None,
+        external_session_id: None,
+        fresh_started_at: None,
+        activity: None,
+        attention_at: None,
+        last_viewed_at: None,
+        unseen: false,
+        attempt_id: None,
+        ticket: None,
+        mode: pdt_core::conversation::SessionMode::Conversation,
+        model: None,
+        permission_mode: None,
+        persona: None,
+        background: vec![],
+    }
+}
+
+#[tokio::test]
+async fn pdt_mcp_answers_503_not_a_sign_in_challenge_when_it_cant_read_the_session() {
+    let env = setup().await;
+    env.state.store.insert_session(&session(&env.project, env._tmp.path())).await.unwrap();
+    let bearer = format!("Bearer {}", pdt_api::mcp_token(&env.state, "s1").unwrap());
+    let rpc = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    let list = |auth: String| {
+        let (app, rpc) = (env.app.clone(), rpc.clone());
+        async move { call_with(&app, "POST", "/api/mcp", Some(rpc), &[("authorization", &auth)]).await }
+    };
+
+    exec(&env.db, "ALTER TABLE sessions RENAME TO test_hidden_sessions").await;
+    let (s, v) = list(bearer.clone()).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::SERVICE_UNAVAILABLE, Some("read_failed")), "{v}");
+
+    exec(&env.db, "ALTER TABLE test_hidden_sessions RENAME TO sessions").await;
+    let (s, v) = list(bearer.clone()).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) = list("Bearer s1.forged".into()).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::UNAUTHORIZED, Some("unauthorized")), "{v}");
+}
+
+#[tokio::test]
+async fn the_outbox_keeps_a_message_whose_step_it_cant_read() {
+    let env = setup().await;
+    let m = pdt_store::SessionMessage {
+        id: "m1".into(),
+        attempt_id: None,
+        session_id: Some("s-gone".into()),
+        ticket_id: None,
+        dedupe: None,
+        text: "hello".into(),
+        timeline: Value::Null,
+        run_id: None,
+        step_id: Some("step-gone".into()),
+        status: "waiting".into(),
+        told_session: None,
+        created_at: 1,
+        resolved_at: None,
+        by_user: false,
+        pending_id: None,
+        reopens: false,
+    };
+    env.state.store.queue_session_message(&m).await.unwrap();
+    let status = || async { env.state.store.get_session_message("m1").await.unwrap().unwrap().status };
+
+    exec(&env.db, "ALTER TABLE workflow_steps RENAME TO test_hidden_steps").await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(status().await, "waiting", "kept for the next pass");
+
+    // Readable again: its step is gone, so it is dropped.
+    exec(&env.db, "ALTER TABLE test_hidden_steps RENAME TO workflow_steps").await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_ne!(status().await, "waiting");
 }

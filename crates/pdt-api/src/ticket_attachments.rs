@@ -287,7 +287,9 @@ pub(crate) async fn get(
 ) -> Result<Response, ApiError> {
     let id = ticket_id(&st, &id).await?;
     let a = st.store.get_ticket_attachment(&id, &aid).await?.or_404("attachment")?;
-    let bytes = tokio::fs::read(path_of(&st, &a)).await.map_err(|_| ApiError::not_found("attachment"))?;
+    let bytes = tokio::fs::read(path_of(&st, &a))
+        .await
+        .map_err(|e| ApiError::io_404("attachment", "reading the attachment", e))?;
     let media_type = if a.is_image() { a.media_type.clone() } else { "text/plain; charset=utf-8".into() };
     let ascii: String =
         a.name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' { c } else { '_' }).collect();

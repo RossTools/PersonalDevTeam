@@ -14,7 +14,8 @@ use ironcalc::base::types::{Color, Dxf, DxfFont};
 use ironcalc::export::save_xlsx_to_writer;
 use ironcalc::import::load_from_xlsx_bytes;
 use pdt_core::document::{
-    BorderStyle, Cell, CellCondition, CellFormat, HAlign, Sheet, SortKey, VAlign, cell_name, parse_column, parse_range,
+    BorderStyle, Cell, CellCondition, CellFormat, HAlign, MAX_COLUMNS, MAX_ROWS, Sheet, SortKey, VAlign, cell_name,
+    column_name, parse_column, parse_range,
 };
 use std::io::Cursor;
 use std::path::Path;
@@ -30,6 +31,22 @@ const LANGUAGE: &str = "en";
 pub const READ_LIMIT: (usize, usize) = (2000, 200);
 
 pub type Result<T> = std::result::Result<T, String>;
+
+/// A zero-based row as IronCalc's one-based index; an error past the sheet's last row (never a wrapped `as` cast).
+fn row_at(r: usize) -> Result<i32> {
+    if r >= MAX_ROWS {
+        return Err(format!("row {} is past a sheet's last row ({MAX_ROWS})", r.saturating_add(1)));
+    }
+    i32::try_from(r + 1).map_err(|e| e.to_string())
+}
+
+/// A zero-based column as IronCalc's one-based index; an error past the sheet's last column.
+fn col_at(c: usize) -> Result<i32> {
+    if c >= MAX_COLUMNS {
+        return Err(format!("column {} is past a sheet's last column (XFD)", column_name(c)));
+    }
+    i32::try_from(c + 1).map_err(|e| e.to_string())
+}
 
 /// A workbook: IronCalc's model of one `.xlsx`.
 pub struct Workbook {
@@ -85,12 +102,12 @@ impl Workbook {
         wb.model.pause_evaluation();
         for (r, record) in reader.records().enumerate() {
             let record = record.map_err(|e| format!("not a CSV file PDT can read: {e}"))?;
-            if r >= 1_048_576 {
+            if r >= MAX_ROWS {
                 break;
             }
             for (c, v) in record.iter().enumerate() {
                 if !v.is_empty() {
-                    wb.model.set_user_input(0, r as i32 + 1, c as i32 + 1, v)?;
+                    wb.model.set_user_input(0, row_at(r)?, col_at(c)?, v)?;
                 }
             }
         }
@@ -204,7 +221,7 @@ impl Workbook {
         for r in r1..=r2.min(r1 + 10_000) {
             let mut line = Vec::new();
             for c in c1..=c2.min(c1 + 1_000) {
-                line.push(match m.get_cell_value_by_index(i, r as i32 + 1, c as i32 + 1)? {
+                line.push(match m.get_cell_value_by_index(i, row_at(r)?, col_at(c)?)? {
                     CellValue::None => Value::Empty,
                     CellValue::Number(n) => Value::Number(n),
                     CellValue::String(s) => Value::Text(s),
@@ -224,7 +241,7 @@ impl Workbook {
         for r in r1..=r2.min(r1 + 10_000) {
             let mut line = Vec::new();
             for c in c1..=c2.min(c1 + 1_000) {
-                line.push(self.model.get_formatted_cell_value(i, r as i32 + 1, c as i32 + 1)?);
+                line.push(self.model.get_formatted_cell_value(i, row_at(r)?, col_at(c)?)?);
             }
             out.push(line);
         }
@@ -239,7 +256,7 @@ impl Workbook {
         let r = (|| {
             for (dr, line) in values.iter().enumerate() {
                 for (dc, v) in line.iter().enumerate() {
-                    let (r, c) = ((row + dr) as i32 + 1, (col + dc) as i32 + 1);
+                    let (r, c) = (row_at(row.saturating_add(dr))?, col_at(col.saturating_add(dc))?);
                     if v.is_empty() {
                         self.model.range_clear_contents(&Area { sheet: i, row: r, column: c, width: 1, height: 1 })?;
                     } else {
@@ -285,13 +302,8 @@ impl Workbook {
     fn area(&self, sheet: &str, range: &str) -> Result<Area> {
         let i = self.sheet_index(sheet)?;
         let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
-        Ok(Area {
-            sheet: i,
-            row: r1 as i32 + 1,
-            column: c1 as i32 + 1,
-            width: (c2 - c1) as i32 + 1,
-            height: (r2 - r1) as i32 + 1,
-        })
+        let (top, left) = (row_at(r1)?, col_at(c1)?);
+        Ok(Area { sheet: i, row: top, column: left, width: col_at(c2)? - left + 1, height: row_at(r2)? - top + 1 })
     }
 
     /// A range to sort or filter: as given, or for none the sheet's used cells from A1.
@@ -415,7 +427,7 @@ impl Workbook {
         let (a, b) = columns.split_once(':').unwrap_or((columns, columns));
         let first = parse_column(a).ok_or_else(|| format!("{a} is not a column (A, B, …)"))?;
         let last = parse_column(b).ok_or_else(|| format!("{b} is not a column (A, B, …)"))?;
-        let (first, last) = (first.min(last) as i32 + 1, first.max(last) as i32 + 1);
+        let (first, last) = (col_at(first.min(last))?, col_at(first.max(last))?);
         self.model.set_columns_width(i, first, last, f64::from(width.clamp(5, 2000)))
     }
 
@@ -460,16 +472,16 @@ impl Workbook {
         }
         let keys: Vec<(usize, bool)> =
             by.iter().map(|k| Ok((Self::column_in(&k.column, c1, c2)?, k.descending))).collect::<Result<_>>()?;
-        let first = r1 as i32 + 1 + i32::from(header);
-        let last = r2 as i32 + 1;
-        let (left, right) = (c1 as i32 + 1, c2 as i32 + 1);
+        let first = row_at(r1)? + i32::from(header);
+        let last = row_at(r2)?;
+        let (left, right) = (col_at(c1)?, col_at(c2)?);
         if first > last {
             return Ok(());
         }
         self.model.set_rows_hidden(i, first, last, false)?;
         let mut rows: Vec<(usize, Vec<Value>)> = Vec::new();
         for (n, r) in (first..=last).enumerate() {
-            let vals = keys.iter().map(|(k, _)| self.typed(i, r, *k as i32 + 1)).collect::<Result<Vec<_>>>()?;
+            let vals = keys.iter().map(|(k, _)| self.typed(i, r, col_at(*k)?)).collect::<Result<Vec<_>>>()?;
             rows.push((n, vals));
         }
         let rank = |v: &Value| match v {
@@ -545,8 +557,8 @@ impl Workbook {
         let i = self.sheet_index(sheet)?;
         let range = self.table(i, range)?;
         let ((r1, c1), (r2, c2)) = parse_range(&range).ok_or_else(|| format!("{range} is not a range"))?;
-        let key = Self::column_in(column, c1, c2)? as i32 + 1;
-        let (first, last) = (r1 as i32 + 2, r2 as i32 + 1);
+        let key = col_at(Self::column_in(column, c1, c2)?)?;
+        let (first, last) = (row_at(r1)? + 1, row_at(r2)?);
         if first > last {
             return Ok(());
         }
@@ -597,14 +609,14 @@ impl Workbook {
     pub fn input(&self, sheet: &str, cell: &str) -> Result<String> {
         let i = self.sheet_index(sheet)?;
         let ((r, c), _) = parse_range(cell).ok_or_else(|| format!("{cell} is not a cell"))?;
-        self.model.get_cell_content(i, r as i32 + 1, c as i32 + 1)
+        self.model.get_cell_content(i, row_at(r)?, col_at(c)?)
     }
 
     /// The cell's style, for tests and agents: IronCalc's own.
     pub fn style(&self, sheet: &str, cell: &str) -> Result<ironcalc::base::types::Style> {
         let i = self.sheet_index(sheet)?;
         let ((r, c), _) = parse_range(cell).ok_or_else(|| format!("{cell} is not a cell"))?;
-        self.model.get_cell_style(i, r as i32 + 1, c as i32 + 1)
+        self.model.get_cell_style(i, row_at(r)?, col_at(c)?)
     }
 
     /// The underlying model, for what this crate doesn't wrap.

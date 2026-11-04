@@ -96,12 +96,22 @@ pub(crate) async fn deliver(st: &AppState) {
         running.iter().filter(live).chain(&stopped).map(|s| (s.id.as_str(), s)).collect();
     let mut batches: HashMap<String, (&Session, Vec<SessionMessage>)> = HashMap::new();
     for m in waiting {
-        // A message whose step no longer waits (its run was cancelled) is dropped.
-        if let Some(step) = &m.step_id
-            && !matches!(st.store.get_step(step).await, Ok(Some(s)) if s.status == StepStatus::Waiting)
-        {
-            let _ = st.store.resolve_session_message(&m.id, None, now_ms()).await;
-            continue;
+        // A message whose step no longer waits (its run was cancelled) is dropped. A step PDT can't read leaves the
+        // message for the next pass (PDT-524).
+        if let Some(step) = &m.step_id {
+            let waits = match st.store.get_step(step).await {
+                Ok(s) => s.is_some_and(|s| s.status == StepStatus::Waiting),
+                Err(e) => {
+                    tracing::warn!(message = %m.id, step = %step, error = %e, "could not read the message's step: kept for the next pass");
+                    continue;
+                }
+            };
+            if !waits {
+                if let Err(e) = st.store.resolve_session_message(&m.id, None, now_ms()).await {
+                    tracing::warn!(message = %m.id, error = %e, "could not drop a message whose step no longer waits");
+                }
+                continue;
+            }
         }
         let target = match (&m.session_id, &m.attempt_id) {
             (Some(s), _) => by_id.get(s.as_str()).copied(),

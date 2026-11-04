@@ -142,6 +142,15 @@ fn failed(e: impl std::fmt::Display) -> ProviderError {
     ProviderError::Failed(e.to_string())
 }
 
+/// A file read's failure: [`ProviderError::NotFound`] only when the file is missing (PDT-524).
+fn io_failed(e: std::io::Error) -> ProviderError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        return ProviderError::NotFound;
+    }
+    tracing::warn!(error = %e, "could not read a local document's file");
+    ProviderError::Failed("could not read the file (PDT's log says why)".into())
+}
+
 /// The file a reference names, checked to be a doc or sheet that exists.
 fn path_of(reference: &str) -> ProviderResult<(PathBuf, DocumentKind)> {
     let p = PathBuf::from(reference);
@@ -552,7 +561,7 @@ impl Files {
         {
             return Err(ProviderError::NotFound);
         }
-        let bytes = std::fs::read(dir.join(file)).map_err(|_| ProviderError::NotFound)?;
+        let bytes = std::fs::read(dir.join(file)).map_err(io_failed)?;
         let mime = match Path::new(file).extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
             Some("png") => "image/png",
             Some("jpg" | "jpeg") => "image/jpeg",
@@ -898,7 +907,7 @@ impl DocumentProvider for LocalProvider {
                 Some(d) => d.title,
                 None => {
                     // A file PDT doesn't know yet is only taken from a local documents folder.
-                    let file = path.canonicalize().map_err(|_| ProviderError::NotFound)?;
+                    let file = path.canonicalize().map_err(io_failed)?;
                     let inside =
                         self.folders().await?.iter().any(|f| f.canonicalize().is_ok_and(|f| file.starts_with(f)));
                     if !inside {

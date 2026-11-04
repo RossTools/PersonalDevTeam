@@ -29,7 +29,13 @@ fn host_key(st: &AppState) -> std::io::Result<Vec<u8>> {
         return Ok(k.clone());
     }
     let path = st.data_dir.join(KEY_FILE);
-    let key = match std::fs::read_to_string(&path).ok().and_then(|t| hex_decode(t.trim())).filter(|k| k.len() == 32) {
+    // A key file PDT can't read is an error, not a missing key: replacing it would end every session's token.
+    let read = match std::fs::read_to_string(&path) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e),
+    };
+    let key = match read.and_then(|t| hex_decode(t.trim())).filter(|k| k.len() == 32) {
         Some(k) => k,
         None => {
             let mut k = uuid::Uuid::new_v4().as_bytes().to_vec();
@@ -93,16 +99,48 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// The session a request's token belongs to, while it exists and has not ended.
-async fn authorize(st: &AppState, headers: &HeaderMap) -> Option<Session> {
-    let h = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (id, given) = proto::parse_token(h)?;
-    let key = host_key(st).ok()?;
-    if !same(&mac(&key, id), given) {
-        return None;
+/// Why [`authorize`] refused a request.
+pub(crate) enum Refused {
+    /// No token, a bad one, or one whose session ended: 401.
+    Unauthorized,
+    /// PDT couldn't read the host key or the session (logged): 503, so a client isn't sent to sign in (PDT-524).
+    ReadFailed(&'static str),
+}
+
+impl IntoResponse for Refused {
+    fn into_response(self) -> Response {
+        match self {
+            Refused::Unauthorized => unauthorized(),
+            Refused::ReadFailed(what) => crate::error::ApiError::unavailable(
+                crate::error::codes::READ_FAILED,
+                format!("{what}, so the request can't be checked (PDT's log says why)"),
+            )
+            .into_response(),
+        }
     }
-    let s = st.store.get_session(id).await.ok()??;
-    (!matches!(s.status, SessionStatus::Finished) && s.kind == SessionKind::AgentTui).then_some(s)
+}
+
+fn read_failed(what: &'static str, e: impl std::fmt::Display) -> Refused {
+    tracing::error!(error = %e, "{what}");
+    Refused::ReadFailed(what)
+}
+
+/// The session a request's token belongs to, while it exists and has not ended.
+async fn authorize(st: &AppState, headers: &HeaderMap) -> Result<Session, Refused> {
+    let Some((id, given)) =
+        headers.get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(proto::parse_token)
+    else {
+        return Err(Refused::Unauthorized);
+    };
+    let key = host_key(st).map_err(|e| read_failed("could not read pdt-mcp's host key", e))?;
+    if !same(&mac(&key, id), given) {
+        return Err(Refused::Unauthorized);
+    }
+    match st.store.get_session(id).await {
+        Ok(Some(s)) if !matches!(s.status, SessionStatus::Finished) && s.kind == SessionKind::AgentTui => Ok(s),
+        Ok(_) => Err(Refused::Unauthorized),
+        Err(e) => Err(read_failed("could not read the token's session", e)),
+    }
 }
 
 /// The tools a session gets: its persona's current set, else (no persona) the default set. A running session follows
@@ -210,7 +248,10 @@ fn unauthorized() -> Response {
 /// `POST /api/mcp`. A request whose session's tools changed since it listed them, from a client that takes a stream,
 /// is answered as one with `notifications/tools/list_changed` first (the client may not hold the `GET` stream open).
 pub(crate) async fn post(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
-    let Some(session) = authorize(&st, &headers).await else { return unauthorized() };
+    let session = match authorize(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r.into_response(),
+    };
     let parsed: Result<Value, _> = serde_json::from_slice(&body);
     let value = match parsed {
         Ok(v) => v,

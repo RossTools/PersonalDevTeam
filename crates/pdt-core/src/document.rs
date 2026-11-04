@@ -906,7 +906,13 @@ pub struct DocumentComment {
     pub actor: Option<Actor>,
 }
 
-/// A cell's place (`B3`) as its zero-based row and column; None for anything else.
+/// The most rows a sheet has (Excel's and IronCalc's limit).
+pub const MAX_ROWS: usize = 1_048_576;
+/// The most columns a sheet has (`XFD`, Excel's and IronCalc's limit).
+pub const MAX_COLUMNS: usize = 16_384;
+
+/// A cell's place (`B3`) as its zero-based row and column; None for anything else, or past [`MAX_ROWS`] and
+/// [`MAX_COLUMNS`].
 pub fn parse_cell(cell: &str) -> Option<(usize, usize)> {
     let cell = cell.trim().to_ascii_uppercase();
     let split = cell.find(|c: char| c.is_ascii_digit())?;
@@ -915,7 +921,10 @@ pub fn parse_cell(cell: &str) -> Option<(usize, usize)> {
         return None;
     }
     let col = letters.bytes().fold(0usize, |n, b| n * 26 + usize::from(b - b'A') + 1) - 1;
-    let row: usize = digits.parse().ok().filter(|r| *r >= 1)?;
+    if col >= MAX_COLUMNS {
+        return None;
+    }
+    let row: usize = digits.parse().ok().filter(|r| (1..=MAX_ROWS).contains(r))?;
     Some((row - 1, col))
 }
 
@@ -1046,6 +1055,11 @@ mod tests {
         assert_eq!(parse_range("B3"), Some(((2, 1), (2, 1))));
         assert_eq!(parse_range("A1:"), None);
         assert_eq!(parse_column("AA"), Some(26));
+        assert_eq!(parse_cell("XFD1048576"), Some((MAX_ROWS - 1, MAX_COLUMNS - 1)));
+        for past in ["A1048577", "XFE1", "A2147483648", "A4294967297", "A99999999999999999999999"] {
+            assert_eq!(parse_cell(past), None, "{past}");
+        }
+        assert_eq!(parse_range("A1:A4294967297"), None);
         assert_eq!(
             (column_name(0), column_name(25), column_name(26), column_name(701)),
             ("A".into(), "Z".into(), "AA".into(), "ZZ".into())
