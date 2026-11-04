@@ -163,7 +163,30 @@ pub fn body(report: &Report, diagnostics: Option<&str>, version: &str, os: Optio
             d.trim_end()
         ));
     }
-    out.push_str(&format!("_Reported with Report a bug in {} {version}._\n", crate::brand::PRODUCT_NAME));
+    out.push_str(&format!("{}{version}._\n", footer_start()));
+    out
+}
+
+/// How the last line of a report's body starts: `_Reported with Report a bug in PDT `.
+fn footer_start() -> String {
+    format!("_Reported with Report a bug in {} ", crate::brand::PRODUCT_NAME)
+}
+
+/// Whether an issue's body ends with the line [`body`] ends with: a report filed with Report a bug. GitHub drops the
+/// labels of an issue opened by someone without push access, so this, not [`ISSUE_LABELS`], marks a report from the
+/// app. Anyone can write the line: it says where a report came from, never that it can be trusted.
+pub fn is_app_report(body: &str) -> bool {
+    body.trim_end().lines().last().is_some_and(|l| l.trim().starts_with(&footer_start()) && l.trim().ends_with("._"))
+}
+
+/// An issue's labels with [`crate::github_issue::FROM_PDT`] added when its body is an app report (see
+/// [`is_app_report`]) and GitHub dropped the label.
+pub fn issue_labels(labels: &[String], body: &str) -> Vec<String> {
+    let mut out = labels.to_vec();
+    let from_pdt = crate::github_issue::FROM_PDT;
+    if is_app_report(body) && !out.iter().any(|l| l == from_pdt) {
+        out.push(from_pdt.to_string());
+    }
     out
 }
 
@@ -470,6 +493,22 @@ mod tests {
             "{b}"
         );
         assert!(body(&r, None, "1", None).contains("### OS\n\n_Not shared_\n"));
+    }
+
+    #[test]
+    fn app_reports_are_known_by_their_last_line() {
+        let b = body(&Report { what_happened: "It broke.".into(), ..Default::default() }, Some("log"), "0.1.42", None);
+        assert!(is_app_report(&b), "{b}");
+        assert!(is_app_report(&format!("{}\r\n\n", b.trim_end().replace('\n', "\r\n"))), "GitHub may send CRLF");
+        assert!(!is_app_report("### What happened\n\nIt broke.\n"), "the GitHub bug form's");
+        assert!(!is_app_report(&format!("{b}\nEdited: more steps.\n")), "only the last line counts");
+        assert!(!is_app_report(""));
+
+        let none: Vec<String> = vec![];
+        assert_eq!(issue_labels(&none, &b), ["from-pdt"], "a non-collaborator's report, its labels dropped");
+        let both = vec!["bug".to_string(), "from-pdt".to_string()];
+        assert_eq!(issue_labels(&both, &b), both, "the maintainer's own, labelled");
+        assert_eq!(issue_labels(&["bug".to_string()], "Steps."), ["bug"], "not from the app");
     }
 
     /// The GitHub bug form asks for the same sections, and no issue template adds `from-pdt` (triage keys off it:

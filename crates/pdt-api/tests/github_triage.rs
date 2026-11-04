@@ -301,8 +301,11 @@ async fn bug_reports_are_triaged_into_tickets_duplicates_and_rejections() {
     let (_, timeline) = call(&env.app, "GET", &format!("/api/tickets/{id}/events"), None).await;
     assert!(timeline.to_string().contains("Another report of this bug"), "{timeline}");
 
-    // A duplicate of a ticket with no issue to point at: closed as not planned, naming the ticket.
-    look(&env, issue(5, "Also crashes", &["from-pdt"])).await;
+    // A duplicate of a ticket with no issue to point at: closed as not planned, naming the ticket. Filed from PDT by
+    // someone without push access, so GitHub dropped its labels: its body's last line still marks it (PDT-567).
+    let report = pdt_core::bug_report::Report { what_happened: "It crashes.".into(), ..Default::default() };
+    let body = pdt_core::bug_report::body(&report, None, "0.1.42", None);
+    look(&env, pdt_forge::Issue { body, ..issue(5, "Also crashes", &[]) }).await;
     let session = triage_session(&env, &mut seen).await;
     submit(&env, &wf, &session, "duplicate", "Same bug.", json!({"ticket": tkey})).await;
     let closed = env.gh.closed.lock().unwrap().get(&(RELEASE_REPO.to_string(), 5)).cloned();
