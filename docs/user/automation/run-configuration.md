@@ -254,6 +254,53 @@ When every conflicting file matches a rule, PDT takes the base's version of each
 and commits what changed under its `paths` with the merge. If a command fails, or other files conflict too, the agent
 gets the conflicts and the commands to run once they're resolved. The host overrides' list replaces the file's.
 
+## Branch names
+
+When work on a ticket starts, PDT names its branch `pdt-<key>-<title>` (`pdt-APP-48-fix-the-login-crash`). To follow
+your team's convention instead, give the project a template, in **Branch names** in the project's settings or in the
+repository's file, so everyone sharing the repository gets the same names:
+
+```toml
+[branch]
+template = "{type}/{jira|issue|key}-{slug}"
+types    = { bug = "fix", docs = "docs" }   # label = type
+```
+
+The file's `[branch]` wins over the setting; Settings then shows its template, read-only. The host overrides can't
+name branches: use the setting.
+
+A template is text with parts in braces:
+
+| Part | Gives |
+| --- | --- |
+| `{key}` | the ticket's key: `APP-48` |
+| `{project}` | the project's key: `APP` |
+| `{number}` | the ticket's number: `48` |
+| `{slug}` | the title, shortened: `fix-the-login-crash` |
+| `{type}` | from the ticket's labels through `types`: `fix` for `bug`, `feat` for anything else |
+| `{issue}` | the linked GitHub issue's number: `123` |
+| `{issue_repo}` | the linked GitHub issue's repository: `owner-repo` |
+| `{jira}` | the linked Jira issue's key: `ABC-123` |
+| `{parent}` | the parent ticket's key, for a part |
+
+- **Fallbacks**: `{jira|issue|key}` takes the first part that has a value.
+- **Empty parts** are dropped with their separator: `{type}/{jira}-{slug}` gives `fix/ABC-123-login-crash`, or
+  `fix/login-crash` for a ticket with no Jira link.
+- **Text** between parts can be letters, digits, `.`, `_`, `-` and `/`. Some tools handle `/` in branch names badly;
+  Settings warns when names will have one.
+- **Length**: names are at most 100 characters; the title is shortened first.
+- **Taken names**: a name already used by another branch, here or on `origin`, gets `-2`, `-3` and so on.
+
+The name is decided when work starts, from the ticket as it is then: linking an issue later doesn't rename the
+branch. The Start dialog shows the name and lets you change it. A template that can't give every ticket a name (only
+`{jira}`, say) is refused in Settings; in the file, it is reported above the run configuration and branches get the
+default names until it is fixed.
+
+Examples:
+
+- **GitHub issues**: `fix/123-login-crash` from `template = "{type}/{issue|key}-{slug}"`.
+- **Jira**: `feature/ABC-123-login-crash` from `template = "feature/{jira|key}-{slug}"`.
+
 ## Pitfalls
 
 - **Use `$PORT`.** A web server on a fixed port never shows as ready, and two branches would clash. Pass the port by

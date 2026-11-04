@@ -716,15 +716,23 @@ async fn outside_input_stays_outside_through_a_sub_workflow() {
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     // The agent asks to use the tool; the user says yes (the refusal is PDT's, not theirs).
     let deadline = Instant::now() + Duration::from_secs(20);
+    // Each request is answered once: on a slow runner the next pass can still list it as open before the agent's
+    // reply lands, and answering it again is refused (`request_closed`).
+    let mut answered = std::collections::HashSet::new();
     let said = loop {
         pdt_api::run_workflows(&env.state).await;
         let (_, ev) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
-        let open =
-            ev.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open");
+        let open = ev.as_array().unwrap().iter().find(|e| {
+            e["event"]["kind"] == "request"
+                && e["event"]["state"] == "open"
+                && !answered.contains(e["event"]["id"].as_str().unwrap_or_default())
+        });
         if let Some(r) = open {
-            let url = format!("/api/sessions/{session}/requests/{}", r["event"]["id"].as_str().unwrap());
+            let id = r["event"]["id"].as_str().unwrap().to_string();
+            let url = format!("/api/sessions/{session}/requests/{id}");
             let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
             assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+            answered.insert(id);
         }
         let said = agent_says(&env, &session).await;
         if let Some(m) = said.iter().skip(before).find(|m| m.starts_with("mcp run_with_secrets")) {

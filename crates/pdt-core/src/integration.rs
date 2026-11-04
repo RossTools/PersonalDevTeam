@@ -188,6 +188,9 @@ pub struct KnownIntegration {
     pub connection_kinds: &'static [&'static str],
     /// Its node kinds' (and event types') id prefixes, with their dot.
     pub kind_prefixes: &'static [&'static str],
+    /// The branch-name template part (`{jira}`) that gives the key of the ticket's linked issue in this tracker, when
+    /// it is one (pdt-core `branch_name`).
+    pub branch_part: Option<&'static str>,
 }
 
 pub const KNOWN: &[KnownIntegration] = &[
@@ -199,6 +202,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "D", color: "#5865f2" },
         connection_kinds: &["discord_webhook", "discord_bot"],
         kind_prefixes: &["discord."],
+        branch_part: None,
     },
     KnownIntegration {
         id: "jira",
@@ -209,6 +213,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "J", color: "#2684ff" },
         connection_kinds: &["jira"],
         kind_prefixes: &["jira."],
+        branch_part: Some("jira"),
     },
     KnownIntegration {
         id: "buildkite",
@@ -218,6 +223,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "BK", color: "#14cc80" },
         connection_kinds: &["buildkite"],
         kind_prefixes: &["buildkite."],
+        branch_part: None,
     },
     KnownIntegration {
         id: "gitlab",
@@ -228,6 +234,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "GL", color: "#fc6d26" },
         connection_kinds: &[],
         kind_prefixes: &[],
+        branch_part: None,
     },
     KnownIntegration {
         id: "google",
@@ -238,6 +245,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "G", color: "#4285f4" },
         connection_kinds: &["google"],
         kind_prefixes: &[],
+        branch_part: None,
     },
     KnownIntegration {
         id: "arr",
@@ -247,6 +255,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "R", color: "#e6a817" },
         connection_kinds: &["sonarr", "radarr"],
         kind_prefixes: &["sonarr.", "radarr."],
+        branch_part: None,
     },
     KnownIntegration {
         id: "scryer",
@@ -257,6 +266,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "S", color: "#7c3aed" },
         connection_kinds: &["scryer"],
         kind_prefixes: &["scryer."],
+        branch_part: None,
     },
     KnownIntegration {
         id: "plex",
@@ -266,6 +276,7 @@ pub const KNOWN: &[KnownIntegration] = &[
         icon: Icon { letters: "P", color: "#cc7b19" },
         connection_kinds: &["plex"],
         kind_prefixes: &["plex."],
+        branch_part: None,
     },
 ];
 

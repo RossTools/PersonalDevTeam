@@ -3,6 +3,7 @@ mod agent_mcp;
 mod attachments;
 mod background;
 mod board;
+mod branch_names;
 mod bug_reports;
 pub mod builtin_settings;
 mod checks;

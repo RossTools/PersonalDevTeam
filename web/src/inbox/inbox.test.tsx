@@ -193,8 +193,11 @@ describe('inbox', () => {
     const { unmount } = renderWithQuery(<InboxList items={gates} selectedId={null} onSelect={() => {}} />);
     const section = screen.getByRole('region', { name: 'Ready to accept' });
     expect(within(section).getAllByRole('row')).toHaveLength(50);
-    await userEvent.click(within(section).getByRole('button', { name: 'Show all 60' }));
+    within(section).getByRole('button', { name: 'Show all 60' }).focus();
+    await userEvent.keyboard('{Enter}');
     expect(within(section).getAllByRole('row')).toHaveLength(60);
+    // The button went away: focus is on the first row it showed.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Item g50').closest('[role="row"]')));
     unmount();
     renderWithQuery(<InboxList items={gates} selectedId="g55" onSelect={() => {}} />);
     expect(screen.getByText('Item g55')).toBeInTheDocument();
@@ -551,6 +554,68 @@ describe('inbox', () => {
     await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'approve', always: false }, rows: [1] }));
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'deny' } }));
+  });
+
+  it('takes y and n on the PM’s rows, as the conversation’s card does; Enter doesn’t allow them', async () => {
+    const row = (n: number) => ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision: 'accept_todo', agentic: false });
+    const card = item('approval:sess:pdt-ask-1', {
+      kind: 'approval', group: 'approval', sessionId: 'sess', personaName: 'PM', runId: null, stepId: null, title: 'Decide Inbox items',
+      body: { requestId: 'pdt-ask-1', sessionTitle: 'PM · Inbox', tool: 'mcp__pdt__inbox_decide', input: { items: [] }, rows: [row(1), row(2)] },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/sessions/sess/requests/pdt-ask-1': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[card]} selectedId={card.id} onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Agent call' })).toHaveTextContent('PM · Inbox proposes 2 decisions on your Inbox.');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Keep PDT-2' }));
+    expect(screen.getByText('1 of 2 ticked')).toHaveAttribute('aria-live', 'polite');
+    const answers = () => calls.filter((c) => c.path === '/api/sessions/sess/requests/pdt-ask-1').map((c) => c.body);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    fireEvent.keyDown(window, { key: 'y' });
+    await waitFor(() => expect(answers()).toEqual([{ answer: { type: 'approve', always: false }, rows: [0] }]));
+    fireEvent.keyDown(window, { key: 'n' });
+    await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'deny' } }));
+  });
+
+  it('takes y and n on an Inbox confirmation’s rows', async () => {
+    const row = (n: number) => ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision: 'reject', agentic: false });
+    const call = item('b', {
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Decide Inbox items',
+      body: { tool: 'inbox_decide', toolTitle: 'Decide Inbox items', agent: 'Codex', sessionTitle: 'PM', input: { items: [] }, rows: [row(1), row(2)] },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/b/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[call]} selectedId="b" onSelect={() => {}} />);
+    const answers = () => calls.filter((c) => c.path === '/api/inbox/b/answer').map((c) => c.body);
+    for (const k of ['PDT-1', 'PDT-2']) await userEvent.click(screen.getByRole('checkbox', { name: `Keep ${k}` }));
+    fireEvent.keyDown(window, { key: 'y' });
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Keep PDT-1' }));
+    fireEvent.keyDown(window, { key: 'y' });
+    await waitFor(() => expect(answers()).toEqual([{ choice: 'allow', rows: [0] }]));
+    fireEvent.keyDown(window, { key: 'n' });
+    await waitFor(() => expect(answers()).toContainEqual({ choice: 'deny' }));
+  });
+
+  it('shows a PDT tool’s approval and confirmation as what it would create, not its raw call', () => {
+    const input = { title: 'Fix the flicker', description: 'The board flickers.', stage: 'todo' };
+    const approval = item('approval:sess:r1', {
+      kind: 'approval', group: 'approval', sessionId: 'sess', runId: null, stepId: null, title: 'mcp__pdt__create_ticket',
+      body: { requestId: 'r1', sessionTitle: 'PM', tool: 'mcp__pdt__create_ticket', input },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    const confirm = item('c', {
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Create a ticket',
+      body: { tool: 'create_ticket', toolTitle: 'Create a ticket', agent: 'Codex', sessionTitle: 'PM', input },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    for (const it of [approval, confirm]) {
+      const { unmount } = renderWithQuery(<InboxView items={[it]} selectedId={it.id} onSelect={() => {}} />);
+      const card = screen.getByRole('group', { name: 'Create this ticket?' });
+      expect(card).toHaveTextContent('Fix the flicker');
+      expect(card).toHaveTextContent('The board flickers.');
+      expect(card).not.toHaveTextContent('"title"');
+      unmount();
+    }
   });
 
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {

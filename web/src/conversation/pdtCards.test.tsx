@@ -135,9 +135,13 @@ describe('PDT tool cards', () => {
     renderWithQuery(<PdtToolCard call={done('watch', { ticket: 'ALP-31' }, { watching: [watch] })} />);
     const card = screen.getByRole('region', { name: 'Watching ALP-31' });
     expect(card).toHaveTextContent("you'll be told when it finishes, fails or needs you");
-    await userEvent.click(within(card).getByRole('button', { name: 'Stop watching' }));
+    within(card).getByRole('button', { name: 'Stop watching' }).focus();
+    await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/watches/w1')).toBe(true));
-    expect(await screen.findByRole('region', { name: 'Watched ALP-31' })).toHaveTextContent('No longer watching');
+    const after = await screen.findByRole('region', { name: 'Watched ALP-31' });
+    expect(after).toHaveTextContent('No longer watching');
+    // The button hid itself: the card keeps focus.
+    await waitFor(() => expect(document.activeElement).toBe(after));
   });
 });
 

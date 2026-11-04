@@ -24,13 +24,16 @@ pub struct AttemptInfo {
     pub merge_requested: bool,
     /// A workflow's merge was refused for something its agent can fix (PDT-139, sticky).
     pub merge_refused: bool,
+    /// PDT named the branch from the project's template (true) or was given the name (false); None for attempts
+    /// from before PDT recorded it (PDT-594).
+    pub branch_named: Option<bool>,
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
                               a.ended_at, a.last_head, a.workspace_id FROM attempts a";
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
                                    a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
-                                   a.finish_on_merge, a.finish_delete_branch, a.merge_requested, a.merge_refused, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
+                                   a.finish_on_merge, a.finish_delete_branch, a.merge_requested, a.merge_refused, a.branch_named, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
                                    w.path AS worktree_path \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
@@ -50,6 +53,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         finish_delete_branch: r.try_get::<i64, _>("finish_delete_branch")? != 0,
         merge_requested: r.try_get::<i64, _>("merge_requested")? != 0,
         merge_refused: r.try_get::<i64, _>("merge_refused")? != 0,
+        branch_named: r.try_get::<Option<i64>, _>("branch_named")?.map(|n| n != 0),
     })
 }
 
@@ -79,6 +83,17 @@ impl Store {
         .bind(now)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// Records whether PDT named the attempt's branch from the project's template (PDT-594), so Won't do knows the
+    /// branch is PDT's to delete from the remote whatever its name.
+    pub async fn set_attempt_branch_named(&self, attempt_id: &str, named: bool) -> Result<(), StoreError> {
+        sqlx::query("UPDATE attempts SET branch_named = ? WHERE id = ?")
+            .bind(named)
+            .bind(attempt_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 

@@ -190,6 +190,30 @@ describe('MessageList', () => {
     expect(onAnswer).toHaveBeenCalledTimes(1);
     expect(onAnswer).toHaveBeenCalledWith('r2', { type: 'approve', always: false });
   });
+
+  it('once answered, the line that says so takes the focus the card had', async () => {
+    const request = { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'rm a', input: {}, canAlways: false } as const;
+    const open = ev(1, { ...request, state: 'open' });
+    const props = { provisional: [], streams: {}, turnRunning: false, pending: [], onAnswer: vi.fn(async () => {}) };
+    const { rerender } = render(<MessageList rows={[open]} {...props} />);
+    screen.getByRole('button', { name: /Allow/ }).focus();
+    await userEvent.keyboard('{Enter}');
+    expect(props.onAnswer).toHaveBeenCalled();
+    const answered = ev(1, { ...request, state: 'answered', answer: { type: 'approve', always: false } });
+    rerender(<MessageList rows={[answered]} {...props} />);
+    expect(document.activeElement).toBe(screen.getByText('Approved').parentElement);
+  });
+
+  it('an answer from elsewhere leaves focus where it is', () => {
+    const request = { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'rm a', input: {}, canAlways: false } as const;
+    const open = ev(1, { ...request, state: 'open' });
+    const props = { provisional: [], streams: {}, turnRunning: false, pending: [], onAnswer: vi.fn(async () => {}) };
+    const { rerender } = render(<><input aria-label="Elsewhere" /><MessageList rows={[open]} {...props} /></>);
+    screen.getByRole('textbox', { name: 'Elsewhere' }).focus();
+    const answered = ev(1, { ...request, state: 'answered' });
+    rerender(<><input aria-label="Elsewhere" /><MessageList rows={[answered]} {...props} /></>);
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Elsewhere' }));
+  });
 });
 
 describe('ConversationComposer', () => {
@@ -504,7 +528,9 @@ describe('ConversationView', () => {
     });
     const card = screen.getByRole('region', { name: 'Make these 3 decisions?' });
     expect(within(card).getByRole('table', { name: 'Decisions' })).toHaveTextContent('PDT-2 Proposal 2');
+    expect(within(card).getByText('3 of 3 ticked.')).toHaveAttribute('aria-live', 'polite');
     await userEvent.click(within(card).getByRole('checkbox', { name: 'Keep PDT-2' }));
+    expect(within(card).getByText('2 of 3 ticked.')).toBeInTheDocument();
     await userEvent.click(within(card).getByRole('button', { name: 'Allow 2 of 3' }));
     const answers = () => calls.filter((c) => c.path === '/api/sessions/s1/requests/pdt-ask-1').map((c) => c.body);
     await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'approve', always: false }, rows: [0, 2] }));
