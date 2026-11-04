@@ -45,5 +45,27 @@ describe('FlowGraph', () => {
       const v = openingViewport({ x: 0, y: 0, width: 200, height: 2000 }, { width: 800, height: 600 });
       expect(v).toEqual({ x: (800 - 150) / 2, y: 40, zoom: 0.75 });
     });
+
+    it('opens an L-shaped graph on its start node, not the bounds\' empty corner', () => {
+      // Cut a release: the trigger at (-520, 0), branches reaching up to y -1600 and right to x 2080.
+      const bounds = { x: -520, y: -1600, width: 2600, height: 1700 };
+      const trigger = { x: -520, y: 0, width: 176, height: 60 };
+      const canvas = { width: 580, height: 700 };
+      const v = openingViewport(bounds, canvas, trigger);
+      expect(v.zoom).toBe(0.75);
+      // The trigger sits at the left padding, and as near the middle as the bounds' bottom allows.
+      expect(v.x + trigger.x * v.zoom).toBeCloseTo(40);
+      const top = v.y + trigger.y * v.zoom;
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top + trigger.height * v.zoom).toBeLessThanOrEqual(canvas.height);
+      // No more than the padding below the graph's bottom edge.
+      expect(v.y + (bounds.y + bounds.height) * v.zoom).toBeCloseTo(canvas.height - 40);
+    });
+
+    it('centres a tall graph on its start node when the bounds allow', () => {
+      const v = openingViewport({ x: 0, y: -1000, width: 200, height: 2000 }, { width: 800, height: 600 }, { x: 0, y: 0, width: 200, height: 60 });
+      expect(v.y + 30 * v.zoom).toBeCloseTo(300);
+      expect(v.x).toBeCloseTo((800 - 150) / 2);
+    });
   });
 });
