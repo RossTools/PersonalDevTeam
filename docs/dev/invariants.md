@@ -95,8 +95,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
-  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless the
-  project lets the PM act, a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
+  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless it is a
+  PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
   whose id starts `pdt-ask-`, which the Inbox lists as its approval item) and the tool call waits on it; a terminal gets
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
   to the waiting call, and only runs the call and messages the session itself when no call waits any more).
