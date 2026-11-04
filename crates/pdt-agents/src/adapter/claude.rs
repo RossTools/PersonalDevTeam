@@ -328,6 +328,8 @@ impl ClaudeLive {
             cmd.env_remove(k);
         }
         cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
+        // So an asking tool's call can wait for the user (PDT-589).
+        cmd.envs(crate::mcp::claude_env());
         #[cfg(unix)]
         cmd.process_group(0);
         #[cfg(windows)]

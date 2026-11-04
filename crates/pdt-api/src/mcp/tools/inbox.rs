@@ -74,6 +74,7 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
             return Err(format!("The user denied this {NAME} call, so nothing changed.{why}"));
         }
         Some(Asked::Ended) => return Err(format!("{NAME} was not run: the turn ended before the user answered.")),
+        Some(Asked::Waiting) => return Err(crate::workflow::agent::still_waiting(NAME)),
         None => in_inbox(cx, &rows).await?,
     };
     let unticked: Vec<&str> =
@@ -96,6 +97,7 @@ async fn in_inbox(cx: &Cx<'_>, rows: &[DecideRow]) -> Result<Vec<usize>, String>
         Confirmed::Allowed(kept) => decide::kept(rows.len(), kept.as_deref()),
         Confirmed::Denied => Err(format!("The user denied this {NAME} call in the Inbox, so nothing changed.")),
         Confirmed::Ended => Err(format!("{NAME} was not run: its Inbox item closed before the user answered.")),
+        Confirmed::Waiting => Err(crate::workflow::agent::still_waiting(NAME)),
     }
 }
 
