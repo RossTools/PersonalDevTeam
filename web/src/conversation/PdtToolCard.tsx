@@ -1,6 +1,6 @@
 // PDT's own tool calls in a conversation as cards (PDT-382): what the agent created, changed, linked, sent, ran or
 // watched, instead of a folded "Used N tools" line.
-import { useContext, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, type ReactNode, type Ref } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
@@ -11,6 +11,7 @@ import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { TicketStage } from '../api/gen/TicketStage';
+import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { plural } from '../common/text';
 import { PRIORITY_LABEL } from '../common/PriorityIcon';
@@ -76,16 +77,24 @@ export function TicketPills({ keys }: { keys: string[] }) {
 }
 
 /** The frame every card shares: an icon and a heading, something on the right, then its rows. */
-function Card({ icon, heading, aside, children, label }: {
+function Card({ icon, heading, aside, children, label, ref }: {
   icon: ReactNode;
   heading: ReactNode;
   aside?: ReactNode;
   children?: ReactNode;
   /** The card's accessible name (the heading's text). */
   label: string;
+  /** Given, the card can take focus (from a button of its own that went away). */
+  ref?: Ref<HTMLElement>;
 }) {
   return (
-    <section aria-label={label} data-slot="pdt-card" className="rounded-lg border border-border bg-card text-sm shadow-card">
+    <section
+      ref={ref}
+      tabIndex={ref ? -1 : undefined}
+      aria-label={label}
+      data-slot="pdt-card"
+      className="rounded-lg border border-border bg-card text-sm shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
       <header className={cn('flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground', children && 'border-b border-border')}>
         <span aria-hidden className="grid size-4 shrink-0 place-items-center text-link [&>svg]:size-3.5">{icon}</span>
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">{heading}</span>
@@ -290,10 +299,16 @@ function WatchCard({ call }: { call: PdtCall }) {
     mutationFn: () => api.watches.remove(w.id!),
     onSettled: () => qc.invalidateQueries({ queryKey: ['watches'] }),
   });
+  // Stop watching hides itself: the card keeps the focus it had (PDT-547).
+  const card = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (stop.isSuccess && focusLost()) card.current?.focus({ preventScroll: true });
+  }, [stop.isSuccess]);
   const watching = !!w.id && call.status === 'done' && !stop.isSuccess && (list.data ? list.data.some((x) => x.id === w.id) : true);
   const what = w.target === 'ticket' ? <Key value={w.label} /> : <span className="font-medium text-foreground">{w.label}</span>;
   return (
     <Card
+      ref={card}
       icon={<Eye />}
       label={`${watching ? 'Watching' : 'Watched'} ${w.label}`}
       heading={

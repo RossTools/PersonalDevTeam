@@ -10,6 +10,7 @@ import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
+import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
@@ -209,6 +210,15 @@ export const requestAnchor = (requestId: string) => `request-${requestId}`;
 
 function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: boolean; onAnswer: MessageListProps['onAnswer'] }) {
   const { agent } = useContext(ListCtx);
+  // Answering removes the card that had focus: the line that says how it was answered takes it, so the keyboard stays in
+  // the conversation and a screen reader reads the result (PDT-547).
+  const resolved = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(ev.state === 'open');
+  useEffect(() => {
+    const open = ev.state === 'open';
+    if (wasOpen.current && !open && focusLost()) resolved.current?.focus({ preventScroll: true });
+    wasOpen.current = open;
+  }, [ev.state]);
   if (ev.state === 'open' && ev.rows) {
     return <DecideCard id={requestAnchor(ev.id)} rows={ev.rows} keyboard={keyboard} onAnswer={(a, kept) => onAnswer(ev.id, a, kept)} />;
   }
@@ -236,7 +246,7 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
     );
   }
   return (
-    <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+    <div ref={resolved} tabIndex={-1} className="flex items-center gap-1.5 rounded-sm px-1 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <span className={cn('shrink-0', ev.answer?.type === 'deny' && 'text-destructive')}>{resolvedText(ev)}</span>
       {ev.requestKind === 'approval' && (
         <>

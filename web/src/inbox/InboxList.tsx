@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { Badge, Button, EmptyState, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -37,6 +37,23 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
 }) {
   const groups = grouped(items);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  // Show all goes away when pressed: focus moves to the first row it showed (PDT-547). The list renders its new rows a
+  // pass after this one, so it looks for a few frames.
+  const reveal = useRef<{ section: Element; id: string } | null>(null);
+  useEffect(() => {
+    const r = reveal.current;
+    if (!r) return;
+    reveal.current = null;
+    let frame = 0;
+    let tries = 10;
+    const look = () => {
+      const row = [...r.section.querySelectorAll<HTMLElement>('[role="row"][data-key]')].find((el) => el.dataset.key === r.id);
+      if (row) row.focus();
+      else if (--tries > 0) frame = requestAnimationFrame(look);
+    };
+    look();
+    return () => cancelAnimationFrame(frame);
+  }, [expanded]);
   return (
     <>
       {groups.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
@@ -70,7 +87,16 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
               ))}
             </List>
             {rows.length < g.items.length && (
-              <Button variant="ghost" size="sm" className="mx-2 mt-1" onClick={() => setExpanded((s) => new Set(s).add(g.id))}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mx-2 mt-1"
+                onClick={(e) => {
+                  const section = e.target.closest('section');
+                  if (section) reveal.current = { section, id: g.items[rows.length].id };
+                  setExpanded((s) => new Set(s).add(g.id));
+                }}
+              >
                 Show all {g.items.length}
               </Button>
             )}

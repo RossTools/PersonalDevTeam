@@ -193,8 +193,11 @@ describe('inbox', () => {
     const { unmount } = renderWithQuery(<InboxList items={gates} selectedId={null} onSelect={() => {}} />);
     const section = screen.getByRole('region', { name: 'Ready to accept' });
     expect(within(section).getAllByRole('row')).toHaveLength(50);
-    await userEvent.click(within(section).getByRole('button', { name: 'Show all 60' }));
+    within(section).getByRole('button', { name: 'Show all 60' }).focus();
+    await userEvent.keyboard('{Enter}');
     expect(within(section).getAllByRole('row')).toHaveLength(60);
+    // The button went away: focus is on the first row it showed.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Item g50').closest('[role="row"]')));
     unmount();
     renderWithQuery(<InboxList items={gates} selectedId="g55" onSelect={() => {}} />);
     expect(screen.getByText('Item g55')).toBeInTheDocument();

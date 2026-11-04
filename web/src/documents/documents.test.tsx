@@ -334,6 +334,23 @@ describe('documents', () => {
     expect(calls.find((c) => c.path === '/api/documents/import')?.body).toEqual({ provider: 'drive', reference: 'c1/f1', by: 'user' });
   });
 
+  it('closing a provider’s picker without a file brings focus back to its button', async () => {
+    const picker = { label: 'Browse the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
+    vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick: vi.fn().mockResolvedValue([]) });
+    stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [],
+      'GET /api/drive/accounts': [
+        { connectionId: 'c1', name: 'Work', signedIn: true, email: 'me@work.com', hasClient: true, builtIn: true, agents: false, picker: true, note: null },
+      ],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    (await screen.findByRole('button', { name: 'Browse the drive…' })).focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Browse the drive…' })));
+  });
+
   it('a provider’s picker says how to get one when no account opens it', async () => {
     const picker = { label: 'Browse the drive', module: '/api/drive/picker.js', accounts: '/api/drive/accounts', help: 'Sign in to pick.' };
     stubApi({
