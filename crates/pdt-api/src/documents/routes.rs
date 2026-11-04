@@ -681,13 +681,10 @@ pub(crate) async fn create_design_doc(
 pub(crate) async fn design(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<Document>), ApiError> {
-    let input: NewDesignDoc = if body.iter().all(u8::is_ascii_whitespace) {
-        NewDesignDoc::default()
-    } else {
-        serde_json::from_slice(&body).map_err(|e| ApiError::invalid(e.to_string()))?
-    };
+    let input: NewDesignDoc = crate::host_guard::optional_json(&headers, &body)?;
     let d = create_design_doc(&st, &id, input.provider, &by_of(input.by)).await?;
     Ok((StatusCode::CREATED, Json(d)))
 }

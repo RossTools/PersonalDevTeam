@@ -291,13 +291,10 @@ pub(crate) async fn comment(
 pub(crate) async fn refine(
     State(st): State<AppState>,
     Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<Ticket>, ApiError> {
-    let by = if body.iter().all(u8::is_ascii_whitespace) {
-        None
-    } else {
-        serde_json::from_slice::<NewRefine>(&body).map_err(|e| ApiError::invalid(e.to_string()))?.by
-    };
+    let by = crate::host_guard::optional_json::<NewRefine>(&headers, &body)?.by;
     let actor = if by == Some(Actor::User) { Actor::User } else { Actor::Agent };
     let t = st.store.get_ticket_summary(&id).await?.or_404("ticket")?;
     if !matches!(t.stage, TicketStage::Draft | TicketStage::Ready) {

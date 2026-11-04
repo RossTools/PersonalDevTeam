@@ -87,8 +87,8 @@ describe('PDT tool cards', () => {
     );
     const card = screen.getByRole('region', { name: 'Changed ALP-2' });
     expect(pills(card)).toEqual(['ALP-2']);
-    expect(card).toHaveTextContent('StageTo doIn progress');
-    expect(card).toHaveTextContent('Labelsnoneagentic');
+    expect(card).toHaveTextContent('StageTo dotoIn progress');
+    expect(card).toHaveTextContent('Labelsnonetoagentic');
     expect(card).toHaveTextContent('DescriptionRewritten');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__edit_ticket', input: { ticket: 'ALP-2', priority: 'high' }, status: 'running' }} />);
     expect(screen.getByRole('region', { name: 'Changing ALP-2' })).toHaveTextContent('PriorityHigh');
