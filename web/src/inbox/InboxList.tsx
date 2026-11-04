@@ -57,7 +57,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
                   title={i.title}
                   textValue={i.title}
                   current={i.id === selectedId}
-                  className="items-start py-1.5 data-current:shadow-[inset_2px_0_0_var(--pdt-accent)]"
+                  className="items-start py-1.5"
                   leading={<KindIcon item={i} className="mt-0.5" />}
                   trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
                   secondary={

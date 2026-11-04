@@ -166,7 +166,7 @@ export function ChangeRow({ c }: { c: FieldChange }) {
           {c.from !== undefined && (
             <>
               <span className="text-muted-foreground line-through decoration-border">{valueText(c.field, c.from)}</span>
-              <ArrowRight aria-label="to" className="size-3 text-muted-foreground" />
+              <ArrowRight aria-hidden className="size-3 text-muted-foreground" /><span className="sr-only">to</span>
             </>
           )}
           <span className="font-medium">{valueText(c.field, c.to)}</span>
