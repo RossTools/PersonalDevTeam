@@ -233,6 +233,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   steps waiting for events: an empty list from a failed read would drop the events for good. Never
   `unwrap_or_default()` those reads. A workflow whose document is corrupt is left out with a warning instead, so one
   bad row doesn't hold up every event.
+- **A failed read is never "not there".** A database, keychain or file read that fails is logged and answered as a
+  failure (`ApiError::io_404` gives 404 only for a missing file; pdt-mcp answers 503 `read_failed`, never the 401
+  Bearer challenge that sends a client to sign in; a document provider's `Failed`), and nothing is dropped or resolved
+  for good on it: the outbox keeps a message whose step it can't read for the next pass. Never `.ok()?` such a read.
 - **Conversation events are never skipped.** `conversations/live.rs` `append` applies an event to the runtime state as
   it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
   the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried

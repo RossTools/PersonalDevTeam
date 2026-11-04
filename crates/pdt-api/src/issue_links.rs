@@ -167,7 +167,13 @@ pub async fn find_forge_issue(
         (plugin.forge_on(&host), repo, number)
     } else {
         let (repo, number) = repo_issue_key(given)?;
-        let project = st.store.get_project(project_id).await.ok()??;
+        let project = match st.store.get_project(project_id).await {
+            Ok(p) => p?,
+            Err(e) => {
+                tracing::warn!(project = %project_id, error = %e, "could not read the project to recognize an issue");
+                return Some(Err("could not read the project (PDT's log says why)".into()));
+            }
+        };
         let f = crate::forge::project_forge(st, project_id, &project.repo_path).await?;
         if f.kind != *kind {
             return None;
