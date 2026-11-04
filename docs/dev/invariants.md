@@ -92,9 +92,14 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
   to the waiting call, and only runs the call and messages the session itself when no call waits any more).
   `answer_request` answers PDT's own requests itself, never the agent's process, and `pm::request_opened` never answers
-  them. Codex conversations and terminals get `tool_timeout_sec` for pdt-mcp so the wait outlives Codex's one-minute
-  default. A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent
-  step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
+  them. Agents get a budget for PDT's tools so the wait outlives their own default (pdt-agents
+  `mcp::PDT_TOOL_TIMEOUT_SECS`): Codex as pdt-mcp's `tool_timeout_sec`, Claude as `MCP_TOOL_TIMEOUT` (every Claude
+  process PDT starts, unless pdtd's environment has the user's own; Claude has no per-server setting, so it covers
+  every MCP server in the session, which only matters to a call that waits). ACP agents get none: ACP's `mcpServers`
+  has no timeout. The wait itself ends a little sooner (`AppState::ask_wait`) with a "still waiting" result rather
+  than the agent's timeout: the Inbox item takes `answer_confirm`'s old way, and a conversation's card is marked
+  detached, so a turn's end keeps it, and its answer runs the call and messages the session (`held::answered_late`).
+  A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
 - **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
   list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
   `DEFAULT_TOOLS`.

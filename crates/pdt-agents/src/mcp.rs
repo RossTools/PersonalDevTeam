@@ -184,15 +184,35 @@ pub const CLAUDE_READ_TOOLS: &str = "Read,Grep,Glob";
 /// A locked-down session's Codex settings: no web search, and a read-only sandbox.
 pub const CODEX_LOCKED_CONFIG: [(&str, &str); 2] = [("web_search", "\"disabled\""), ("sandbox_mode", "\"read-only\"")];
 
-/// How long Codex waits for one of PDT's tools (`tool_timeout_sec`; Codex's own is a minute): an asking tool's call
-/// waits for the user's answer, in a conversation (PDT-490) or a terminal's Inbox item (PDT-492).
-pub const CODEX_PDT_TOOL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+/// How long an agent waits for one of PDT's tools: an asking tool's call waits for the user's answer, in a conversation
+/// (PDT-490) or a terminal's Inbox item (PDT-492). Codex gets it as pdt-mcp's `tool_timeout_sec` (its own default is a
+/// minute), Claude as [`CLAUDE_TOOL_TIMEOUT_ENV`] (PDT-589). PDT's own wait ends a little before it, with a "still
+/// waiting" result, so the agent never sees its call time out.
+pub const PDT_TOOL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+
+/// Claude Code's MCP tool-call timeout, in milliseconds. Claude has no per-server setting, so it covers every MCP
+/// server in the session, not only PDT's: harmless, as the budget only matters to a call that waits.
+pub const CLAUDE_TOOL_TIMEOUT_ENV: &str = "MCP_TOOL_TIMEOUT";
+
+/// The variable a Claude process PDT starts gets for [`PDT_TOOL_TIMEOUT_SECS`]; none when the user set their own
+/// (`inherited`, pdtd's environment), which the process inherits instead.
+pub fn claude_tool_timeout_env(inherited: Option<&std::ffi::OsStr>) -> Option<(String, String)> {
+    if inherited.is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    Some((CLAUDE_TOOL_TIMEOUT_ENV.to_string(), (PDT_TOOL_TIMEOUT_SECS * 1000).to_string()))
+}
+
+/// [`claude_tool_timeout_env`] for pdtd's own environment.
+pub fn claude_env() -> Option<(String, String)> {
+    claude_tool_timeout_env(std::env::var_os(CLAUDE_TOOL_TIMEOUT_ENV).as_deref())
+}
 
 /// A Codex app-server thread's `config` overrides. PDT's tools run without asking (as Claude's `--allowedTools`):
 /// a session only gets the tools its persona allows. The PM also gets [`CODEX_PM_CONFIG`].
 pub fn codex_thread_config(m: &McpServer) -> Value {
     let server = json!({"url": m.url, "http_headers": {"Authorization": m.bearer()},
-                        "default_tools_approval_mode": "approve", "tool_timeout_sec": CODEX_PDT_TOOL_TIMEOUT_SECS});
+                        "default_tools_approval_mode": "approve", "tool_timeout_sec": PDT_TOOL_TIMEOUT_SECS});
     let mut c = json!({format!("mcp_servers.{SERVER_NAME}"): server});
     for x in m.extra.iter().filter(|x| codex_takes(x)) {
         c[format!("mcp_servers.{}", x.name)] = codex_server(x, false);
@@ -361,7 +381,7 @@ pub fn codex_tui_args(m: &McpServer) -> Vec<String> {
         "-c".into(),
         format!("mcp_servers.{SERVER_NAME}.default_tools_approval_mode=\"approve\""),
         "-c".into(),
-        format!("mcp_servers.{SERVER_NAME}.tool_timeout_sec={CODEX_PDT_TOOL_TIMEOUT_SECS}"),
+        format!("mcp_servers.{SERVER_NAME}.tool_timeout_sec={PDT_TOOL_TIMEOUT_SECS}"),
     ]
     .into_iter()
     .chain(
@@ -667,6 +687,16 @@ mod tests {
     }
 
     #[test]
+    fn claude_gets_pdt_s_tool_timeout_unless_the_user_set_one() {
+        let ms = (PDT_TOOL_TIMEOUT_SECS * 1000).to_string();
+        assert_eq!(claude_tool_timeout_env(None), Some(("MCP_TOOL_TIMEOUT".into(), ms.clone())));
+        assert_eq!(claude_tool_timeout_env(Some("".as_ref())), Some(("MCP_TOOL_TIMEOUT".into(), ms)), "empty: unset");
+        assert_eq!(claude_tool_timeout_env(Some("90000".as_ref())), None, "the user's own stands");
+        // Within what Node's timers take (2^31 - 1 ms), or Claude would fire the timeout at once.
+        assert!(PDT_TOOL_TIMEOUT_SECS * 1000 < i32::MAX as u64);
+    }
+
+    #[test]
     fn codex_gets_overrides_and_keeps_the_token_off_the_command_line() {
         let m = server(None);
         let c = codex_thread_config(&m);
@@ -674,10 +704,10 @@ mod tests {
         assert_eq!(c["mcp_servers.pdt"]["http_headers"]["Authorization"], "Bearer s1.ab");
         let a = codex_tui_args(&m);
         assert_eq!(a.len(), 10);
-        assert_eq!(a[7], format!("mcp_servers.pdt.tool_timeout_sec={CODEX_PDT_TOOL_TIMEOUT_SECS}"));
+        assert_eq!(a[7], format!("mcp_servers.pdt.tool_timeout_sec={PDT_TOOL_TIMEOUT_SECS}"));
         assert_eq!(a[9], "shell_environment_policy.exclude=[\"PDT_MCP_*\"]", "its token stays out of shell commands");
         assert_eq!(c["mcp_servers.pdt"]["default_tools_approval_mode"], "approve");
-        assert_eq!(c["mcp_servers.pdt"]["tool_timeout_sec"], CODEX_PDT_TOOL_TIMEOUT_SECS);
+        assert_eq!(c["mcp_servers.pdt"]["tool_timeout_sec"], PDT_TOOL_TIMEOUT_SECS);
         for kv in [&a[1], &a[3], &a[5], &a[7]] {
             let t: toml::Table = toml::from_str(kv).unwrap();
             assert!(t.contains_key("mcp_servers"), "{kv}");
