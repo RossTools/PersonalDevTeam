@@ -39,6 +39,7 @@ const menu = [
 		<link rel="icon" href={`${links.home}pdt-favicon-16.svg`} type="image/svg+xml" />
 		<title>{title}</title>
 		<meta name="description" content={description} />
+		<link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
 		<meta property="og:type" content="website" />
 		<meta property="og:site_name" content={SITE_NAME} />
 		<meta property="og:title" content={title} />

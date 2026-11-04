@@ -22,8 +22,8 @@ full form.
 Click **Start** on the ticket. The **Start** dialog lets you change:
 
 - **Agent**: your default agent, or another.
-- **Session**: **Conversation** (a chat view with the agent's tool calls and diffs) or **Terminal** (the agent's own
-  interface).
+- **Session**: **Conversation** (a chat view with the agent's tool calls and diffs), **Terminal** (the agent's own
+  interface) or **No session** (only the branch and worktree).
 - **Branch** and **Base branch**: named after the ticket, made from your base branch.
 - **Permissions**: what the agent may do without asking you.
 

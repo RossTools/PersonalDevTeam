@@ -291,7 +291,7 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 
 ### Steps
 
-**Add node** lists every step, grouped:
+**Add node** lists every step (search it by name). By what they do:
 
 - **Act on tickets**: **Comment on the ticket**, **Move the ticket**, **Create a ticket**, **Finish the ticket** (stop
   its runs, remove its worktree), **Update with the base**, **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and

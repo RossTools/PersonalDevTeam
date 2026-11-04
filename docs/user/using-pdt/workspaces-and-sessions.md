@@ -26,8 +26,9 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 - The sidebar lists the workspaces, the **Tickets** being worked on (with pull request and agent state), and your
   **Agents** sessions. Right-click (or long-press) anything for rename, move and close.
 - A session's dot and label say what it is doing: **Working**, **Needs you**, **Done** (finished, not looked at yet),
-  **Idle**, **Ended**. **Background** (a slowly pulsing green ring) means its turn ended but tasks it started in the
-  background still run; hover to see them. It turns **Done** when they finish.
+  **Idle**, **Ended**, **Interrupted** (PDT restarted while it ran and it wasn't resumed). **Background** (a slowly
+  pulsing green ring) means its turn ended but tasks it started in the background still run; hover to see them. It turns
+  **Done** when they finish.
 - Sessions a workflow starts (a ticket's Coder, Reviewer and QA, a Triage or PM step) aren't under **Agents**. Find
   them in their tab, the ticket's **Sessions** (under **Attempt**), or **Open session** on the step in the workflow's
   **Runs**.
