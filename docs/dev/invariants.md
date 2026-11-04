@@ -26,6 +26,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   against `brand::MACOS_TEAM_ID` on the extracted `.app` before it removes quarantine and swaps it in. The install
   scripts pin the same key (a test checks) and check the same signature. Pinning a key or changing it:
   [SDLC.md](../SDLC.md) "Release signing".
+- **CI and the release build run third-party actions only by commit SHA.** A tag can be moved to other code, which
+  would build or upload a different release whose checksums still match. `scripts/check-action-pins.sh` enforces it;
+  [SDLC.md](../SDLC.md) "Dependabot" says how to pin one.
 
 ## Talking to agents
 
@@ -92,8 +95,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
-  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless the
-  project lets the PM act, a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
+  only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless it is a
+  PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
   whose id starts `pdt-ask-`, which the Inbox lists as its approval item) and the tool call waits on it; a terminal gets
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
   to the waiting call, and only runs the call and messages the session itself when no call waits any more).
@@ -233,6 +236,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   steps waiting for events: an empty list from a failed read would drop the events for good. Never
   `unwrap_or_default()` those reads. A workflow whose document is corrupt is left out with a warning instead, so one
   bad row doesn't hold up every event.
+- **A failed read is never "not there".** A database, keychain or file read that fails is logged and answered as a
+  failure (`ApiError::io_404` gives 404 only for a missing file; pdt-mcp answers 503 `read_failed`, never the 401
+  Bearer challenge that sends a client to sign in; a document provider's `Failed`), and nothing is dropped or resolved
+  for good on it: the outbox keeps a message whose step it can't read for the next pass. Never `.ok()?` such a read.
 - **Conversation events are never skipped.** `conversations/live.rs` `append` applies an event to the runtime state as
   it comes (a message the agent took leaves `pending`, a turn's leftover streamed text goes), then stores it through
   the conversation's `unstored` queue: one that can't be written waits there with every event after it, is retried
@@ -340,8 +347,14 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `BEGIN`.
 - **Processes start off the runtime's threads.** Creating a process (and scanning the search path for it) can take a
   second or more on a loaded Windows host, and tokio's `Command::spawn` does it inline in the poll. Async code starts
-  them on the blocking pool: pdt-agents `launch::find_launch` and `launch::spawn_child`, `spawn_blocking` around
-  `PtyManager::spawn`/`remove`/`kill` (`AppState::kill_pty`/`remove_pty`). `PtyManager` holds its map lock only to look
+  every process with pdt-agents `launch::spawn_child` (agents, workflow command and conflict steps, local CI,
+  `run_with_secrets`, sign-in), never `Command::spawn` itself; a library that spawns its own child (rmcp's
+  `TokioChildProcess` for stdio MCP servers) is spawned inside `spawn_blocking` and handed over. Search-path lookups
+  go through `launch::find_launch` or `spawn_blocking`, and so do `PtyManager::spawn`/`remove`/`kill`
+  (`AppState::kill_pty`/`remove_pty`). Killing a tree from async code or a `Drop` uses `proc::kill_group` (Windows'
+  `taskkill` starts on a thread of its own). The same goes for folders that grow with use: Claude's transcript is
+  looked up in its working folder's project first (`launch::claude_transcript`), and only scanned for on a miss, on
+  the blocking pool. `PtyManager` holds its map lock only to look
   up, reserve an id or insert, never while a PTY opens, a process starts or one is killed, so attaching, writing and
   resizing other terminals never wait on them. The id reserved while a process starts is released on every way out
   (a `Reservation` drop guard; a panic while starting becomes a spawn error), or that session could not start again
@@ -365,6 +378,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **IronCalc is one version on both sides**: pdt-sheet's `ironcalc` (pinned with `=`) and web's
   `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
   `the_web_ui_runs_the_same_ironcalc` checks).
+- **IronCalc never sees input past pdt-sheet's limits** (`limits.rs`): its formula parser and evaluator recurse
+  without a depth limit (an overflow aborts pdtd), and its importer trusts the package. Every new way a formula or a
+  file reaches IronCalc goes through `check_formula` or `check_xlsx` first, and pdtd's runtime threads keep a stack
+  (pdtd `main.rs`, `STACK`) that holds the deepest formula the limits allow. A view's diffs aren't checked (their types
+  are IronCalc's own); they rely on the stack.
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **The web doesn't test for an integration's id or name**: what a plugin adds to the UI comes from what it declares
   (its connection kinds, project settings schema, label, account sign-in, a document provider's picker, a forge's

@@ -3,7 +3,7 @@
 //! them again. The list it last got is a fingerprint in its folder, so a change made while pdtd was down (an update)
 //! is told too. Two ways reach it: the `GET /api/mcp` stream, and a POST answered as a stream with the notice first.
 
-use super::{authorize, session_tools, unauthorized};
+use super::{authorize, session_tools};
 use crate::routes::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -25,6 +25,9 @@ pub(crate) struct ToolWatch {
     changed: tokio::sync::watch::Sender<u64>,
     /// Session id → the fingerprint it was last told of, so it is told once per change.
     notified: Mutex<HashMap<String, String>>,
+    /// Session id → the fingerprint in its folder (None: it never listed them), so the file is read once per session
+    /// and written only when the list changes, not on every POST and broadcast.
+    listed: Mutex<HashMap<String, Option<String>>>,
 }
 
 /// The tools a session's tools may have changed with: a plugin turned on or off, a persona saved or updated by PDT.
@@ -46,22 +49,44 @@ fn listed_path(st: &AppState, id: &str) -> std::path::PathBuf {
     st.data_dir.join("sessions").join(id).join(LISTED_FILE)
 }
 
-/// Records the list a session was just given.
-pub(super) fn record(st: &AppState, s: &Session, list: &[ToolInfo]) {
+/// Records the list a session was just given (its folder's file only when it differs from the last one).
+pub(super) async fn record(st: &AppState, s: &Session, list: &[ToolInfo]) {
+    let print = fingerprint(list);
+    {
+        let mut cache = st.mcp_tools.listed.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.get(&s.id).is_some_and(|p| p.as_deref() == Some(print.as_str())) {
+            return;
+        }
+        cache.insert(s.id.clone(), Some(print.clone()));
+    }
     let path = listed_path(st, &s.id);
-    let written =
-        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&path, fingerprint(list)));
+    let written = tokio::task::spawn_blocking(move || {
+        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&path, print))
+    })
+    .await
+    .unwrap_or_else(|e| Err(std::io::Error::other(e)));
     if let Err(e) = written {
         tracing::warn!(session = %s.id, error = %e, "could not record the session's pdt-mcp tools");
     }
 }
 
+/// The fingerprint of the list a session last got: from memory, or its folder's file the first time.
+async fn last_listed(st: &AppState, id: &str) -> Option<String> {
+    if let Some(p) = st.mcp_tools.listed.lock().unwrap_or_else(|e| e.into_inner()).get(id) {
+        return p.clone();
+    }
+    let read = tokio::fs::read_to_string(listed_path(st, id)).await.ok().map(|t| t.trim().to_string());
+    let mut cache = st.mcp_tools.listed.lock().unwrap_or_else(|e| e.into_inner());
+    // A `tools/list` recorded meanwhile is newer than the file read.
+    cache.entry(id.to_string()).or_insert(read).clone()
+}
+
 /// Whether a session should be told its tools changed: it listed them, they differ now, and it wasn't told of this
 /// list already.
 pub(super) async fn changed_since_listed(st: &AppState, s: &Session) -> bool {
-    let Ok(last) = std::fs::read_to_string(listed_path(st, &s.id)) else { return false };
+    let Some(last) = last_listed(st, &s.id).await else { return false };
     let now = fingerprint(&listed(st, s).await);
-    if last.trim() == now {
+    if last == now {
         return false;
     }
     let mut told = st.mcp_tools.notified.lock().unwrap_or_else(|e| e.into_inner());
@@ -98,7 +123,10 @@ pub(crate) async fn get(State(st): State<AppState>, headers: HeaderMap) -> Respo
     if !accepts_stream(&headers) {
         return super::not_allowed().await;
     }
-    let Some(session) = authorize(&st, &headers).await else { return unauthorized() };
+    let session = match authorize(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r.into_response(),
+    };
     let init = Listening {
         changed: st.mcp_tools.changed.subscribe(),
         wake: st.resume_changed.subscribe(),
@@ -118,7 +146,15 @@ pub(crate) async fn get(State(st): State<AppState>, headers: HeaderMap) -> Respo
             if l.st.shutting_down.load(Ordering::SeqCst) {
                 return None;
             }
-            let s = l.st.store.get_session(&l.id).await.ok()??;
+            let s = match l.st.store.get_session(&l.id).await {
+                Ok(Some(s)) => s,
+                Ok(None) => return None,
+                // The client opens the stream again; it hears of changes since it listed through its next POST too.
+                Err(e) => {
+                    tracing::warn!(session = %l.id, error = %e, "could not read the session: ending its MCP stream");
+                    return None;
+                }
+            };
             if s.status == SessionStatus::Finished {
                 return None;
             }

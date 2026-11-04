@@ -216,22 +216,35 @@ pub(crate) fn attached_json(st: &AppState, list: &[TicketAttachment]) -> serde_j
 }
 
 /// Removes the attachment folders of tickets that no longer exist (after a ticket or project is deleted). Never fails.
+/// The folder holds one entry per ticket that ever had an attachment, so it is listed and pruned on the blocking pool.
 pub(crate) async fn prune(st: &AppState) {
     let root = tickets_dir(st);
-    let ids: Vec<String> = std::fs::read_dir(&root)
-        .map(|r| {
-            r.flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()
-        })
-        .unwrap_or_default();
+    let listed = root.clone();
+    let ids: Vec<String> = tokio::task::spawn_blocking(move || {
+        std::fs::read_dir(&listed)
+            .map(|r| {
+                r.flatten()
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
     if ids.is_empty() {
         return;
     }
     let Ok(live) = st.store.existing_ticket_ids(&ids).await else { return };
-    for id in ids.iter().filter(|id| !live.contains(id)) {
-        if let Err(e) = std::fs::remove_dir_all(root.join(id)) {
-            tracing::warn!(ticket = %id, error = %e, "could not remove a deleted ticket's attachments");
+    let gone: Vec<String> = ids.into_iter().filter(|id| !live.contains(id)).collect();
+    let _ = tokio::task::spawn_blocking(move || {
+        for id in gone {
+            if let Err(e) = std::fs::remove_dir_all(root.join(&id)) {
+                tracing::warn!(ticket = %id, error = %e, "could not remove a deleted ticket's attachments");
+            }
         }
-    }
+    })
+    .await;
 }
 
 #[derive(serde::Deserialize)]
@@ -274,7 +287,9 @@ pub(crate) async fn get(
 ) -> Result<Response, ApiError> {
     let id = ticket_id(&st, &id).await?;
     let a = st.store.get_ticket_attachment(&id, &aid).await?.or_404("attachment")?;
-    let bytes = tokio::fs::read(path_of(&st, &a)).await.map_err(|_| ApiError::not_found("attachment"))?;
+    let bytes = tokio::fs::read(path_of(&st, &a))
+        .await
+        .map_err(|e| ApiError::io_404("attachment", "reading the attachment", e))?;
     let media_type = if a.is_image() { a.media_type.clone() } else { "text/plain; charset=utf-8".into() };
     let ascii: String =
         a.name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' { c } else { '_' }).collect();

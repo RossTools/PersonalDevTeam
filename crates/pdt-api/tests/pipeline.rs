@@ -989,6 +989,9 @@ async fn a_rejected_tickets_coder_whose_terminal_stopped_gets_a_new_session_with
     }
     let accept = inbox_item(&env, "gate", &t).await;
     let first = get_ticket(&env, &t).await["sessions"][0]["id"].as_str().unwrap().to_string();
+    // A running turn refuses the switch (`turn_running`): on a slow runner the task's turn can still be going.
+    common::conversation::wait_turns(&env.app, &first, 1).await;
+    common::conversation::wait_session(&env.app, &first, "activity", "idle").await;
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{first}/mode"), Some(json!({"mode": "terminal"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");

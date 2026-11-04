@@ -19,6 +19,9 @@ const POLL_EVERY: Duration = Duration::from_secs(60);
 use pdt_core::brand::{DAEMON_BIN, PRODUCT_NAME};
 use pdt_store::Store;
 
+/// The stack of each of pdtd's runtime threads.
+const STACK: usize = 32 * 1024 * 1024;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     // `pdtd hook …` runs inside agent sessions: no runtime, no logging, never stdout, always exit 0.
@@ -27,7 +30,14 @@ fn main() {
             std::env::var(k).ok()
         }));
     }
-    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    // Sheets run IronCalc, whose formula parser and evaluator recurse: pdt-sheet's limits keep a formula within what
+    // this stack holds (tokio's default of 2 MiB is not enough for the deepest it lets through). Reserved, not used,
+    // until a thread needs it.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(STACK)
+        .build()
+        .expect("tokio runtime");
     if let Err(e) = rt.block_on(run()) {
         tracing::error!("{e:#}");
         eprintln!("{DAEMON_BIN}: {e:#}");

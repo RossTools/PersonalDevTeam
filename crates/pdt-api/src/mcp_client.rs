@@ -230,11 +230,15 @@ async fn connect(
     match &resolved.transport {
         Transport::Stdio { command, args, env, cwd } => {
             let program = command.clone();
-            let (proc, stderr) =
-                rmcp::transport::TokioChildProcess::builder(stdio_command(command, args, env, cwd.as_deref()))
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()
-                    .map_err(|e| format!("{}: could not start {program}: {e}", conn.name))?;
+            let cmd = stdio_command(command, args, env, cwd.as_deref());
+            // Started on the blocking pool (PDT-48), then handed to rmcp.
+            let (proc, stderr) = tokio::task::spawn_blocking(move || {
+                rmcp::transport::TokioChildProcess::builder(cmd).stderr(std::process::Stdio::piped()).spawn()
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|r| r)
+            .map_err(|e| format!("{}: could not start {program}: {e}", conn.name))?;
             let tail = Arc::new(Mutex::new(VecDeque::new()));
             if let Some(stderr) = stderr {
                 tokio::spawn(drain_stderr(conn.name.clone(), stderr, tail.clone()));

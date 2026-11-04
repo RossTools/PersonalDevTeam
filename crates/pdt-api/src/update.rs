@@ -599,6 +599,7 @@ async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
                 if e == UpdateError::Unauthorized {
                     s.token = TokenState::Expired;
                 }
+                tracing::warn!(error = %e, "the update check failed");
                 s.error = Some(e.to_string());
                 if !busy {
                     s.state = resting(&s);

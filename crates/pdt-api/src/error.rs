@@ -19,7 +19,8 @@ use ts_rs::TS;
 /// - 403 not allowed ([`ApiError::forbidden`]); 404 what the URL names does not exist (`not_found`, [`ApiError::not_found`]);
 ///   409 not now, in this state ([`ApiError::conflict`]).
 /// - 502 a service PDT called failed ([`ApiError::upstream`]); 503 PDT can't do it now ([`ApiError::unavailable`]):
-///   `keychain_unavailable` ([`ApiError::keychain`]), `write_failed` ([`ApiError::write_failed`]).
+///   `keychain_unavailable` ([`ApiError::keychain`]), `write_failed` ([`ApiError::write_failed`]), `read_failed` (pdt-mcp
+///   couldn't check a token).
 /// - 500 `internal` ([`ApiError::internal`]) and the few failures of PDT's own setup (`git_missing`, `spawn_failed`).
 pub mod codes {
     pub const AGENT_ERROR: &str = "agent_error";
@@ -144,6 +145,7 @@ pub mod codes {
     pub const PROVIDER_BUSY: &str = "provider_busy";
     pub const PROVIDER_FAILED: &str = "provider_failed";
     pub const PR_UNREADABLE: &str = "pr_unreadable";
+    pub const READ_FAILED: &str = "read_failed";
     pub const REFINE_RUNNING: &str = "refine_running";
     pub const REGISTRY_UNAVAILABLE: &str = "registry_unavailable";
     pub const REQUEST_CLOSED: &str = "request_closed";
@@ -341,6 +343,14 @@ impl ApiError {
             _ if doing.is_empty() => Self::internal(e),
             _ => Self::internal_as(&format!("{doing} failed (PDT's log says why)"), says(&e)),
         }
+    }
+}
+
+impl ApiError {
+    /// Reading or opening `what` failed: 404 `what` not found when it is missing, else as [`ApiError::io`] says
+    /// (PDT-524: a permission error or a full disk isn't a missing file).
+    pub fn io_404(what: &str, doing: &str, e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::NotFound { Self::not_found(what) } else { Self::io(doing, e) }
     }
 }
 

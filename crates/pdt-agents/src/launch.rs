@@ -219,17 +219,39 @@ fn read_rollout_meta(path: &Path) -> Option<(String, String, i64)> {
     Some((p.get("id")?.as_str()?.to_string(), p.get("cwd")?.as_str()?.to_string(), began))
 }
 
-/// Whether Claude has saved a conversation for `session_id`. It writes `projects/<encoded cwd>/<id>.jsonl` only
-/// after the first turn; the folder name is Claude's own encoding, so every project folder is checked.
-pub fn claude_conversation_exists(config_dir: &Path, session_id: &str) -> bool {
-    claude_transcript(config_dir, session_id).is_some()
+/// Whether Claude has saved a conversation for `session_id`, started in `cwd`. It writes
+/// `projects/<encoded cwd>/<id>.jsonl` only after the first turn. Reads the file system: async code calls
+/// [`claude_conversation_saved`].
+pub fn claude_conversation_exists(config_dir: &Path, cwd: &str, session_id: &str) -> bool {
+    claude_transcript(config_dir, cwd, session_id).is_some()
 }
 
-/// Claude's transcript of a session: `<config dir>/projects/<folder key>/<session id>.jsonl`, once it has one.
-pub fn claude_transcript(config_dir: &Path, session_id: &str) -> Option<PathBuf> {
-    let projects = std::fs::read_dir(config_dir.join("projects")).ok()?;
+/// [`claude_conversation_exists`] on the blocking pool. Unknown config dir: assume it was saved.
+pub async fn claude_conversation_saved(config_dir: Option<&Path>, cwd: &str, session_id: &str) -> bool {
+    let Some(dir) = config_dir.map(Path::to_path_buf) else { return true };
+    let (cwd, id) = (cwd.to_string(), session_id.to_string());
+    tokio::task::spawn_blocking(move || claude_conversation_exists(&dir, &cwd, &id)).await.unwrap_or(false)
+}
+
+/// The project folder Claude keeps a working folder's conversations in: every character other than an ASCII letter or
+/// digit becomes `-` (`/Users/me/repo` is `-Users-me-repo`). Claude shortens very long names its own way, which
+/// [`claude_transcript`] finds by scanning.
+pub fn claude_project_folder(cwd: &str) -> String {
+    cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Claude's transcript of a session started in `cwd`: `<config dir>/projects/<project folder>/<session id>.jsonl`, once
+/// it has one. The folder `cwd` names is checked first; only when the file is not there is every project folder
+/// (one per working folder Claude ever ran in, so it grows with each worktree) scanned. Reads the file system: call
+/// it on the blocking pool.
+pub fn claude_transcript(config_dir: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
+    let root = config_dir.join("projects");
     let file = format!("{session_id}.jsonl");
-    projects.flatten().map(|d| d.path().join(&file)).find(|p| p.is_file())
+    let direct = root.join(claude_project_folder(cwd)).join(&file);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    std::fs::read_dir(root).ok()?.flatten().map(|d| d.path().join(&file)).find(|p| p.is_file())
 }
 
 /// Runs `shell args` and returns the last line of its stdout, or None if it fails, prints nothing or outlives `timeout`.
@@ -378,21 +400,41 @@ mod tests {
     #[test]
     fn claude_conversation_is_found_in_any_project_folder() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!claude_conversation_exists(dir.path(), "abc"), "no projects dir");
+        let exists = |id: &str| claude_conversation_exists(dir.path(), "/elsewhere", id);
+        assert!(!exists("abc"), "no projects dir");
         std::fs::create_dir_all(dir.path().join("projects").join("C--some-repo")).unwrap();
         std::fs::create_dir_all(dir.path().join("projects").join("C--other")).unwrap();
-        assert!(!claude_conversation_exists(dir.path(), "abc"), "no file yet");
-        std::fs::write(
-            dir.path().join("projects").join("C--other").join("abc.jsonl"),
-            "{}
-",
-        )
-        .unwrap();
-        assert!(claude_conversation_exists(dir.path(), "abc"));
-        assert!(!claude_conversation_exists(dir.path(), "abcd"), "a different id");
+        assert!(!exists("abc"), "no file yet");
+        std::fs::write(dir.path().join("projects").join("C--other").join("abc.jsonl"), "{}\n").unwrap();
+        assert!(exists("abc"));
+        assert!(!exists("abcd"), "a different id");
         // A directory with the right name is not a conversation.
         std::fs::create_dir_all(dir.path().join("projects").join("C--some-repo").join("xyz.jsonl")).unwrap();
-        assert!(!claude_conversation_exists(dir.path(), "xyz"));
+        assert!(!exists("xyz"));
+    }
+
+    #[test]
+    fn claude_transcript_is_looked_up_in_its_working_folders_project_first() {
+        assert_eq!(claude_project_folder("/Users/me/repo/.worktrees/a_b"), "-Users-me-repo--worktrees-a-b");
+        assert_eq!(claude_project_folder(r"C:\Users\me\repo"), "C--Users-me-repo");
+        let dir = tempfile::tempdir().unwrap();
+        let projects = dir.path().join("projects");
+        let own = projects.join(claude_project_folder("/work/repo"));
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("abc.jsonl"), "{}\n").unwrap();
+        assert_eq!(claude_transcript(dir.path(), "/work/repo", "abc"), Some(own.join("abc.jsonl")));
+        // Another working folder's copy is found by the scan when its own folder has none.
+        let other = projects.join("-moved");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("def.jsonl"), "{}\n").unwrap();
+        assert_eq!(claude_transcript(dir.path(), "/work/repo", "def"), Some(other.join("def.jsonl")));
+    }
+
+    #[tokio::test]
+    async fn claude_conversation_saved_assumes_saved_without_a_config_dir() {
+        assert!(claude_conversation_saved(None, "/work", "abc").await);
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!claude_conversation_saved(Some(dir.path()), "/work", "abc").await);
     }
 
     #[test]

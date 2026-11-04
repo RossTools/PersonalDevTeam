@@ -326,10 +326,18 @@ pub(crate) async fn post_sign_in(
         return Err(ApiError::bad_request(codes::NO_SIGN_IN, format!("{} has no sign-in", def.label)));
     };
     let s = st.store.get_host_settings().await?;
-    let def = launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def, st.host_env.acp_program.as_deref());
-    let program = crate::host::found(&def.command, st.platform.login_path.as_deref())
-        .ok_or_else(|| ApiError::conflict(codes::AGENT_NOT_FOUND, format!("{} is not installed", def.label)))?;
-    let cwd = st.home_dir.clone().filter(|h| h.is_dir()).unwrap_or_else(std::env::temp_dir);
+    // Reading the installed agent's record and searching the PATH touch the disk: on the blocking pool.
+    let (data_dir, home, search) = (st.data_dir.clone(), st.home_dir.clone(), st.platform.login_path.clone());
+    let env_program = st.host_env.acp_program.clone();
+    let (def, program, cwd) = tokio::task::spawn_blocking(move || {
+        let def = launch_def(&data_dir, home.as_deref(), &s, def, env_program.as_deref());
+        let program = crate::host::found(&def.command, search.as_deref());
+        (def, program, home.filter(|h| h.is_dir()).unwrap_or_else(std::env::temp_dir))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?;
+    let program =
+        program.ok_or_else(|| ApiError::conflict(codes::AGENT_NOT_FOUND, format!("{} is not installed", def.label)))?;
     let mut cmd = tokio::process::Command::new(&program);
     cmd.args(&def.args)
         .current_dir(&cwd)
@@ -338,7 +346,9 @@ pub(crate) async fn post_sign_in(
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
     cmd.envs(def.env.iter().map(|e| (&e.name, &e.value)));
-    let child = cmd.spawn().map_err(|e| ApiError::internal(format!("could not start {}: {e}", def.label)))?;
+    let child = pdt_agents::launch::spawn_child(cmd)
+        .await
+        .map_err(|e| ApiError::internal(format!("could not start {}: {e}", def.label)))?;
     let outcome = tokio::time::timeout(SIGN_IN_TIMEOUT, authenticate(child, method)).await;
     match outcome {
         Ok(Ok(())) => Ok(Json(crate::host::view(&st).await?)),

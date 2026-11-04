@@ -154,7 +154,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         if let Err(e) = crate::conversations::start(st, &session, valid.initial_prompt).await {
             crate::conversations::forget(st, &session.id).await;
             st.store.delete_session(&session.id).await?;
-            let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
+            remove_data_dir(st, &session.id).await;
             return Err(e);
         }
         if let Some(tab) = req.tab {
@@ -184,7 +184,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
     };
     if let Err(e) = started {
         st.store.delete_session(&session.id).await?;
-        let _ = std::fs::remove_dir_all(session_data_dir(st, &session.id));
+        remove_data_dir(st, &session.id).await;
         return Err(e);
     }
     crate::activity::track(st, &session).await;
@@ -335,13 +335,13 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
         return s.external_session_id.clone().map(Resume::Devin).unwrap_or(Resume::Fresh);
     }
     // Claude: resuming a conversation that was never saved fails, so start a fresh one under the same id (a new
-    // conversation's own after `/clear`: the session id's transcript is taken). Only a few
-    // directory entries are read, so this stays on the async thread. Unknown config dir: assume it was saved.
-    let saved = st
-        .platform
-        .claude_config_dir
-        .as_deref()
-        .is_none_or(|dir| pdt_agents::launch::claude_conversation_exists(dir, s.claude_conversation_id()));
+    // conversation's own after `/clear`: the session id's transcript is taken).
+    let saved = pdt_agents::launch::claude_conversation_saved(
+        st.platform.claude_config_dir.as_deref(),
+        &s.cwd,
+        s.claude_conversation_id(),
+    )
+    .await;
     if saved { Resume::Claude } else { Resume::Fresh }
 }
 
@@ -923,10 +923,17 @@ pub(crate) async fn discard(st: &AppState, id: &str) {
     if let Err(e) = st.store.delete_session(id).await {
         tracing::warn!(session = %id, error = %e, "could not delete the session row");
     }
-    let _ = std::fs::remove_dir_all(session_data_dir(st, id));
+    remove_data_dir(st, id).await;
     crate::activity::forget(st, id);
     drop(_guard);
     st.forget_session_lock(id);
+}
+
+/// Deletes a session's folder (its hook settings, instructions, logs), best-effort, on the blocking pool: removing a
+/// project discards many sessions.
+async fn remove_data_dir(st: &AppState, id: &str) {
+    let dir = session_data_dir(st, id);
+    let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dir)).await;
 }
 
 /// Removes a session, stopping it first if it runs.
@@ -943,7 +950,7 @@ async fn remove_locked(st: &AppState, id: &str) -> Result<(), ApiError> {
     st.remove_pty(id).await;
     st.store.delete_session(id).await?;
     // Best-effort: the session's hook settings.
-    let _ = std::fs::remove_dir_all(session_data_dir(st, id));
+    remove_data_dir(st, id).await;
     crate::activity::forget(st, id);
     st.forget_session_lock(id);
     Ok(())
