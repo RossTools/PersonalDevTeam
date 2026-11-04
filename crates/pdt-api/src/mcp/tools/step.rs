@@ -229,20 +229,44 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         _ => Value::Null,
     };
     // An external ticket's title and description are what someone outside PDT wrote (an imported issue, PDT-202,
-    // PDT-415): fenced.
+    // PDT-415): fenced. Linked issues' titles (PDT-536) and the documents' titles are outside text on any ticket.
     let external = ticket.summary.source == TicketSource::External;
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
-    let outside = external.then(|| (fence.wrap(&ticket.summary.title), fence.wrap(&ticket.description), fence.note()));
+    let outside = external.then(|| (fence.wrap(&ticket.summary.title), fence.wrap(&ticket.description)));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
     let ticket_project = ticket.summary.project_id.clone();
     let mut v = serde_json::to_value(ticket).map_err(|e| e.to_string())?;
-    if let Some((title, description, note)) = outside {
+    let issues = super::issue_links::fence_titles(&mut v["external"], &fence);
+    if let Some((title, description)) = outside {
         v["title"] = json!(title);
         v["description"] = json!(description);
-        v["outsideText"] = json!(format!(
-            "{note} This ticket came from outside PDT, so its title and description (and any text file attached to \
-             it) are in such blocks (the tags are not part of them)."
-        ));
+    }
+    let documents: Vec<Value> = crate::documents::routes::for_agent(st, id)
+        .await
+        .map_err(api)?
+        .into_iter()
+        .map(|mut d| {
+            if let Some(t) = d["title"].as_str() {
+                d["title"] = json!(fence.wrap(t));
+            }
+            d
+        })
+        .collect();
+    let mut fenced = vec![];
+    if external {
+        fenced.push(
+            "This ticket came from outside PDT, so its title and description (and any text file attached to it) are \
+             in such blocks.",
+        );
+    }
+    if issues {
+        fenced.push("Its linked issues' titles are what their trackers say, so they are in such blocks.");
+    }
+    if !documents.is_empty() {
+        fenced.push("Its documents' titles are written by whoever can edit them, so they are in such blocks.");
+    }
+    if !fenced.is_empty() {
+        v["outsideText"] = json!(format!("{} {} (The tags are not part of them.)", fence.note(), fenced.join(" ")));
     }
     if !attachments.is_empty() {
         v["attachments"] = json!(attachments);
@@ -251,7 +275,6 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
              read; an image opens with your file-reading or image-viewing tool)."
         );
     }
-    let documents = crate::documents::routes::for_agent(st, id).await.map_err(api)?;
     if !documents.is_empty() {
         v["documents"] = json!(documents);
         v["documentsNote"] = json!(

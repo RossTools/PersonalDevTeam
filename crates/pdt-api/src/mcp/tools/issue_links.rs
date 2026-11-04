@@ -1,6 +1,7 @@
 //! The PM's tools for a ticket's links to issues in other trackers and its plain links (PDT-481).
 
 use super::*;
+use pdt_core::fence::Fence;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -53,9 +54,23 @@ pub(super) fn defs() -> Vec<Tool> {
     ]
 }
 
-/// What the agent reads back: the ticket's issues and plain links.
-fn links_json(t: &pdt_core::ticket::Ticket) -> Value {
-    let issues: Vec<Value> = t
+/// Wraps the `title` of each issue in `issues` (a ticket's `external`, or [`links_json`]'s `issues`) in `fence`: what
+/// a tracker says an issue is called is outside text, whoever linked it (PDT-536). Whether any had one.
+pub(super) fn fence_titles(issues: &mut Value, fence: &Fence) -> bool {
+    let mut any = false;
+    for l in issues.as_array_mut().into_iter().flatten() {
+        if let Some(t) = l["title"].as_str() {
+            l["title"] = json!(fence.wrap(t));
+            any = true;
+        }
+    }
+    any
+}
+
+/// What the agent reads back: the ticket's issues and plain links, the issues' titles in `fence`; and whether any
+/// had a title.
+fn links_json(t: &pdt_core::ticket::Ticket, fence: &Fence) -> (Value, bool) {
+    let mut issues: Value = t
         .summary
         .external
         .iter()
@@ -64,8 +79,20 @@ fn links_json(t: &pdt_core::ticket::Ticket) -> Value {
                    "origin": l.origin, "closeOnDone": l.close_on_done})
         })
         .collect();
+    let fenced = fence_titles(&mut issues, fence);
     let links: Vec<Value> = t.web_links.iter().map(|l| json!({"label": l.label, "url": l.url})).collect();
-    json!({"key": t.summary.key, "issues": issues, "links": links})
+    (json!({"key": t.summary.key, "issues": issues, "links": links}), fenced)
+}
+
+/// A link tool's answer: `v` with the note on `fence`'s blocks (the issues' titles) when it has any (`fenced`).
+fn noted(mut v: Value, fence: &Fence, fenced: bool) -> Value {
+    if fenced {
+        v["outsideText"] = json!(format!(
+            "{} An issue's title is what its tracker says, so each is in such a block (the tags are not part of it).",
+            fence.note()
+        ));
+    }
+    v
 }
 
 /// The issues and plain links `given` names for a new ticket of `project_id` (`create_ticket`'s `external`), read
@@ -122,11 +149,14 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let by = agent_by(st, cx.session).await;
             let t = link(st, &id, &found, a.close_on_done, by).await?;
             // The one just linked, for the conversation's card.
+            let fence = new_fence();
             let issue = match &found {
-                Found::Issue(r) => json!({"key": r.issue.key, "url": r.issue.url, "title": r.issue.title}),
+                Found::Issue(r) => json!({"key": r.issue.key, "url": r.issue.url, "title": fence.wrap(&r.issue.title)}),
                 Found::Web(url, label) => json!({"key": null, "url": url, "title": label}),
             };
-            Ok(json!({"linked": true, "issue": issue, "ticket": links_json(&t)}))
+            let (ticket, titled) = links_json(&t, &fence);
+            let fenced = titled || matches!(found, Found::Issue(_));
+            Ok(noted(json!({"linked": true, "issue": issue, "ticket": ticket}), &fence, fenced))
         }
         "unlink_issue" => {
             let a: UnlinkIssue = args(a)?;
@@ -141,8 +171,9 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
             let by = agent_by(st, cx.session).await;
             // The one removed, for the conversation's card.
+            let fence = new_fence();
             let removed = match (issue, web) {
-                (Some(l), _) => json!({"key": l.key, "url": l.url, "title": l.title}),
+                (Some(l), _) => json!({"key": l.key, "url": l.url, "title": l.title.as_deref().map(|t| fence.wrap(t))}),
                 (None, Some(w)) => json!({"key": null, "url": w.url, "title": w.label}),
                 (None, None) => unreachable!("checked above"),
             };
@@ -152,8 +183,14 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 (None, None) => unreachable!("checked above"),
             }
             .map_err(|e| api(e.into()))?;
-            Ok(json!({"unlinked": true, "issue": removed, "ticket": links_json(&t)}))
+            let (ticket, titled) = links_json(&t, &fence);
+            let fenced = titled || issue.is_some_and(|l| l.title.is_some());
+            Ok(noted(json!({"unlinked": true, "issue": removed, "ticket": ticket}), &fence, fenced))
         }
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+fn new_fence() -> Fence {
+    Fence::new(uuid::Uuid::new_v4().simple().to_string())
 }

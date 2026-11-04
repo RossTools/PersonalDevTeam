@@ -47,8 +47,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (pdt-api `conversations/mod.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at
   once, as an automatic nudge (`workflow/agent/recovery.rs` `restarted_while_waiting`). Terminals don't report
   background tasks, so their agents aren't told.
-- **Text from outside is fenced.** Issue and PR text (titles too), webhook payloads and other outside fields
-  (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
+- **Text from outside is fenced.** Issue and PR text (titles too, a linked issue's on any ticket: `get_ticket`,
+  `link_issue`), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
+  payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
   reviews are outside text whatever their role on the repository (they relay others' text). A sub-workflow's run
   inherits its `workflow.call` chain's first run (`untrusted::origin`, `StepCx::origin`): when that run's trigger

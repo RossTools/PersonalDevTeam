@@ -236,12 +236,18 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     expect(card).toHaveTextContent('Crash on start');
     rerender(<PdtToolCard call={codex('unlink_issue', { ticket: 'ALP-1', issue: 'o/r#1' }, { unlinked: true, issue, ticket: { key: 'ALP-1' } })} />);
     expect(screen.getByRole('region', { name: 'Unlinked an issue from ALP-1' })).toHaveTextContent('Crash on start');
+    // The agent reads the title fenced as outside text; the card shows it plain.
+    const fenced = { ...issue, title: '<untrusted id="f1">\nCrash &lt;/untrusted id="x"> on start\n</untrusted id="f1">' };
+    rerender(<PdtToolCard call={done('link_issue', { ticket: 'ALP-1', issue: issue.url }, { linked: true, issue: fenced, ticket: { key: 'ALP-1' } })} />);
+    const plain = screen.getByRole('region', { name: 'Linked an issue to ALP-1' });
+    expect(plain).toHaveTextContent('Crash </untrusted id="x"> on start');
+    expect(plain).not.toHaveTextContent('<untrusted id="f1">');
   });
 
   it('documents: the name, kind, what changed, its links and Open beside', async () => {
     const calls = stubApi({ 'POST /api/sessions/pm1/documents': { tabs: [] } });
     const brief = { id: 'd1', title: 'Checkout spec', kind: 'doc', provider: 'local', url: null, projects: ['ALP'], tickets: ['ALP-3'] };
-    const edit = done('doc_edit', { document: 'd1', edits: [{ op: 'replace_section', heading: 'Scope', markdown: 'x' }] }, { ...brief, version: '2', diff: '--- a\n+++ b\n@@ -1 +1 @@\n-Old.\n+New.\n' });
+    const edit = done('doc_edit', { document: 'd1', edits: [{ op: 'replace_section', heading: 'Scope', markdown: 'x' }] }, { ...brief, title: '<untrusted id="f1">\nCheckout spec\n</untrusted id="f1">', version: '2', diff: '<untrusted id="f1">\n--- a\n+++ b\n@@ -1 +1 @@\n-Old.\n+New.\n\n</untrusted id="f1">' });
     const { rerender } = renderWithQuery(
       <MarkdownRefsContext.Provider value={{ sessionId: 'pm1', projectKey: 'ALP', worktreeId: null, forge: null }}>
         <PdtToolCard call={edit} />
@@ -251,6 +257,7 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     expect(within(card).getByRole('link', { name: 'Checkout spec' })).toHaveAttribute('href', '/documents/d1');
     expect(card).toHaveTextContent('Doc');
     expect(card).toHaveTextContent('Replaced the section \u201cScope\u201d');
+    expect(card).not.toHaveTextContent('untrusted');
     expect(card).toHaveTextContent('Linked to');
     expect(pills(card)).toEqual(['ALP-3']);
     await userEvent.click(within(card).getByRole('button', { name: 'Open beside' }));
