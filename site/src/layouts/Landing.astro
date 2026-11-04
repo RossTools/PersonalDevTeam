@@ -15,6 +15,20 @@ interface Props {
 const { title: page, description } = Astro.props;
 const title = pageTitle(page);
 const links = siteLinks(import.meta.env.BASE_URL);
+
+// The phone menu's links; it marks the page you're on (a plugin's own page counts as Plugins).
+const path = Astro.url.pathname.replace(/\/?$/, '/');
+const menu = [
+	{ label: 'How it works', href: `${links.home}#how` },
+	{ label: 'Features', href: links.features },
+	{ label: 'Plugins', href: links.plugins, section: true },
+	{ label: 'Docs', href: links.docs },
+	{ label: 'Changelog', href: links.changelog },
+	{ label: 'GitHub', href: links.github },
+].map((l) => ({
+	...l,
+	current: path === l.href ? 'page' : l.section && path.startsWith(l.href) ? 'true' : undefined,
+}));
 ---
 
 <!doctype html>
@@ -46,9 +60,19 @@ const links = siteLinks(import.meta.env.BASE_URL);
 					<li><a href={links.changelog}>Changelog</a></li>
 				</ul>
 				<div class="right">
-					<a class="btn sm ghost" href={links.github}>GitHub</a>
+					<a class="btn sm ghost nav-github" href={links.github}>GitHub</a>
 					<a class="btn sm primary" href={links.download}>Download</a>
+					<button class="btn sm ghost menu-button" type="button" aria-expanded="false" aria-controls="site-menu">
+						<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"
+							><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg
+						><span class="menu-label">Menu</span>
+					</button>
 				</div>
+			</div>
+			<div class="menu-panel" id="site-menu" hidden>
+				<ul>
+					{menu.map((l) => <li><a href={l.href} aria-current={l.current}>{l.label}</a></li>)}
+				</ul>
 			</div>
 		</nav>
 
@@ -63,5 +87,42 @@ const links = siteLinks(import.meta.env.BASE_URL);
 				</div>
 			</div>
 		</footer>
+
+		<script>
+			// The phone menu (below 860 px). Without the script the button stays hidden and the footer has the links.
+			const nav = document.querySelector<HTMLElement>('body > nav')!;
+			const button = nav.querySelector<HTMLButtonElement>('.menu-button')!;
+			const label = button.querySelector<HTMLElement>('.menu-label')!;
+			const panel = nav.querySelector<HTMLElement>('#site-menu')!;
+			const desktop = window.matchMedia('(min-width: 861px)');
+
+			function setOpen(open: boolean, restoreFocus = true) {
+				if (open === !panel.hidden) return;
+				panel.hidden = !open;
+				button.setAttribute('aria-expanded', String(open));
+				label.textContent = open ? 'Close' : 'Menu';
+				document.documentElement.classList.toggle('menu-open', open);
+				if (open) panel.querySelector<HTMLElement>('a')?.focus();
+				else if (restoreFocus) button.focus({ preventScroll: true });
+			}
+
+			nav.dataset.menu = 'ready';
+			button.addEventListener('click', () => setOpen(panel.hidden));
+			// A link closes it before the browser follows it, so a same-page anchor can scroll.
+			panel.addEventListener('click', (e) => {
+				if ((e.target as Element).closest('a')) setOpen(false, false);
+				else if (e.target === panel) setOpen(false);
+			});
+			document.addEventListener('click', (e) => {
+				if (!panel.hidden && !nav.contains(e.target as Node)) setOpen(false);
+			});
+			document.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape' && !panel.hidden) setOpen(false);
+			});
+			nav.addEventListener('focusout', (e) => {
+				if (!panel.hidden && e.relatedTarget && !nav.contains(e.relatedTarget as Node)) setOpen(false, false);
+			});
+			desktop.addEventListener('change', () => desktop.matches && setOpen(false, false));
+		</script>
 	</body>
 </html>

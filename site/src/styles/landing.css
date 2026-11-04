@@ -22,8 +22,8 @@ nav .wrap { display: flex; align-items: center; height: 60px; gap: 32px; }
 /* What PDT stands for, beside the mark in the nav; phones have it in the hero's eyebrow instead. */
 .logo-name { font-size: 14px; font-weight: 500; letter-spacing: 0; color: var(--muted); white-space: nowrap; }
 @media (max-width: 600px) { .logo-name { display: none; } }
-nav ul { display: flex; gap: 24px; list-style: none; padding: 0; font-size: 14px; color: var(--muted); }
-nav ul a:hover { color: var(--fg); }
+nav .wrap > ul { display: flex; gap: 24px; list-style: none; padding: 0; font-size: 14px; color: var(--muted); }
+nav .wrap > ul a:hover { color: var(--fg); }
 nav .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
 
 .btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 8px; font-weight: 500; font-size: 15px; border: 1px solid var(--border); transition: .12s; }
@@ -31,6 +31,18 @@ nav .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #eef2fb; }
 .btn.primary:hover { background: var(--accent-hi); }
 .btn.ghost:hover { background: var(--surface); }
+/* The phone menu: a button beside Download (shown once its script runs) opens the links in a panel under the bar,
+   over a dimmed page that closes it when tapped. */
+.menu-button { display: none; cursor: pointer; background: none; color: var(--fg); font-family: inherit; }
+.menu-button svg { flex: none; }
+.menu-panel { position: absolute; top: 100%; left: 0; right: 0; height: calc(100dvh - 60px); background: rgba(0,0,0,.55); }
+.menu-panel[hidden] { display: none; }
+@media (min-width: 861px) { .menu-panel { display: none; } }
+.menu-panel ul { list-style: none; padding: 8px 0 16px; background: var(--bg); border-bottom: 1px solid var(--border); }
+.menu-panel a { display: flex; align-items: center; min-height: 48px; padding: 0 24px; font-size: 17px; color: var(--muted); border-left: 2px solid transparent; }
+.menu-panel a:hover, .menu-panel a:focus-visible { color: var(--fg); background: var(--surface); }
+.menu-panel a[aria-current] { color: var(--fg); border-left-color: var(--accent-hi); background: var(--accent-soft); }
+html.menu-open, html.menu-open body { overflow: hidden; }
 
 /* Hero */
 .hero { position: relative; padding: 96px 0 56px; text-align: center; overflow: hidden; }
@@ -108,7 +120,7 @@ h2 { font-size: clamp(30px, 4vw, 42px); line-height: 1.15; letter-spacing: -.02e
 .stat { border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; background: var(--surface); }
 .stat b { display: block; font-size: 34px; letter-spacing: -.02em; }
 .stat span { font-size: 13px; color: var(--muted); }
-.term { background: #0a0b0d; border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; font: 13px/1.8 var(--mono); color: var(--muted); }
+.term { background: #0a0b0d; border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; font: 13px/1.8 var(--mono); color: var(--muted); overflow-x: auto; }
 .term div { white-space: pre; }
 .term .p { color: var(--accent-hi); } .term .g { color: var(--running); } .term .y { color: var(--waiting); } .term .w { color: var(--fg); }
 ul.checks { list-style: none; padding: 0; margin-top: 28px; display: grid; gap: 12px; }
@@ -161,7 +173,7 @@ ul.checks b { color: var(--fg); font-weight: 500; }
 
 footer { border-top: 1px solid var(--border); padding: 40px 0; font-size: 14px; color: var(--muted); }
 footer .wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
-footer .links { margin-left: auto; display: flex; gap: 20px; }
+footer .links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 20px; }
 footer a:hover { color: var(--fg); }
 
 
@@ -180,10 +192,11 @@ footer a:hover { color: var(--fg); }
 .final .lead { margin: 16px auto 0; }
 
 @media (max-width: 860px) {
-  nav ul { display: none; }
+  nav .wrap > ul, nav[data-menu] .nav-github { display: none; }
+  nav[data-menu] .menu-button { display: inline-flex; }
   .loop { grid-template-columns: repeat(2, 1fr); row-gap: 40px; } .step::after { display: none; }
   .features { grid-template-columns: 1fr; }
-  .split { grid-template-columns: 1fr; gap: 40px; }
+  .split { grid-template-columns: minmax(0, 1fr); gap: 40px; }
 }
 
 /* The PM section: its points beside a conversation with the PM. The shot is taller than the text, which stays in view
