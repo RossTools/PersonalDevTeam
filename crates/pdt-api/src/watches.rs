@@ -139,11 +139,20 @@ async fn label(st: &AppState, target: WatchTarget, id: &str) -> Option<String> {
 pub(crate) async fn infos(st: &AppState, watches: Vec<Watch>) -> Result<Vec<WatchInfo>, ApiError> {
     let mut out = vec![];
     for w in watches {
-        let target_label = match w.target {
-            WatchTarget::Ticket => st.store.get_ticket(&w.target_id).await?.map(|t| t.summary.key),
-            WatchTarget::Run => st.store.get_workflow_run(&w.target_id).await?.map(|r| r.workflow_name),
-        }
-        .unwrap_or_else(|| w.target_id.clone());
+        // (label, title, state, workflow): what the conversation header's watch list shows of each.
+        let (label, target_title, target_state, workflow_id) = match w.target {
+            WatchTarget::Ticket => match st.store.get_ticket(&w.target_id).await? {
+                Some(t) => {
+                    (Some(t.summary.key), Some(t.summary.title), Some(t.summary.stage.as_str().to_string()), None)
+                }
+                None => (None, None, None, None),
+            },
+            WatchTarget::Run => match st.store.get_workflow_run(&w.target_id).await? {
+                Some(r) => (Some(r.workflow_name), None, Some(r.status.as_str().to_string()), Some(r.workflow_id)),
+                None => (None, None, None, None),
+            },
+        };
+        let target_label = label.unwrap_or_else(|| w.target_id.clone());
         let watcher = match &w.session_id {
             None => "you".to_string(),
             Some(sid) => match st.store.get_session(sid).await? {
@@ -156,6 +165,9 @@ pub(crate) async fn infos(st: &AppState, watches: Vec<Watch>) -> Result<Vec<Watc
             target: w.target,
             target_id: w.target_id,
             target_label,
+            target_title,
+            target_state,
+            workflow_id,
             session_id: w.session_id,
             watcher,
             events: w.events,

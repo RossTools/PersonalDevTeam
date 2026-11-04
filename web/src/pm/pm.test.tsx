@@ -5,6 +5,7 @@ import { plugins } from '../api/gen/plugins';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { PmState } from '../api/gen/PmState';
 import type { Session } from '../api/gen/Session';
+import type { WatchInfo } from '../api/gen/WatchInfo';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { PmList } from './PmList';
 import { PmView } from './PmView';
@@ -155,6 +156,66 @@ describe('the PM', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/pm/sessions/c1')).toBe(true));
     expect(onSelect).toHaveBeenCalledWith('current');
+  });
+
+  it('shows what the conversation watches in its header, and stops a watch after asking', async () => {
+    const watch = (over: Partial<WatchInfo>): WatchInfo => ({
+      id: 'w1', target: 'ticket', targetId: 't12', targetLabel: 'ALP-12', targetTitle: 'Cache the board', targetState: 'in_progress',
+      workflowId: null, sessionId: 'c1', watcher: 'PM “CB cutover”', events: ['finished', 'failed', 'needs_you'], once: true,
+      createdAt: Date.now() - 60_000, ...over,
+    });
+    let watches = [
+      watch({}),
+      watch({ id: 'w2', target: 'run', targetId: 'r1', targetLabel: 'Ship', targetTitle: null, targetState: 'running', workflowId: 'wf1', once: false, events: ['comment'] }),
+      watch({ id: 'w3', sessionId: 'c2', watcher: 'PM “A PDT bug”' }),
+    ];
+    const calls = stubApi({
+      ...conversationRoutes,
+      'GET /api/pm': two,
+      'GET /api/watches': () => watches,
+      'DELETE /api/watches/w1': () => { watches = watches.filter((w) => w.id !== 'w1'); return undefined; },
+    });
+    renderWithQuery(<PmView selection="c1" onSelect={() => {}} onNew={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Watching 2 things' }));
+    const list = await screen.findByRole('list', { name: 'Watches' });
+    const [ticketRow, runRow] = within(list).getAllByRole('listitem');
+    expect(within(ticketRow).getByRole('link', { name: 'ALP-12' })).toHaveAttribute('href', '/tickets/ALP-12');
+    expect(ticketRow).toHaveTextContent('Cache the board');
+    expect(ticketRow).toHaveTextContent('In progress');
+    expect(ticketRow).toHaveTextContent('Hears when it finishes, fails or needs you · until it finishes · since');
+    expect(within(runRow).getByRole('link', { name: 'Ship' })).toHaveAttribute('href', '/workflows/wf1/runs/r1');
+    expect(runRow).toHaveTextContent('Running');
+    expect(runRow).toHaveTextContent('Hears when someone comments · ongoing');
+    expect(list).not.toHaveTextContent('A PDT bug');
+    // One request for every watch, shared with the board and the PM list.
+    expect(calls.filter((c) => c.path.startsWith('/api/watches')).every((c) => c.path === '/api/watches')).toBe(true);
+
+    await userEvent.click(within(ticketRow).getByRole('button', { name: 'Stop watching' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Stop watching ALP-12?');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop watching' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/watches/w1', body: undefined }));
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Watches' })).getAllByRole('listitem')).toHaveLength(1));
+    expect(screen.getByRole('list', { name: 'Watches' })).toHaveTextContent('Ship');
+    // The chip behind the open popover counts one now.
+    expect(await screen.findByRole('button', { name: 'Watching 1 thing', hidden: true })).toBeInTheDocument();
+  });
+
+  it('has no watch chip while the conversation watches nothing, and eyes the watching ones in the list', async () => {
+    stubApi({
+      ...conversationRoutes,
+      'GET /api/pm': two,
+      'GET /api/watches': [{
+        id: 'w1', target: 'ticket', targetId: 't1', targetLabel: 'ALP-1', targetTitle: 'One', targetState: 'todo', workflowId: null,
+        sessionId: 'c1', watcher: 'PM “CB cutover”', events: [], once: true, createdAt: 1,
+      }],
+    });
+    renderWithQuery(<><PmList selection="c2" onSelect={() => {}} onNew={() => {}} /><PmView selection="c2" onSelect={() => {}} onNew={() => {}} /></>);
+    const open = await screen.findByRole('grid', { name: 'PM conversations' });
+    expect(await within(await within(open).findByRole('row', { name: /CB cutover/ })).findByRole('img', { name: 'Watching 1 thing' })).toBeInTheDocument();
+    expect(within(within(open).getByRole('row', { name: /A PDT bug/ })).queryByRole('img', { name: /^Watching/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'A PDT bug' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Watching/ })).not.toBeInTheDocument();
   });
 
   it('shows an ended conversation read-only with why it ended and its journal', async () => {

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Plus } from 'lucide-react';
-import { IconButton, List, ListHeading, ListRow, RelativeTime, Skeleton, Spinner, useMenuAt } from '@ui';
+import { IconButton, List, ListHeading, ListRow, RelativeTime, Skeleton, Spinner, WatchMark, useMenuAt } from '@ui';
+import { useAllWatches } from '../common/Watch';
+import { plural } from '../common/text';
 import { InlineRename } from '../common/InlineRename';
 import { RowField } from '../common/RowField';
 import { earlier, firstLine, isUnread, openConversations, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useShownRef, useViaLabel, type PmSelection } from './usePm';
@@ -25,6 +27,9 @@ export function PmList({ selection, onSelect, onNew }: {
   const open = openConversations(sessions);
   const ended = earlier(sessions);
   const shown = shownConversation(sessions, pm.data?.current?.id, selection)?.session.id ?? null;
+  const watches = useAllWatches().data;
+  /** How many things each conversation watches. */
+  const watching = (id: string) => watches?.filter((w) => w.sessionId === id).length ?? 0;
   const { openMenu, menu } = useMenuAt();
   const [renaming, setRenaming] = useState<string | null>(null);
   const onShow = useShownRef(shown);
@@ -69,6 +74,9 @@ export function PmList({ selection, onSelect, onNew }: {
             trailing={unread ? <span role="img" aria-label="New reply" className="size-2 rounded-full bg-primary" />
               : info.session.activity === 'working' ? <Spinner decorative className="size-3 text-muted-foreground" /> : undefined}
             secondary={<>
+              {watching(info.session.id) > 0 && (
+                <WatchMark title={`Watching ${plural(watching(info.session.id), 'thing')}`} className="mr-1 align-[-2px]" />
+              )}
               {resetting(info) ? 'Resetting…' : info.rotation === 'journal' ? 'Writing its journal…'
                 : info.session.activity === 'working' ? 'Working…' : <RelativeTime time={info.lastActivity} />}
               {viaLabel(info) && ` · ${viaLabel(info)}`}

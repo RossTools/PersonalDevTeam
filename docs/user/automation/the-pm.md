@@ -127,6 +127,11 @@ Watching asks nothing: it only tells the PM's own conversation. The watch ends o
 unless you ask for more. A watched ticket or run shows **Watched by PM “…”**, and **×** beside it stops that watch. If
 you close the conversation, what it hadn't heard yet comes to your Inbox instead.
 
+While a conversation watches anything, an eye with a count sits at the top of it (and beside it in the list of
+conversations). Click it to see each ticket or run it watches, what it listens for, whether the watch ends when it
+finishes, and since when; **Stop watching** ends one. Watched tickets have a small eye on the board and in the backlog:
+hover it to see who watches.
+
 To watch something yourself, see [Watch a ticket](../using-pdt/tickets-and-the-board.md#watch-a-ticket).
 
 ## Notes and the PM's memory

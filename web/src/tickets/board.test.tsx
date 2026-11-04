@@ -95,6 +95,19 @@ describe('board', () => {
     expect(await within(started).findByLabelText('Needs you')).toBeInTheDocument();
   });
 
+  it('puts an eye on watched cards, naming who, from one watches request for the whole board', async () => {
+    const w = (id: string, targetId: string, sessionId: string | null, watcher: string) => ({
+      id, target: 'ticket', targetId, targetLabel: '', targetTitle: null, targetState: null, workflowId: null, sessionId, watcher,
+      events: ['finished'], once: true, createdAt: 1,
+    });
+    const calls = stub({ 'GET /api/watches': [w('w1', 't1', null, 'you'), w('w2', 't1', 'pm', 'PM “Docs”'), w('w3', 't2', 'pm', 'PM “Docs”')] });
+    renderWithQuery(<Harness />);
+    expect(await within(await card(/ALP-1/)).findByRole('img', { name: 'Watched by you and PM “Docs”' })).toBeInTheDocument();
+    expect(await within(await card(/ALP-2/)).findByRole('img', { name: 'Watched by PM “Docs”' })).toBeInTheDocument();
+    expect(within(await card(/ALP-4/)).queryByRole('img', { name: /^Watched by/ })).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.path.startsWith('/api/watches')).map((c) => c.path)).toEqual(['/api/watches']);
+  });
+
   it('follows the project chosen for the backlog', async () => {
     localStorage.setItem('pdt.tickets.view', JSON.stringify({ projectId: project.id, mode: 'board', filters: {} }));
     const calls = stub();

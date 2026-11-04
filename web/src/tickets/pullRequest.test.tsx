@@ -117,7 +117,8 @@ describe('pull request status', () => {
     expect(screen.getByText(fullText('Last checked 3m ago'))).toBeInTheDocument();
     rerender(<PrDetails pr={pr({ checkedAt: now - 3 * 60_000, error: 'gh failed: HTTP 401' })} />);
     expect(screen.getByText(fullText('Not updated: gh failed: HTTP 401 (last checked 3m ago)'))).toHaveClass('text-destructive');
-    render(
+    stubApi({ 'GET /api/watches': [] });
+    renderWithQuery(
       <ul>
         <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: { ...passed, state: 'running' }, error: 'gh failed' })) })}
           onOpen={() => {}} entries={() => []} />
@@ -129,7 +130,8 @@ describe('pull request status', () => {
   });
 
   it('puts the PR on the board card and in the ticket Attempt section', async () => {
-    render(
+    stubApi({ 'GET /api/watches': [] });
+    renderWithQuery(
       <ul>
         <BoardCard ticket={summary(1, { stage: 'in_progress', attempt: attempt(pr({ ci: failed })) })} onOpen={() => {}} entries={() => []} />
       </ul>,

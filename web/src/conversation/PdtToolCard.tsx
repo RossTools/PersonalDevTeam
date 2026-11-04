@@ -299,7 +299,7 @@ function WatchCard({ call }: { call: PdtCall }) {
       heading={
         <>
           {watching ? 'Watching' : call.status === 'done' ? 'No longer watching' : 'Watch'} {what}
-          {watching && <span>· you'll be told when it {watchEventsText(w.events)}</span>}
+          {watching && <span>· you'll be told when {watchEventsText(w.events)}</span>}
         </>
       }
       aside={state?.aside ?? (watching && (
