@@ -36,6 +36,7 @@ import {
   ticketComment,
   ticketEdit,
   ticketLink,
+  unfenced,
   watchEventsText,
   watchOf,
   workflowRun,
@@ -486,7 +487,7 @@ function DocumentCard({ call }: { call: PdtCall }) {
 
 /** A `doc_edit` result's diff, if it has one. */
 function diffOf(output?: string): string | null {
-  const v = resultOf(output)?.diff;
+  const v = unfenced(resultOf(output)?.diff);
   return typeof v === 'string' && v ? v : null;
 }
 
