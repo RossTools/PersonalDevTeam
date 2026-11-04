@@ -122,11 +122,11 @@ pub mod codes {
     pub const NO_DEVICE_FLOW: &str = "no_device_flow";
     pub const NO_DRAFTS: &str = "no_drafts";
     pub const NO_FREE_PORT: &str = "no_free_port";
+    pub const NO_GITHUB_LOGIN: &str = "no_github_login";
     pub const NO_NEXT_PART: &str = "no_next_part";
     pub const NO_PROVIDER: &str = "no_provider";
     pub const NO_REFINE_WORKFLOW: &str = "no_refine_workflow";
     pub const NO_SIGN_IN: &str = "no_sign_in";
-    pub const NO_TOKEN: &str = "no_token";
     pub const NO_TURN_YET: &str = "no_turn_yet";
     pub const NO_UPDATE: &str = "no_update";
     pub const OWNER_REQUIRED: &str = "owner_required";

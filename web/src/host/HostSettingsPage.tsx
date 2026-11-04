@@ -344,7 +344,7 @@ function Updates({ v }: { v: HostSettingsView }) {
             label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
             description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
               : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
-                : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
+                : 'Only needed for a private repository or a fork. Kept in the OS keychain. Report a bug uses your GitHub login, not this.'}
           >
             <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
             <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
@@ -863,7 +863,8 @@ function BugReports({ v }: { v: HostSettingsView }) {
   const [open, setOpen] = useState(false);
   const p = preview.data;
   const where = !p ? null
-    : p.route === 'github' ? `Reports go to ${p.repo} on GitHub as issues, filed with the update token.`
+    : p.route === 'github' ? `Reports go to ${p.repo} on GitHub as issues, ${p.via === 'login' ? `filed as ${p.githubLogin ?? 'your GitHub login'}`
+      : p.via === 'token' ? 'filed with the update token' : 'sent from your browser on GitHub\'s bug form until you connect GitHub'}.`
     : p.route === 'local' ? `Reports become Draft bug tickets in ${p.project ? `${p.project.key} · ${p.project.name}` : 'the project whose origin is ' + p.repo}; nothing goes to GitHub.`
     : 'Report a bug is turned off.';
   return (
