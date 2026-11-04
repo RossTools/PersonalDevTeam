@@ -28,6 +28,17 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('ls')).toBeInTheDocument();
   });
 
+  it('names its button with `label`, and stretches it over the row with tags (PDT-548)', () => {
+    render(
+      <ToolCallRow verb="Read" label="Read ALP-1, ALP-2" tags={<a href="/tickets/ALP-1">ALP-1</a>}>
+        <ToolCallRow verb="Run" subject="ls" status="done" />
+      </ToolCallRow>,
+    );
+    const row = screen.getByRole('button', { name: 'Read ALP-1, ALP-2' });
+    expect(row).toHaveClass('before:absolute', 'before:inset-0');
+    expect(row.parentElement).toHaveClass('relative');
+  });
+
   it('is not a button with nothing to show; running shows a spinner', () => {
     render(<ToolCallRow verb="Read" subject="a.ts" status="running" />);
     expect(screen.queryByRole('button')).not.toBeInTheDocument();

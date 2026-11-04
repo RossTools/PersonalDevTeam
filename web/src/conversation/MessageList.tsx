@@ -169,6 +169,7 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
       verb={read ? 'Read' : toolVerb(ev.tool)}
       subject={read ? undefined : ev.title || undefined}
       tags={read ? <TicketPills keys={read} /> : undefined}
+      label={read ? `Read ${read.join(', ')}` : undefined}
       status={ev.status}
       meta={meta}
       details={
@@ -414,7 +415,7 @@ const BlockView = memo(
         return e.kind === 'tool_call' ? [{ tool: e.tool, input: e.input, output: (n.row.itemId && streams[n.row.itemId]?.output) || e.output }] : [];
       }));
       return (
-        <ToolCallRow verb={read ? 'Read' : summarizeTools(block.calls)} tags={read ? <TicketPills keys={read} /> : undefined}>
+        <ToolCallRow verb={read ? 'Read' : summarizeTools(block.calls)} tags={read ? <TicketPills keys={read} /> : undefined} label={read ? `Read ${read.join(', ')}` : undefined}>
           {block.nodes.map((n) => (
             <div key={n.row.itemId ?? n.row.seq} className="py-0.5">
               <NodeView node={n} streams={streams} />

@@ -34,7 +34,8 @@
   enforces this outside `tokens.css`.
 - Sizes: controls are `h-control-sm` (24px) or `h-control-md` (28px, the default); on touch screens
   `pointer-coarse:h-control-touch` (44px) / `pointer-coarse:min-w-control-touch` for icon buttons. `h-control-lg`
-  (48px) is the large touch button (`Button size="lg"`). Corners follow `--radius`
+  (48px) is the large touch button (`Button size="lg"`). A small inline target (a pill, a text link) that can't
+  grow takes `relative touch-hit`: an invisible hit area 8px past its edges on touch screens (`Link` has it). Corners follow `--radius`
   (6px): `rounded-md` (0.8 × radius, about 5px: controls), `rounded-lg` (the radius: cards, toolbars).
 - Gutters: page-like content (settings pages, the Inbox, a conversation, a ticket) pads its sides with `px-gutter` /
   `p-gutter` (16px, 24px from `sm`). A view whose content sits on the gutter gives its `ViewHeader` `gutter` (and its
