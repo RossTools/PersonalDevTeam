@@ -99,6 +99,7 @@ pub use github_issues::refresh_issues;
 pub use github_pulls::refresh_pulls;
 pub use github_workflow_runs::refresh_workflow_runs;
 pub use local_forge::run_local_ci_watch;
+pub use pdt_agents::launch::isolated_platform;
 
 /// Stops the MCP servers workflows use (pdtd is stopping).
 pub async fn shutdown_mcp(st: &AppState) {
