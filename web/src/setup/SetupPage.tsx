@@ -225,7 +225,10 @@ function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { 
                   <td className="py-1.5 text-right whitespace-nowrap">
                     {c?.found && !c.ok && r.id !== 'git' ? <span className="text-waiting" title={c.detail}>Not logged in</span>
                       : c?.found ? <span className="text-running">{r.id === 'git' ? 'Found' : 'Logged in'}</span> : (
-                      <span className="text-destructive">Missing · <Link href={r.install} external>How to install</Link></span>
+                      // git is needed; each agent is optional (one is enough), so a missing one isn't an error.
+                      <span className={r.id === 'git' ? 'text-destructive' : 'text-muted-foreground'}>
+                        {r.id === 'git' ? 'Missing' : 'Not installed'} · <Link href={r.install} external>How to install</Link>
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -400,8 +403,8 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
       void qc.invalidateQueries({ queryKey: hostKeys.setup });
     },
   });
-  const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless a persona says otherwise.`
-    : 'Which agent works on tickets by default. You can change it per persona later.';
+  const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless you pick another for a role (Coder, Reviewer…) in Personas.`
+    : 'Which agent works on tickets by default. You can pick another for each role (Coder, Reviewer…) later.';
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
       <ChoiceCardGroup
