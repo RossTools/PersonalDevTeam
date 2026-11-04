@@ -20,6 +20,10 @@
       button { font: inherit; padding: 0.5rem 1rem; border: 0; border-radius: 8px; background: #3561b8; color: #fff; cursor: pointer; }
       a { color: #8fb0f0; }
       .warn { color: #f0c36a; }
+      .paste { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0 0 1rem; }
+      textarea { flex: 1; font: 13px/1.4 ui-monospace, Menlo, monospace; background: #0e0f12; color: #e7e8ec;
+        border: 1px solid #2c2e36; border-radius: 8px; padding: 0.5rem; resize: none; word-break: break-all; }
+      summary { cursor: pointer; color: #8fb0f0; margin: 1rem 0 0.5rem; }
     </style>
   </head>
   <body>
@@ -27,7 +31,8 @@
       <noscript><p>This page needs JavaScript to send you back to PDT.</p></noscript>
       <section id="starting" hidden>
         <h1>Signing in to Google…</h1>
-        <p>Waiting for PDT. If nothing happens, close this window and start again from PDT: Settings → Plugins → Google.</p>
+        <p>Waiting for PDT, then on to Google. If nothing happens, close this window and start again from PDT: Settings →
+          Plugins → Google.</p>
       </section>
       <section id="ask" hidden>
         <h1>Return to PDT at <code id="where"></code>?</h1>
@@ -37,6 +42,20 @@
           Google Docs and Sheets you use with PDT. Continue only if it is your own machine and you just clicked Sign in
           there.</p>
         <button id="go" type="button">Return to PDT</button>
+        <details id="paste-instead" hidden>
+          <summary>PDT didn’t open? Paste a code instead</summary>
+          <p>In PDT’s Google sign-in, choose <strong>Paste a code instead</strong> and paste this:</p>
+          <div class="paste"><textarea id="code" readonly rows="3" aria-label="Sign-in code"></textarea></div>
+        </details>
+      </section>
+      <section id="paste" hidden>
+        <h1>Paste this code into PDT</h1>
+        <p>Google signed you in, but this page can’t send you back to PDT (a company network or browser isolation can
+          stop it). In PDT’s Google sign-in, choose <strong>Paste a code instead</strong> and paste this code:</p>
+        <div class="paste"><textarea id="code-shown" readonly rows="3" aria-label="Sign-in code"></textarea>
+          <button id="copy" type="button">Copy</button></div>
+        <p class="warn">Paste it only into the PDT you just started signing in from (<code id="code-for"></code>). Never
+          give it to anyone else: it lets that PDT use your Google Docs and Sheets.</p>
       </section>
       <section id="refused" hidden>
         <h1>This sign-in can’t go back to PDT</h1>

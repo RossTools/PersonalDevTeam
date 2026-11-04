@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SignIn } from '../api/gen/SignIn';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { connectionsKey } from '../connections/queries';
-import { AccountSignIn, redirectUri } from './AccountSignIn';
+import { AccountSignIn, RELAY_READY_MS, SLOW_SIGN_IN_MS, redirectUri } from './AccountSignIn';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -16,6 +16,7 @@ const signIn = (builtIn: boolean): SignIn => ({
   service: 'Acme',
   kind: 'acme',
   builtIn,
+  pasteCode: builtIn,
   description: 'Sign in with Acme adds an account.',
   ownClient: 'Blocked? Use your own client.',
 });
@@ -98,6 +99,55 @@ describe('A plugin’s account sign-in', () => {
     expect(popup.postMessage).toHaveBeenCalledWith({ pdtRelayTo: 'https://acme.example/consent?new=1' }, 'https://pdt.dev');
     ready('https://pdt.dev', popup);
     expect(popup.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the window to the consent page itself when the website’s page never answers, and takes a pasted code', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const popup = { location: { href: '' }, close: vi.fn(), postMessage: vi.fn() };
+      vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+      const calls = stubApi({
+        'GET /api/ui/token': { token: 'ui' },
+        'GET /api/acme/accounts': [],
+        'POST /api/acme/sign-in': { url: 'https://acme.example/consent?new=1', redirectUri: 'https://pdt.dev/oauth/acme', relay: 'https://pdt.dev/oauth/acme' },
+        'POST /api/acme/sign-in/code': { message: 'PDT is signed in to Acme as me@work.com for me@work.com.' },
+      });
+      renderWithQuery(<AccountSignIn signIn={signIn(true)} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(await screen.findByRole('button', { name: 'Sign in with Acme' }));
+      await waitFor(() => expect(popup.location.href).toBe('https://pdt.dev/oauth/acme'));
+      // Isolated by a proxy, the page can't say it is ready.
+      vi.advanceTimersByTime(RELAY_READY_MS);
+      expect(popup.location.href).toBe('https://acme.example/consent?new=1');
+      expect(popup.postMessage).not.toHaveBeenCalled();
+      // A slow sign-in says what may be in the way.
+      vi.advanceTimersByTime(SLOW_SIGN_IN_MS);
+      expect(await screen.findByText(/A company network may be blocking/)).toBeInTheDocument();
+      expect(screen.getByText(/Workspace admin/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Paste a code instead' }));
+      await user.type(screen.getByRole('textbox', { name: 'Sign-in code' }), '  c3RhdGU9  ');
+      await user.click(screen.getByRole('button', { name: 'Finish signing in' }));
+      expect(await screen.findByText('PDT is signed in to Acme as me@work.com for me@work.com.')).toBeInTheDocument();
+      expect(calls.find((c) => c.path === '/api/acme/sign-in/code')?.body).toEqual({ code: 'c3RhdGU9' });
+      expect(screen.queryByRole('button', { name: 'Paste a code instead' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('offers no code to paste when the window comes straight back to PDT', async () => {
+    const popup = { location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    stubApi({
+      'GET /api/ui/token': { token: 'ui' },
+      'GET /api/acme/accounts': [],
+      'POST /api/acme/sign-in': { url: 'https://acme.example/consent?desktop=1', redirectUri: 'http://127.0.0.1:7420/api/acme/callback' },
+    });
+    renderWithQuery(<AccountSignIn signIn={signIn(true)} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign in with Acme' }));
+    await waitFor(() => expect(popup.location.href).toBe('https://acme.example/consent?desktop=1'));
+    expect(await screen.findByRole('status')).toHaveTextContent('Finish signing in in the Acme window');
+    expect(screen.queryByRole('button', { name: 'Paste a code instead' })).toBeNull();
   });
 
   it('asks for pop-ups when PDT’s own sign-in can’t open its window', async () => {

@@ -3,7 +3,8 @@
 //! connection's secret, with the Picker's API key and project number) — and the Drive folder new documents go in.
 //! Signing in adds the account's refresh token and email, kept as a secret of their own ([`sign_in_key`]) so editing
 //! the connection never loses them. With PDT's own clients, agents have a sign-in of their own too, with the agentic
-//! client ([`agent_key`]): the account's agent permission.
+//! client ([`agent_key`]): the account's agent permission. A sign-in made on the same machine with PDT's Desktop
+//! clients ([`crate::builtin::Desktop`], PDT-590) says so ([`SignIn::desktop`]): its refresh token works only with them.
 
 use crate::api::{Account, Tokens, token_key};
 use crate::builtin::{BuiltIn, Client};
@@ -35,6 +36,9 @@ pub struct SignIn {
     pub refresh_token: String,
     #[serde(default)]
     pub email: Option<String>,
+    /// Made with PDT's Desktop client (signing in on the same machine), not its Web one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub desktop: bool,
 }
 
 /// A sign-in under way: the browser is at Google's consent page.
@@ -49,6 +53,8 @@ pub struct Pending {
     pub client: Client,
     /// The agent permission, with PDT's agentic client.
     pub agent: bool,
+    /// With PDT's Desktop client, straight back to PDT on this machine.
+    pub desktop: bool,
     pub started_ms: i64,
 }
 
@@ -136,10 +142,23 @@ pub async fn connections(st: &AppState) -> Result<Vec<Connection>, ProviderError
 }
 
 /// The OAuth client a connection signs in with: its own (the ID in its config, the secret as its secret), else PDT's
-/// standard or agentic one.
-pub async fn client(st: &AppState, shared: &Shared, c: &Connection, agent: bool) -> Result<Client, ProviderError> {
+/// standard or agentic one, the Desktop one for a sign-in made with it (`desktop`).
+pub async fn client(
+    st: &AppState,
+    shared: &Shared,
+    c: &Connection,
+    agent: bool,
+    desktop: bool,
+) -> Result<Client, ProviderError> {
     let Some(id) = config_str(c, "clientId") else {
         return match &shared.built_in {
+            Some(b) if desktop => b.desktop.as_ref().map(|d| d.client(agent).clone()).ok_or_else(|| {
+                ProviderError::Failed(format!(
+                    "the Google connection {} signed in with a client this build of PDT lacks: sign in again in \
+                     Settings → Plugins → Google",
+                    c.name
+                ))
+            }),
             Some(b) => Ok(if agent { b.agent.clone() } else { b.standard.clone() }),
             None => Err(ProviderError::Failed(format!(
                 "the Google connection {} has no OAuth client ID (this PDT was built without its own Google sign-in)",
@@ -170,12 +189,13 @@ pub async fn account(st: &AppState, shared: &Shared, c: &Connection, agent: bool
     if let Some(e) = &s.email {
         shared.emails.write().unwrap_or_else(|e| e.into_inner()).insert(c.id.clone(), e.clone());
     }
-    let refresh_token = if agent {
-        agent_sign_in(st, &c.id).await?.ok_or_else(|| ProviderError::Failed(no_agents(&c.name)))?.refresh_token
+    let s = if agent {
+        agent_sign_in(st, &c.id).await?.ok_or_else(|| ProviderError::Failed(no_agents(&c.name)))?
     } else {
-        s.refresh_token
+        s
     };
-    let client = client(st, shared, c, agent).await?;
+    let client = client(st, shared, c, agent, s.desktop).await?;
+    let refresh_token = s.refresh_token;
     Ok(Account {
         connection_id: c.id.clone(),
         name: c.name.clone(),
@@ -323,7 +343,7 @@ mod tests {
     }
 
     fn signed(token: &str, email: Option<&str>) -> SignIn {
-        SignIn { refresh_token: token.into(), email: email.map(String::from) }
+        SignIn { refresh_token: token.into(), email: email.map(String::from), desktop: false }
     }
 
     fn failed(e: ProviderError) -> String {
@@ -387,24 +407,48 @@ mod tests {
         let env = env().await;
         let (with, without) = (shared(&env, Some(built_in())), shared(&env, None));
         let plain = add(&env, "c1", "Plain", json!({}), None).await;
-        let c = client(&env.st, &with, &plain, false).await.unwrap();
+        let c = client(&env.st, &with, &plain, false, false).await.unwrap();
         assert_eq!((c.id.as_str(), c.secret.as_str()), ("std-id", "std-secret"));
-        let c = client(&env.st, &with, &plain, true).await.unwrap();
+        let c = client(&env.st, &with, &plain, true, false).await.unwrap();
         assert_eq!((c.id.as_str(), c.secret.as_str()), ("agent-id", "agent-secret"));
-        let e = failed(client(&env.st, &without, &plain, false).await.unwrap_err());
+        let e = failed(client(&env.st, &without, &plain, false, false).await.unwrap_err());
         assert!(e.contains("Plain has no OAuth client ID"), "{e}");
 
         // Its own client, standard or agent alike, with its secret trimmed.
         let own = add(&env, "c2", "Own", json!({"clientId": "cid"}), Some("  csecret \n")).await;
         for agent in [false, true] {
-            let c = client(&env.st, &with, &own, agent).await.unwrap();
+            let c = client(&env.st, &with, &own, agent, false).await.unwrap();
             assert_eq!((c.id.as_str(), c.secret.as_str()), ("cid", "csecret"));
         }
         let blank = add(&env, "c3", "Blank", json!({"clientId": "cid"}), Some("   ")).await;
-        let e = failed(client(&env.st, &with, &blank, false).await.unwrap_err());
+        let e = failed(client(&env.st, &with, &blank, false, false).await.unwrap_err());
         assert!(e.contains("Blank has no OAuth client secret"), "{e}");
         let none = add(&env, "c4", "None", json!({"clientId": "cid"}), None).await;
-        assert!(failed(client(&env.st, &with, &none, false).await.unwrap_err()).contains("no OAuth client secret"));
+        assert!(
+            failed(client(&env.st, &with, &none, false, false).await.unwrap_err()).contains("no OAuth client secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_desktop_sign_in_refreshes_with_the_desktop_client() {
+        let env = env().await;
+        let desktop = crate::builtin::Desktop::from_values([Some("d-id"), Some("d-s"), Some("da-id"), Some("da-s")]);
+        let sh = shared(&env, Some(BuiltIn { desktop, ..built_in() }));
+        let c = add(&env, "c1", "Work", json!({}), None).await;
+        let on_this_machine = SignIn { desktop: true, ..signed("user-r", None) };
+        store_sign_in(&env.st, sign_in_key("c1"), &on_this_machine).await.unwrap();
+        let a = account(&env.st, &sh, &c, false).await.unwrap();
+        assert_eq!((a.client_id.as_str(), a.client_secret.as_str()), ("d-id", "d-s"));
+        // The agents' sign-in names its own client: here the Web one, made from another device.
+        store_sign_in(&env.st, agent_key("c1"), &signed("agent-r", None)).await.unwrap();
+        assert_eq!(account(&env.st, &sh, &c, true).await.unwrap().client_id, "agent-id");
+        store_sign_in(&env.st, agent_key("c1"), &SignIn { desktop: true, ..signed("agent-r", None) }).await.unwrap();
+        assert_eq!(account(&env.st, &sh, &c, true).await.unwrap().client_id, "da-id");
+        // A build without the Desktop clients asks to sign in again.
+        let e = failed(account(&env.st, &shared(&env, Some(built_in())), &c, false).await.unwrap_err());
+        assert!(e.contains("sign in again"), "{e}");
+        // Kept only when true, so older sign-ins read back unchanged.
+        assert!(!serde_json::to_string(&signed("r", None)).unwrap().contains("desktop"));
     }
 
     #[tokio::test]
@@ -478,6 +522,7 @@ mod tests {
             redirect_uri: "http://127.0.0.1/api/google/callback".into(),
             client: built_in().standard,
             agent: false,
+            desktop: false,
             started_ms: 0,
         }
     }

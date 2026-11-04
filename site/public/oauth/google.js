@@ -8,6 +8,11 @@
 // opened with no query by PDT's sign-in window, it says it is ready to its opener, takes Google's consent address in
 // a message whose origin the browser vouches for, remembers the state when its origin is that one, and goes on to
 // Google. A state it doesn't remember (a Google link someone else made) goes nowhere.
+//
+// Where it can't hand the answer back (a corporate proxy isolating this page in a remote browser: no opener, no
+// storage of its own, and 127.0.0.1 there isn't the user's), it shows Google's answer as a code to paste into PDT
+// (PDT-590). A code is useless without the sign-in's state and PKCE verifier, which only the PDT that started it
+// has, and it goes nowhere by itself.
 
 const NONCE = /^[A-Za-z0-9_-]{32}$/;
 
@@ -136,6 +141,24 @@ export function returnTo(search, ours) {
   return { origin, url: `${origin}/api/google/callback?${out}` };
 }
 
+/** Google's answer (`state`, `code`) as one line to paste into PDT: base64url of `state=…&code=…`. */
+export function pasteCode(state, code) {
+  const q = new URLSearchParams({ state, code }).toString();
+  return btoa(q).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * What to show for pasting into PDT, for Google's answer (`?code&state`) to a sign-in a PDT could have started:
+ * `{ origin, code }`, or null.
+ */
+export function pasteFor(search) {
+  const q = new URLSearchParams(search);
+  const state = q.get('state');
+  const code = q.get('code');
+  const origin = stateOrigin(state);
+  return origin && code ? { origin, code: pasteCode(state, code) } : null;
+}
+
 function store() {
   try {
     return window.localStorage;
@@ -148,10 +171,9 @@ function store() {
 function begin($) {
   const opener = window.opener;
   const s = store();
-  if (!opener || !s) {
-    $('refused').hidden = false;
-    return;
-  }
+  // PDT sends the window to Google itself when this page doesn't answer; the code then comes back to paste.
+  $('starting').hidden = false;
+  if (!opener || !s) return;
   // The redirect URI PDT registered, whatever path the host served this page at.
   const self = `${window.location.origin}/oauth/google`;
   window.addEventListener('message', (e) => {
@@ -161,9 +183,19 @@ function begin($) {
     remember(s, state, Date.now());
     window.location.replace(e.data.pdtRelayTo);
   });
-  $('starting').hidden = false;
   // Nothing secret: it says only that this page is listening.
   opener.postMessage({ pdtRelay: 'ready' }, '*');
+}
+
+/** Shows the code to paste into PDT at `origin`. */
+function showPaste($, paste) {
+  $('code').value = paste.code;
+  $('code-shown').value = paste.code;
+  $('code-for').textContent = paste.origin;
+  $('copy').addEventListener('click', () => {
+    $('code-shown').select();
+    navigator.clipboard?.writeText(paste.code).then(() => { $('copy').textContent = 'Copied'; }, () => {});
+  });
 }
 
 function main() {
@@ -173,13 +205,18 @@ function main() {
     return;
   }
   const s = store();
-  const to = returnTo(window.location.search, (state) => s !== null && take(s, state, Date.now()));
+  const search = window.location.search;
+  const to = returnTo(search, (state) => s !== null && take(s, state, Date.now()));
+  const paste = pasteFor(search);
   // The code stays out of the address bar and history once read.
   window.history.replaceState(null, '', window.location.pathname);
+  if (paste) showPaste($, paste);
   if (!to) {
-    $('refused').hidden = false;
+    // Not started here (or this browser kept no record of it): never sent on, only shown to paste.
+    $(paste ? 'paste' : 'refused').hidden = false;
     return;
   }
+  $('paste-instead').hidden = !paste;
   $('where').textContent = to.origin;
   $('remote').hidden = loopback(to.origin);
   $('go').addEventListener('click', () => window.location.replace(to.url));

@@ -136,19 +136,38 @@ makes and the ones you pick: it never sees the rest of your Drive.
 ### Add a Google account
 
 1. Open **Settings › Plugins › Google** and turn it on.
-2. Under **Sign in**, click **Sign in with Google**. A window of its own opens on pdt.dev and goes on to Google's
-   page; pick your account and allow access. Google sends you back through pdt.dev, which asks **Return to PDT at
-   …?**: check it's the address you opened PDT at and click **Return to PDT**. The window closes and the account
-   shows, named after its email.
+2. Under **Sign in**, click **Sign in with Google**. A window of its own opens on Google's page; pick your account
+   and allow access. The window closes and the account shows, named after its email.
+
+When you opened PDT on this machine (`127.0.0.1`, `localhost`), Google sends you straight back to PDT. From another
+device on your network or over [Tailscale](../your-machine/remote-access.md), the window goes through pdt.dev first,
+which asks **Return to PDT at …?** on the way back: check it's the address you opened PDT at and click **Return to
+PDT**.
 
 pdt.dev sends you back only to the PDT that started the sign-in in the same browser, within 15 minutes. A Google
 sign-in link from anywhere else stops there. For an address that isn't on this computer, it also warns you that whoever
 runs that address gets access to your files, so continue only when it's your own machine. If your browser blocks the
 window, allow pop-ups for PDT and click **Sign in with Google** again.
 
-This works wherever you opened PDT: on this machine, from another device on your network, or over
-[Tailscale](../your-machine/remote-access.md). Sign in once for each Google account. **Sign out** takes PDT's access
-back; you can also remove it in your Google Account (**Security › Third-party apps with account access**).
+Sign in once for each Google account. **Sign out** takes PDT's access back; you can also remove it in your Google
+Account (**Security › Third-party apps with account access**).
+
+### Signing in on a work network
+
+Company networks often block or isolate websites they don't know yet, such as pdt.dev (a proxy like Zscaler, or
+browser isolation, which shows a site from a remote browser).
+
+- **On the same machine as PDT**, signing in never loads pdt.dev, so open PDT at `http://127.0.0.1:7420` (or
+  `localhost`) and sign in there.
+- **From another device**, if pdt.dev can't send you back, it shows a code instead. Click **Paste a code instead**
+  under **Sign in** in PDT, paste the code, and click **Finish signing in**. The code works once, only in the PDT that
+  started the sign-in, within 15 minutes. Paste it only there, and never give it to anyone else.
+
+If the window seems stuck, PDT says what may be in the way after a while and offers the paste option too.
+
+**Access blocked?** If Google shows its own **Access blocked** page, your Google Workspace administrator only allows
+apps they have approved. Only they can allow PDT (in the Google Admin console, under **API controls**, as a trusted
+app). Until then, [use your own OAuth client](#use-your-own-oauth-client) made in your organization's Google Cloud.
 
 To choose where new documents go, **Edit** the account's connection and set **Folder for new documents** (a Drive
 folder's address; blank: My Drive).
@@ -168,9 +187,10 @@ made once in the Google Cloud console:
    **Google Picker API** for it.
 2. Set up its **OAuth consent screen** (Google Auth Platform). While it is in testing, add your Google accounts as
    test users.
-3. Under **Clients**, make an OAuth client of type **Web application**, and add the address PDT shows under
-   **Advanced** on the Google plugin's page to its **Authorized redirect URIs**. That address follows where you
-   opened PDT: Google takes plain `http` only for this machine's own address, so sign in from here, or from PDT's HTTPS
+3. Under **Clients**, make an OAuth client. Of type **Desktop app**, it needs no redirect address and works when you
+   sign in on this machine (`127.0.0.1` or `localhost`). Of type **Web application**, add the address PDT shows under
+   **Advanced** on the Google plugin's page to its **Authorized redirect URIs**. That address follows where you opened
+   PDT: Google takes plain `http` only for this machine's own address, so sign in from here, or from PDT's HTTPS
    address ([remote access](../your-machine/remote-access.md)) with that address added too.
 4. For Google's file picker, make an **API key** (**Credentials › Create credentials › API key**), limited to the
    **Google Picker API**, and note the project's **number** from its dashboard.

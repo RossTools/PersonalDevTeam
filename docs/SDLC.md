@@ -368,14 +368,24 @@ Gatekeeper warns. Check a host with `security dump-keychain -a`: the item's part
 ### Google sign-in
 
 Release and nightly bundles build in PDT's own Google OAuth clients (the GCP project `pdt`): the standard and agentic
-Web clients, the file picker's API key and the project's number, from the `PDT_GOOGLE_CLIENT_ID`,
-`PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`, `PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
+Web clients, the standard and agentic Desktop app clients, the file picker's API key and the project's number, from
+the `PDT_GOOGLE_CLIENT_ID`, `PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`,
+`PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_DESKTOP_CLIENT_ID`, `PDT_GOOGLE_DESKTOP_CLIENT_SECRET`,
+`PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID`, `PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
 `PDT_GOOGLE_PROJECT_NUMBER` repository secrets, passed to `.github/actions/bundle` (CI's bundles only when they build a
 release). Never commit them. A release build (a release, a nightly, the release PR) warns, naming it, in the job and
-its summary when any of the six is empty (`scripts/google-build-values.sh`): the build ships without that part. A build
+its summary when any of the ten is empty (`scripts/google-build-values.sh`): the build ships without that part. A build
 without them (a local one, a PR's bundle) offers only the user's own OAuth client;
-set the same variables in the environment to build them in locally. Both clients' only redirect URI is
+set the same variables in the environment to build them in locally. The Web clients' only redirect URI is
 `https://pdt.dev/oauth/google`, and the consent screen links `https://pdt.dev/privacy`: both are on the website.
+
+The Desktop app clients are for signing in on the same machine: Google sends the browser straight back to PDT on
+`127.0.0.1` (or `localhost`) on any port, so they need no redirect URI. A build without them signs in through the
+website from the same machine too. A Desktop client's secret isn't confidential by Google's design (it ships in every
+copy of the app; PKCE protects its codes), but keep it in the secrets like the others. To make them: in the same
+project (so files picked with one client are the others' too, and the consent screen and scopes are shared), under
+**Google Auth Platform › Clients**, create two clients of type **Desktop app** (the standard one and the agentic one)
+and set their IDs and secrets as the four `PDT_GOOGLE_DESKTOP_*` secrets.
 
 ### Moving the release repository
 
