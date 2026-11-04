@@ -348,6 +348,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   until pdtd restarts.
 - **Never edit an applied migration** (sqlx checksums them); add a new one named by its UTC creation time. Data
   backfills that run when the store opens go in `Store::open`.
+- **A changed default in `HostSettings` changes it for every install that never stored the field** (no stored row, or
+  one saved by an older version): a stored row reads over the profile's defaults (pdt-store `get_host_settings`).
+  When existing installs must keep the old value, a migration stores it for them (tickets' permission mode:
+  `*_ticket_permissions_keep_bypass.sql`, which counts an install with a project or stored settings as existing).
 - **`.pdt/project.toml` must stay readable by the stable release.** Unknown top-level sections are skipped, but unknown
   keys inside `[[run]]`, `[[test]]` and `[[area]]` are refused, so a new section waits until stable supports it.
 - **Names live only in `crates/pdt-core/src/brand.rs`** (plus the Tauri configs, the Windows installer hooks and the

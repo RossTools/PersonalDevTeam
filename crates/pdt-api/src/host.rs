@@ -327,9 +327,14 @@ pub(crate) async fn put_settings(
     if to_auto {
         crate::install_updates::wake(&st).await;
     }
-    // Get started's last step: the default agent was picked.
-    if patch.default_agent.is_some() {
-        crate::setup::confirm_default_agent(&st).await?;
+    // Get started's steps for the default agent and tickets' permissions: picked here.
+    if patch.default_agent.is_some() || patch.ticket_permission_mode.is_some() {
+        let confirmed = pdt_core::setup::SetupPatch {
+            default_agent_confirmed: patch.default_agent.is_some().then_some(true),
+            permissions_confirmed: patch.ticket_permission_mode.is_some().then_some(true),
+            ..Default::default()
+        };
+        crate::setup::confirm(&st, &confirmed).await?;
     }
     // Another agent program: what the checks found (logins, the agents offered) is out of date.
     if patch.claude_program.is_some()

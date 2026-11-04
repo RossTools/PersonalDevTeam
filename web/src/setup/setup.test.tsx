@@ -20,9 +20,9 @@ const checks = (o: { claude?: boolean; codex?: boolean; devin?: boolean; git?: b
 });
 
 function view(o: Partial<Omit<SetupView, 'steps'>> & { steps?: Partial<SetupView['steps']> } = {}): SetupView {
-  const steps = { agents: 'todo', github: 'todo', project: 'todo', defaultAgent: 'todo', ...o.steps } as SetupView['steps'];
+  const steps = { agents: 'todo', github: 'todo', project: 'todo', defaultAgent: 'todo', permissions: 'todo', ...o.steps } as SetupView['steps'];
   return {
-    state: { needed: true, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false },
+    state: { needed: true, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false, permissionsConfirmed: false },
     done: Object.values(steps).filter((s) => s !== 'todo').length,
     opensOnLaunch: true,
     defaultAgent: 'claude',
@@ -54,7 +54,8 @@ describe('Get started', () => {
   it('opens the first step not done', () => {
     expect(firstOpenStep(view())).toBe('agents');
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'skipped' } }))).toBe('project');
-    expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }))).toBeNull();
+    expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }))).toBe('permissions');
+    expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done', permissions: 'done' } }))).toBeNull();
     expect(foundAgents(checks({ codex: true }))).toEqual(['claude', 'codex']);
     expect(foundAgents(checks({ codex: true }), ['codex'])).toEqual(['claude']);
   });
@@ -63,7 +64,7 @@ describe('Get started', () => {
     stub(view({ steps: { agents: 'done', github: 'skipped' } }));
     renderWithQuery(<SetupPage {...props()} />);
     expect(await screen.findByRole('progressbar', { name: 'Setup progress' })).toHaveAttribute('aria-valuenow', '2');
-    expect(screen.getByText('2 of 4')).toBeInTheDocument();
+    expect(screen.getByText('2 of 5')).toBeInTheDocument();
     expect(within(await step('Agents on this machine')).getByRole('img', { name: 'done' })).toBeInTheDocument();
     expect(within(await step('Connect GitHub')).getByRole('img', { name: 'skipped' })).toBeInTheDocument();
     expect(within(await step('Add a project')).getByRole('img', { name: 'to do' })).toBeInTheDocument();
@@ -224,9 +225,24 @@ describe('Get started', () => {
     expect(within(agents).queryByRole('row', { name: /Cursor/ })).toBeNull();
   });
 
+  it('picks tickets’ permission mode, Ask until the user picks another', async () => {
+    const calls = stub(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }), {
+      'GET /api/host/settings': { settings: { defaultAgent: 'claude', ticketPermissionMode: 'ask' }, projectsDir: '/u/work', programs: [] },
+      'PUT /api/host/settings': { settings: { defaultAgent: 'claude', ticketPermissionMode: 'bypass' }, projectsDir: null, programs: [] },
+    });
+    renderWithQuery(<SetupPage {...props()} />);
+    const perms = await step('Choose tickets’ permissions');
+    const group = within(perms).getByRole('radiogroup', { name: 'Ticket permissions' });
+    expect(await within(group).findByRole('radio', { name: /^Ask/ })).toBeChecked();
+    expect(within(group).queryByRole('radio', { name: /^Plan/ })).not.toBeInTheDocument();
+    await userEvent.click(within(group).getByRole('radio', { name: /Bypass \(dangerous\)/ }));
+    await userEvent.click(within(perms).getByRole('button', { name: 'Use Bypass (dangerous)' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ ticketPermissionMode: 'bypass' }));
+  });
+
   it('says so when every step is done, with the board and the PM', async () => {
     const p = props();
-    stub(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }));
+    stub(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done', permissions: 'done' } }));
     renderWithQuery(<SetupPage {...p} />);
     expect(await screen.findByText(/You’re set up/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Go to the board' }));

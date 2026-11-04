@@ -1,4 +1,4 @@
-//! The Get started checklist (PDT-230): its four steps, each ticked off from the host's real state, and whether it
+//! The Get started checklist (PDT-230): its five steps, each ticked off from the host's real state, and whether it
 //! opens on launch. Pure: pdt-api gathers the facts and stores the state.
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,9 @@ pub struct SetupState {
     pub github_skipped: bool,
     /// The default agent was picked (in the checklist or in Settings), or the preset one confirmed.
     pub default_agent_confirmed: bool,
+    /// Tickets' permission mode was picked (in the checklist or in Settings), or the preset one (Ask) confirmed
+    /// (PDT-562).
+    pub permissions_confirmed: bool,
 }
 
 impl SetupState {
@@ -44,6 +47,9 @@ impl SetupState {
         if let Some(v) = p.default_agent_confirmed {
             s.default_agent_confirmed = v;
         }
+        if let Some(v) = p.permissions_confirmed {
+            s.permissions_confirmed = v;
+        }
         s
     }
 }
@@ -62,6 +68,9 @@ pub struct SetupPatch {
     #[serde(default)]
     #[ts(optional)]
     pub default_agent_confirmed: Option<bool>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub permissions_confirmed: Option<bool>,
 }
 
 /// The host's real state, as the steps read it.
@@ -120,7 +129,12 @@ pub struct SetupSteps {
     pub project: StepState,
     /// The default agent was set explicitly or confirmed.
     pub default_agent: StepState,
+    /// Tickets' permission mode was set explicitly or confirmed.
+    pub permissions: StepState,
 }
+
+/// How many steps the checklist has.
+pub const STEPS: u32 = 5;
 
 impl SetupSteps {
     pub fn read(s: &SetupState, f: &SetupFacts) -> Self {
@@ -136,16 +150,20 @@ impl SetupSteps {
             },
             project: StepState::done_if(f.projects > 0),
             default_agent: StepState::done_if(s.default_agent_confirmed),
+            permissions: StepState::done_if(s.permissions_confirmed),
         }
     }
 
-    /// How many of the four are done.
+    /// How many of the [`STEPS`] are done.
     pub fn done(&self) -> u32 {
-        [self.agents, self.github, self.project, self.default_agent].iter().filter(|s| s.complete()).count() as u32
+        [self.agents, self.github, self.project, self.default_agent, self.permissions]
+            .iter()
+            .filter(|s| s.complete())
+            .count() as u32
     }
 
     pub fn all_done(&self) -> bool {
-        self.done() == 4
+        self.done() == STEPS
     }
 }
 
@@ -220,8 +238,18 @@ mod tests {
         let s = SetupState::default();
         let steps = SetupSteps::read(&s, &SetupFacts { projects: 1, ..facts() });
         assert_eq!((steps.project, steps.default_agent), (StepState::Done, StepState::Todo));
-        let confirmed = SetupState { default_agent_confirmed: true, ..s };
+        let confirmed = SetupState { default_agent_confirmed: true, ..s.clone() };
         assert_eq!(SetupSteps::read(&confirmed, &facts()).default_agent, StepState::Done);
+        assert_eq!(SetupSteps::read(&confirmed, &facts()).permissions, StepState::Todo);
+    }
+
+    #[test]
+    fn the_permissions_step_is_done_once_picked_or_confirmed() {
+        let s = SetupState::default();
+        assert_eq!(SetupSteps::read(&s, &facts()).permissions, StepState::Todo);
+        let picked = s.apply(&SetupPatch { permissions_confirmed: Some(true), ..Default::default() });
+        assert!(picked.permissions_confirmed);
+        assert_eq!(SetupSteps::read(&picked, &facts()).permissions, StepState::Done);
     }
 
     #[test]
@@ -229,8 +257,11 @@ mod tests {
         let none = SetupSteps::read(&SetupState::default(), &facts());
         assert_eq!((none.done(), none.all_done()), (0, false));
         let s = SetupState { github_skipped: true, default_agent_confirmed: true, ..Default::default() };
+        let four = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, ..facts() });
+        assert_eq!((four.done(), four.all_done()), (4, false), "permissions still to do");
+        let s = SetupState { permissions_confirmed: true, ..s };
         let all = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, ..facts() });
-        assert_eq!((all.done(), all.all_done()), (4, true));
+        assert_eq!((all.done(), all.all_done()), (STEPS, true));
     }
 
     #[test]

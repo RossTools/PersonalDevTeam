@@ -34,6 +34,7 @@ import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks, useAgentCapabilities } from './queries';
 import { LoadError } from '../common/QueryStatus';
+import { STEPS } from '../setup/SetupPage';
 
 /** The stored token's state as a badge (never the token itself). */
 function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeTone; text: string } {
@@ -837,8 +838,8 @@ function Setup() {
   const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup });
   const v = setup.data;
   const where = !v ? undefined
-    : v.done === 4 ? 'Every step is done.'
-      : `${v.done} of 4 steps done.${v.state.dismissed ? ' Dismissed: it no longer opens on its own.' : ''}`;
+    : v.done === STEPS.length ? 'Every step is done.'
+      : `${v.done} of ${STEPS.length} steps done.${v.state.dismissed ? ' Dismissed: it no longer opens on its own.' : ''}`;
   return (
     <Section label="Setup" description="The Get started checklist: agents, GitHub, a first project and the default agent.">
       <SettingsRow label="Get started" description={where}>
