@@ -785,6 +785,59 @@ async fn areas_make_planned_overlap_and_start_checks_them() {
     env.state.ptys.shutdown().await;
 }
 
+/// Writes the main checkout's run configuration, dated a minute back (one written just now is read on every request,
+/// in case a second edit lands within the file system's timestamp granularity).
+fn write_config(env: &Env, text: &str, aged: bool) {
+    let path = env.repo.join(".pdt/project.toml");
+    std::fs::write(&path, text).unwrap();
+    if aged {
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options().write(true).open(&path).unwrap().set_modified(past).unwrap();
+    }
+}
+
+/// The backlog and ticket polls (every 2 s) don't read an unchanged run configuration again (PDT-137).
+#[tokio::test]
+async fn polls_read_the_run_config_only_when_it_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    configure_areas(&env);
+    write_config(&env, AREAS, true);
+    let a = ticket(&env, json!({"title": "A", "areas": ["migrations"]})).await;
+    let b = ticket(&env, json!({"title": "B", "areas": ["migrations"]})).await;
+    started(&env, &a, json!({"agent": "claude"})).await;
+    assert_eq!(by_key(&list(&env, "").await, "PDT-2")["overlap"], "conflict");
+
+    let reads = env.state.run_config_reads();
+    for _ in 0..3 {
+        assert_eq!(by_key(&list(&env, "").await, "PDT-2")["overlap"], "conflict");
+        assert_eq!(get_ticket(&env, &b).await["overlapWith"], json!(["PDT-1"]));
+    }
+    assert_eq!(env.state.run_config_reads(), reads, "an unchanged file is not read again");
+
+    // A changed file is read again: migrations is no longer exclusive.
+    write_config(&env, &AREAS.replace("exclusive = true", "exclusive = false"), true);
+    assert_eq!(by_key(&list(&env, "").await, "PDT-2")["overlap"], "overlap");
+    assert_eq!(env.state.run_config_reads(), reads + 1);
+    list(&env, "").await;
+    assert_eq!(env.state.run_config_reads(), reads + 1);
+
+    // So are changed overrides.
+    let overrides = "[[area]]\nname = \"migrations\"\npaths = [\"db/**\"]\nexclusive = true\n";
+    let body = json!({"agentCredentials": null, "runOverrides": overrides});
+    let (s, v) = call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.pid), Some(body)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(by_key(&list(&env, "").await, "PDT-2")["overlap"], "conflict");
+    assert_eq!(env.state.run_config_reads(), reads + 2);
+
+    // A file written just now is read on every request until it settles.
+    write_config(&env, AREAS, false);
+    list(&env, "").await;
+    list(&env, "").await;
+    assert_eq!(env.state.run_config_reads(), reads + 4);
+    env.state.ptys.shutdown().await;
+}
+
 #[tokio::test]
 async fn files_changed_by_two_attempts_overlap_and_are_recorded_once() {
     let tmp = tempfile::tempdir().unwrap();

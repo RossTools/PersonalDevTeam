@@ -130,6 +130,8 @@ pub struct AppState {
     pub(crate) finishes: std::sync::Arc<crate::finish::Finishes>,
     /// Each active attempt's changed files, refreshed by `refresh_overlaps` (actual overlap).
     pub(crate) changed_files: crate::overlap::ChangedFiles,
+    /// Parsed run configurations, by checkout (`crate::runconfig::ConfigCache`).
+    pub(crate) run_configs: std::sync::Arc<crate::runconfig::ConfigCache>,
     /// How long stopping a run waits for its processes to end before reporting `run_stopping`.
     pub run_stop_wait: std::time::Duration,
     /// The program agent hooks run (`<this pdtd> hook …`).
@@ -311,6 +313,7 @@ impl AppState {
             ticket_start_locks: Default::default(),
             finishes: Default::default(),
             changed_files: Default::default(),
+            run_configs: Default::default(),
             run_stop_wait: std::time::Duration::from_secs(20),
             hook_program: std::env::current_exe().unwrap_or_default(),
             activity: Default::default(),
@@ -373,6 +376,11 @@ impl AppState {
     pub async fn refresh_owner(&self) {
         let stored = self.store.get_host_settings().await.ok().and_then(|s| s.owner_login);
         *self.owner_cache.write().unwrap_or_else(|e| e.into_inner()) = self.owner_from_env.clone().or(stored);
+    }
+
+    /// How many times a run configuration file has been read; an unchanged one is not read again.
+    pub fn run_config_reads(&self) -> u64 {
+        self.run_configs.reads()
     }
 
     pub(crate) fn owner(&self) -> Option<String> {

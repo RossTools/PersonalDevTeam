@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::{Path, State};
-use pdt_core::overlap::{AreaSet, OverlapNews, Participant, compute, overlap_news};
+use pdt_core::overlap::{AreaSet, OverlapNews, Participant, compute, compute_for, overlap_news};
 use pdt_core::project::Project;
 use pdt_core::runconfig::ProjectAreas;
 use pdt_core::ticket::{Actor, EventKind, MAX_OVERLAP_FILES, OverlapLevel, Ticket, TicketOverlap, TicketSummary};
@@ -65,10 +65,11 @@ impl OverlapIndex {
 /// Computes the overlaps of every open ticket (or one project's).
 pub(crate) async fn index(st: &AppState, project: Option<&str>) -> Result<OverlapIndex, ApiError> {
     let rows = st.store.overlap_rows(project).await?;
-    index_of(st, &rows).await
+    index_of(st, &rows, None).await
 }
 
-async fn index_of(st: &AppState, rows: &[OverlapRow]) -> Result<OverlapIndex, ApiError> {
+/// The overlaps of the open tickets in `rows`, or of the one ticket `only` (the others' are left out).
+async fn index_of(st: &AppState, rows: &[OverlapRow], only: Option<&str>) -> Result<OverlapIndex, ApiError> {
     let mut by_project: HashMap<&str, Vec<&OverlapRow>> = HashMap::new();
     for r in rows {
         by_project.entry(r.project_id.as_str()).or_default().push(r);
@@ -87,7 +88,13 @@ async fn index_of(st: &AppState, rows: &[OverlapRow]) -> Result<OverlapIndex, Ap
                 files: r.attempt_id.as_ref().and_then(|a| files.get(a).cloned()).unwrap_or_default(),
             })
             .collect();
-        let found = compute(&areas, &participants);
+        let found = match only {
+            Some(id) => {
+                let list = compute_for(&areas, &participants, id);
+                if list.is_empty() { HashMap::new() } else { HashMap::from([(id.to_string(), list)]) }
+            }
+            None => compute(&areas, &participants),
+        };
         let info: HashMap<&str, &&OverlapRow> = rows.iter().map(|r| (r.ticket_id.as_str(), r)).collect();
         for (id, list) in found {
             let mut out: Vec<(u32, TicketOverlap)> = list
@@ -125,7 +132,8 @@ pub(crate) async fn load_ticket(st: &AppState, id: &str) -> Result<Ticket, ApiEr
 
 /// The ticket with its overlap fields filled in.
 pub async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, ApiError> {
-    index(st, Some(&t.summary.project_id)).await?.apply(&mut t);
+    let rows = st.store.overlap_rows(Some(&t.summary.project_id)).await?;
+    index_of(st, &rows, Some(&t.summary.id)).await?.apply(&mut t);
     crate::github::apply(st, &mut t);
     crate::parts::apply(st, &mut t).await?;
     crate::scheduler::apply_agents(st, std::slice::from_mut(&mut t.summary)).await;
@@ -182,7 +190,7 @@ pub async fn refresh_overlaps(st: &AppState) {
 /// Compares every open ticket's file overlaps with what its timeline already says, and adds what is news.
 pub(crate) async fn record_overlap_events(st: &AppState) -> Result<(), ApiError> {
     let rows = st.store.overlap_rows(None).await?;
-    let idx = index_of(st, &rows).await?;
+    let idx = index_of(st, &rows, None).await?;
     let mut reported = st.store.overlap_reports().await?;
     let files = st.changed_files.read().map(|m| m.clone()).unwrap_or_default();
     let attempt: HashMap<&str, Option<&str>> =
