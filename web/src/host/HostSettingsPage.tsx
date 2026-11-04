@@ -809,12 +809,12 @@ function Checks() {
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
           {[
-            ...(['claude', 'codex', 'devin', 'git', 'gitIdentity', 'tailscale'] as const).map((k) => ({ key: k, name: k === 'gitIdentity' ? 'git identity' : k, c: checks.data[k], optional: k === 'devin' })),
+            ...(['claude', 'codex', 'devin', 'git', 'gitIdentity', 'tailscale'] as const).map((k) => ({ key: k, name: k === 'gitIdentity' ? 'git identity' : k, c: checks.data[k], optional: k === 'devin' || k === 'tailscale' })),
             ...Object.entries(checks.data.acp ?? {}).map(([k, c]) => ({ key: k, name: agents.label(k as AgentKind), c, optional: true })),
           ].map(({ key: k, name, c, optional: canLack }) => {
             // An agent switched off is not checked for (PDT-270).
             const switchedOff = off.includes(k as AgentKind);
-            // Devin and ACP agents are optional: a host without them is fine.
+            // Devin, Tailscale and ACP agents are optional: a host without them is fine.
             const optional = switchedOff || (canLack && !c.found);
             const [status, text]: [Status, string] = switchedOff ? ['idle', 'switched off'] : c.ok ? ['running', 'OK'] : c.found ? ['waiting', 'needs attention'] : optional ? ['idle', 'not installed (optional)'] : ['failed', 'not found'];
             return (

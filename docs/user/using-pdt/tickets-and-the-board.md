@@ -10,7 +10,7 @@ of the same tickets.
 
 | Stage | Means |
 | --- | --- |
-| **Draft** | Written down, not ready yet. New tickets start here. |
+| **Draft** | Written down, not ready yet. New tickets start here, except ones made on the board, which start in **To do**. |
 | **Ready** | Refined and ready, not picked yet. |
 | **To do** | Picked: on the board, waiting to start. |
 | **In progress** | A branch, a worktree and (usually) an agent are working on it. |
