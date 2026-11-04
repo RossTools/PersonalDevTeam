@@ -356,6 +356,39 @@ impl Store {
     }
 }
 
+impl Store {
+    /// A project's branch naming on this host (PDT-594); no template (the default) until it is set.
+    pub async fn get_project_branch_names(
+        &self,
+        project_id: &str,
+    ) -> Result<pdt_core::branch_name::BranchSettings, StoreError> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT branch_names FROM project_settings WHERE project_id = ?")
+            .bind(project_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        match row {
+            None => Ok(Default::default()),
+            Some((v,)) => serde_json::from_str(&v).map_err(|e| StoreError::Corrupt(format!("branch names: {e}"))),
+        }
+    }
+
+    pub async fn put_project_branch_names(
+        &self,
+        project_id: &str,
+        s: &pdt_core::branch_name::BranchSettings,
+    ) -> Result<(), StoreError> {
+        // The row gets the other settings as they read now, so a project with none keeps its defaults.
+        let current = self.get_project_settings(project_id).await?;
+        self.put_project_settings(project_id, &current).await?;
+        sqlx::query("UPDATE project_settings SET branch_names = ? WHERE project_id = ?")
+            .bind(serde_json::to_string(s).expect("branch names serialize"))
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::worktrees::tests::store_with_project;
@@ -525,6 +558,24 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(store.get_host_settings().await, Err(StoreError::Corrupt(_))));
+    }
+
+    #[tokio::test]
+    async fn branch_names_default_and_roundtrip_beside_the_other_settings() {
+        use pdt_core::branch_name::BranchSettings;
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        assert_eq!(store.get_project_branch_names("p").await.unwrap(), BranchSettings::default());
+        let s = BranchSettings {
+            template: Some("{type}/{jira|key}-{slug}".into()),
+            types: [("docs".to_string(), "docs".to_string())].into(),
+        };
+        store.put_project_branch_names("p", &s).await.unwrap();
+        assert_eq!(store.get_project_branch_names("p").await.unwrap(), s);
+        assert_eq!(store.get_project_settings("p").await.unwrap(), ProjectSettings::default());
+        // Saving the other settings keeps them.
+        store.put_project_settings("p", &ProjectSettings::default()).await.unwrap();
+        assert_eq!(store.get_project_branch_names("p").await.unwrap(), s);
     }
 
     #[tokio::test]

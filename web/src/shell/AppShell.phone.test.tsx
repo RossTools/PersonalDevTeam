@@ -325,7 +325,7 @@ describe('phone', () => {
     expect(here()).toBe('/settings/projects/ALP');
     const sections = await within(main).findByRole('grid', { name: 'Sections' });
     expect(within(sections).getAllByRole('row').map((r) => r.textContent)).toEqual([
-      'General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Danger zone',
+      'General', 'Worktrees', 'Runs on this host', 'Branch names', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Danger zone',
     ]);
     expect(topBar).toHaveTextContent('Alpha');
     await userEvent.click(screen.getByRole('button', { name: 'Back' }));

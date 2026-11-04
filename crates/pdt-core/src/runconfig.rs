@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 8] = ["run", "test", "area", "forge", "ci", "push", "storage", "merge"];
+const SECTIONS: [&str; 9] = ["run", "test", "area", "forge", "ci", "push", "storage", "merge", "branch"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -35,6 +35,9 @@ pub struct ConfigFile {
     /// `[merge]`: how PDT brings a branch up to date with its base at merge time (PDT-328).
     #[serde(default)]
     pub merge: Option<MergeFile>,
+    /// `[branch]`: how new tickets' branches are named (PDT-594).
+    #[serde(default)]
+    pub branch: Option<BranchFile>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -68,6 +71,14 @@ pub struct StorageFile {
 #[serde(deny_unknown_fields)]
 pub struct MergeFile {
     pub regenerate: Option<Vec<RegenerateFile>>,
+}
+
+/// `[branch]` as written: `template = "{type}/{jira|key}-{slug}"`, `types = { bug = "fix", docs = "docs" }`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BranchFile {
+    pub template: Option<String>,
+    pub types: Option<BTreeMap<String, String>>,
 }
 
 /// A `[[merge.regenerate]]` as written: `paths = ["Cargo.lock"]`, `run = "cargo update -w"`.
@@ -186,6 +197,11 @@ pub struct RunConfig {
     pub build_output: Option<Vec<String>>,
     /// `[[merge.regenerate]]`: the rules for generated files at merge time (the overrides' list wins when they give one).
     pub regenerate: Vec<RegenerateDef>,
+    /// `[branch]`: how new tickets' branches are named, from the repository's file only (it wins over the project's
+    /// setting). Checked apart from the rest: a bad template is `branch_error`, and branches get the project's naming
+    /// meanwhile, while runs keep working.
+    pub branch: Option<crate::branch_name::BranchSettings>,
+    pub branch_error: Option<String>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -408,9 +424,29 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
     let rules = |m: Option<MergeFile>| m.and_then(|m| m.regenerate);
     let regenerate = rules(over.merge).or(rules(file.merge)).unwrap_or_default();
     let regenerate = regenerate.into_iter().map(finish_regenerate).collect::<Result<_, _>>()?;
+    let branch = file
+        .branch
+        .map(|b| crate::branch_name::BranchSettings { template: b.template, types: b.types.unwrap_or_default() });
+    let branch_error = branch
+        .as_ref()
+        .and_then(|b| crate::branch_name::BranchNaming::new(b).err())
+        .map(|e| format!("[branch] in {PROJECT_CONFIG_FILE}: {e}"));
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
-    Ok(RunConfig { runs, tests, areas, forge, ci, ci_providers, push, build_output, regenerate, ignored })
+    Ok(RunConfig {
+        runs,
+        tests,
+        areas,
+        forge,
+        ci,
+        ci_providers,
+        push,
+        build_output,
+        regenerate,
+        branch,
+        branch_error,
+        ignored,
+    })
 }
 
 fn finish_regenerate(r: RegenerateFile) -> Result<RegenerateDef, RunConfigError> {
@@ -811,6 +847,31 @@ command = "cargo run"
         let b = parse("[[merge.regenerate]]\npaths = [\"src/[\"]\nrun = \"x\"\n", Source::File).unwrap();
         assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadRegenerateGlob { .. })));
         assert!(matches!(parse("[merge]\nrebase = true\n", Source::File), Err(RunConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn branch_naming_comes_from_the_file_and_a_bad_template_spoils_only_it() {
+        let text = "[[run]]\nname = \"a\"\ncommand = \"x\"\n[branch]\ntemplate = \"{type}/{jira|key}-{slug}\"\ntypes = { docs = \"docs\" }\n";
+        let c = merge(Some(parse(text, Source::File).unwrap()), None).unwrap();
+        let b = c.branch.unwrap();
+        assert_eq!(b.template.as_deref(), Some("{type}/{jira|key}-{slug}"));
+        assert_eq!(b.types["docs"], "docs");
+        assert_eq!((c.branch_error, c.ignored.is_empty()), (None, true));
+
+        let bad = merge(
+            Some(
+                parse("[[run]]\nname = \"a\"\ncommand = \"x\"\n[branch]\ntemplate = \"{nope}\"\n", Source::File)
+                    .unwrap(),
+            ),
+            None,
+        )
+        .unwrap();
+        assert_eq!(bad.runs.len(), 1, "runs keep working");
+        assert!(bad.branch_error.unwrap().starts_with("[branch] in .pdt/project.toml: {nope} is not a part"));
+        assert!(matches!(parse("[branch]\ntemplat = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
+        // Only the repository's file names branches; the overrides' [branch] is not merged.
+        let over = parse("[branch]\ntemplate = \"x-{key}\"\n", Source::Overrides).unwrap();
+        assert_eq!(merge(None, Some(over)).unwrap().branch, None);
     }
 
     #[test]

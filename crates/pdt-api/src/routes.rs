@@ -494,6 +494,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::activity::router())
         .merge(crate::attachments::router())
         .merge(crate::board::router())
+        .merge(crate::branch_names::router())
         .merge(crate::bug_reports::router())
         .merge(crate::checks::router())
         .merge(crate::conversations::router())

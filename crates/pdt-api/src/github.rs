@@ -1370,6 +1370,7 @@ mod tests {
             finish_delete_branch: false,
             merge_requested: false,
             merge_refused: false,
+            branch_named: None,
         };
         let bk = buildkite();
         let mut build = bk.run("app/3", "app", "b", "h", CiState::Failed, "t");

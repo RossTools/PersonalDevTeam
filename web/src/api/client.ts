@@ -3,6 +3,7 @@
 // `api` stays one plain object (tests spy on `api.foo`), and every area's keys must be unique across areas.
 
 import { boardApi } from './board';
+import { branchNamesApi } from './branchNames';
 import { connectionsApi } from './connections';
 import { documentsApi } from './documents';
 import { filesApi } from './files';
@@ -33,6 +34,7 @@ export type { SessionPatch } from './sessions';
 
 export const api = {
   ...boardApi,
+  ...branchNamesApi,
   ...connectionsApi,
   ...documentsApi,
   ...filesApi,

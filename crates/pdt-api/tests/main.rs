@@ -16,6 +16,7 @@ mod activity;
 mod agent_nodes;
 mod agent_steps;
 mod api;
+mod branch_names;
 mod bug_reports;
 mod checks;
 mod close_parents;

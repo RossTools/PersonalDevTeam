@@ -136,6 +136,7 @@ pub async fn decorate(st: &AppState, mut t: Ticket) -> Result<Ticket, ApiError> 
     index_of(st, &rows, Some(&t.summary.id)).await?.apply(&mut t);
     crate::github::apply(st, &mut t);
     crate::parts::apply(st, &mut t).await?;
+    crate::branch_names::apply(st, &mut t).await;
     crate::scheduler::apply_agents(st, std::slice::from_mut(&mut t.summary)).await;
     crate::scheduler::apply_auto_start(st, std::slice::from_mut(&mut t.summary)).await;
     Ok(t)

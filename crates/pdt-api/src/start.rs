@@ -4,6 +4,7 @@
 //! closed.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use crate::sessions::{CreateSession, create_session};
 use axum::Json;
@@ -164,11 +165,17 @@ pub(crate) async fn start_ticket(
         Some(sid) => Some(startable_chat(&st, sid, &project).await?),
         None => None,
     };
+    // Whether PDT named the branch from the project's template (PDT-594): Won't do may delete such a branch from the
+    // remote, whatever its name.
+    let named = chat.is_none() && personal.is_none() && v.branch.as_deref().is_none_or(|b| b == ticket.default_branch);
     let (wt, branch) = match (&chat, &personal) {
         (_, Some(_)) => (None, String::new()),
         (Some((_, wt)), None) => (Some(wt.clone()), wt.branch.clone()),
         (None, None) => {
-            let branch = v.branch.clone().unwrap_or_else(|| ticket.default_branch.clone());
+            let branch = match &v.branch {
+                Some(b) => b.clone(),
+                None => crate::branch_names::start_branch(&st, &project, &ticket, &ticket.default_branch).await?,
+            };
             let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
             let wt = match existing {
                 Some(w) => w,
@@ -209,6 +216,7 @@ pub(crate) async fn start_ticket(
             now_ms(),
         )
         .await?;
+    st.store.set_attempt_branch_named(&attempt_id, named).await.log_warn("record who named the attempt's branch");
     drop(guard);
 
     if let Some((chat, _)) = chat {
@@ -428,7 +436,8 @@ async fn fetch_before_start(
     id: &str,
     v: &ValidStart,
 ) -> Result<(String, Option<(String, String)>), ApiError> {
-    let ticket = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    let mut ticket = st.store.get_ticket(id).await?.ok_or_else(|| ApiError::not_found("ticket"))?;
+    crate::branch_names::apply(st, &mut ticket).await;
     // A part is always in its parent's project.
     let project_id = ticket.summary.project_id.clone();
     let Some(project) = st.store.get_project(&project_id).await? else { return Ok((project_id, None)) };
