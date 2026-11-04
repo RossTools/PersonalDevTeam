@@ -227,7 +227,7 @@ pub(crate) async fn refuse_secrets(st: &AppState, s: &Session) -> Result<(), Str
 /// None for a trigger whose event carries none.
 pub(crate) fn trigger_source(reg: &crate::integrations::Registry, trigger: &Value) -> Option<(String, Option<String>)> {
     let kind = trigger.get("type").and_then(Value::as_str)?;
-    if reg.event_type(kind).is_none_or(|t| t.outside.is_empty()) || pdt_core::workflow::events::by_user(trigger) {
+    if reg.event_type(kind).is_none_or(|t| t.outside_of(trigger).is_empty()) {
         return None;
     }
     let s = |k: &str| trigger.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
@@ -510,6 +510,9 @@ mod tests {
         assert_eq!(trigger_source(reg, &hook), Some(("webhook deploys".into(), None)));
         assert_eq!(trigger_source(reg, &json!({"type": "ci.run_failed", "url": "u"})), None, "not outside text");
         assert_eq!(trigger_source(reg, &json!({"repo": "o/r"})), None);
+        // The user's own comment on a document still carries its title, which they may not have set (PDT-597).
+        let mine = json!({"type": "document.comment_added", "byUser": true, "url": "https://d/1"});
+        assert_eq!(trigger_source(reg, &mine), Some(("https://d/1".into(), Some("https://d/1".into()))));
     }
 
     #[test]
