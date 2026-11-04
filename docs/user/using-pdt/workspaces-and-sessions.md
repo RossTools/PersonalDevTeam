@@ -119,8 +119,9 @@ A conversation's message box has two pickers, both changeable at any time:
 
 Terminal sessions have one choice when they start: **Skip permission prompts (dangerous)**.
 
-**Settings › This host › Agents** sets two defaults: one for tickets (bypass, since the agent works on its own branch
-in its own folder) and one for other sessions (ask). **Always allow in this session** lasts for that session only; PDT
+**Settings › This host › Agents** sets two defaults: one for tickets and one for other sessions. Both start as **Ask**;
+Get started offers the ticket one (many choose **Bypass**, since a ticket's agent works on its own branch in its own
+folder). **Always allow in this session** lasts for that session only; PDT
 never changes your agents' own settings.
 
 ## Runs: dev servers and tests

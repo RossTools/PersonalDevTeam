@@ -24,4 +24,9 @@ githubSkipped: boolean,
 /**
  * The default agent was picked (in the checklist or in Settings), or the preset one confirmed.
  */
-defaultAgentConfirmed: boolean, };
+defaultAgentConfirmed: boolean, 
+/**
+ * Tickets' permission mode was picked (in the checklist or in Settings), or the preset one (Ask) confirmed
+ * (PDT-562).
+ */
+permissionsConfirmed: boolean, };

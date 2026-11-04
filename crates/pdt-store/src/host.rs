@@ -67,10 +67,16 @@ impl Store {
             .bind(HOST_KEY)
             .fetch_optional(&self.pool)
             .await?;
-        match row {
-            None => Ok((*self.host_defaults).clone()),
-            Some((v,)) => serde_json::from_str(&v).map_err(|e| StoreError::Corrupt(format!("host settings: {e}"))),
+        let Some((v,)) = row else { return Ok((*self.host_defaults).clone()) };
+        let corrupt = |e: serde_json::Error| StoreError::Corrupt(format!("host settings: {e}"));
+        // What is stored goes over the profile's defaults: a field it lacks (stored by an older version, or a
+        // migration's row of one field) reads as the profile's.
+        let mut merged = serde_json::to_value(&*self.host_defaults).expect("host settings serialize");
+        match (serde_json::from_str::<serde_json::Value>(&v).map_err(corrupt)?, &mut merged) {
+            (serde_json::Value::Object(stored), serde_json::Value::Object(m)) => m.extend(stored),
+            (other, _) => merged = other,
         }
+        serde_json::from_value(merged).map_err(corrupt)
     }
 
     pub async fn put_host_settings(&self, s: &HostSettings) -> Result<(), StoreError> {
@@ -466,6 +472,88 @@ mod tests {
         let dev = HostSettings::for_profile(pdt_core::brand::Profile::Dev);
         let store = store_with_project(tmp.path()).await.with_host_defaults(dev.clone());
         assert_eq!(store.get_host_settings().await.unwrap(), dev);
+    }
+
+    /// A stored row lacking fields reads them from the profile's defaults (the dev profile's run ports here).
+    #[tokio::test]
+    async fn stored_host_settings_go_over_the_given_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dev = HostSettings::for_profile(pdt_core::brand::Profile::Dev);
+        let store = store_with_project(tmp.path()).await.with_host_defaults(dev.clone());
+        sqlx::query("INSERT INTO host_settings (key, value) VALUES (?, ?)")
+            .bind(super::HOST_KEY)
+            .bind(r#"{"ticketPermissionMode":"bypass"}"#)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        let s = store.get_host_settings().await.unwrap();
+        assert_eq!(s, HostSettings { ticket_permission_mode: pdt_core::conversation::PermissionMode::Bypass, ..dev });
+    }
+
+    /// PDT-562: an install from before tickets defaulted to Ask keeps Bypass, the old default, whether it stored its
+    /// settings, stored them without the field, or never stored any; one that picked a mode keeps it, and a new one
+    /// starts in Ask.
+    #[tokio::test]
+    async fn the_ticket_permissions_migration_keeps_old_installs_on_bypass() {
+        use pdt_core::conversation::PermissionMode;
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("m");
+        std::fs::create_dir_all(&old).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.ends_with("_ticket_permissions_keep_bypass.sql") {
+                std::fs::copy(e.path(), old.join(&name)).unwrap();
+            }
+        }
+        let before = sqlx::migrate::Migrator::new(old.as_path()).await.unwrap();
+        let project = pdt_core::project::Project {
+            id: "p".into(),
+            name: "P".into(),
+            repo_path: "/r".into(),
+            base_branch: "main".into(),
+            created_at: 1,
+            key: String::new(),
+            forge: None,
+            kind: Default::default(),
+        };
+        // (a project, the stored host row, the setup row) before; the mode after, and the step confirmed.
+        type Case = (bool, Option<&'static str>, Option<&'static str>, PermissionMode, Option<bool>);
+        let cases: [Case; 4] = [
+            (true, None, None, PermissionMode::Bypass, None),
+            (false, Some(r#"{"maxConcurrentRuns":2}"#), Some(r#"{"needed":true}"#), PermissionMode::Bypass, Some(true)),
+            (true, Some(r#"{"ticketPermissionMode":"accept_edits"}"#), None, PermissionMode::AcceptEdits, None),
+            (false, None, Some(r#"{"needed":true}"#), PermissionMode::Ask, Some(false)),
+        ];
+        for (i, (has_project, host, setup, mode, confirmed)) in cases.into_iter().enumerate() {
+            let dir = tmp.path().join(format!("case{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let (db, backups) = (dir.join("pdt.db"), dir.join("backups"));
+            let store = crate::Store::open_with(&db, &before, &backups).await.unwrap();
+            if has_project {
+                store.insert_project(&project).await.unwrap();
+            }
+            for (key, value) in [(super::HOST_KEY, host), ("setup", setup)] {
+                if let Some(v) = value {
+                    sqlx::query("INSERT INTO host_settings (key, value) VALUES (?, ?)")
+                        .bind(key)
+                        .bind(v)
+                        .execute(&store.pool)
+                        .await
+                        .unwrap();
+                }
+            }
+            store.close().await;
+            let store = crate::Store::open_with(&db, &crate::migrate::MIGRATOR, &backups).await.unwrap();
+            let s = store.get_host_settings().await.unwrap();
+            assert_eq!(s.ticket_permission_mode, mode, "case {i}");
+            if host.is_some_and(|h| h.contains("maxConcurrentRuns")) {
+                assert_eq!(s.max_concurrent_runs, 2, "case {i}: the rest stays");
+            }
+            let setup = store.get_host_value("setup").await.unwrap();
+            assert_eq!(setup.map(|v| v["permissionsConfirmed"] == true), confirmed, "case {i}");
+        }
     }
 
     #[tokio::test]

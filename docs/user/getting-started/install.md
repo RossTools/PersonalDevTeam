@@ -7,8 +7,10 @@ installing PDT: [the first run](first-run.md) checks for them.
 ## Install with one command
 
 The command downloads the latest release for your system, checks it against the release's checksums (and installs
-nothing if they don't match), installs it without admin rights and starts it. If PDT is already installed, it changes
-nothing.
+nothing if they don't match), installs it without admin rights and starts it.
+
+If PDT is already installed and running, the command changes nothing. If it's installed but stopped, the command tells
+you how to start it. If an earlier install didn't finish, the command installs PDT again.
 
 **macOS and Linux**, in a terminal:
 
@@ -19,7 +21,9 @@ curl -fsSL https://pdt.dev/install.sh | sh
 - On macOS it installs **Personal Dev Team** into the **Applications** folder in your home folder and opens it, which
   adds it to your login items.
 - On Linux it installs into `~/.local/opt/pdt` as a systemd user service that starts now and when you log in. On a
-  machine without a desktop it offers to keep PDT running after you log out and start it at boot.
+  machine without a desktop it offers to keep PDT running after you log out and start it at boot. Linux needs a
+  systemd user session: on WSL, turn systemd on first (`systemd=true` under `[boot]` in `/etc/wsl.conf`, then
+  `wsl --shutdown`).
 
 **Windows**, in PowerShell:
 

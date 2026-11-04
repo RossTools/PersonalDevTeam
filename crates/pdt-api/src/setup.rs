@@ -1,6 +1,6 @@
 //! Get started (PDT-230): the first-run checklist. Its steps tick themselves off from the host's real state (the
 //! checks, the GitHub login, the projects); what the host remembers about it (dismissed, GitHub skipped, the default
-//! agent confirmed) is stored under its own key in `host_settings`, the first time anyone asks.
+//! agent and tickets' permissions confirmed) is stored under its own key in `host_settings`, the first time anyone asks.
 
 use crate::error::ApiError;
 use crate::routes::AppState;
@@ -20,7 +20,7 @@ const SETUP_KEY: &str = "setup";
 pub struct SetupView {
     pub state: SetupState,
     pub steps: SetupSteps,
-    /// How many of the four steps are done.
+    /// How many of the five steps are done.
     pub done: u32,
     /// The app opens on Get started.
     pub opens_on_launch: bool,
@@ -56,16 +56,19 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
     })
 }
 
-/// Records that the default agent was set (in Settings or here): the checklist's last step is then done.
-pub(crate) async fn confirm_default_agent(st: &AppState) -> Result<(), ApiError> {
+/// Records what Settings set that a step asks for (the default agent, tickets' permission mode): that step is then
+/// done.
+pub(crate) async fn confirm(st: &AppState, p: &SetupPatch) -> Result<(), ApiError> {
     let _guard = st.setup_lock.lock().await;
-    let Some(s) = stored(st).await? else {
-        // Never asked for yet: the first look decides whether this host needs setting up; remember the pick then.
-        let f = facts(st).await?;
-        return store(st, &SetupState { default_agent_confirmed: true, ..SetupState::first_seen(&f) }).await;
+    let before = stored(st).await?;
+    // Never asked for yet: the first look decides whether this host needs setting up; remember the pick then.
+    let s = match &before {
+        Some(s) => s.clone(),
+        None => SetupState::first_seen(&facts(st).await?),
     };
-    if !s.default_agent_confirmed {
-        store(st, &SetupState { default_agent_confirmed: true, ..s }).await?;
+    let next = s.apply(p);
+    if before.as_ref() != Some(&next) {
+        store(st, &next).await?;
     }
     Ok(())
 }

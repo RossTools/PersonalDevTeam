@@ -17,4 +17,8 @@ project: StepState,
 /**
  * The default agent was set explicitly or confirmed.
  */
-defaultAgent: StepState, };
+defaultAgent: StepState, 
+/**
+ * Tickets' permission mode was set explicitly or confirmed.
+ */
+permissions: StepState, };

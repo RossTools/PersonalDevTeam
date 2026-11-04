@@ -342,6 +342,9 @@ async fn a_refined_external_ticket_waits_in_ready_for_the_user() {
 #[tokio::test]
 async fn a_session_on_an_external_ticket_gets_no_secrets_until_it_is_let_in() {
     let env = setup().await;
+    // Tickets' agents in Bypass, so a let-in call runs without asking (a new install's Ask would ask first).
+    let (s, _) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"ticketPermissionMode": "bypass"}))).await;
+    assert_eq!(s, StatusCode::OK);
     // A Refine step run by the Coder persona, whose tools include the secret ones.
     let wf = pipeline(&env, json!({"refiner": "Coder"}), &[]).await;
     let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{wf}"), None).await;
