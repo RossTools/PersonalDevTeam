@@ -5,24 +5,37 @@ import Landing from '../layouts/Landing.astro';
 import { NAME, SHORT_NAME } from '../brand.mjs';
 
 const SUPPORT = 'support@pdt.dev';
+const UPDATED = '4 November 2026';
 ---
 
 <Landing title="Privacy" description={`What ${SHORT_NAME} keeps, what it sends, and how to take its access back.`}>
 	<main class="privacy">
 		<div class="wrap">
 			<h2>Privacy</h2>
+			<p class="updated">Last updated {UPDATED}</p>
 			<p class="lead">{NAME} ({SHORT_NAME}) runs on your own machine. There are no {SHORT_NAME} servers your work goes through.</p>
 
 			<h3>What stays on your machine</h3>
 			<ul>
 				<li>Your tickets, documents, conversations and settings are kept in {SHORT_NAME}'s data folder on the computer it runs on.</li>
-				<li>Sign-ins and secrets (tokens for GitHub, Google and other services) are kept in that computer's keychain.</li>
-				<li>Nothing is sent to {SHORT_NAME}'s developers: no analytics, no telemetry, no copies of your data.</li>
+				<li>Sign-ins and secrets (tokens for GitHub, Google and other services) are kept in that computer's keychain. On
+					Linux without a system keyring (a server with no desktop, usually), they are kept instead in a file
+					in {SHORT_NAME}'s data folder that only your user can read.</li>
+				<li>Nothing is sent to {SHORT_NAME}'s developers on its own: no analytics, no telemetry, no copies of your data.
+					The one exception is a bug report you choose to send (below).</li>
 			</ul>
 
 			<h3>What {SHORT_NAME} sends, and where</h3>
 			<p>{SHORT_NAME} talks to the services you connect it to, from your machine, as you: GitHub for your repositories, the
 				coding agents you run, and the plugins you turn on. It checks GitHub for new releases.</p>
+
+			<h3>Bug reports</h3>
+			<p><strong>Report a bug</strong> sends what you write and, unless you leave them out, diagnostics ({SHORT_NAME}'s
+				version, your operating system, its update state and the end of its log) to a public GitHub issue
+				on {SHORT_NAME}'s repository, which anyone can read (filed as your GitHub login, or opened in GitHub's bug form for you
+				to send yourself). The log is cleaned of secrets, tokens, home folders and your machine's names, but can still
+				name repositories, branches and folders; the report form in {SHORT_NAME} shows everything it includes before you
+				send it. In Settings you can keep reports as a local ticket instead, which sends nothing, or turn them off.</p>
 
 			<h3>Google</h3>
 			<ul>
@@ -43,6 +56,11 @@ const SUPPORT = 'support@pdt.dev';
 				To take {SHORT_NAME}'s access back from Google's side, open your Google Account → Security → Third-party apps with
 				account access, pick {NAME} and remove its access.</p>
 
+			<h3>This website</h3>
+			<p>This website is hosted on GitHub Pages. It sets no cookies and has no analytics or tracking, and its fonts are
+				served with the site. GitHub, as the host, receives the usual details of each visit, such as your IP address,
+				and keeps them in its server logs under <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub's privacy statement</a>.</p>
+
 			<h3>Contact</h3>
 			<p>Questions about privacy or support: <a href={`mailto:${SUPPORT}`}>{SUPPORT}</a>.</p>
 		</div>
@@ -52,6 +70,7 @@ const SUPPORT = 'support@pdt.dev';
 <style>
 	.privacy { padding: 72px 0 96px; }
 	.privacy .wrap { max-width: 760px; }
+	.privacy .updated { color: var(--muted); font-size: 14px; margin: -4px 0 16px; }
 	.privacy h3 { font-size: 20px; margin: 40px 0 12px; }
 	.privacy p, .privacy li { color: var(--muted); font-size: 16px; line-height: 1.6; }
 	.privacy ul { padding-left: 20px; display: grid; gap: 8px; }
