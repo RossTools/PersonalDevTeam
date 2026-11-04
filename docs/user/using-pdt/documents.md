@@ -89,8 +89,9 @@ rename and delete sheets, format cells, add conditional formats and charts, and 
 can. They read a document's comments, reply to them and resolve them.
 
 Reading never asks. Changing a document, making one, linking one, and replying to or resolving a comment ask you
-first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**). What other
-people wrote in a document's comments reaches agents marked as outside input, never as instructions.
+first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**). A document's
+title, its content and its comments reach agents marked as outside input, never as instructions, since anyone who can
+edit the document (or the file) could have written them.
 
 Workflows work on documents too: they can make one, add text or rows, set cells, add a chart and comment, and start
 when a document changes or gets a new comment. See [Workflows](../automation/workflows.md#steps), with examples that

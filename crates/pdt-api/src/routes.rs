@@ -163,6 +163,9 @@ pub struct AppState {
     pub home_dir: Option<std::path::PathBuf>,
     /// Conversation sessions' runtimes (structured agents).
     pub conversations: crate::conversations::Conversations,
+    /// The asking tools each Claude session's process was launched with an ask rule for, by session (PDT-535,
+    /// `mcp::server_for`): `mcp::tools::confirmable` trusts Claude's prompt only for those.
+    pub(crate) claude_ask_rules: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>>,
     /// Serializes the workflow engine's state changes (claiming a step, writing its result, matching events) and
     /// the commands that change runs. Never held while a node runs.
     pub(crate) engine_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
@@ -269,6 +272,7 @@ impl AppState {
             ptys: pdt_agents::PtyManager::new(),
             platform,
             exit_tasks: Default::default(),
+            claude_ask_rules: Default::default(),
             session_locks: Default::default(),
             codex_spawn_spacing: std::time::Duration::from_secs(5),
             codex_spawns: Default::default(),

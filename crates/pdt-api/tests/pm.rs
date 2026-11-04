@@ -869,7 +869,12 @@ fn mcp_servers_of(env: &Env, session: &str) -> Vec<String> {
 }
 
 async fn approve_open(env: &Env, session: &str) {
-    let req = open_request(env, session).await;
+    approve_open_except(env, session, &[]).await
+}
+
+/// [`approve_open`] for a request that isn't one of `answered`.
+async fn approve_open_except(env: &Env, session: &str, answered: &[String]) {
+    let req = open_request_except(env, session, answered).await;
     let url = format!("/api/sessions/{session}/requests/{req}");
     let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
@@ -913,8 +918,8 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
     let to_do = r#"mcp: edit_ticket {"ticket": "PX-2", "stage": "todo"}"#;
     let n = agent_says(&env, &id).await.len();
     send(&env, &id, to_do).await;
-    let req = open_request(&env, &id).await;
-    let url = format!("/api/sessions/{id}/requests/{req}");
+    let denied = open_request(&env, &id).await;
+    let url = format!("/api/sessions/{id}/requests/{denied}");
     call(&env.app, "POST", &url, Some(json!({"answer": {"type": "deny"}}))).await;
     assert_eq!(wait_said(&env, &id, n + 1).await.pop().unwrap(), "mcp edit_ticket denied");
     assert_eq!(stage().await["stage"], "ready");
@@ -922,8 +927,8 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
     // A yes that isn't the user's click (an agent's curl, without the UI token) grants nothing (PDT-204).
     let n = agent_says(&env, &id).await.len();
     send(&env, &id, to_do).await;
-    let req = open_request(&env, &id).await;
-    let url = format!("/api/sessions/{id}/requests/{req}");
+    let curled = open_request_except(&env, &id, std::slice::from_ref(&denied)).await;
+    let url = format!("/api/sessions/{id}/requests/{curled}");
     let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
@@ -933,7 +938,7 @@ async fn the_pm_moves_an_external_ticket_to_to_do_only_after_the_users_yes() {
     // A yes lets it in.
     let n = agent_says(&env, &id).await.len();
     send(&env, &id, to_do).await;
-    approve_open(&env, &id).await;
+    approve_open_except(&env, &id, &[denied, curled]).await;
     let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
     assert!(said.contains("\"updated\": true") && said.contains("\"stage\": \"todo\""), "{said}");
     let v = stage().await;

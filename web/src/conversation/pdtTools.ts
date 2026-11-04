@@ -38,6 +38,17 @@ const CARD_TOOLS = new Set([
 export const isCardTool = (tool: string) => CARD_TOOLS.has(pdtTool(tool) ?? '');
 
 /**
+ * The text of a pdt-mcp result's field without the block that marks it as outside text for the agent
+ * (`<untrusted id="…">` … `</untrusted id="…">`, crates/pdt-core/src/fence.rs), its escaped tags written back; any
+ * other value as it is.
+ */
+export function unfenced(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const m = /^<untrusted id="([A-Za-z0-9]*)">\n([\s\S]*)\n<\/untrusted id="\1">$/.exec(v);
+  return m ? m[2].replace(/&lt;(?=\s*\/?\s*untrusted)/gi, '<') : v;
+}
+
+/**
  * A pdt-mcp result as an object: the JSON text Claude passes on, or Codex's whole MCP result (its
  * `structuredContent`, else its text). Null for an error or anything else.
  */
@@ -245,7 +256,7 @@ export function issueLink(input: unknown, output?: string): { ticket: string; ke
     ticket: nonBlank(t.key) ?? nonBlank(a.ticket) ?? 'a ticket',
     key: nonBlank(i.key) ?? (isUrl ? issueKeyOf(given) : given),
     url,
-    title: nonBlank(i.title) ?? nonBlank(a.label),
+    title: nonBlank(unfenced(i.title)) ?? nonBlank(a.label),
   };
 }
 
@@ -321,7 +332,7 @@ export function documentOf(tool: string, input: unknown, output?: string): Docum
       : null;
   return {
     id: nonBlank(r.id) ?? (name === 'document_create' ? null : given),
-    title: nonBlank(r.title) ?? nonBlank(a.title) ?? given ?? 'a document',
+    title: nonBlank(unfenced(r.title)) ?? nonBlank(a.title) ?? given ?? 'a document',
     kind,
     url: nonBlank(r.url),
     projects: strings(r.projects ?? (name === 'document_create' && a.project ? [a.project] : [])),

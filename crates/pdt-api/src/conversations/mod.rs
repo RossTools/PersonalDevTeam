@@ -242,7 +242,7 @@ fn unknown_agent(agent: AgentKind) -> ApiError {
 pub(crate) async fn acp_agent(st: &AppState, agent: AgentKind) -> Result<AcpAgentDef, ApiError> {
     let s = st.store.get_host_settings().await?;
     let def = s.acp_agent(agent).ok_or_else(|| unknown_agent(agent))?;
-    Ok(crate::toolchains::launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def))
+    Ok(crate::toolchains::launch_def(&st.data_dir, st.home_dir.as_deref(), &s, def, st.host_env.acp_program.as_deref()))
 }
 
 fn adapter_error(e: AdapterError) -> ApiError {

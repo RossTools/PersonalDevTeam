@@ -131,7 +131,18 @@ pub fn installed(data_dir: &FsPath, registry_id: &str) -> Option<Installed> {
 
 /// `def` as it launches on this host: a profile PDT installs runs the path set over it in Settings → Agents, else the
 /// program PDT installed (with the registry's arguments); its command stays the placeholder when neither is there.
-pub fn launch_def(data_dir: &FsPath, home: Option<&FsPath>, s: &HostSettings, def: AcpAgentDef) -> AcpAgentDef {
+/// `PDT_ACP_PROGRAM` (`env_program`, PDT-561) wins over all of them, for every ACP agent: tests and scratch daemons
+/// point it at a stand-in, or at nothing so no ACP agent is found.
+pub fn launch_def(
+    data_dir: &FsPath,
+    home: Option<&FsPath>,
+    s: &HostSettings,
+    def: AcpAgentDef,
+    env_program: Option<&str>,
+) -> AcpAgentDef {
+    if let Some(program) = env_program {
+        return AcpAgentDef { command: program.to_string(), ..def };
+    }
     let Some(registry_id) = def.installer.clone() else { return def };
     let found = installed(data_dir, &registry_id);
     if let Some(path) = s.acp_programs.get(&def.id) {
@@ -317,8 +328,9 @@ pub(crate) async fn post_sign_in(
     let s = st.store.get_host_settings().await?;
     // Reading the installed agent's record and searching the PATH touch the disk: on the blocking pool.
     let (data_dir, home, search) = (st.data_dir.clone(), st.home_dir.clone(), st.platform.login_path.clone());
+    let env_program = st.host_env.acp_program.clone();
     let (def, program, cwd) = tokio::task::spawn_blocking(move || {
-        let def = launch_def(&data_dir, home.as_deref(), &s, def);
+        let def = launch_def(&data_dir, home.as_deref(), &s, def, env_program.as_deref());
         let program = crate::host::found(&def.command, search.as_deref());
         (def, program, home.filter(|h| h.is_dir()).unwrap_or_else(std::env::temp_dir))
     })
@@ -456,13 +468,18 @@ mod tests {
 
         let def = pdt_core::acp_agent::find(&[], "antigravity").unwrap();
         let s = HostSettings::default();
-        assert_eq!(launch_def(tmp.path(), None, &s, def.clone()).command, new.program.to_string_lossy());
+        assert_eq!(launch_def(tmp.path(), None, &s, def.clone(), None).command, new.program.to_string_lossy());
         let home = tmp.path().join("home");
         let s = HostSettings { acp_programs: [("antigravity".into(), "~/agy/server".into())].into(), ..s };
-        let set = launch_def(tmp.path(), Some(&home), &s, def.clone());
+        let set = launch_def(tmp.path(), Some(&home), &s, def.clone(), None);
         assert_eq!(set.command, crate::host::expand_home("~/agy/server", Some(&home)));
         // Not installed: the placeholder, which is never found.
-        let none = launch_def(&tmp.path().join("nothing"), None, &HostSettings::default(), def.clone());
+        let none = launch_def(&tmp.path().join("nothing"), None, &HostSettings::default(), def.clone(), None);
         assert_eq!(none.command, def.command);
+        // PDT_ACP_PROGRAM wins over the path set and the installed program, and over an agent PDT doesn't install.
+        let env = launch_def(tmp.path(), Some(&home), &s, def.clone(), Some("/x/stand-in"));
+        assert_eq!((env.command.as_str(), env.args), ("/x/stand-in", def.args.clone()));
+        let omp = pdt_core::acp_agent::find(&[], "omp").unwrap();
+        assert_eq!(launch_def(tmp.path(), None, &s, omp, Some("/x/stand-in")).command, "/x/stand-in");
     }
 }
