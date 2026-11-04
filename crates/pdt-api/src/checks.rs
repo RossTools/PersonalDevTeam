@@ -79,6 +79,8 @@ pub struct HostChecks {
     /// Optional: most hosts never install Devin, so a missing one is no problem.
     pub devin: ToolCheck,
     pub git: ToolCheck,
+    /// Whether git has a name and email to commit with (`user.name`, `user.email`): merges and updates need them.
+    pub git_identity: ToolCheck,
     pub tailscale: ToolCheck,
     /// Each ACP agent's (by agent kind, `acp:<id>`): whether its command is found. PDT can't tell whether one is
     /// logged in, so a found one is `ok`.
@@ -190,6 +192,7 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         }
     });
     let git = check("git", run(st, "git", &["--version"], SessionKind::Shell, creds).await, ToolCheck::answered);
+    let git_identity = if git.found { identity_check().await } else { ToolCheck::missing("git is missing".into()) };
     let ts = st.tailscale.clone();
     let tailscale = match tokio::task::spawn_blocking(move || ts.status()).await {
         Ok(Ok(s)) => ToolCheck::answered(true, s.dns_name),
@@ -208,9 +211,40 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             (v.agent.as_str().to_string(), check)
         })
         .collect();
-    let c = HostChecks { claude, codex, devin, git, tailscale, acp, checked_at: now_ms() };
+    let c = HostChecks { claude, codex, devin, git, git_identity, tailscale, acp, checked_at: now_ms() };
     *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
     c
+}
+
+/// What to run when git has no identity.
+const SET_IDENTITY: &str =
+    "git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\"";
+
+/// The check of git's configured identity (see [`identity_detail`]).
+async fn identity_check() -> ToolCheck {
+    match tokio::task::spawn_blocking(pdt_git::configured_identity).await {
+        Ok(Ok(id)) => {
+            let (ok, detail) = identity_detail(&id);
+            ToolCheck::answered(ok, detail)
+        }
+        Ok(Err(e)) => ToolCheck::answered(false, format!("could not read git's settings: {e}")),
+        Err(e) => ToolCheck::answered(false, format!("could not read git's settings: {e}")),
+    }
+}
+
+/// Whether `id` is complete, and what the check says: the name and email, or which is missing and how to set it.
+fn identity_detail(id: &pdt_git::Identity) -> (bool, String) {
+    match (&id.name, &id.email) {
+        (Some(n), Some(e)) => (true, format!("{n} <{e}>")),
+        (name, email) => {
+            let missing = match (name, email) {
+                (None, None) => "no name or email",
+                (None, _) => "no name",
+                _ => "no email",
+            };
+            (false, format!("{missing} set, so merges fail or get a made-up address: run {SET_IDENTITY}"))
+        }
+    }
 }
 
 impl HostChecks {
@@ -245,6 +279,17 @@ mod tests {
         assert_eq!(super::claude_logged_in("{\n \"loggedIn\": true, \"authMethod\": \"claude.ai\"\n}"), Some(true));
         assert_eq!(super::claude_logged_in("warning\n{\"loggedIn\": false}"), Some(false));
         assert_eq!(super::claude_logged_in("Logged in"), None);
+    }
+
+    #[test]
+    fn says_what_identity_is_missing() {
+        let id =
+            |n: Option<&str>, e: Option<&str>| pdt_git::Identity { name: n.map(Into::into), email: e.map(Into::into) };
+        assert_eq!(super::identity_detail(&id(Some("Ada"), Some("a@b"))), (true, "Ada <a@b>".to_string()));
+        let (ok, detail) = super::identity_detail(&id(None, None));
+        assert!(!ok && detail.starts_with("no name or email set") && detail.contains("user.email"), "{detail}");
+        assert!(super::identity_detail(&id(Some("Ada"), None)).1.starts_with("no email set"));
+        assert!(super::identity_detail(&id(None, Some("a@b"))).1.starts_with("no name set"));
     }
 
     #[test]

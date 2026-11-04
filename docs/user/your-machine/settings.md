@@ -135,7 +135,7 @@ folders.
 ### Checks
 
 Whether PDT found the programs it runs: git, the agents and Tailscale, with where it found them or what's wrong.
-**Run checks again** after installing something.
+**git identity** shows the name and email git commits merges with. **Run checks again** after installing something.
 
 ### Setup
 

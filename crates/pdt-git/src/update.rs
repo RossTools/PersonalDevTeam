@@ -2,11 +2,11 @@
 //! generated files, stage what a regeneration changed, commit the merge. Commits use the user's own git identity, as
 //! an agent's would. `git rerere` replays a resolution recorded earlier.
 
-use crate::{GitError, git_with_env, is_ancestor};
+use crate::{GitError, command_failed, git_with_env, is_ancestor};
 use std::path::Path;
 
 fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-    git_with_env(dir, args, &[])?.map_err(|f| GitError::Command(f.stderr))
+    git_with_env(dir, args, &[])?.map_err(|f| command_failed(f.stderr))
 }
 
 /// Turns on `git rerere` for the repository (shared by its worktrees), unless it is set either way already: a
@@ -51,7 +51,7 @@ pub fn merge_base_in(worktree: &Path, base: &str) -> Result<BaseMerge, GitError>
         Err(f) => f,
     };
     if !merge_in_progress(worktree) {
-        return Err(GitError::Command(failed.stderr));
+        return Err(command_failed(failed.stderr));
     }
     let files = unmerged_files(worktree)?;
     if !files.is_empty() {
@@ -103,7 +103,7 @@ pub fn stage_globs(worktree: &Path, globs: &[String]) -> Result<(), GitError> {
         if let Err(f) = git_with_env(worktree, &["add", "-A", "--", &spec], &[])?
             && !f.stderr.contains("did not match")
         {
-            return Err(GitError::Command(f.stderr));
+            return Err(command_failed(f.stderr));
         }
     }
     Ok(())

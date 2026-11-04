@@ -73,6 +73,18 @@ If the agent is found but its sessions fail at once, run it in a terminal and lo
 
 Don't use an agent? Turn it off with its switch under **Programs**, and PDT stops counting it as missing.
 
+## A merge says git doesn't know who you are
+
+git needs a name and email to commit a merge. Set them once in a terminal, then merge again:
+
+```sh
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
+
+Nothing was merged and the checkout is as it was. **git identity** in **Settings › This host › Checks** shows what git
+commits with; without one set, git may make up an address from your user and computer names.
+
 ## An agent is waiting for approval
 
 An agent asks before running a command or editing a file when its permission mode says so. Its tab shows it's

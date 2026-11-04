@@ -10,6 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 const tool = (found: boolean, path: string | null = null) => ({ found, ok: found, detail: '', path });
 const checks = (o: { claude?: boolean; codex?: boolean; devin?: boolean; git?: boolean } = {}) => ({
   git: tool(o.git ?? true, '/usr/bin/git'),
+  gitIdentity: tool(o.git ?? true),
   claude: tool(o.claude ?? true, '/u/.local/bin/claude'),
   codex: tool(o.codex ?? false),
   devin: tool(o.devin ?? false),
@@ -79,6 +80,14 @@ describe('Get started', () => {
     const devin = within(agents).getByRole('row', { name: /Devin/ });
     expect(within(devin).getByRole('link', { name: /How to install/ })).toHaveAttribute('href', 'https://cli.devin.ai');
     expect(screen.queryByText(/You’re set up/)).not.toBeInTheDocument();
+  });
+
+  it('says how to set git’s name and email when it has none', async () => {
+    stub(view(), { 'GET /api/host/checks': { ...checks(), gitIdentity: { found: true, ok: false, detail: 'no name or email set' } } });
+    renderWithQuery(<SetupPage {...props()} />);
+    const agents = await step('Agents on this machine');
+    const alert = (await within(agents).findByText('git doesn’t know who you are')).closest<HTMLElement>('[role=status]')!;
+    expect(within(alert).getByRole('group', { name: 'Set your git identity' })).toHaveTextContent('git config --global user.email "you@example.com"');
   });
 
   it('cuts a Windows path in the middle too, keeping the program\'s name', async () => {

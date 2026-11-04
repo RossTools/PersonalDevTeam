@@ -809,7 +809,7 @@ function Checks() {
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
           {[
-            ...(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => ({ key: k, name: k, c: checks.data[k], optional: k === 'devin' })),
+            ...(['claude', 'codex', 'devin', 'git', 'gitIdentity', 'tailscale'] as const).map((k) => ({ key: k, name: k === 'gitIdentity' ? 'git identity' : k, c: checks.data[k], optional: k === 'devin' })),
             ...Object.entries(checks.data.acp ?? {}).map(([k, c]) => ({ key: k, name: agents.label(k as AgentKind), c, optional: true })),
           ].map(({ key: k, name, c, optional: canLack }) => {
             // An agent switched off is not checked for (PDT-270).
@@ -820,7 +820,7 @@ function Checks() {
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />
-                <span className="w-20 shrink-0 truncate font-medium" title={name}>{name}</span>
+                <span className="w-24 shrink-0 truncate font-medium" title={name}>{name}</span>
                 <span className={c.ok || optional ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
                 {!optional && <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>}
               </li>

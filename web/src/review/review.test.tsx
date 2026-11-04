@@ -673,6 +673,16 @@ describe('MergeDialog', () => {
     expect(await screen.findByText(/Merged pdt\/ALP-1-fix-login into main/)).toBeInTheDocument();
   });
 
+  it('shows a failed merge in the dialog, which stays open', async () => {
+    const message = "git doesn't know who you are, so it can't make the commit.";
+    const { onClose } = open(preview(), { 'POST /api/attempts/a1/merge': new Reply(409, { code: 'git_identity_missing', message }) });
+    await userEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('The merge didn’t go through');
+    expect(alert).toHaveTextContent(message);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('squashes when asked, and remembers it for the project', async () => {
     localStorage.removeItem(`pdt.review.mergeStyle.${t1.projectId}`);
     const { calls } = open(preview(), {

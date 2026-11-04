@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { MergePreview } from '../api/gen/MergePreview';
 import type { MergeStyle } from '../api/gen/MergeStyle';
 import type { Ticket } from '../api/gen/Ticket';
-import { actionError, useAction } from '../common/useAction';
+import { actionError, runAction, useAction, useFormAction } from '../common/useAction';
 import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import { invalidateWorktrees } from '../common/worktrees';
@@ -105,43 +105,48 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
     onClose();
   });
 
-  const [merge, busy] = useAction(async () => {
+  // The merge's own failure shows in the dialog, which stays open (a toast would sit behind it); what follows a merge
+  // that went through runs after the dialog closes and toasts.
+  const merge = useFormAction(async () => {
     if (!p) return;
+    const viaForge = p.method === 'forge';
+    if (!viaForge) saveStyle(ticket.projectId, style);
+    let r: Awaited<ReturnType<typeof api.mergeAttempt>>;
     try {
-      const viaForge = p.method === 'forge';
-      if (!viaForge) saveStyle(ticket.projectId, style);
-      const r = await api.mergeAttempt(attemptId, viaForge ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
-      invalidateTickets(qc, [ticket.id]);
-      invalidateWorktrees(qc, ticket.projectId);
-      onClose();
-      if (r.outcome === 'queued') {
-        const then = finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : '';
-        toast.success(
-          p.pr?.local
-            ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${then}.`
-            : pdtHolds(p)
-              ? `PR #${p.pr?.number} is set to merge. PDT merges it once its CI passes${then}.`
-              : p.pr?.queue
-                ? `PR #${p.pr.number} is set to merge through the ${p.pr.queueName}${then}.`
-                : `Auto-merge is on for PR #${p.pr?.number}. ${p.pr?.forge ?? 'The forge'} merges it once the checks pass${then}.`,
-        );
-        return;
-      }
-      if (viaForge) {
-        // Merged at once (CI had passed, or the forge merged it straight away): PDT finishes the ticket as asked.
-        toast.success(`Merged ${p.pr?.local ? 'change request' : 'PR'} #${p.pr?.number} into ${p.base}.`);
-        return;
-      }
+      r = await api.mergeAttempt(attemptId, viaForge ? { finishOnMerge, deleteBranch: finishOnMerge && deleteBranch } : { style });
+    } catch (e) {
+      void preview.refetch();
+      throw e;
+    }
+    invalidateTickets(qc, [ticket.id]);
+    invalidateWorktrees(qc, ticket.projectId);
+    onClose();
+    if (r.outcome === 'queued') {
+      const then = finishOnMerge ? `; then ${ticket.key} moves to Done and its worktree goes` : '';
+      toast.success(
+        p.pr?.local
+          ? `Change request #${p.pr.number} merges into ${p.base} once its CI passes${then}.`
+          : pdtHolds(p)
+            ? `PR #${p.pr?.number} is set to merge. PDT merges it once its CI passes${then}.`
+            : p.pr?.queue
+              ? `PR #${p.pr.number} is set to merge through the ${p.pr.queueName}${then}.`
+              : `Auto-merge is on for PR #${p.pr?.number}. ${p.pr?.forge ?? 'The forge'} merges it once the checks pass${then}.`,
+      );
+      return;
+    }
+    if (viaForge) {
+      // Merged at once (CI had passed, or the forge merged it straight away): PDT finishes the ticket as asked.
+      toast.success(`Merged ${p.pr?.local ? 'change request' : 'PR'} #${p.pr?.number} into ${p.base}.`);
+      return;
+    }
+    await runAction(async () => {
       const fresh = await api.getTicket(ticket.id);
       if (removeWorktree) await finishMerged(confirm, qc, fresh, { deleteBranch });
       else {
         await patchTicket(qc, ticket.id, { stage: 'done' });
         toast.success(`${style === 'squash' ? 'Squashed' : 'Merged'} ${p.branch} into ${p.base}; ${ticket.key} moved to Done.`);
       }
-    } catch (e) {
-      void preview.refetch();
-      throw e;
-    }
+    });
   });
 
   const viaForge = p?.method === 'forge';
@@ -154,7 +159,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           {p && !p.problem && (
-            <Button variant="primary" pending={busy} onClick={() => void merge()}>
+            <Button variant="primary" pending={merge.pending} onClick={() => void merge.run()}>
               {viaForge
                 ? (p.pr?.queue ? `Add to ${queueName}` : p.pr?.local || pdtHolds(p) ? 'Merge when CI passes' : 'Turn on auto-merge')
                 : style === 'squash' ? 'Squash and merge' : 'Merge'}
@@ -192,6 +197,7 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
             )
           )}
           <Problem p={p} onAsk={() => void ask()} sending={sending} />
+          {merge.error && <Alert tone="error" title="The merge didn’t go through">{merge.error}</Alert>}
           {viaForge && !p.problem && (
             <div className="flex flex-col gap-1.5">
               <Checkbox checked={finishOnMerge} onChange={(v) => { setFinishOnMerge(v); if (!v) setDeleteBranch(false); }}>

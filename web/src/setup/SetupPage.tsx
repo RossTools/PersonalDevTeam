@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Minus } from 'lucide-react';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, ChoiceCardGroup, Disclosure, Input, Link, Select, Skeleton } from '@ui';
+import { Alert, Badge, Button, ChoiceCardGroup, CodeCard, Disclosure, Input, Link, Select, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
@@ -223,6 +223,12 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
             })}
           </tbody>
         </table>
+      )}
+      {checks?.gitIdentity && checks.gitIdentity.found && !checks.gitIdentity.ok && (
+        <Alert tone="warning" title="git doesn’t know who you are">
+          <p>Merges need a name and email to commit with. Set them in a terminal, then Check again:</p>
+          <CodeCard className="mt-2" aria-label="Set your git identity" code={'git config --global user.name "Your Name"\ngit config --global user.email "you@example.com"'} />
+        </Alert>
       )}
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" pending={checking} onClick={() => void check()}>Check again</Button>

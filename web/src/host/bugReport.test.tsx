@@ -92,7 +92,7 @@ describe('Host settings: Bug reports', () => {
     const calls = stubApi({
       'GET /api/host/settings': view,
       'GET /api/host/update': { current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null, error: null, token: { state: 'missing' }, lastResult: null },
-      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, checkedAt: 1 },
+      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, gitIdentity: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, checkedAt: 1 },
       'GET /api/host/whoami': { caller: 'local', login: null },
       'GET /api/connections': [],
       'GET /api/bug-reports/preview': preview({ route: 'local', project: { id: 'p', key: 'PDT', name: 'Personal Dev Team' } }),

@@ -46,6 +46,46 @@ pub enum GitError {
     /// A search pattern or path filter git can't read (an unbalanced regex, a path outside the checkout).
     #[error("{0}")]
     BadPattern(String),
+    /// git can't make a commit: no `user.name` / `user.email` is set (and it won't guess one).
+    #[error(
+        "git doesn't know who you are, so it can't make the commit. Set your name and email, then try again: \
+         git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\""
+    )]
+    NoIdentity,
+}
+
+/// A failed git command's error from its `stderr`: [`GitError::NoIdentity`] when git refused to commit without an
+/// identity, else [`GitError::Command`].
+pub(crate) fn command_failed(stderr: String) -> GitError {
+    const NO_IDENTITY: [&str; 4] =
+        ["identity unknown", "auto-detection is disabled", "unable to auto-detect email address", "empty ident name"];
+    if NO_IDENTITY.iter().any(|s| stderr.contains(s)) { GitError::NoIdentity } else { GitError::Command(stderr) }
+}
+
+/// The `user.name` and `user.email` git commits with, as configured (system and global settings, not a repository's
+/// own); `None` for one that isn't set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+/// The identity configured for every repository (see [`Identity`]). git may still guess one from the user and host
+/// names when it is missing, which is how merges end up authored as `user@host.local`.
+pub fn configured_identity() -> Result<Identity, GitError> {
+    configured_identity_with_env(&[])
+}
+
+fn configured_identity_with_env(env: &[(&str, &str)]) -> Result<Identity, GitError> {
+    // Outside any repository, so only the system and global settings count.
+    let dir = std::env::temp_dir();
+    let get = |key: &str| -> Result<Option<String>, GitError> {
+        Ok(git_with_env(&dir, &["config", "--get", key], env)?
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()))
+    };
+    Ok(Identity { name: get("user.name")?, email: get("user.email")? })
 }
 
 /// Settings for every git command PDT runs: a repository's own `core.fsmonitor` is a command git runs on `git status`
@@ -152,7 +192,7 @@ fn resolve_repo_with_env(path: &Path, inherited_env: &[(&str, &str)]) -> Result<
         Ok(s) if !s.is_empty() => Some(s),
         Ok(_) => None,
         Err(f) if f.code == Some(1) => None,
-        Err(f) => return Err(GitError::Command(f.stderr)),
+        Err(f) => return Err(command_failed(f.stderr)),
     };
     Ok(RepoInfo { root, current_branch })
 }
@@ -164,7 +204,7 @@ fn classify_failure(path: &Path, f: Failed) -> GitError {
     } else if lower.contains("dubious ownership") {
         GitError::Command(format!("git refused this repository (safe.directory): {}", f.stderr))
     } else {
-        GitError::Command(f.stderr)
+        command_failed(f.stderr)
     }
 }
 
@@ -213,7 +253,7 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
         Err(f) if f.stderr.contains("already exists") && f.stderr.contains("branch") => {
             Err(GitError::BranchExists(branch.to_string()))
         }
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -289,7 +329,7 @@ pub fn branch_file(repo: &Path, branch: &str, path: &str) -> Result<Option<Strin
     }
     match git_with_env(repo, &["cat-file", "blob", &object], &[])? {
         Ok(text) => Ok(Some(text)),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -316,12 +356,12 @@ pub fn add_worktree_for_branch(repo: &Path, path: &Path, branch: &str) -> Result
             .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
     }
     if let Err(f) = git_with_env(repo, &args, &[])? {
-        return Err(GitError::Command(f.stderr));
+        return Err(command_failed(f.stderr));
     }
     let _ = enable_rerere(repo);
     match git_with_env(path, &["rev-parse", "HEAD"], &[])? {
         Ok(sha) => Ok(sha),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -372,23 +412,23 @@ pub fn init(dir: &Path, branch: &str) -> Result<(), GitError> {
     std::fs::create_dir_all(dir).map_err(|e| GitError::Command(format!("creating {}: {e}", dir.display())))?;
     match git_with_env(dir, &["init", "-q", "-b", branch], &[])? {
         Ok(_) => Ok(()),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
 /// Stages every change in the working tree at `dir` and commits it with PDT's own identity. Returns the new commit.
 pub fn commit_all(dir: &Path, message: &str) -> Result<String, GitError> {
     if let Err(f) = git_with_env(dir, &["add", "-A"], &[])? {
-        return Err(GitError::Command(f.stderr));
+        return Err(command_failed(f.stderr));
     }
     let mut args = PDT_COMMIT_CONFIG.to_vec();
     args.extend(["commit", "-q", "-m", message]);
     if let Err(f) = git_with_env(dir, &args, &[])? {
-        return Err(GitError::Command(f.stderr));
+        return Err(command_failed(f.stderr));
     }
     match git_with_env(dir, &["rev-parse", "HEAD"], &[])? {
         Ok(sha) => Ok(sha),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -398,7 +438,7 @@ pub fn create_branch(repo: &Path, branch: &str, start: &str) -> Result<(), GitEr
     match git_with_env(repo, &["branch", "--end-of-options", branch, start], &[])? {
         Ok(_) => Ok(()),
         Err(f) if f.stderr.contains("already exists") => Err(GitError::BranchExists(branch.to_string())),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -414,6 +454,36 @@ mod tests {
 
     fn same_dir(a: &Path, b: &Path) -> bool {
         std::fs::canonicalize(a).unwrap() == std::fs::canonicalize(b).unwrap()
+    }
+
+    #[test]
+    fn reads_the_configured_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let global = tmp.path().join("gitconfig");
+        std::fs::write(&global, "").unwrap();
+        let g = global.to_str().unwrap();
+        let env = [("GIT_CONFIG_GLOBAL", g), ("GIT_CONFIG_NOSYSTEM", "1")];
+        assert_eq!(configured_identity_with_env(&env).unwrap(), Identity { name: None, email: None });
+        std::fs::write(&global, "[user]\n\tname = Ada\n\temail = \n").unwrap();
+        assert_eq!(
+            configured_identity_with_env(&env).unwrap(),
+            Identity { name: Some("Ada".into()), email: None },
+            "an empty email is none"
+        );
+    }
+
+    #[test]
+    fn a_missing_identity_is_its_own_error() {
+        let said = "Committer identity unknown\n\n*** Please tell me who you are.\n\nfatal: no email was given and \
+                    auto-detection is disabled";
+        assert!(matches!(command_failed(said.into()), GitError::NoIdentity));
+        assert!(matches!(
+            command_failed("fatal: empty ident name (for <t@t>) not allowed".into()),
+            GitError::NoIdentity
+        ));
+        assert!(
+            matches!(command_failed("fatal: bad revision".into()), GitError::Command(s) if s == "fatal: bad revision")
+        );
     }
 
     #[test]
