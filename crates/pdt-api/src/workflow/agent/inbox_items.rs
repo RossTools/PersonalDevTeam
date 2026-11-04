@@ -49,18 +49,62 @@ pub(crate) async fn ask_confirm_rows(
 /// the tickets of the rows they unticked. The input as it is when the item has no rows.
 fn kept_input(item: &InboxItem, input: Value, kept: Option<&[u32]>) -> R<(Value, Vec<String>)> {
     let Some(rows) = item.body.get("rows").and_then(Value::as_array) else { return Ok((input, vec![])) };
-    let keep = pdt_core::inbox_decide::kept(rows.len(), kept)?;
+    let keys: Vec<String> =
+        rows.iter().map(|r| r.get("ticketKey").and_then(Value::as_str).unwrap_or("?").to_string()).collect();
+    keep_rows(input, &keys, kept)
+}
+
+/// [`kept_input`] for a call whose rows are the tickets `keys`, one per entry of its input's `items`.
+pub(crate) fn keep_rows(input: Value, keys: &[String], kept: Option<&[u32]>) -> R<(Value, Vec<String>)> {
+    let keep = pdt_core::inbox_decide::kept(keys.len(), kept)?;
     let mut input = input;
     let items = input.get_mut("items").and_then(Value::as_array_mut).ok_or("the call has no items")?;
-    if items.len() != rows.len() {
+    if items.len() != keys.len() {
         return Err("the call's items don't match its rows".into());
     }
-    let dropped = (0..rows.len())
-        .filter(|n| !keep.contains(n))
-        .map(|n| rows[n].get("ticketKey").and_then(Value::as_str).unwrap_or("?").to_string())
-        .collect();
+    let dropped = (0..keys.len()).filter(|n| !keep.contains(n)).map(|n| keys[n].clone()).collect();
     *items = keep.into_iter().map(|n| items[n].clone()).collect();
     Ok((input, dropped))
+}
+
+/// Runs an asking tool's call the user allowed once it no longer waited, as the session's call with their yes
+/// (`dropped`: the rows they unticked): what the session is told, and the result.
+pub(crate) async fn run_allowed(
+    st: &AppState,
+    s: &Session,
+    tool: &str,
+    title: &str,
+    input: Value,
+    dropped: &[String],
+) -> (String, Value) {
+    let unticked = if dropped.is_empty() {
+        String::new()
+    } else {
+        format!(" The user unticked {}, so PDT left them as they were.", dropped.join(", "))
+    };
+    let cx = crate::mcp::tools::Cx { st, session: s, input: &input, confirmed: true };
+    let r = st.store.redactor();
+    match st.registry().call_tool(&cx, tool, input.clone()).await {
+        Ok(v) => {
+            let v = r.json(&v);
+            (
+                format!("[PDT] The user allowed your {tool} call ({title}).{unticked} PDT ran it; its result:\n{v}"),
+                json!({"allowed": true, "result": v}),
+            )
+        }
+        Err(e) => {
+            let e = r.string(&e);
+            (
+                format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}{unticked}"),
+                json!({"allowed": true, "error": e}),
+            )
+        }
+    }
+}
+
+/// What a session is told of the user's Deny of a call that no longer waited.
+pub(crate) fn denied_text(tool: &str, title: &str) -> String {
+    format!("[PDT] The user denied your {tool} call ({title}): don't make it.")
 }
 
 /// The user's Allow or Deny of an asking tool's call (PDT-256): Allow runs it as the session's call with the user's
@@ -78,11 +122,6 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
     // The rows are checked before the item is answered.
     let input = item.body.get("input").cloned().unwrap_or_else(|| json!({}));
     let (input, dropped) = if allowed { kept_input(item, input, kept)? } else { (input, vec![]) };
-    let unticked = if dropped.is_empty() {
-        String::new()
-    } else {
-        format!(" The user unticked {}, so PDT left them as they were.", dropped.join(", "))
-    };
     // Ended first, so a second click runs nothing.
     let resolution = match (allowed, kept) {
         (true, Some(rows)) if item.body.get("rows").is_some() => json!({"choice": choice, "rows": rows}),
@@ -104,28 +143,9 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         return Ok(json!({"allowed": allowed, "waited": true}));
     }
     let (text, out) = if allowed {
-        let cx = crate::mcp::tools::Cx { st, session: &s, input: &input, confirmed: true };
-        let r = st.store.redactor();
-        match st.registry().call_tool(&cx, tool, input.clone()).await {
-            Ok(v) => {
-                let v = r.json(&v);
-                (
-                    format!(
-                        "[PDT] The user allowed your {tool} call ({title}).{unticked} PDT ran it; its result:\n{v}"
-                    ),
-                    json!({"allowed": true, "result": v}),
-                )
-            }
-            Err(e) => {
-                let e = r.string(&e);
-                (
-                    format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}{unticked}"),
-                    json!({"allowed": true, "error": e}),
-                )
-            }
-        }
+        run_allowed(st, &s, tool, title, input, &dropped).await
     } else {
-        (format!("[PDT] The user denied your {tool} call ({title}): don't make it."), json!({"allowed": false}))
+        (denied_text(tool, title), json!({"allowed": false}))
     };
     let _locked = crate::workflow::engine::lock_run(st, item.run_id.as_deref()).await;
     tell(st, item, &s, &text).await?;

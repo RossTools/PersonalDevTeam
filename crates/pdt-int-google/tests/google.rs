@@ -646,3 +646,153 @@ async fn without_pdts_clients_only_your_own() {
         call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
     assert_eq!(s, 400, "{v}");
 }
+
+/// PDT's own clients with the Desktop ones too, as a release build has them.
+fn with_desktop() -> BuiltIn {
+    let desktop = pdt_int_google::builtin::Desktop::from_values([
+        Some("desk-id"),
+        Some("desk-secret"),
+        Some("desk-agent-id"),
+        Some("desk-agent-secret"),
+    ]);
+    BuiltIn { desktop, ..built_in() }
+}
+
+/// Signing in on the same machine (PDT-590): Google comes straight back to PDT's own port with the Desktop client,
+/// never through the website, and the account then refreshes with that client; from another device (Tailscale, the
+/// network) it still goes through the website; and a build without the Desktop clients goes through it everywhere.
+#[tokio::test]
+async fn signing_in_on_this_machine_never_goes_through_the_website() {
+    let env = env_with(Some(with_desktop())).await;
+    for origin in ["http://127.0.0.1:7420", "http://localhost:7420", "http://[::1]:7420"] {
+        let (s, v) = call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": origin}))).await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["redirectUri"], format!("{origin}/api/google/callback"), "{v}");
+        assert!(v.get("relay").is_none(), "{v}");
+        let url = v["url"].as_str().unwrap();
+        assert!(url.contains("client_id=desk-id") && url.contains("code_challenge="), "{url}");
+        assert!(!url.contains("pdt.dev"), "{url}");
+        // Its state is only the nonce: there is no page to tell where to go back to.
+        assert!(!state_of(url).contains('.'), "{url}");
+    }
+    let (_, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"u0","expires_in":3600,"refresh_token":"desk-rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"me@example.com"}"#,
+    );
+    let state = state_of(v["url"].as_str().unwrap());
+    let (s, _) = call(&env.app, "GET", &format!("/api/google/callback?code=c1&state={state}"), None).await;
+    assert_eq!(s, 200);
+    let body = exchange_body(&env);
+    for part in [
+        "client_id=desk-id",
+        "client_secret=desk-secret",
+        "redirect_uri=http%3A%2F%2F127.0.0.1%3A7420%2Fapi%2Fgoogle%2Fcallback",
+    ] {
+        assert!(body.contains(part), "{part} in {body}");
+    }
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    let id = v[0]["connectionId"].as_str().unwrap().to_string();
+    // The picker gets the Desktop client's token and ID, in the same project.
+    env.google.ok("POST", TOKEN_URL, TOKEN);
+    let (s, v) = call_as_ui(&env.app, "GET", &format!("/api/google/accounts/{id}/picker"), None).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!((&v["appId"], &v["clientId"]), (&json!("42"), &json!("desk-id")));
+    let refresh = exchange_body(&env);
+    assert!(refresh.contains("refresh_token=desk-rt") && refresh.contains("client_id=desk-id"), "{refresh}");
+
+    // Allowing agents from this machine uses the Desktop agentic client.
+    let (_, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "http://127.0.0.1:7420", "agent": true})),
+    )
+    .await;
+    assert!(v["url"].as_str().unwrap().contains("client_id=desk-agent-id"), "{v}");
+    assert!(v.get("relay").is_none(), "{v}");
+
+    // From another device: through the website, with the Web client.
+    let (_, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "https://mac.tail1.ts.net"})),
+    )
+    .await;
+    assert_eq!(
+        (&v["redirectUri"], &v["relay"]),
+        (&json!("https://pdt.dev/oauth/google"), &json!("https://pdt.dev/oauth/google"))
+    );
+    assert!(v["url"].as_str().unwrap().contains("client_id=std-id"), "{v}");
+
+    // A build without the Desktop clients: through the website from this machine too.
+    let env = env_with(Some(built_in())).await;
+    let (_, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://127.0.0.1:7420"}))).await;
+    assert_eq!(v["relay"], "https://pdt.dev/oauth/google", "{v}");
+    assert!(v["url"].as_str().unwrap().contains("client_id=std-id"), "{v}");
+}
+
+/// Starts adding an account from another device on the network: its state.
+async fn start_remote(env: &Env) -> String {
+    let (_, v) =
+        call_as_ui(&env.app, "POST", "/api/google/sign-in", Some(json!({"origin": "http://192.168.1.20:7420"}))).await;
+    state_of(v["url"].as_str().unwrap())
+}
+
+async fn paste(env: &Env, code: String) -> (axum::http::StatusCode, Value) {
+    call_as_ui(&env.app, "POST", "/api/google/sign-in/code", Some(json!({"code": code}))).await
+}
+
+/// The website's page can't send the browser back (PDT-590): the code it shows, pasted into PDT, finishes the
+/// sign-in, once, only for a state PDT issued, and a code Google refuses is refused.
+#[tokio::test]
+async fn a_pasted_code_finishes_a_sign_in_through_the_website() {
+    let env = env_with(Some(with_desktop())).await;
+    let (_, v) = call(&env.app, "GET", "/api/integrations", None).await;
+    let google = v.as_array().unwrap().iter().find(|p| p["id"] == "google").unwrap();
+    assert_eq!(google["signIn"]["pasteCode"], true);
+    let state = start_remote(&env).await;
+    let code = pdt_int_google::builtin::paste_code(&state, "4/0good");
+    // Only PDT's web app.
+    let (s, _) = call(&env.app, "POST", "/api/google/sign-in/code", Some(json!({"code": code}))).await;
+    assert_eq!(s, 403);
+    // Not a code at all, or a state PDT never issued.
+    let (s, v) = paste(&env, "nonsense!".into()).await;
+    assert_eq!(s, 400, "{v}");
+    let forged = format!("{}{}", if state.starts_with('x') { 'y' } else { 'x' }, &state[1..]);
+    let (s, v) = paste(&env, pdt_int_google::builtin::paste_code(&forged, "4/0good")).await;
+    assert_eq!((s.as_u16(), v["message"].as_str().unwrap().contains("unknown or too old")), (400, true), "{v}");
+    assert!(env.google.sent().is_empty());
+
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"u0","expires_in":3600,"refresh_token":"rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"me@example.com"}"#,
+    );
+    let (s, v) = paste(&env, format!("  {code}\n")).await;
+    assert_eq!(s, 200, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("signed in to Google as me@example.com"), "{v}");
+    let body = exchange_body(&env);
+    assert!(body.contains("code=4%2F0good") && body.contains("client_id=std-id"), "{body}");
+    assert!(body.contains("redirect_uri=https%3A%2F%2Fpdt.dev%2Foauth%2Fgoogle"), "{body}");
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    assert_eq!(v[0]["signedIn"], true);
+    // Once only.
+    let (s, _) = paste(&env, code).await;
+    assert_eq!(s, 400);
+
+    // A code Google refuses (wrong, used or expired) is refused.
+    let state = start_remote(&env).await;
+    env.google.on(
+        "POST",
+        TOKEN_URL,
+        Response::new(400, r#"{"error":"invalid_grant","error_description":"Bad Request"}"#),
+    );
+    let (s, v) = paste(&env, pdt_int_google::builtin::paste_code(&state, "4/0wrong")).await;
+    assert_eq!(s, 400, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Google turned it down"), "{v}");
+}

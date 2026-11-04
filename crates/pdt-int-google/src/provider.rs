@@ -252,7 +252,7 @@ mod tests {
             last_error_at: None,
         };
         env.docs.st.store.insert_connection(&c).await.unwrap();
-        let s = SignIn { refresh_token: format!("r-{id}"), email: email.map(String::from) };
+        let s = SignIn { refresh_token: format!("r-{id}"), email: email.map(String::from), desktop: false };
         store_sign_in(&env.docs.st, sign_in_key(id), &s).await.unwrap();
     }
 

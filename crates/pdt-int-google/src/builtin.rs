@@ -10,6 +10,13 @@
 //! same rule as the page's `site/public/oauth/google.js`), and pdtd takes only the states it issued. The browser
 //! starts at that page too (`AccountSignInStart::relay`), which takes the consent page only from the PDT the state
 //! names and forwards only states it started, so a Google link made with these clients elsewhere goes nowhere (PDT-410).
+//! Where that page can't hand the answer back (a corporate proxy isolating the website, no storage), it shows it as a
+//! code to paste into PDT instead ([`pasted`]), still useless without the sign-in's state and PKCE verifier (PDT-590).
+//!
+//! When PDT is open on the same machine (a loopback origin, [`loopback_redirect`]), the website isn't needed: a build
+//! may also have two Desktop app clients ([`Desktop`]), which Google lets come straight back to PDT's own port on
+//! `127.0.0.1` (RFC 8252), so signing in there never loads the website (PDT-590). A Desktop client's secret isn't
+//! confidential by design (it ships in every copy of the app); PKCE is what protects its codes.
 
 use base64::Engine;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -30,6 +37,32 @@ pub struct BuiltIn {
     pub agent: Client,
     /// The picker's API key and the Google Cloud project's number.
     pub picker: Option<(String, String)>,
+    /// The Desktop app clients, for signing in on the same machine; without them that goes through the website too.
+    pub desktop: Option<Desktop>,
+}
+
+/// PDT's Desktop app clients, in the same Google Cloud project as the Web ones (so files picked with one are the
+/// others' too): Google sends the browser back to a loopback address on any port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Desktop {
+    pub standard: Client,
+    pub agent: Client,
+}
+
+impl Desktop {
+    /// From the standard Desktop client's ID and secret and the agentic one's: both or none.
+    pub fn from_values(v: [Option<&str>; 4]) -> Option<Self> {
+        let [id, secret, agent_id, agent_secret] = v.map(|s| s.map(str::trim).filter(|s| !s.is_empty()));
+        Some(Self { standard: client(id, secret)?, agent: client(agent_id, agent_secret)? })
+    }
+    /// The one for agents' document tools, or the user's own actions.
+    pub fn client(&self, agent: bool) -> &Client {
+        if agent { &self.agent } else { &self.standard }
+    }
+}
+
+fn client(id: Option<&str>, secret: Option<&str>) -> Option<Client> {
+    Some(Client { id: id?.into(), secret: secret?.into() })
 }
 
 impl BuiltIn {
@@ -43,17 +76,26 @@ impl BuiltIn {
             option_env!("PDT_GOOGLE_PICKER_KEY"),
             option_env!("PDT_GOOGLE_PROJECT_NUMBER"),
         ])
+        .map(|b| Self {
+            desktop: Desktop::from_values([
+                option_env!("PDT_GOOGLE_DESKTOP_CLIENT_ID"),
+                option_env!("PDT_GOOGLE_DESKTOP_CLIENT_SECRET"),
+                option_env!("PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID"),
+                option_env!("PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET"),
+            ]),
+            ..b
+        })
     }
 
     /// From the standard client's ID and secret, the agentic client's, the picker key and the project number: both
-    /// clients or none; the picker only with its key and the number.
+    /// clients or none; the picker only with its key and the number. No Desktop clients ([`BuiltIn::desktop`]).
     pub fn from_values(v: [Option<&str>; 6]) -> Option<Self> {
         let [id, secret, agent_id, agent_secret, key, number] = v.map(|s| s.map(str::trim).filter(|s| !s.is_empty()));
-        let client = |id: Option<&str>, secret: Option<&str>| Some(Client { id: id?.into(), secret: secret?.into() });
         Some(Self {
             standard: client(id, secret)?,
             agent: client(agent_id, agent_secret)?,
             picker: key.zip(number).map(|(k, n)| (k.to_string(), n.to_string())),
+            desktop: None,
         })
     }
 }
@@ -61,6 +103,75 @@ impl BuiltIn {
 /// Where Google sends the browser back to, with PDT's own clients.
 pub fn redirect_uri() -> String {
     format!("{}/oauth/google", pdt_core::brand::WEBSITE)
+}
+
+/// Where Google sends the browser back to with a Desktop client, when PDT is open at `origin` on this machine:
+/// PDT's own callback on its loopback address (`http://127.0.0.1:7420/api/google/callback`). None anywhere else (a
+/// LAN or Tailscale address, https), where the website's page is the way back.
+pub fn loopback_redirect(origin: &str) -> Option<String> {
+    let o = pdt_origin(origin).ok()?;
+    let rest = o.strip_prefix("http://")?;
+    let host = match rest.strip_prefix('[') {
+        Some(r) => r.split_once(']')?.0,
+        None => rest.split_once(':').map_or(rest, |(h, _)| h),
+    };
+    matches!(host, "127.0.0.1" | "::1" | "localhost").then(|| format!("{o}/api/google/callback"))
+}
+
+/// What the website's page shows to paste into PDT when it can't send the browser back: Google's answer (`code`,
+/// `state`) as one line of base64url. Read back by [`pasted`].
+pub fn paste_code(state: &str, code: &str) -> String {
+    let q = pdt_forge::transport::form(&[("state", state), ("code", code)]);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(q)
+}
+
+/// Google's answer (`state`, `code`) from what the user pasted: the page's code ([`paste_code`]), or the address the
+/// browser was sent back to (`…/api/google/callback?state=…&code=…`).
+pub fn pasted(text: &str) -> Option<(String, String)> {
+    let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    let query = match t.split_once('?') {
+        Some((_, q)) => q.split('#').next().unwrap_or_default().to_string(),
+        None => {
+            let b = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(t.trim_end_matches('=')).ok()?;
+            String::from_utf8(b).ok()?
+        }
+    };
+    let (mut state, mut code) = (None, None);
+    for pair in query.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        let v = unescape(v)?;
+        match k {
+            "state" => state = Some(v),
+            "code" => code = Some(v),
+            _ => {}
+        }
+    }
+    Some((state.filter(|s| !s.is_empty())?, code.filter(|c| !c.is_empty())?))
+}
+
+/// A query string's value, unescaped (`%2F`, `+`).
+fn unescape(v: &str) -> Option<String> {
+    let b = v.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+                out.push(u8::from_str_radix(hex, 16).ok()?);
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// OAuth's `state` for a sign-in started at `origin`: the nonce PDT keeps the sign-in under, and the address the
@@ -141,6 +252,61 @@ mod tests {
         let no_picker = BuiltIn::from_values([Some("cid"), Some("cs"), Some("aid"), Some("as"), Some("key"), None]);
         assert_eq!(no_picker.unwrap().picker, None);
         assert_eq!(BuiltIn::from_values([None; 6]), None);
+    }
+
+    #[test]
+    fn desktop_clients_come_both_or_none() {
+        let d = Desktop::from_values([Some("did"), Some("ds"), Some("daid"), Some(" das ")]).unwrap();
+        assert_eq!((d.client(false).id.as_str(), d.client(true).secret.as_str()), ("did", "das"));
+        assert_eq!(Desktop::from_values([Some("did"), Some("ds"), Some(""), Some("das")]), None);
+        assert_eq!(Desktop::from_values([None; 4]), None);
+        let all = [Some("cid"), Some("cs"), Some("aid"), Some("as"), None, None];
+        assert_eq!(BuiltIn::from_values(all).unwrap().desktop, None);
+    }
+
+    #[test]
+    fn only_this_machine_comes_straight_back() {
+        for (origin, to) in [
+            ("http://127.0.0.1:7420", "http://127.0.0.1:7420/api/google/callback"),
+            ("http://127.0.0.1:7421/", "http://127.0.0.1:7421/api/google/callback"),
+            ("http://localhost:7420", "http://localhost:7420/api/google/callback"),
+            ("http://[::1]:7420", "http://[::1]:7420/api/google/callback"),
+        ] {
+            assert_eq!(loopback_redirect(origin).as_deref(), Some(to), "{origin}");
+        }
+        for elsewhere in [
+            "http://192.168.1.20:7420",
+            "http://100.101.102.103:7420",
+            "https://mac.tail1234.ts.net",
+            "https://127.0.0.1:7420",
+            "http://127.0.0.2:7420",
+            "http://pdt.localhost:7420",
+            "https://evil.example",
+            "",
+        ] {
+            assert_eq!(loopback_redirect(elsewhere), None, "{elsewhere}");
+        }
+    }
+
+    #[test]
+    fn a_pasted_code_reads_back_googles_answer() {
+        let (state, code) = ("n0nce.aHR0cDovLzEyNy4wLjAuMTo3NDIw", "4/0Ab_c-d+e");
+        let want = Some((state.to_string(), code.to_string()));
+        assert_eq!(pasted(&paste_code(state, code)), want);
+        // Wrapped or with spaces around it, as copied.
+        let c = paste_code(state, code);
+        assert_eq!(pasted(&format!("  {}\n{} ", &c[..10], &c[10..])), want);
+        // The address the browser was sent back to works too.
+        let url = format!(
+            "http://127.0.0.1:7420/api/google/callback?{}",
+            pdt_forge::transport::form(&[("state", state), ("code", code), ("scope", "x")])
+        );
+        assert_eq!(pasted(&url), want);
+        // The site's page writes it the same way (`site/src/oauth-google.test.mjs`).
+        assert_eq!(pasted("c3RhdGU9bjBuY2UuYUhSMGNEb3ZMekV5Tnk0d0xqQXVNVG8zTkRJdyZjb2RlPTQlMkYwQWJfYy1kJTJCZQ"), want);
+        for bad in ["", "not base64!", &paste_code("", code), &paste_code(state, ""), "http://x/?state=s", "%zz"] {
+            assert_eq!(pasted(bad), None, "{bad}");
+        }
     }
 
     #[test]

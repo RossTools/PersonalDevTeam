@@ -1,8 +1,8 @@
 //! Asking-tool calls that wait on their Inbox `confirm` item (PDT-492): a terminal session's call (no conversation to
 //! show a card in) and the PM's `inbox_decide` table. The call blocks until the user answers, as an inline card's does
 //! (`conversations::held`), so the agent never ends its turn to wait. [`answer_confirm`](super::answer_confirm) hands
-//! the answer to the waiting call; one that is no longer waiting (the agent gave up on it) gets the old way: PDT runs
-//! the call and sends the session the result.
+//! the answer to the waiting call; one that is no longer waiting (the agent gave up on it, or PDT stopped it at
+//! `AppState::ask_wait`, PDT-589) gets the old way: PDT runs the call and sends the session the result.
 
 use crate::routes::AppState;
 use pdt_core::inbox::{InboxItem, InboxStatus};
@@ -14,6 +14,19 @@ use tokio::sync::oneshot;
 /// How often a waiting call checks that its item is still open (closed with its step, replaced, dismissed).
 const CHECK: Duration = Duration::from_secs(2);
 
+/// How long an asking tool's call waits for the answer (`AppState::ask_wait`): the agent's budget for PDT's tools
+/// ([`pdt_agents::mcp::PDT_TOOL_TIMEOUT_SECS`]) less a margin for the result to reach it.
+pub(crate) const ASK_WAIT: Duration = Duration::from_secs(pdt_agents::mcp::PDT_TOOL_TIMEOUT_SECS - 10 * 60);
+
+/// What a call that waited [`ASK_WAIT`] for the user returns (PDT-589), in place of the agent's own timeout: the ask
+/// stays open, and the answer comes as a message ([`super::answer_confirm`], `conversations::held`).
+pub(crate) fn still_waiting(tool: &str) -> String {
+    format!(
+        "Still waiting for the user's answer to this {tool} call in PDT's Inbox. PDT will message you the result \
+         once they answer. Don't call {tool} again for this: carry on with other work, or end your turn."
+    )
+}
+
 /// The user's answer to a waiting call's item.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Confirmed {
@@ -22,6 +35,8 @@ pub(crate) enum Confirmed {
     Denied,
     /// The item closed before the user answered.
     Ended,
+    /// The user hasn't answered within `AppState::ask_wait`: the item stays open, and its answer comes as a message.
+    Waiting,
 }
 
 /// The calls waiting on their items, by item id.
@@ -39,11 +54,18 @@ pub(crate) async fn wait(st: &AppState, item: &InboxItem) -> Confirmed {
     let (tx, mut rx) = oneshot::channel();
     st.confirm_waits.map().insert(item.id.clone(), tx);
     // Dropped unanswered (the agent gave up on the call), the item stays for the old way.
+    // Gone with it once the budget is up: the answer then takes the old way.
     let _gone = Unwait { st, id: &item.id };
+    let until = tokio::time::Instant::now() + st.ask_wait;
     loop {
         tokio::select! {
             r = &mut rx => return r.unwrap_or(Confirmed::Ended),
             _ = tokio::time::sleep(CHECK) => {}
+            _ = tokio::time::sleep_until(until) => {
+                // Closed first, so an answer is either here now or sent nowhere (and takes the old way).
+                rx.close();
+                return rx.try_recv().unwrap_or(Confirmed::Waiting);
+            }
         }
         // An item that ends without an answer (its step went away, a newer call replaced it) ends the wait. One being
         // answered keeps it: [`take`] removes the waiter before the item ends, and the answer follows.

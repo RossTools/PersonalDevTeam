@@ -3,7 +3,7 @@
 // as pdtd's (crates/pdt-int-google/src/builtin.rs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STARTED_MS, loopback, pdtOrigin, remember, returnTo, startState, started, stateOrigin, take } from '../public/oauth/google.js';
+import { STARTED_MS, loopback, pasteCode, pasteFor, pdtOrigin, remember, returnTo, startState, started, stateOrigin, take } from '../public/oauth/google.js';
 
 const b64 = (s) => Buffer.from(s).toString('base64url');
 const NONCE = 'abcdefghijklmnopqrstuvwxyz012-_A';
@@ -89,4 +89,17 @@ test('a code goes back only for a sign-in started here, once and in time', () =>
 test('only this computer’s own addresses go back without a warning', () => {
   for (const o of ['http://127.0.0.1:7420', 'http://localhost:7421', 'http://pdt.localhost', 'http://[::1]:7420']) assert.ok(loopback(o), o);
   for (const o of ['https://mac.tail1.ts.net', 'http://192.168.1.20:7420', 'http://100.101.102.103:7420']) assert.ok(!loopback(o), o);
+});
+
+test('an answer it can’t send back is shown as a code to paste into PDT', () => {
+  const state = `${NONCE}.${b64('http://127.0.0.1:7420')}`;
+  // The same code pdtd reads back (builtin.rs `a_pasted_code_reads_back_googles_answer`).
+  assert.equal(pasteCode('n0nce.aHR0cDovLzEyNy4wLjAuMTo3NDIw', '4/0Ab_c-d+e'), 'c3RhdGU9bjBuY2UuYUhSMGNEb3ZMekV5Tnk0d0xqQXVNVG8zTkRJdyZjb2RlPTQlMkYwQWJfYy1kJTJCZQ');
+  const p = pasteFor(`?state=${state}&code=4%2F0abc&scope=x`);
+  assert.equal(p.origin, 'http://127.0.0.1:7420');
+  assert.equal(Buffer.from(p.code, 'base64url').toString(), `state=${state}&code=4%2F0abc`);
+  // Only for a state a PDT could have issued, and only a code.
+  assert.equal(pasteFor(`?state=${NONCE}.${b64('https://evil.example')}&code=c`), null);
+  assert.equal(pasteFor(`?state=${state}&error=access_denied`), null);
+  assert.equal(pasteFor('?code=c'), null);
 });

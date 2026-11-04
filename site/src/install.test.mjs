@@ -1,5 +1,6 @@
 // public/install.sh against a fake release: GitHub's API is a local HTTP server answering from a map (PDT_INSTALL_API),
-// HOME is a temp folder, and uname, getconf, loginctl and open are stubs on PATH. The Linux tarball's pdt-host is a
+// HOME is a temp folder, and uname, getconf, loginctl, open and codesign are stubs on PATH (codesign passes unless
+// $HOME/codesign.fail holds its message). The Linux tarball's pdt-host is a
 // stub that records how it was called, so nothing is registered for real, and no running PDT is looked for on 7420.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,6 +46,7 @@ function setup({ os = 'Linux', arch = 'x86_64', glibc = '2.35' } = {}) {
   stub(bin, 'getconf', glibc ? `echo "glibc ${glibc}"` : 'exit 1');
   stub(bin, 'loginctl', `echo "$*" >> "$HOME/loginctl.log"; case "$1" in show-user) echo Linger=no ;; esac`);
   stub(bin, 'open', `echo "$*" >> "$HOME/open.log"`);
+  stub(bin, 'codesign', `echo "$*" >> "$HOME/codesign.log"; if [ -f "$HOME/codesign.fail" ]; then cat "$HOME/codesign.fail" >&2; exit 1; fi`);
   return { root, home, bin, api, cleanup: () => rmSync(root, { recursive: true, force: true }) };
 }
 
@@ -169,6 +171,22 @@ test('installs the app on macOS into ~/Applications and opens it', { skip }, asy
   const dest = join(t.home, 'Applications', APP);
   assert.ok(existsSync(join(dest, 'Contents/Info.plist')));
   assert.equal(read(join(t.home, 'open.log')), `${dest}\n`);
+  assert.match(read(join(t.home, 'codesign.log')), /^--verify --deep --strict .*Personal Dev Team\.app\n$/);
+});
+
+test('an app whose signature does not verify is not installed', { skip }, async (ctx) => {
+  const t = setup({ os: 'Darwin', arch: 'arm64' });
+  ctx.after(t.cleanup);
+  const app = tarball(t, { [`${APP}/Contents/MacOS/pdt-host`]: hostStub, [`${APP}/Contents/Info.plist`]: '<plist/>' });
+  publish(t, 'v0.3.0', { 'Personal.Dev.Team.app.tar.gz': app });
+  writeFileSync(join(t.home, 'codesign.fail'), 'a sealed resource is missing or invalid\n');
+  const r = await run(t);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /signature of .* does not verify/);
+  assert.match(r.stderr, /a sealed resource is missing or invalid/);
+  assert.match(r.stderr, /Nothing was installed/);
+  assert.ok(!existsSync(join(t.home, 'Applications', APP)));
+  assert.equal(read(join(t.home, 'open.log')), '');
 });
 
 test('a checksum mismatch or a missing entry aborts and installs nothing', { skip }, async (ctx) => {

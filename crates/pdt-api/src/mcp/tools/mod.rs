@@ -186,6 +186,7 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
             Some(Asked::Ended) => {
                 return Err(format!("{tool} was not run: the turn ended before the user answered."));
             }
+            Some(Asked::Waiting) => return Err(crate::workflow::agent::still_waiting(tool)),
             None => {}
         }
     }
@@ -200,6 +201,7 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         }
         Confirmed::Denied => Err(format!("The user denied this {tool} call in the Inbox, so PDT didn't make it.")),
         Confirmed::Ended => Err(format!("{tool} was not run: its Inbox item closed before the user answered.")),
+        Confirmed::Waiting => Err(crate::workflow::agent::still_waiting(tool)),
     }
 }
 

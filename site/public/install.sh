@@ -199,6 +199,11 @@ pdt_install() {
 
 install_mac() {
 	[ -d "$tmp/unpack/$app_name" ] || die "$asset does not hold $app_name."
+	# curl sets no quarantine flag, so Gatekeeper never looks at this app: check its signature here instead.
+	if ! codesign --verify --deep --strict "$tmp/unpack/$app_name" 2>"$tmp/codesign.err"; then
+		cat "$tmp/codesign.err" >&2
+		die "the signature of $app_name in $tag does not verify. Nothing was installed."
+	fi
 	mkdir -p "$(dirname "$dest")"
 	if [ -e "$dest" ]; then
 		rm -rf "$dest.old"

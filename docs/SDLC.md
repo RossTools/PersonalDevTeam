@@ -313,8 +313,9 @@ Releases are deliberate: merges don't ship. Stable releases happen when the user
    once the queue dropped it), or close it, which releases nothing.
 3. **Tag and publish**: on merge, the workflow tags `vX.Y.Z` on the merge commit, builds the bundles again from it (the
    queue squashed the PR's commit away), and publishes the GitHub release with `SHA256SUMS` (signed: "Release
-   signing") and the version's
-   `CHANGELOG.md` section. Re-running a failed job reuses the tag and release and replaces re-uploaded assets.
+   signing") and the version's `CHANGELOG.md` section. Then `check-macos-download` downloads the published
+   `.app.tar.gz` on macOS and fails unless Gatekeeper accepts it (`spctl -a -t exec`, a stapled ticket). Re-running a
+   failed job reuses the tag and release and replaces re-uploaded assets.
 
 Setup: the `PDT_RELEASE_TOKEN` secret (fine-grained: Contents and Pull requests, read and write) and auto-merge
 allowed in the repository's settings; without the token the workflow stops before opening anything. **Dry run**: on
@@ -360,7 +361,10 @@ everyone.
 
 Every macOS release is signed (`scripts/sign-macos.sh`) with one certificate from the `MACOS_SIGNING_P12` and
 `MACOS_SIGNING_P12_PASSWORD` secrets, and notarized (`scripts/notarize-macos.sh`) with an App Store Connect API key
-(`MACOS_NOTARY_KEY`, base64 of the `.p8`; `MACOS_NOTARY_KEY_ID`; `MACOS_NOTARY_ISSUER`). A **Developer ID
+(`MACOS_NOTARY_KEY`, base64 of the `.p8`; `MACOS_NOTARY_KEY_ID`; `MACOS_NOTARY_ISSUER`). A release build (a release,
+a nightly, the release PR's bundles) fails in its first step, naming the secret, when any of the three is empty, and
+its check step fails unless the app has a stapled ticket and passes `spctl`: a release is never shipped unnotarized,
+which macOS refuses to open once downloaded. A **Developer ID
 Application** certificate carries a Team ID, so the keychain's partition list trusts every release (`teamid:<id>`)
 and the update token is read without a prompt once allowed. A self-signed one (`scripts/make-signing-cert.sh`, a
 stopgap) has no Team ID: the keychain then trusts each build's exact code hash, so every update asks again, and
@@ -393,14 +397,24 @@ also checks that an update's `.app` is signed by `MACOS_TEAM_ID` before swapping
 ### Google sign-in
 
 Release and nightly bundles build in PDT's own Google OAuth clients (the GCP project `pdt`): the standard and agentic
-Web clients, the file picker's API key and the project's number, from the `PDT_GOOGLE_CLIENT_ID`,
-`PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`, `PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
+Web clients, the standard and agentic Desktop app clients, the file picker's API key and the project's number, from
+the `PDT_GOOGLE_CLIENT_ID`, `PDT_GOOGLE_CLIENT_SECRET`, `PDT_GOOGLE_AGENT_CLIENT_ID`,
+`PDT_GOOGLE_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_DESKTOP_CLIENT_ID`, `PDT_GOOGLE_DESKTOP_CLIENT_SECRET`,
+`PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID`, `PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET`, `PDT_GOOGLE_PICKER_KEY` and
 `PDT_GOOGLE_PROJECT_NUMBER` repository secrets, passed to `.github/actions/bundle` (CI's bundles only when they build a
 release). Never commit them. A release build (a release, a nightly, the release PR) warns, naming it, in the job and
-its summary when any of the six is empty (`scripts/google-build-values.sh`): the build ships without that part. A build
+its summary when any of the ten is empty (`scripts/google-build-values.sh`): the build ships without that part. A build
 without them (a local one, a PR's bundle) offers only the user's own OAuth client;
-set the same variables in the environment to build them in locally. Both clients' only redirect URI is
+set the same variables in the environment to build them in locally. The Web clients' only redirect URI is
 `https://pdt.dev/oauth/google`, and the consent screen links `https://pdt.dev/privacy`: both are on the website.
+
+The Desktop app clients are for signing in on the same machine: Google sends the browser straight back to PDT on
+`127.0.0.1` (or `localhost`) on any port, so they need no redirect URI. A build without them signs in through the
+website from the same machine too. A Desktop client's secret isn't confidential by Google's design (it ships in every
+copy of the app; PKCE protects its codes), but keep it in the secrets like the others. To make them: in the same
+project (so files picked with one client are the others' too, and the consent screen and scopes are shared), under
+**Google Auth Platform › Clients**, create two clients of type **Desktop app** (the standard one and the agentic one)
+and set their IDs and secrets as the four `PDT_GOOGLE_DESKTOP_*` secrets.
 
 ### Moving the release repository
 
