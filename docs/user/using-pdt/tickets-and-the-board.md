@@ -149,7 +149,8 @@ is done or closed, its work merges, CI fails or the merge queue drops it, or som
 ends once the ticket is finished; click the eye again to stop sooner.
 
 The ticket's **Watching** section lists who watches it: you, and any PM conversation you asked to keep an eye on it.
-**×** beside one stops that watch. A workflow run has the same eye, on its page under the workflow's **Runs**.
+**×** beside one stops that watch. On the board and in the backlog, a watched ticket has a small eye; hover it to see
+who watches. A workflow run has the same eye, on its page under the workflow's **Runs**.
 
 ## Search and filters
 

@@ -129,7 +129,7 @@ describe('PDT tool cards', () => {
   });
 
   it('watch: what it watches and tells about, and Stop watching', async () => {
-    const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'ALP-31', sessionId: 'pm1', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
+    const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'ALP-31', targetTitle: null, targetState: null, workflowId: null, sessionId: 'pm1', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
     const calls = stubApi({ 'GET /api/watches': [watch], 'DELETE /api/watches/w1': undefined });
     renderWithQuery(<PdtToolCard call={done('watch', { ticket: 'ALP-31' }, { watching: [watch] })} />);
     const card = screen.getByRole('region', { name: 'Watching ALP-31' });

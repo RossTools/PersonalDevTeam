@@ -17,6 +17,7 @@ import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PriorityIcon, PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
 import { TicketKey } from '../common/TicketKey';
+import { TicketWatchMark } from '../common/Watch';
 import { actionError, runAction } from '../common/useAction';
 import { readViewState, useViewKey, useViewState, writeViewState } from '../common/viewState';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
@@ -175,6 +176,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
       {t.parent && <ParentChip parent={t.parent} projectId={t.projectId} static />}
       {t.parts && <PartsStepper parts={t.parts} showCount className="w-20 shrink-0" />}
       <TicketBadges ticket={t} />
+      <TicketWatchMark ticketId={t.id} />
     </>
   );
   if (phone) {
