@@ -4,7 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::call;
 use serde_json::{Value, json};
 
 struct Env {
@@ -20,7 +20,7 @@ async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
+    crate::common::init_repo(&repo);
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let state = common::app_state(store, tmp.path());
     let app = pdt_api::router(state.clone(), None);

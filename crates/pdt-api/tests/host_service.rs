@@ -85,7 +85,7 @@ async fn busy_lists_the_working_agents_stopping_would_interrupt() {
 
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    crate::common::init_repo(&repo);
     let (_, p) =
         call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     state

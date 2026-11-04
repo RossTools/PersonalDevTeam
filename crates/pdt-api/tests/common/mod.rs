@@ -138,6 +138,13 @@ pub fn git(dir: &std::path::Path, args: &[&str]) {
     assert!(ok, "git {args:?}");
 }
 
+/// Makes `dir` a repository on `main` with one empty commit: PDT refuses to add a repository with no commits.
+pub fn init_repo(dir: &std::path::Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", "init"]);
+}
+
 /// Records the checkout's branch as pushed to `origin` at HEAD (a remote-tracking ref, no remote needed), as an agent
 /// that pushed would leave it: `submitted` is refused for a branch that isn't on `origin` (PDT-161).
 pub fn mark_pushed(worktree: &std::path::Path) {

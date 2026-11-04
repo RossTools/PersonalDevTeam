@@ -44,7 +44,7 @@ async fn host(tmp: &Path, codex: Option<String>) -> (axum::Router, AppState) {
 
 async fn add_project(app: &axum::Router, dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(dir).status().unwrap().success());
+    crate::common::init_repo(dir);
     let (s, v) =
         call(app, "POST", "/api/projects", Some(json!({"name": "demo", "repoPath": dir.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");

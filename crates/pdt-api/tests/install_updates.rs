@@ -82,7 +82,7 @@ async fn still_waiting(env: &Env, id: &str) -> Value {
 async fn busy_session(env: &Env) {
     let repo = env.tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    common::git(&repo, &["init", "-q"]);
+    crate::common::init_repo(&repo);
     let body = json!({"name": "P", "repoPath": repo.to_string_lossy()});
     let (_, p) = call(&env.app, "POST", "/api/projects", Some(body)).await;
     let session = Session {

@@ -37,6 +37,19 @@ impl Drop for Daemon {
 /// A port for a test's pdtd that no other test holds, below every OS's ephemeral range (Linux hands out 32768 and up
 /// for outgoing connections, Windows and macOS 49152 and up). A port from `bind(0)` was free only at that moment: under
 /// nextest another test's connection could take it before pdtd bound it (or between a shutdown and a restart).
+/// Makes `dir` (which exists) a repository on `main` with one empty commit: PDT refuses a repository with no commits.
+pub fn init_repo(dir: &Path) {
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"],
+    ] {
+        assert!(
+            std::process::Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success(),
+            "git {args:?}"
+        );
+    }
+}
+
 pub fn free_port() -> u16 {
     port_blocks::claim(30500, 500, 1)
 }
