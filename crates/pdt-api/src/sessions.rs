@@ -582,6 +582,10 @@ fn pty_spec(
         if let Some(m) = mcp.filter(|_| s.agent == Some(AgentKind::Codex)) {
             env.extend(pdt_agents::mcp::codex_tui_env(m));
         }
+        if s.agent == Some(AgentKind::Claude) {
+            // So an asking tool's call can wait for the user (PDT-589).
+            env.extend(pdt_agents::mcp::claude_env());
+        }
     }
     Ok(SpawnSpec {
         id: s.id.clone(),
