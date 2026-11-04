@@ -260,7 +260,7 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
             if (a) void runAction(() => ws.focusItem(a.info.item, a.info.projectId));
             onChoose?.();
           }}
-          renderEmpty={() => <EmptyState>No agents yet. Start one with + in the tab bar (Ctrl+] c).</EmptyState>}
+          renderEmpty={() => <EmptyState>No agents yet. Click Start on a ticket to start one.</EmptyState>}
         >
           {agents.map(({ id, info, where }) => {
             const state = itemState(info);

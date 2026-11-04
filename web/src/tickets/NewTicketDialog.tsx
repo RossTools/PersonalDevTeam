@@ -25,6 +25,8 @@ export interface NewTicketDialogProps {
   description?: string;
   /** A follow-up offered as a checkbox (off by default), run once the ticket exists: Make ticket's "Start from this chat". */
   then?: { label: string; hint?: string; run: (t: Ticket) => Promise<void> };
+  /** The stage it starts in: To do from the Board (a Draft wouldn't show there), Draft elsewhere. */
+  stage?: TicketStage;
   /** The form's heading ("New ticket"). */
   heading?: string;
   onClose: () => void;
@@ -33,7 +35,7 @@ export interface NewTicketDialogProps {
 
 /** The full new-ticket form: title, description (with preview), stage, priority, labels, areas. It lands at the top of its stage. */
 export function NewTicketDialog({
-  projects, projectId: initialProject, title: initialTitle = '', description: initialDescription = '', then, heading = 'New ticket', onClose, onCreated,
+  projects, projectId: initialProject, title: initialTitle = '', description: initialDescription = '', stage: initialStage = 'draft', then, heading = 'New ticket', onClose, onCreated,
 }: NewTicketDialogProps) {
   const qc = useQueryClient();
   const [projectId, setProjectId] = useState<string | null>(initialProject ?? projects[0]?.id ?? null);
@@ -41,7 +43,7 @@ export function NewTicketDialog({
   const [description, setDescription] = useState(initialDescription);
   const [follow, setFollow] = useState(false);
   const [mode, setMode] = useState<'write' | 'preview'>('write');
-  const [stage, setStage] = useState<TicketStage>('draft');
+  const [stage, setStage] = useState<TicketStage>(initialStage);
   const [priority, setPriority] = useState<Priority>('none');
   const [labels, setLabels] = useState<string[]>([]);
   const [areas, setAreas] = useState<string[]>([]);
@@ -51,7 +53,7 @@ export function NewTicketDialog({
   const ready = !!projectId && !!title.trim();
   const confirm = useConfirm();
   // Anything typed or chosen (a title from quick add counts: that row clears when the form opens).
-  const edited = !!title.trim() || !!description.trim() || stage !== 'draft' || priority !== 'none' || labels.length > 0 || areas.length > 0;
+  const edited = !!title.trim() || !!description.trim() || stage !== initialStage || priority !== 'none' || labels.length > 0 || areas.length > 0;
 
   /** Cancel, Escape, the close button or a click outside: asks first when closing would lose what was typed. */
   const requestClose = async () => {

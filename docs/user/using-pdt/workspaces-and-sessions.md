@@ -5,7 +5,8 @@ in PDT, not your browser, so closing the window or switching devices doesn't sto
 
 ## Projects and worktrees
 
-A **project** is one repository on your machine. Add one with **Add project** in **Settings** (see
+A **project** is one repository on your machine. Add one with **Add project** in **Settings**, or **Add project…** in the
+command palette (see
 [A first project](../getting-started/first-project.md)); its page there has its name, key, **Base branch** (what new
 branches start from and are reviewed against), runs and policies.
 

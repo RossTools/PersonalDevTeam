@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), newIssue: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(), openFile: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), addProject: vi.fn(), newTicket: vi.fn(), newIssue: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(), openFile: vi.fn(),
   };
 }
 
@@ -243,6 +243,13 @@ describe('paletteItems', () => {
     expect(c.handlers.showPersonas).toHaveBeenCalled();
     byId(paletteItems(c), 'view:pm').run!();
     expect(c.handlers.showPm).toHaveBeenCalled();
+  });
+
+  it('offers Add project… with or without projects', () => {
+    for (const c of [ctx(), ctx({ projects: [] })]) {
+      byId(paletteItems(c), 'projects:add').run!();
+      expect(c.handlers.addProject).toHaveBeenCalled();
+    }
   });
 
   it('offers New ticket and Open ticket… (a ticket search step) when there are projects', () => {

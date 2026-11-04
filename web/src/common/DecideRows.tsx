@@ -46,7 +46,7 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
           {rows.map((r, n) => (
             <tr key={r.itemId} className={kept(n) ? 'border-t border-border' : 'border-t border-border text-muted-foreground line-through'}>
               <td className="px-3 py-2 align-top">
-                <Checkbox aria-label={`Keep ${r.ticketKey}`} checked={kept(n)} disabled={disabled} onChange={(on) => onToggle(n, on)} />
+                <Checkbox aria-label={`Keep ${r.ticketKey}`} className="justify-center pointer-coarse:min-w-control-touch" checked={kept(n)} disabled={disabled} onChange={(on) => onToggle(n, on)} />
               </td>
               <td className="px-3 py-2 align-top">
                 <span className="font-mono text-xs">{r.ticketKey}</span> {r.ticketTitle}
@@ -54,6 +54,7 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
               <td className="px-3 py-2 align-top">
                 {DECISION_LABEL[r.decision]}
                 {details(r) && <div className="text-xs text-muted-foreground">{details(r)}</div>}
+                {r.note && <div className="mt-1 text-xs sm:hidden">{r.note}</div>}
               </td>
               <td className="px-3 py-2 align-top max-sm:hidden">{r.note ?? ''}</td>
             </tr>

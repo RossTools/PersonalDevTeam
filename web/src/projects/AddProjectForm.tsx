@@ -56,18 +56,20 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
       <SegmentedControl aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="w-full [&>*]:flex-1" />
       {mode === 'path' ? (
         <>
-          <Field label="Name">
-            <Input required autoFocus={autoFocus} value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
+          {/* The folder first: picking it fills the name in. */}
           <Field label="Repository path">
             <FolderField
               required
+              autoFocus={autoFocus}
               title="Choose the repository"
               start={host.data?.projectsDir ?? ''}
               value={repoPath}
               onChange={setRepoPath}
               onPick={(f) => { if (!name.trim()) setName(f.name); }}
             />
+          </Field>
+          <Field label="Name">
+            <Input required value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
         </>
       ) : mode === 'personal' ? (
@@ -95,7 +97,7 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
           </Field>
         </>
       )}
-      <Field label="Key" hint="2–10 letters and digits">
+      <Field label="Key" hint="The prefix of its ticket numbers, like REPO in REPO-1: 2–10 letters and digits.">
         <Input mono className="uppercase placeholder:normal-case placeholder:font-sans" maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} />
       </Field>
       {m.isError && <Alert id={errorId} tabIndex={-1} tone="error">{m.error.message}</Alert>}

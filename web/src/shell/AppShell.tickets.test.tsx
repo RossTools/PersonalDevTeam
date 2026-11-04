@@ -123,6 +123,30 @@ describe('tickets', () => {
     expect(await screen.findByRole('dialog', { name: 'New ticket' })).toBeInTheDocument();
   });
 
+  it('starts a ticket made on the Board in To do, and says where one made as a Draft went (PDT-563)', async () => {
+    const calls = stubWorkspaces({
+      ...ticketRoutes,
+      [`POST /api/projects/${project.id}/tickets`]: ticket(2, { projectId: project.id, title: 'Idea', stage: 'draft' }),
+    });
+    renderWithQuery(<AppShell />);
+    await screen.findByRole('tab', { name: /Claude A/ });
+    await userEvent.keyboard('{Control>}]{/Control}b');
+    expect(await screen.findByRole('radio', { name: 'Board' })).toBeChecked();
+    await userEvent.keyboard('{Control>}]{/Control}k');
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await userEvent.click(within(palette).getByRole('menuitem', { name: 'New ticket' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New ticket' });
+    expect(within(dialog).getByRole('button', { name: /Stage/ })).toHaveTextContent('To do');
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Title' }), 'Idea');
+    await userEvent.click(within(dialog).getByRole('button', { name: /Stage/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Draft' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/tickets'))?.body).toMatchObject({ stage: 'draft' }));
+    expect(await screen.findByText('ALP-2 created in Draft')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Show on the Backlog' }));
+    expect(await screen.findByRole('radio', { name: 'Backlog' })).toBeChecked();
+  });
+
   it('opens the board with Ctrl+] b', async () => {
     stubWorkspaces(ticketRoutes);
     renderWithQuery(<AppShell />);

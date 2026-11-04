@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, FileText, NotebookPen, PanelBottom } from 'lucide-react';
 import { api } from '../api/client';
 import { branchUrl } from '../projects/forgeLinks';
-import { Button, EmptyState, IconButton, Link, ListHeading, Sheet, Skeleton, useConfirm, useThemePref, type MenuEntry } from '@ui';
+import { Button, EmptyState, IconButton, Link, ListHeading, Sheet, Skeleton, toast, useConfirm, useThemePref, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
@@ -32,9 +32,11 @@ import { OpenSessionContext, OpenTicketContext, OpenChangesContext, type OpenCha
 import { StartTicketContext, startNextPart } from '../tickets/actions';
 import { invalidateTickets, ticketByKey, ticketKeys, useProjectForge, useTicketSearch } from '../tickets/queries';
 import type { StartResult } from '../api/gen/StartResult';
+import type { Ticket } from '../api/gen/Ticket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Workspace } from '../api/gen/Workspace';
-import { looksLikeKey } from '../tickets/model';
+import { BACKLOG_STAGES, looksLikeKey } from '../tickets/model';
+import { STAGE_LABEL } from '../common/StageStepper';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
@@ -371,6 +373,18 @@ export function AppShell() {
     }
     setStarting({ ticketId: t.id, ...(placement ? { placement } : {}) });
   }, [ws.workspace, ws.tab]);
+  // A new ticket the Tickets view on screen doesn't show (a Draft made on the Board, a To do one in the Backlog) says
+  // where it went (PDT-563).
+  const onTicketCreated = (t: Ticket) => {
+    if (view !== 'tickets') return;
+    const inBacklog = BACKLOG_STAGES.includes(t.stage);
+    if (inBacklog === (mode === 'backlog')) return;
+    const there = inBacklog ? 'Backlog' : 'Board';
+    toast.success(`${t.key} created in ${STAGE_LABEL[t.stage]}`, {
+      description: `It's on the ${there}.`,
+      action: { label: `Show on the ${there}`, onClick: () => go({ view: 'tickets', board: !inBacklog, ticket: t.key }) },
+    });
+  };
   const onStarted = (r: StartResult) => {
     invalidateTickets(qc, [r.ticket.id]);
     qc.setQueryData(ticketKeys.one(r.ticket.id), r.ticket);
@@ -606,6 +620,7 @@ export function AppShell() {
     showPersonas: () => setView('personas'),
     showPm: () => setView('pm'),
     showNotes: () => setView('notes'),
+    addProject: () => setAddingProject(true),
     newTicket: () => setNewTicket({ projectId: ticketProjectId, title: '' }),
     newIssue: () => { if (ticketProjectId && issueRepo) setNewIssue({ projectId: ticketProjectId, repo: issueRepo }); },
     openTicket,
@@ -888,6 +903,9 @@ export function AppShell() {
             projects={ws.projects}
             projectId={newTicket.projectId}
             title={newTicket.title}
+            // A Draft isn't on the Board, so one made there starts in To do (the form still offers Draft).
+            {...(view === 'tickets' && mode === 'board' ? { stage: 'todo' as const } : {})}
+            onCreated={onTicketCreated}
             onClose={() => setNewTicket(null)}
           /></Suspense>
         )}

@@ -67,7 +67,7 @@ export function AreasEditor({ projectId, areas, onChange, disabled }: {
           <span className="line-clamp-2">Areas config: {q.data.error}</span>
         </p>
       ) : q.data && q.data.areas.length === 0 ? (
-        <EmptyState size="inline">No areas in .pdt/project.toml yet.</EmptyState>
+        <EmptyState size="inline">No areas set up for this project yet.</EmptyState>
       ) : null}
     </div>
   );

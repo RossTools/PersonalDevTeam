@@ -109,9 +109,17 @@ function Install-Pdt {
     # GitHub needs TLS 1.2, which Windows PowerShell 5.1 may not offer by default.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    # Installed: the installer's folder (a per-user install), or a PDT answering on its port.
+    # Installed: the installer's folder (a per-user install), or a PDT answering on its port. An install counts as one
+    # only when it starts at login (pdt-host's Run value) or runs: files left by an install cut short are installed again.
     $installDir = Join-Path $env:LOCALAPPDATA $product
     $existing = Test-Path (Join-Path $installDir 'pdt-host.exe')
+    $registered = $false
+    if ($existing) {
+        try {
+            $null = Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'Personal Dev Team host' -ErrorAction Stop
+            $registered = $true
+        } catch { $registered = $false }
+    }
     $running = $false
     try {
         $health = Invoke-RestMethod -Uri "$local/api/health" -TimeoutSec 3 -UseBasicParsing
@@ -153,11 +161,20 @@ function Install-Pdt {
         }
     }
 
-    if (-not $Force -and ($existing -or $running)) {
-        if ($existing) { Write-Host "$product is already installed in $installDir." } else { Write-Host "$product is already running at $local." }
-        Write-Host 'It keeps itself up to date: Settings > This host > Updates shows its version and checks for a new one.'
-        Write-Host "To install it again anyway, set `$env:PDT_FORCE = '1' and run this again."
-        return
+    if (-not $Force) {
+        if ($running) {
+            if ($existing) { Write-Host "$product is already installed in $installDir, and running." } else { Write-Host "$product is already running at $local." }
+            Write-Host 'It keeps itself up to date: Settings > This host > Updates shows its version and checks for a new one.'
+            Write-Host "To install it again anyway, set `$env:PDT_FORCE = '1' and run this again."
+            return
+        }
+        if ($registered) {
+            Write-Host "$product is installed in $installDir, but it isn't running."
+            Write-Host "Start it by opening $product from the Start menu."
+            Write-Host "To install it again instead, set `$env:PDT_FORCE = '1' and run this again."
+            return
+        }
+        if ($existing) { Write-Host "$product is in $installDir but isn't set up to start at login: installing it again." }
     }
 
     $headers = @{ Accept = 'application/vnd.github+json' }

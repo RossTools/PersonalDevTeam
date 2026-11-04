@@ -151,7 +151,7 @@ export const section = {
         </Demo>
         <Demo label="ToolCallRow · folded lookups name the tickets they read">
           <div className="flex flex-col">
-            <ToolCallRow verb="Read" tags={<TicketPills keys={['SHOP-19', 'SHOP-31']} />}>
+            <ToolCallRow verb="Read" label="Read SHOP-19, SHOP-31" tags={<TicketPills keys={['SHOP-19', 'SHOP-31']} />}>
               <ToolCallRow verb="pdt: get_ticket" status="done" />
               <ToolCallRow verb="pdt: get_ticket" status="done" />
             </ToolCallRow>
