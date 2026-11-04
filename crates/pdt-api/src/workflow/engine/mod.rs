@@ -180,17 +180,17 @@ fn context(wf: &Workflow, run: &Run, steps: &[Step], state: serde_json::Map<Stri
     })
 }
 
-/// The outside fields of `trigger` (its event type's `outside`), none when it carries none or the user wrote them (a
-/// comment of theirs on a document, PDT-318).
-fn outside_fields(reg: &crate::integrations::Registry, trigger: &Value) -> &'static [&'static str] {
-    let Some(t) = trigger.get("type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return &[] };
-    if pdt_core::workflow::events::by_user(trigger) { &[] } else { t.outside }
+/// The outside fields of `trigger` (its event type's `outside`), less those the user wrote (a comment of theirs on a
+/// document, PDT-318: its title is still outside, PDT-597).
+fn outside_fields(reg: &crate::integrations::Registry, trigger: &Value) -> Vec<&'static str> {
+    let Some(t) = trigger.get("type").and_then(Value::as_str).and_then(|k| reg.event_type(k)) else { return vec![] };
+    t.outside_of(trigger)
 }
 
 /// The outside text an agent gets, fenced (PDT-202): each of `fields` (`NodeKind::agent_text`) is resolved again, each
 /// reference that reads one of the trigger's outside fields (its event type's `outside`, or something inside one:
 /// `{{trigger.body.message}}`) put in a block tagged with an id picked for this prompt, and the fixed instruction goes
-/// before it. Other fields, and other nodes, get the text as it is, as does a trigger the user wrote (`byUser`). In a
+/// before it. Other fields, and other nodes, get the text as it is, as do the fields of a trigger the user wrote (`byUser`). In a
 /// sub-workflow's run whose `origin` (the trigger of the run that called it first) carries outside text, all of the
 /// trigger (its input) counts as outside (PDT-415).
 pub(crate) fn fence_input(
@@ -205,7 +205,7 @@ pub(crate) fn fence_input(
         return;
     }
     let outside = match origin {
-        Some(o) if !outside_fields(reg, o).is_empty() => pdt_core::fence::ALL,
+        Some(o) if !outside_fields(reg, o).is_empty() => pdt_core::fence::ALL.to_vec(),
         _ => outside_fields(reg, &ctx["trigger"]),
     };
     if outside.is_empty() {
@@ -214,7 +214,7 @@ pub(crate) fn fence_input(
     let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
     for f in fields {
         let (Some(raw), Some(slot)) = (config.get(*f), input.get_mut(*f)) else { continue };
-        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", outside, &fence);
+        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", &outside, &fence);
         if let Value::String(text) = fenced {
             *slot = Value::String(fence.with_note(&text));
         }
