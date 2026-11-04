@@ -8,6 +8,9 @@ on:
       - "site/**"
       - "docs/**"
       - ".github/workflows/pages.yml"
+  # Monthly too, so /.well-known/security.txt (written at build time, valid for 180 days) never expires.
+  schedule:
+    - cron: "17 4 1 * *"
   workflow_dispatch:
 
 # One deploy at a time; a newer merge waits rather than cancelling one half-way.
