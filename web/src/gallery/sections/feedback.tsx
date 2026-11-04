@@ -5,6 +5,7 @@ import { StatusDot, type Status } from '@ui/StatusDot';
 import { Badge } from '@ui/Badge';
 import { Chip } from '@ui/Chip';
 import { OverlapBadge } from '@ui/OverlapBadge';
+import { WatchMark } from '@ui/WatchMark';
 import { Alert } from '@ui/Alert';
 import { Banner } from '@ui/Banner';
 import { EmptyState } from '@ui/EmptyState';
@@ -111,6 +112,12 @@ function render() {
           <OverlapBadge level="conflict" keys={['PDT-51']} />
           <OverlapBadge level="conflict" keys={['PDT-51', 'PDT-52', 'PDT-60']} />
           <span className="text-meta text-muted-foreground">(none renders nothing)</span>
+        </Row>
+
+        <Row label="WatchMark">
+          <WatchMark title="Watched by you" />
+          <WatchMark title="Watched by you and PM “Docs and website”" />
+          <WatchMark title="Watching 3" count={3} />
         </Row>
 
         <Row label="Chip">

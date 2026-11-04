@@ -97,6 +97,12 @@ async fn the_pm_hears_when_a_watched_tickets_agent_reports_and_the_ticket_finish
     assert_eq!(w.len(), 1);
     assert_eq!(w[0]["sessionId"], pm.as_str());
     assert!(w[0]["watcher"].as_str().unwrap().starts_with("PM “"), "{}", w[0]);
+    // What the conversation header's watch list shows (PDT-555): the ticket's title and stage, the conversation's.
+    assert_eq!(w[0]["targetState"], "todo", "{}", w[0]);
+    assert!(w[0]["targetTitle"].is_string(), "{}", w[0]);
+    assert_eq!(w[0]["workflowId"], Value::Null);
+    let (_, mine) = call(&env.app, "GET", &format!("/api/watches?session={pm}"), None).await;
+    assert_eq!(mine.as_array().unwrap().len(), 1, "{mine}");
     settle(&env).await;
     assert!(told(&env, &pm).await.is_empty(), "what happened before the watch is no news");
 
@@ -325,6 +331,8 @@ async fn a_watched_run_tells_when_it_waits_on_you_and_when_it_ends() {
     let (s, w) = call(&env.app, "POST", "/api/watches", Some(json!({"run": run}))).await;
     assert_eq!(s, StatusCode::CREATED, "{w}");
     assert_eq!(w["targetLabel"], "Ship");
+    assert_eq!(w["targetState"], "running", "{w}");
+    assert_eq!(w["workflowId"], wf.as_str());
     for _ in 0..3 {
         pdt_api::run_workflows(&env.state).await;
     }

@@ -293,7 +293,9 @@ failures, queue drops), new Inbox items about it, and a run's status. It notes w
 burst once it has been quiet for 15 s (at most a minute after the first). A conversation is told through the outbox
 (`reopens`, so a parked one wakes); the user, and a closed conversation's leftovers, get a `watch.event`
 notification. A `once` watch ends when its target finishes. A PM Reset moves the old
-conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it.
+conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it. The web shows them from
+`GET /api/watches` with no filter (every active watch, each with its target's title and stage or status), one shared
+query (`useAllWatches`) for the board's and backlog's eyes, the PM list's and the conversation header's watch list.
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,

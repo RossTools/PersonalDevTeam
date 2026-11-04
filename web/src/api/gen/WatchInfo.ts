@@ -11,6 +11,18 @@ export type WatchInfo = { id: string, target: WatchTarget, targetId: string,
  */
 targetLabel: string, 
 /**
+ * The ticket's title; null for a run (or a target that is gone).
+ */
+targetTitle: string | null, 
+/**
+ * The ticket's stage (`in_progress`) or the run's status (`running`); null for a target that is gone.
+ */
+targetState: string | null, 
+/**
+ * A run's workflow (its page is under it); null for a ticket.
+ */
+workflowId: string | null, 
+/**
  * The PM conversation told; null: the user.
  */
 sessionId: string | null, 

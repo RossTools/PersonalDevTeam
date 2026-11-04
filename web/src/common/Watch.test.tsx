@@ -11,7 +11,7 @@ afterEach(() => {
 });
 
 const watch = (over: Partial<WatchInfo>): WatchInfo => ({
-  id: 'w1', target: 'ticket', targetId: 't1', targetLabel: 'ABC-12', sessionId: null, watcher: 'you',
+  id: 'w1', target: 'ticket', targetId: 't1', targetLabel: 'ABC-12', targetTitle: 'Fix it', targetState: 'todo', workflowId: null, sessionId: null, watcher: 'you',
   events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1, ...over,
 });
 

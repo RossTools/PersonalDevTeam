@@ -30,6 +30,7 @@ export * from './StatusDot';
 export * from './Badge';
 export * from './Chip';
 export * from './OverlapBadge';
+export * from './WatchMark';
 export * from './Alert';
 export * from './Callout';
 export * from './SourceCard';

@@ -40,7 +40,7 @@ const attempt: AttemptSummary = {
   },
 };
 
-const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'SHOP-31', sessionId: 'pm', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
+const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'SHOP-31', targetTitle: 'Checkout page', targetState: 'in_progress', workflowId: null, sessionId: 'pm', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
 
 /** What the cards and hover cards would fetch, so the gallery shows them without a daemon. */
 function Seeded({ children }: { children: ReactNode }) {
