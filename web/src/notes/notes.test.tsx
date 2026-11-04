@@ -204,7 +204,7 @@ describe('notes: a note', () => {
     await act(() => qc.refetchQueries({ queryKey: ['pm-notes', 'one', 'a'] }));
     expect(editorText(body)).toBe('Mine, unsaved');
     // Once saved, a change made elsewhere shows.
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Saved/), { timeout: 2000 });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Saved/));
     theirs = note('a', { title: 'Plan', body: 'The PM changed it', updatedAt: NOW + 2 });
     await act(() => qc.refetchQueries({ queryKey: ['pm-notes', 'one', 'a'] }));
     await waitFor(() => expect(editorText(body)).toBe('The PM changed it'));
@@ -240,7 +240,7 @@ describe('notes: a note', () => {
     expect(title).toHaveFocus();
     expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
     fireEvent.change(title, { target: { value: 'Idea' } });
-    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Idea', body: '', kind: 'user', project: project.id }), { timeout: 2000 });
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ title: 'Idea', body: '', kind: 'user', project: project.id }));
     await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith('c'));
     // The path changes to the note's own: the same editor stays.
     rerender(<NoteScreen {...props} id="c" />);

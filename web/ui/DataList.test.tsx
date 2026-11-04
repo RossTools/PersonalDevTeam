@@ -1,18 +1,14 @@
 import { useState } from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DataList, DataListRow, type DataListProps, type DataListSection } from './DataList';
 
 // jsdom has no layout: give every element a viewport so the virtualizer renders the first screen of rows.
 const sizes: [keyof HTMLElement, number][] = [['clientWidth', 400], ['clientHeight', 360], ['offsetWidth', 400], ['offsetHeight', 360]];
-const restore: (() => void)[] = [];
 let observed: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
-beforeAll(() => {
-  for (const [prop, value] of sizes) {
-    const spy = vi.spyOn(HTMLElement.prototype, prop as 'clientWidth', 'get').mockImplementation(() => value);
-    restore.push(() => spy.mockRestore());
-  }
+beforeEach(() => {
+  for (const [prop, value] of sizes) vi.spyOn(HTMLElement.prototype, prop as 'clientWidth', 'get').mockImplementation(() => value);
   vi.stubGlobal(
     'IntersectionObserver',
     class {
@@ -22,10 +18,6 @@ beforeAll(() => {
       disconnect() {}
     },
   );
-});
-afterAll(() => {
-  restore.forEach((r) => r());
-  vi.unstubAllGlobals();
 });
 
 interface Row { id: string; title: string }

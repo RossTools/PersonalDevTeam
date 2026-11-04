@@ -15,11 +15,10 @@ describe('Sheet', () => {
       </Sheet>,
     );
     // The sheet loads lazily; until then its trigger is shown as a plain placeholder.
-    // A generous timeout: under a full parallel test run the lazy chunk can take over a second to load.
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-expanded', 'false'), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Alpha' })).toHaveAttribute('aria-expanded', 'false'));
     const trigger = screen.getByRole('button', { name: 'Alpha' });
     await user.click(trigger);
-    const sheet = await screen.findByRole('dialog', { name: 'Workspaces' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Workspaces' });
     expect(within(sheet).getByRole('link', { name: 'Release' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -34,7 +33,7 @@ describe('Sheet', () => {
         body
       </Sheet>,
     );
-    const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Peek' });
     await user.click(within(sheet).getByRole('button', { name: 'Close' }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
@@ -43,7 +42,7 @@ describe('Sheet', () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     render(<Sheet side="left" title="Sidebar" open onOpenChange={onOpenChange}>body</Sheet>);
-    await screen.findByRole('dialog', { name: 'Sidebar' }, { timeout: 5000 });
+    await screen.findByRole('dialog', { name: 'Sidebar' });
     // Where a click lands when a menu opened on mouse down covers its button by mouse up.
     await user.click(document.body);
     expect(onOpenChange).not.toHaveBeenCalled();
@@ -63,7 +62,7 @@ describe('Sheet', () => {
         </Sheet>
       </>,
     );
-    const sheet = await screen.findByRole('dialog', { name: 'Peek' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Peek' });
     // The sheet takes focus once it opens; moving focus out of it must not close it.
     await waitFor(() => expect(sheet.contains(document.activeElement)).toBe(true));
     await user.click(within(sheet).getByText('body'));
@@ -95,7 +94,7 @@ describe('Sheet', () => {
     const pick = screen.getByRole('button', { name: 'Pick' });
     await user.click(pick);
     // Not hidden by the dialog: found without `hidden`, and focus moves into it.
-    const sheet = await screen.findByRole('dialog', { name: 'Preview' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Preview' });
     await waitFor(() => expect(sheet).toContainElement(document.activeElement as HTMLElement));
     const create = within(sheet).getByRole('button', { name: 'Create' });
     await user.click(create);
@@ -117,7 +116,7 @@ describe('Sheet', () => {
         body
       </Sheet>,
     );
-    const sheet = await screen.findByRole('dialog', { name: 'Sidebar' }, { timeout: 5000 });
+    const sheet = await screen.findByRole('dialog', { name: 'Sidebar' });
     expect(within(sheet).getByRole('button', { name: 'Settings' })).toBeInTheDocument();
   });
 

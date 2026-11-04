@@ -787,7 +787,7 @@ describe('UpdateBanner', () => {
     stubApi({ 'GET /api/host/update': () => (++n === 1 ? update({ state: 'installing' }) : update({ current: '0.1.7' })) });
     renderWithQuery(<UpdateBanner />);
     expect(await screen.findByRole('status')).toHaveTextContent('Installing the update');
-    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1), { timeout: 4_000 });
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
   });
 
   it('does not reload while the version stays the same', async () => {
@@ -796,7 +796,7 @@ describe('UpdateBanner', () => {
     let n = 0;
     const calls = stubApi({ 'GET /api/host/update': () => update({ state: ++n === 1 ? 'installing' : 'idle' }) });
     renderWithQuery(<UpdateBanner />);
-    await waitFor(() => expect(calls.length).toBeGreaterThan(1), { timeout: 4_000 });
+    await waitFor(() => expect(calls.length).toBeGreaterThan(1));
     expect(reload).not.toHaveBeenCalled();
   });
 
