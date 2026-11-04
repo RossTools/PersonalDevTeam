@@ -20,6 +20,8 @@ import { PlacePicker, type Place } from '../common/PlacePicker';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
 import { useNavigationGuard, whenAllowed } from '../shell/router';
 import { CodeViewer } from './LazyCodeViewer';
+import type { CodeTarget } from './CodeViewer';
+import { FileSearch } from './FileSearch';
 import { sessionsQuery } from '../sessions/queries';
 
 // The conflict diff is CodeMirror's merge view: loaded only when it is shown.
@@ -50,6 +52,8 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
   const [open, setOpen] = useState<Set<string>>(new Set());
   // The file with unsaved edits, if any: it can't be renamed or deleted under the editor.
   const [unsaved, setUnsaved] = useState<string | null>(null);
+  // Where a search result opens its file: the viewer scrolls to it and marks the match (`n` tells clicks apart).
+  const [at, setAt] = useState<(CodeTarget & { path: string }) | null>(null);
   // Another checkout starts with its folders closed (not the first one shown once projects load: a linked file's
   // folders are open in it).
   const shownPlace = useRef(placeKey);
@@ -73,6 +77,12 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
     toggle: (path: string) => setOpen((s) => { const n = new Set(s); if (n.has(path)) n.delete(path); else n.add(path); return n; }),
     file,
     setFile: (f: string | null) => change(picked, f),
+    at,
+    /** Opens `path` at `line`, the match `[from, to)` in it marked (UTF-16 units). */
+    openAt: (path: string, line: number, from: number, to: number) => {
+      setAt((was) => ({ path, line, from, to, n: (was?.n ?? 0) + 1 }));
+      change(picked, path);
+    },
     unsaved,
     setUnsaved,
   };
@@ -226,7 +236,9 @@ export function FolderTree({ state }: { state: FolderViewState }) {
         <div className="min-w-0 flex-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>
         <NewFileButton key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} />
       </div>
-      <Files key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} />
+      <FileSearch key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place}>
+        <Files state={state} place={state.place} />
+      </FileSearch>
     </div>
   );
 }
@@ -240,7 +252,13 @@ export function FolderList({ state, dir }: { state: FolderViewState; dir: string
   return (
     <div className="flex flex-col gap-2 py-1">
       {dir === '' && <div className="px-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>}
-      <FolderEntries key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} dir={dir} />
+      {dir === '' ? (
+        <FileSearch key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place}>
+          <FolderEntries state={state} place={state.place} dir={dir} />
+        </FileSearch>
+      ) : (
+        <FolderEntries key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} dir={dir} />
+      )}
     </div>
   );
 }
@@ -314,6 +332,13 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   const [markdownView, setMarkdownView] = useViewState<'rendered' | 'source'>(`${remembered}:view`, 'rendered');
   const renderedScroll = useRememberedScroll(`${remembered}:rendered`);
   const [editView, setEditView] = useState<'edit' | 'preview'>('edit');
+  // A search result opened here: shown in the source, where its line is.
+  const target = state.at?.path === f.path ? state.at : undefined;
+  useEffect(() => {
+    if (!target) return;
+    if (markdownView !== 'source') setMarkdownView('source');
+    if (editView !== 'edit') setEditView('edit');
+  }, [target?.n]);
   const [edit, setEdit] = useState<Edit | null>(null);
   // Saving was refused: the file changed on disk. `disk` is what is there now (null: deleted), once fetched.
   const [conflict, setConflict] = useState<{ disk?: FileContent | null; diff: boolean } | null>(null);
@@ -521,7 +546,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
             {markdown ? (
               <MarkdownEditor key={edit.n} variant="file" label={f.path} value={edit.text} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
             ) : (
-              <CodeViewer key={edit.n} name={f.path} text={edit.start} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
+              <CodeViewer key={edit.n} name={f.path} text={edit.start} at={target} onChange={(text) => setEdit((e) => (e ? { ...e, text } : e))} />
             )}
           </div>
           {markdown && editView === 'preview' && (
@@ -535,7 +560,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
           <Markdown className="mx-auto max-w-3xl p-4">{f.text}</Markdown>
         </div>
       ) : (
-        <div className="flex-1 min-h-0"><CodeViewer name={f.path} text={f.text} remember={`${remembered}:code`} /></div>
+        <div className="flex-1 min-h-0"><CodeViewer name={f.path} text={f.text} at={target} remember={`${remembered}:code`} /></div>
       )}
     </div>
   );

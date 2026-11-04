@@ -601,3 +601,52 @@ async fn pull_fast_forwards_the_base_branch_from_origin() {
     let (s, _) = call(&env.app, "POST", "/api/projects/nope/pull", None).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn the_files_view_searches_inside_files() {
+    let env = setup().await;
+    std::fs::create_dir_all(env.repo.join("src")).unwrap();
+    std::fs::write(env.repo.join(".gitignore"), "build/\n").unwrap();
+    std::fs::create_dir_all(env.repo.join("build")).unwrap();
+    std::fs::write(env.repo.join("build").join("out.txt"), "needle\n").unwrap();
+    std::fs::write(env.repo.join("blob.bin"), b"needle\0\x01").unwrap();
+    std::fs::write(env.repo.join("src").join("a.rs"), "fn needle() {}\nlet Needle = 1;\n").unwrap();
+    let many: String = (0..60).map(|i| format!("needle {i}\n")).collect();
+    std::fs::write(env.repo.join("many.txt"), many).unwrap();
+    let base = format!("/api/projects/{}/files/search", env.pid);
+
+    let (s, r) = call(&env.app, "GET", &format!("{base}?q=needle"), None).await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    let paths: Vec<&str> = r["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["many.txt", "src/a.rs"], "ignored and binary files are left out");
+    assert_eq!(r["files"][0]["lines"].as_array().unwrap().len(), 50);
+    assert_eq!(r["files"][0]["count"], 60);
+    assert_eq!(r["capped"], true);
+    assert_eq!(r["timedOut"], false);
+    assert_eq!(
+        r["files"][1]["lines"][0],
+        json!({"line": 1, "text": "fn needle() {}", "offset": 0, "cutEnd": false, "ranges": [[3, 9]]})
+    );
+
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=Needle&case=true&glob=src"), None).await;
+    assert_eq!(r["files"].as_array().unwrap().len(), 1);
+    assert_eq!(r["files"][0]["lines"][0]["line"], 2);
+    assert_eq!(r["capped"], false);
+
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=needle%20%5B0-9%5D%24&regex=true&glob=*.txt"), None).await;
+    assert_eq!(r["files"][0]["count"], 10);
+
+    let (s, v) = call(&env.app, "GET", &format!("{base}?q=needle(&regex=true"), None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_pattern")), "{v}");
+    let (s, v) = call(&env.app, "GET", &format!("{base}?q=needle&glob=../x"), None).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("bad_pattern")), "{v}");
+
+    // The cap on all matches: 41 files of 50 matches each.
+    for i in 0..41 {
+        std::fs::write(env.repo.join(format!("f{i:02}.txt")), "needle\n".repeat(50)).unwrap();
+    }
+    let (_, r) = call(&env.app, "GET", &format!("{base}?q=needle"), None).await;
+    let sent: usize = r["files"].as_array().unwrap().iter().map(|f| f["lines"].as_array().unwrap().len()).sum();
+    assert_eq!(sent, 2000);
+    assert_eq!(r["capped"], true);
+}

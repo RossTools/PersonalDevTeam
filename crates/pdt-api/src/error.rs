@@ -31,6 +31,7 @@ pub mod codes {
     pub const ALREADY_RUNNING: &str = "already_running";
     pub const ATTEMPT_ACTIVE: &str = "attempt_active";
     pub const ATTEMPT_INACTIVE: &str = "attempt_inactive";
+    pub const BAD_PATTERN: &str = "bad_pattern";
     pub const BAD_SIGNATURE: &str = "bad_signature";
     pub const BRANCH_EXISTS: &str = "branch_exists";
     pub const BRANCH_NOT_DELETED: &str = "branch_not_deleted";
@@ -503,6 +504,7 @@ impl From<GitError> for ApiError {
             GitError::InvalidBranch(_) => Self::bad_request(codes::INVALID_BRANCH, e.to_string()),
             GitError::BranchExists(_) => Self::conflict(codes::BRANCH_EXISTS, e.to_string()),
             GitError::UnknownRef(_) => Self::bad_request(codes::UNKNOWN_REF, e.to_string()),
+            GitError::BadPattern(_) => Self::bad_request(codes::BAD_PATTERN, e.to_string()),
         }
     }
 }
