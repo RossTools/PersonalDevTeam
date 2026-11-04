@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { CaseSensitive, Regex, Search, WholeWord, X } from 'lucide-react';
 import { Alert, Badge, Disclosure, IconButton, Input, Spinner } from '@ui';
@@ -7,17 +7,8 @@ import type { FileSearchQuery } from '../api/files';
 import type { SearchFile } from '../api/gen/SearchFile';
 import type { SearchLine } from '../api/gen/SearchLine';
 import type { Place } from '../common/PlacePicker';
+import { useDebounced } from '../common/useDebounced';
 import type { FolderViewState } from './FolderView';
-
-/** Waits until typing pauses before asking the API. */
-function useDebounced<T>(value: T, ms = 250): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
 
 /**
  * Search inside the checkout's files (`git grep`: ignored and binary files are left out). With nothing typed it shows
@@ -26,7 +17,7 @@ function useDebounced<T>(value: T, ms = 250): T {
 export function FileSearch({ state, place, children }: { state: FolderViewState; place: Place; children: ReactNode }) {
   const [s, setS] = useState<FileSearchQuery>({ q: '', case: false, word: false, regex: false, glob: '' });
   const set = (patch: Partial<FileSearchQuery>) => setS((was) => ({ ...was, ...patch }));
-  const asked = useDebounced(s);
+  const asked = useDebounced(s, 250);
   const searching = asked.q !== '';
   // A new search cancels the one in flight: the query's signal aborts once its key is left.
   const r = useQuery({
