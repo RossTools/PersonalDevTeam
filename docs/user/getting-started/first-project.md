@@ -9,7 +9,8 @@ In **Get started**, open **Add a project** and click **Choose a folder…** (or 
 Settings list of projects). Then pick one:
 
 - **Folder**: a repository already on your machine. Give the **Repository path**, and a **Name** if you want one other
-  than the folder's.
+  than the folder's. The repository needs at least one commit, since tickets branch from it: in a new folder, run
+  `git init` and make a first commit before adding it.
 - **Clone URL**: a repository to clone. Give the **Repository URL** and, under **Into folder**, where to clone it.
   With GitHub connected, **Clone from GitHub…** in **Get started** opens this directly.
 - **Personal (no repo)**: for work that isn't code (notes, research, planning). Each ticket works in a folder of its

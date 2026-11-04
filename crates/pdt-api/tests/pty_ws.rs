@@ -42,9 +42,7 @@ async fn http(port: u16, method: &str, path: &str, body: Option<Value>) -> (u16,
 async fn shell_session(tmp: &Path, port: u16) -> String {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(
-        std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success()
-    );
+    crate::common::init_repo(&repo);
     let (_, p) =
         http(port, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     let (status, s) = http(

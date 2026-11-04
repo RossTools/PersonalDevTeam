@@ -34,7 +34,7 @@ fn store_token(env: &Env, token: &str) {
 async fn add_project(env: &Env, name: &str, key: &str, origin: &str) -> Value {
     let repo = env.tmp.path().join(name);
     std::fs::create_dir_all(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
+    crate::common::init_repo(&repo);
     git(&repo, &["remote", "add", "origin", origin]);
     let body = json!({"name": name, "key": key, "repoPath": repo.to_string_lossy()});
     let (s, p) = call(&env.app, "POST", "/api/projects", Some(body)).await;
