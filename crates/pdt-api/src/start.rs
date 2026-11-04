@@ -166,8 +166,8 @@ pub(crate) async fn start_ticket(
         None => None,
     };
     // Whether PDT named the branch from the project's template (PDT-594): Won't do may delete such a branch from the
-    // remote, whatever its name.
-    let named = chat.is_none() && personal.is_none() && v.branch.as_deref().is_none_or(|b| b == ticket.default_branch);
+    // remote, whatever its name. Only a name `start_branch` chose (and checked was free) is PDT's.
+    let named = chat.is_none() && personal.is_none() && v.branch.is_none();
     let (wt, branch) = match (&chat, &personal) {
         (_, Some(_)) => (None, String::new()),
         (Some((_, wt)), None) => (Some(wt.clone()), wt.branch.clone()),

@@ -215,10 +215,39 @@ async fn a_taken_name_gets_a_number_and_a_tickets_own_branch_is_reused() {
     let b = ticket(&env, json!({"title": "Login", "stage": "ready"})).await;
     assert_eq!(start(&env, &b).await, "feat/login-4", "another ticket's worktree has -3");
 
-    // Abandoned and started again, a ticket gets its own branch back.
+    // Abandoned, a ticket's kept worktree is still taken for others; started again, the ticket gets its branch back.
     let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{a}"), None).await;
     let attempt = t["attempts"][0]["id"].as_str().unwrap().to_string();
+    // Uncommitted work keeps the worktree.
+    std::fs::write(env.repo.join(".worktrees/feat-login-3/wip.txt"), "wip\n").unwrap();
     let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{attempt}/abandon"), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(env.repo.join(".worktrees/feat-login-3").is_dir(), "the abandoned attempt's worktree is kept");
+    let c = ticket(&env, json!({"title": "Login", "stage": "ready"})).await;
+    assert_eq!(start(&env, &c).await, "feat/login-5", "not the abandoned ticket's -3");
     assert_eq!(start(&env, &a).await, "feat/login-3");
+
+    // A chat's worktree (made through the API) is taken too.
+    let body = json!({"branch": "feat/chat"});
+    let (s, v) = call(&env.app, "POST", &format!("/api/projects/{}/worktrees", env.pid), Some(body)).await;
+    assert!(s.is_success(), "{v}");
+    let d = ticket(&env, json!({"title": "Chat", "stage": "ready"})).await;
+    assert_eq!(start(&env, &d).await, "feat/chat-2");
+}
+
+#[tokio::test]
+async fn only_a_name_pdt_chose_is_recorded_as_pdts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    put(&env, json!({"template": "{type}/{slug}"})).await;
+    git(&env.repo, &["branch", "feat/login"]);
+    let a = ticket(&env, json!({"title": "Login", "stage": "ready"})).await;
+    // Given the template's name, Start takes it as given: someone's branch, not PDT's.
+    let body = json!({"agent": "claude", "noSession": true, "branch": "feat/login"});
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{a}/start"), Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let attempt = v["attempt"]["id"].as_str().unwrap();
+    let info = env.state.store.list_active_attempts().await.unwrap();
+    let info = info.iter().find(|i| i.attempt.id == attempt).unwrap();
+    assert_eq!((info.attempt.branch.as_str(), info.branch_named), ("feat/login", Some(false)));
 }

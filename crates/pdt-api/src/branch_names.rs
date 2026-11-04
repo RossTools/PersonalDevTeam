@@ -79,22 +79,25 @@ pub(crate) async fn apply(st: &AppState, t: &mut Ticket) {
 }
 
 /// The branch Start makes for `ticket`, named `name` by the project's naming: `name`, or `name-2`, `name-3`, … when
-/// it is taken. A name is the ticket's own (not taken) when one of its attempts had it, when a worktree of the
-/// project has it that no active attempt uses (a Start that failed after making it), or when it has the ticket's
-/// `pdt-<KEY>` prefix (no other ticket's branch can, so the default names never change); otherwise it is taken when
-/// a worktree, a local branch, `origin`'s branch or the worktree folder has it.
+/// it is taken. A name is the ticket's own (not taken) when one of its attempts had it, or when it has the ticket's
+/// `pdt-<KEY>` prefix (no other ticket's branch can, so the default names never change). Any other name is taken when
+/// a worktree of the project (a chat's, another ticket's kept after Won't do), a local branch, `origin`'s branch or
+/// the worktree folder has it.
 pub(crate) async fn start_branch(
     st: &AppState,
     project: &Project,
     ticket: &Ticket,
     name: &str,
 ) -> Result<String, ApiError> {
-    let worktrees = st.store.list_worktrees(&project.id).await?;
-    let active = st.store.list_active_attempts().await?;
-    let in_use: Vec<&str> = active.iter().filter_map(|a| a.attempt.worktree_id.as_deref()).collect();
-    let mut own: Vec<String> = ticket.attempts.iter().map(|a| a.branch.clone()).collect();
-    own.extend(worktrees.iter().filter(|w| !in_use.contains(&w.id.as_str())).map(|w| w.branch.clone()));
-    let other: Vec<String> = worktrees.into_iter().map(|w| w.branch).filter(|b| !own.contains(b)).collect();
+    let own: Vec<String> = ticket.attempts.iter().map(|a| a.branch.clone()).collect();
+    let other: Vec<String> = st
+        .store
+        .list_worktrees(&project.id)
+        .await?
+        .into_iter()
+        .map(|w| w.branch)
+        .filter(|b| !own.contains(b))
+        .collect();
     let (repo, name, key) = (PathBuf::from(&project.repo_path), name.to_string(), ticket.summary.key.clone());
     tokio::task::spawn_blocking(move || {
         let origin = pdt_git::remote_url(&repo, "origin").is_some();
