@@ -138,22 +138,24 @@ function ProviderIcon({ id }: { id: string }) {
 }
 
 /** A provider's picker: a button for one account, a menu of them for several. */
-function BrowseButton({ label, accounts, onPick, variant = 'primary', size = 'md' }: {
+function BrowseButton({ label, accounts, onPick, variant = 'primary', size = 'md', autoFocus }: {
   label: string;
   accounts: SignInAccount[];
   onPick: (connectionId: string) => void;
   variant?: 'primary' | 'secondary';
   size?: 'sm' | 'md';
+  /** Back from the picker: this is where focus was. */
+  autoFocus?: boolean;
 }) {
   if (accounts.length === 1) {
-    return <Button variant={variant} size={size} onClick={() => onPick(accounts[0].connectionId)}>{label}</Button>;
+    return <Button variant={variant} size={size} autoFocus={autoFocus} onClick={() => onPick(accounts[0].connectionId)}>{label}</Button>;
   }
   return (
     <MenuButton
       label={label}
       entries={() => accounts.map((a) => ({ label: a.email ?? a.name, onSelect: () => onPick(a.connectionId) }))}
     >
-      <Button variant={variant} size={size}>{label} <ChevronDown aria-hidden /></Button>
+      <Button variant={variant} size={size} autoFocus={autoFocus}>{label} <ChevronDown aria-hidden /></Button>
     </MenuButton>
   );
 }
@@ -215,6 +217,12 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const browseNote = picker && pickers.length > 0 ? `${picker.label} for the rest.` : null;
   // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);
+  // Which Browse button opened it: focus goes back there, not to the search, when the dialog returns (PDT-547).
+  const [pickedFrom, setPickedFrom] = useState<'primary' | 'secondary' | null>(null);
+  // Once: a Browse button shown later (an empty search's) mustn't take focus from the search.
+  useEffect(() => {
+    if (!picking && pickedFrom) setPickedFrom(null);
+  }, [picking, pickedFrom]);
   // The keyboard hints, only where there is a keyboard: not on phones or touch screens.
   const touch = useMediaQuery('(max-width: 639.98px), (pointer: coarse)');
   const found = files.data ?? [];
@@ -253,8 +261,9 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
       setImporting(null);
     }
   });
-  const pickWith = (connectionId: string) => act.run(async () => {
+  const pickWith = (connectionId: string, from: 'primary' | 'secondary') => act.run(async () => {
     if (!picker || !chosen) return;
+    setPickedFrom(from);
     setPicking(true);
     try {
       const picked = await pickFiles(picker.module, connectionId);
@@ -268,7 +277,9 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   });
   if (picking) return null;
   const browse = (variant: 'primary' | 'secondary', size: 'sm' | 'md', label = `${picker?.label ?? ''}…`) =>
-    picker && pickers.length > 0 && <BrowseButton label={label} accounts={pickers} onPick={(c) => void pickWith(c)} variant={variant} size={size} />;
+    picker && pickers.length > 0 && (
+      <BrowseButton label={label} accounts={pickers} onPick={(c) => void pickWith(c, variant)} variant={variant} size={size} autoFocus={pickedFrom === variant} />
+    );
   const account = pickers.length === 1 ? (pickers[0].email ?? pickers[0].name) : pickers.length > 1 ? `${pickers.length} accounts` : undefined;
   const description = ticket
     ? <>Into <Badge className="font-mono">{ticket.key}</Badge>{projectName && ` · ${projectName}`}</>
@@ -319,7 +330,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
               items={items}
               query={query}
               onQueryChange={setQuery}
-              autoFocus
+              autoFocus={pickedFrom === null}
               emptyText={empty}
               onAction={(id) => void pick(String(id))}
               className="max-h-[45dvh] p-0"
