@@ -58,7 +58,9 @@ answer and resolve comments too.
   documents folders.
 - **From your computer** (in **Import a document**): drop a file anywhere on the dialog, or click **Choose file…**. A
   `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet, copied into the local documents folder. A spreadsheet's
-  charts, pictures and pivot tables aren't kept; PDT says so.
+  charts, pictures and pivot tables aren't kept; PDT says so. PDT refuses a spreadsheet with more than a million cells,
+  one that unpacks to more than 200 MB, or a formula longer than 8,192 characters, nested more than 64 brackets deep or
+  with more than 1,024 operators, and says why.
 - The **⋯** menu exports a doc as **Export as Markdown (.md)**, and a sheet as **Export as Excel (.xlsx)** (every
   sheet, with formulas and formats) or as CSV (the sheet you're on). Charts aren't in the exported file.
 

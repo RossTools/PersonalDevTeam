@@ -20,6 +20,9 @@ use pdt_core::document::{
 use std::io::Cursor;
 use std::path::Path;
 
+mod limits;
+pub use limits::{MAX_CELLS, MAX_FORMULA_CHARS, MAX_FORMULA_DEPTH, MAX_FORMULA_OPERATORS, MAX_UNPACKED, check_formula};
+
 /// The IronCalc version in pdtd; the web UI's `@ironcalc/workbook` must be the same (a test checks).
 pub const IRONCALC_VERSION: &str = "0.9.1";
 
@@ -76,8 +79,10 @@ impl Workbook {
         Ok(Self { model })
     }
 
-    /// A workbook from a `.xlsx` file's bytes, recalculated.
+    /// A workbook from a `.xlsx` file's bytes, recalculated. A package past PDT's limits (its unpacked size, cells,
+    /// formulas) is refused before IronCalc reads it.
     pub fn from_xlsx(bytes: &[u8], name: &str) -> Result<Self> {
+        limits::check_xlsx(bytes)?;
         let wb = load_from_xlsx_bytes(bytes, name, LOCALE, TZ)
             .map_err(|e| format!("not a spreadsheet PDT can read: {e}"))?;
         let model = ironcalc::base::Model::from_workbook(wb, LANGUAGE)?;
@@ -87,28 +92,43 @@ impl Workbook {
     }
 
     /// A workbook from a `.csv` file (comma, semicolon or tab separated), one sheet named `sheet`. Cells are typed as
-    /// if entered by hand: numbers stay numbers, and a cell starting with `=` is a formula.
+    /// if entered by hand: numbers stay numbers, and a cell starting with `=` is a formula. At most [`MAX_CELLS`]
+    /// cells, and each formula within [`check_formula`]'s limits.
     pub fn from_csv(text: &str, name: &str, sheet: &str) -> Result<Self> {
         let delimiter = sniff_delimiter(text);
         let mut wb = Self::new(name)?;
         if !sheet.trim().is_empty() && sheet != "Sheet1" {
             wb.model.rename_sheet(0, sheet.trim())?;
         }
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .flexible(true)
-            .delimiter(delimiter)
-            .from_reader(text.trim_start_matches('\u{feff}').as_bytes());
-        wb.model.pause_evaluation();
-        for (r, record) in reader.records().enumerate() {
-            let record = record.map_err(|e| format!("not a CSV file PDT can read: {e}"))?;
-            if r >= MAX_ROWS {
-                break;
-            }
-            for (c, v) in record.iter().enumerate() {
-                if !v.is_empty() {
-                    wb.model.set_user_input(0, row_at(r)?, col_at(c)?, v)?;
+        let text = text.trim_start_matches('\u{feff}');
+        let records = || {
+            csv::ReaderBuilder::new()
+                .has_headers(false)
+                .flexible(true)
+                .delimiter(delimiter)
+                .from_reader(text.as_bytes())
+                .into_records()
+                .take(MAX_ROWS)
+                .enumerate()
+                .map(|(r, record)| record.map(|v| (r, v)).map_err(|e| format!("not a CSV file PDT can read: {e}")))
+        };
+        // Checked whole before IronCalc sees a cell.
+        let mut cells = 0usize;
+        for record in records() {
+            let (r, record) = record?;
+            for (c, v) in record.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
+                cells += 1;
+                if cells > MAX_CELLS {
+                    return Err(format!("a sheet file holds at most {MAX_CELLS} cells"));
                 }
+                limits::check_input(v).map_err(|e| format!("{}: {e}", cell_name(r, c)))?;
+            }
+        }
+        wb.model.pause_evaluation();
+        for record in records() {
+            let (r, record) = record?;
+            for (c, v) in record.iter().enumerate().filter(|(_, v)| !v.is_empty()) {
+                wb.model.set_user_input(0, row_at(r)?, col_at(c)?, v)?;
             }
         }
         wb.model.resume_evaluation();
@@ -248,10 +268,17 @@ impl Workbook {
         Ok(out)
     }
 
-    /// Writes values into a sheet from `cell` across and down; a value starting with `=` is a formula.
+    /// Writes values into a sheet from `cell` across and down; a value starting with `=` is a formula. Nothing is
+    /// written when a formula is past [`check_formula`]'s limits.
     pub fn set_cells(&mut self, sheet: &str, cell: &str, values: &[Vec<String>]) -> Result<()> {
         let i = self.sheet_index(sheet)?;
         let ((row, col), _) = parse_range(cell).ok_or_else(|| format!("{cell} is not a cell"))?;
+        for (dr, line) in values.iter().enumerate() {
+            for (dc, v) in line.iter().enumerate() {
+                limits::check_input(v)
+                    .map_err(|e| format!("{}: {e}", cell_name(row.saturating_add(dr), col.saturating_add(dc))))?;
+            }
+        }
         self.model.pause_evaluation();
         let r = (|| {
             for (dr, line) in values.iter().enumerate() {
@@ -443,6 +470,7 @@ impl Workbook {
         let i = self.sheet_index(sheet)?;
         let ((r1, c1), (r2, c2)) = parse_range(range).ok_or_else(|| format!("{range} is not a range"))?;
         let formula = condition_formula(when, &cell_name(r1, c1));
+        check_formula(&formula)?;
         let color = f.color.as_deref().map(hex).transpose()?.map(Color::Rgb).unwrap_or_default();
         let font = (f.bold.is_some() || f.italic.is_some() || f.underline.is_some() || f.color.is_some())
             .then(|| DxfFont { b: f.bold, i: f.italic, u: f.underline, color, ..Default::default() });
