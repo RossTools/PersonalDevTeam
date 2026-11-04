@@ -97,8 +97,8 @@ export function CommandList({
         {it.description && <span className="truncate text-meta text-muted-foreground">{it.description}</span>}
       </span>
       {it.trailing && (
-        // A link or button here acts on its own: its presses don't reach the row (which would choose it).
-        <span className="flex shrink-0 items-center gap-2" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onClick={stop}>
+        // A link or button here acts on its own: its presses and keys don't reach the row (which would choose it).
+        <span className="flex shrink-0 items-center gap-2" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop} onClick={stop} onKeyDown={stop} onKeyUp={stop} onFocus={stop}>
           {it.trailing}
         </span>
       )}

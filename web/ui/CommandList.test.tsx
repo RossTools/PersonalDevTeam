@@ -100,4 +100,18 @@ describe('CommandList rows', () => {
     await user.click(within(row).getByText('Plan'));
     expect(onAction).toHaveBeenCalledWith('plan');
   });
+
+  it('keys on a trailing part act on it alone, not the row', async () => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    const onOpen = vi.fn();
+    render(<CommandList label="Files" items={[{ id: 'plan', label: 'Plan', trailing: <button type="button" onClick={onOpen}>Open</button> }]} onAction={onAction} />);
+    // Tab from the search reaches it, and it keeps the focus.
+    expect(screen.getByRole('searchbox')).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'Open' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onOpen).toHaveBeenCalled();
+    expect(onAction).not.toHaveBeenCalled();
+  });
 });

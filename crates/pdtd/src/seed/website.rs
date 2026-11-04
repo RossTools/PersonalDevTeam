@@ -552,16 +552,16 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
     Ok(true)
 }
 
-/// A ticket's branch, as Start names it: `pdt-<KEY>-<n>-<slug>`.
+/// A ticket's branch, as Start names it with the default template (`pdt-<KEY>-<n>-<slug>`).
 fn branch_name(key: &str, title: &str) -> String {
-    let slug: String = title
-        .to_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .take(5)
-        .collect::<Vec<_>>()
-        .join("-");
-    format!("pdt-{key}-{slug}")
+    let (project_key, number) = key.rsplit_once('-').unwrap_or((key, "0"));
+    let facts = pdt_core::branch_name::BranchFacts {
+        project_key: project_key.into(),
+        number: number.parse().unwrap_or(0),
+        title: title.into(),
+        ..Default::default()
+    };
+    pdt_core::branch_name::BranchNaming::default().name(&facts)
 }
 
 /// The files an agent changed on each started ticket's branch, with their new text.

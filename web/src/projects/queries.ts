@@ -6,6 +6,8 @@ import { workspaceKeys } from '../workspaces/queries';
 export const projectKeys = {
   all: ['projects'] as const,
   branches: (projectId: string) => ['branches', projectId] as const,
+  branchNames: (projectId: string) => ['branch-names', projectId] as const,
+  branchNamesPreview: (projectId: string, template: string, types: string) => ['branch-names', projectId, 'preview', template, types] as const,
   settings: (projectId: string) => ['project-settings', projectId] as const,
   settingsSchemas: ['project-settings-schemas'] as const,
 };

@@ -23,7 +23,9 @@ import {
   inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
-import { allowRowsTitle, DecideRows, useKeptRows } from '../common/DecideRows';
+import { DecideRows, useRowsDecision } from '../common/DecideRows';
+import { pdtApproval } from '../conversation/PdtProposal';
+import { pdtTool } from '../conversation/pdtTools';
 import { nonBlank } from '../common/guards';
 import { capitalize, formatBytes } from '../common/text';
 
@@ -122,7 +124,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [draft, setDraft] = useState(() => ({ title: item.title, description: proposed.description, priority: proposed.priority, labels: proposed.labels }));
   // A batch call's rows (PDT-475): an Inbox confirmation's, or the PM conversation's card's (PDT-502).
   const rows = decideRowsOf(item);
-  const ticked = useKeptRows(rows?.length ?? 0);
+  const decision = useRowsDecision(rows);
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
   const targets = inboxTargets(item);
@@ -132,19 +134,22 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const workflow = nonBlank(item.body.workflow);
   const persona = item.personaName ?? 'The agent';
 
-  // The PM's batch of decisions, from an Inbox confirmation or its conversation's card: untick rows, then Allow or Deny.
-  const decideSpec = (rows: DecideRow[], allow: (kept: number[]) => void, deny: () => void, pending: boolean, session?: string | null) => {
-    const { kept, isKept, toggle } = ticked;
+  // The PM's batch of decisions, from an Inbox confirmation or its conversation's card: untick rows, then Allow (`y`)
+  // or Deny (`n`), as on the card.
+  const decideSpec = (rows: DecideRow[], allow: (kept: number[]) => void, deny: () => void, pending: boolean, session: string | null) => {
+    const d = decision;
     return {
       region: 'Agent call',
-      why: `${session ?? item.personaName ?? 'The PM'} proposes ${rows.length === 1 ? 'a decision' : `${rows.length} decisions`} on your Inbox. Untick any you don't want; Allow applies the rest as your own decisions, Deny changes nothing.`,
-      content: <DecideRows rows={rows} kept={isKept} onToggle={toggle} disabled={pending} />,
+      why: `${d.proposes(session ?? item.personaName ?? 'The PM')} ${d.help}`,
+      content: <DecideRows rows={rows} kept={d.isKept} onToggle={d.toggle} disabled={pending} />,
       actions: [
-        { id: 'allow', title: allowRowsTitle(kept.length, rows.length), short: 'Allow', primary: true,
-          pending, disabled: pending || kept.length === 0, run: () => allow(kept) },
-        { id: 'deny', title: 'Deny', end: true, disabled: pending, run: deny },
+        { id: 'allow', title: d.allowTitle, short: 'Allow', primary: true, kbd: 'y',
+          pending, disabled: pending || !d.canAllow, run: () => allow(d.kept) },
+        { id: 'deny', title: 'Deny', kbd: 'n', end: true, disabled: pending, run: deny },
       ],
-      hint: `${kept.length} of ${rows.length} ticked`,
+      hint: d.ticked,
+      enter: false,
+      onKey: (key: string) => !pending && d.onKey(key, allow, deny),
     };
   };
 
@@ -246,12 +251,17 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         const deny = () => send({ type: 'deny', ...(note.trim() ? { message: note.trim() } : {}) });
         if (rows) {
           // The PM's decisions, asked on its conversation's card (PDT-502): the same table, answered there too.
-          return decideSpec(rows, (kept) => send({ type: 'approve', always: false }, kept), () => send({ type: 'deny' }), approving);
+          return decideSpec(rows, (kept) => send({ type: 'approve', always: false }, kept), () => send({ type: 'deny' }), approving,
+            nonBlank(item.body.sessionTitle));
         }
         const where = [tool, nonBlank(item.body.sessionTitle)].filter(Boolean).join(' · ');
+        // PDT's own tools say what they will create or change, as on the conversation's card (PDT-382).
+        const pdt = diff ? null : pdtApproval(tool, item.body.input);
         return {
           region: 'Approval', why, enter: false,
-          content: (
+          content: pdt ? (
+            <CodeCard aria-label={pdt.title} title={pdt.title} aside={nonBlank(item.body.sessionTitle) ?? undefined}><div className="p-2.5">{pdt.preview}</div></CodeCard>
+          ) : (
             <CodeCard aria-label={approvalTitle(tool)} title={where} aside={description} code={diff ? undefined : item.title}>
               {diff && <DiffViewer diff={diff} />}
             </CodeCard>
@@ -484,6 +494,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       }
       case 'confirm': {
         const { tool, agent, session, input } = confirmOf(item);
+        // Only PDT's own tools ask here, by their bare names.
+        const pdt = pdtApproval(pdtTool(tool) ? tool : `mcp__pdt__${tool}`, item.body.input);
         if (rows) {
           // The PM's decisions (PDT-475): Allow applies the rows left ticked, as if each was clicked here.
           return decideSpec(rows, (kept) => void answer({ choice: 'allow', rows: kept }), () => plain('deny'), busy, session);
@@ -491,8 +503,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         return {
           region: 'Agent call',
           why: `${session ?? 'An agent session'}${agent ? ` (${agent})` : ''} wants to call ${tool}. ${agent ?? 'Its agent'} can't ask in its own prompt, so PDT asks here; either way the agent hears what happened.`,
-          content: <CodeCard aria-label="The call's arguments" title={<span className="font-mono">{tool}</span>}
-            aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')} code={input} />,
+          content: pdt
+            ? <CodeCard aria-label={pdt.title} title={pdt.title} aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')}><div className="p-2.5">{pdt.preview}</div></CodeCard>
+            : <CodeCard aria-label="The call's arguments" title={<span className="font-mono">{tool}</span>}
+              aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')} code={input} />,
           actions: choiceActions(item, plain, busy),
         };
       }

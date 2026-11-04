@@ -10,6 +10,7 @@ import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
+import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
@@ -17,8 +18,8 @@ import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, typ
 import type { Streams } from './model';
 import { DecideCard } from './DecideCard';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
-import { PdtProposal } from './PdtProposal';
-import { isCardTool, lookedUp, pdtApprovalTitle } from './pdtTools';
+import { pdtApproval } from './PdtProposal';
+import { isCardTool, lookedUp } from './pdtTools';
 import { approvalTitle, clock, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
@@ -209,6 +210,15 @@ export const requestAnchor = (requestId: string) => `request-${requestId}`;
 
 function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: boolean; onAnswer: MessageListProps['onAnswer'] }) {
   const { agent } = useContext(ListCtx);
+  // Answering removes the card that had focus: the line that says how it was answered takes it, so the keyboard stays in
+  // the conversation and a screen reader reads the result (PDT-547).
+  const resolved = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(ev.state === 'open');
+  useEffect(() => {
+    const open = ev.state === 'open';
+    if (wasOpen.current && !open && focusLost()) resolved.current?.focus({ preventScroll: true });
+    wasOpen.current = open;
+  }, [ev.state]);
   if (ev.state === 'open' && ev.rows) {
     return <DecideCard id={requestAnchor(ev.id)} rows={ev.rows} keyboard={keyboard} onAnswer={(a, kept) => onAnswer(ev.id, a, kept)} />;
   }
@@ -216,14 +226,14 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
     const args = ev.requestKind === 'approval' && !ev.diff ? inputText(ev.tool, ev.input) : '';
     // PDT's own tools say what they will create or change (PDT-382).
-    const pdtTitle = ev.requestKind === 'approval' ? pdtApprovalTitle(ev.tool, ev.input) : null;
+    const pdt = ev.requestKind === 'approval' ? pdtApproval(ev.tool, ev.input) : null;
     return (
       <ApprovalCard
         id={requestAnchor(ev.id)}
         kind={ev.requestKind}
-        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : pdtTitle ?? approvalTitle(ev.tool)}
-        subject={ev.requestKind === 'approval' && !ev.diff && !pdtTitle ? ev.title || undefined : undefined}
-        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : pdtTitle ? <PdtProposal tool={ev.tool} input={ev.input} /> : undefined}
+        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : pdt?.title ?? approvalTitle(ev.tool)}
+        subject={ev.requestKind === 'approval' && !ev.diff && !pdt ? ev.title || undefined : undefined}
+        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : pdt?.preview}
         planAcceptEdits={agent === 'claude'}
         description={ev.description}
         details={args && args !== '{}' && args !== ev.title ? <ToolOutput>{args}</ToolOutput> : undefined}
@@ -236,7 +246,7 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
     );
   }
   return (
-    <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+    <div ref={resolved} tabIndex={-1} className="flex items-center gap-1.5 rounded-sm px-1 text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <span className={cn('shrink-0', ev.answer?.type === 'deny' && 'text-destructive')}>{resolvedText(ev)}</span>
       {ev.requestKind === 'approval' && (
         <>

@@ -66,7 +66,7 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
 }
 
 /** Which of `count` rows are ticked (all to start with): `kept` lists them, 0-based, for the Allow. */
-export function useKeptRows(count: number) {
+function useKeptRows(count: number) {
   const [unticked, setUnticked] = useState<ReadonlySet<number>>(() => new Set());
   const isKept = (n: number) => !unticked.has(n);
   const toggle = (n: number, on: boolean) => setUnticked((u) => {
@@ -78,5 +78,31 @@ export function useKeptRows(count: number) {
   return { kept, isKept, toggle };
 }
 
-/** The Allow button's title for `kept` of `count` rows. */
-export const allowRowsTitle = (kept: number, count: number) => (kept === count ? 'Allow' : `Allow ${kept} of ${count}`);
+/**
+ * The decision on a batch of rows, wherever it is asked (the conversation's card, the Inbox): which rows are ticked,
+ * the copy, and the `y`/`n` keys. `allow` gets the rows kept.
+ */
+export function useRowsDecision(rows: DecideRow[] | null) {
+  const count = rows?.length ?? 0;
+  const { kept, isKept, toggle } = useKeptRows(count);
+  return {
+    kept,
+    isKept,
+    toggle,
+    title: count === 1 ? 'Make this decision?' : `Make these ${count} decisions?`,
+    /** What the proposal is, for the Inbox's line: "PM proposes 3 decisions on your Inbox." */
+    proposes: (who: string) => `${who} proposes ${count === 1 ? 'a decision' : `${count} decisions`} on your Inbox.`,
+    help: "Untick any you don't want. Allow applies the rest as your own decisions; Deny changes nothing.",
+    allowTitle: kept.length === count ? 'Allow' : `Allow ${kept.length} of ${count}`,
+    canAllow: kept.length > 0,
+    /** How many are ticked; announce it (a live region) as it changes. */
+    ticked: `${kept.length} of ${count} ticked`,
+    /** `y` allows the rows kept (when any are), `n` denies: true when the key was one of them. */
+    onKey: (key: string, allow: (kept: number[]) => void, deny: () => void) => {
+      if (key === 'y') { if (kept.length > 0) allow(kept); }
+      else if (key === 'n') deny();
+      else return false;
+      return true;
+    },
+  };
+}

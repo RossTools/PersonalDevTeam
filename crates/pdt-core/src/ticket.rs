@@ -651,7 +651,8 @@ pub struct Ticket {
     pub links: Vec<LinkedTicket>,
     /// Newest first.
     pub attempts: Vec<AttemptSummary>,
-    /// The branch Start uses unless told otherwise: `pdt/<KEY>-<n>-<slug of the title>`.
+    /// The branch Start uses unless told otherwise: the project's branch template's name for it (`pdt-<KEY>-<n>-<slug>` by
+    /// default; the API fills it in, `pdt_core::branch_name`).
     pub default_branch: String,
     /// The sessions of all its attempts, newest first.
     pub sessions: Vec<AttemptSession>,
