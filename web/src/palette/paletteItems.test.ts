@@ -6,7 +6,7 @@ import type { Tab } from '../api/gen/Tab';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { Workspace } from '../api/gen/Workspace';
 import { runInfo, sessionInfo, ticketInfo } from '../workspaces/useWorkspaces';
-import { ACTIONS, GO_TO, paletteItems, type PaletteContext, type PaletteHandlers, type PaletteItem } from './paletteItems';
+import { ACTIONS, FILES, GO_TO, fileCheckouts, paletteItems, type PaletteContext, type PaletteHandlers, type PaletteItem } from './paletteItems';
 
 const project = (id: string, name: string, key: string): Project => ({
   id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, forge: null, kind: 'repo',
@@ -46,7 +46,7 @@ function handlers(): PaletteHandlers {
   return {
     selectWorkspace: vi.fn(), selectTab: vi.fn(), focusItem: vi.fn(), projectSettings: vi.fn(), hostSettings: vi.fn(),
     newSession: vi.fn(), openChooser: vi.fn(), renameTab: vi.fn(), closeTab: vi.fn(), moveTab: vi.fn(),
-    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), newIssue: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(),
+    moveTabToNewWorkspace: vi.fn(), setTheme: vi.fn(), showKeys: vi.fn(), reportBug: vi.fn(), showFiles: vi.fn(), showWorkflows: vi.fn(), showInbox: vi.fn(), showPersonas: vi.fn(), showPm: vi.fn(), showNotes: vi.fn(), newTicket: vi.fn(), newIssue: vi.fn(), openTicket: vi.fn(), startTicket: vi.fn(), startNextPart: vi.fn(), openFile: vi.fn(),
   };
 }
 
@@ -317,6 +317,37 @@ describe('paletteItems', () => {
     expect(c.handlers.startNextPart).toHaveBeenCalledWith(t);
     const closed = { ...t, stage: 'done' as const };
     expect(ids(paletteItems(ctx({ workspaces: w, tab: w[0].tabs[0], infos: [ticketInfo(closed)] })))).not.toContain('tickets:start-next-part');
+  });
+
+  it('lists found files last, below every other group, and opens them', () => {
+    const checkout = { projectId: 'p1', worktreeId: 'wt1', label: 'PDT-42' };
+    const found = [{ checkout, path: 'web/src/palette/CommandPalette.tsx' }, { checkout, path: 'README.md' }];
+    const c = ctx({ tickets: [summary], files: { query: 'pal', found } });
+    const items = paletteItems(c);
+    const groups = items.map((i) => i.group);
+    expect(groups.indexOf(FILES)).toBe(groups.length - 2);
+    expect(groups.lastIndexOf(ACTIONS)).toBeLessThan(groups.indexOf(FILES));
+    const [file, readme] = items.slice(-2);
+    expect([file.label, file.detail, file.icon]).toEqual(['CommandPalette.tsx', 'web/src/palette · PDT-42', 'file']);
+    expect(readme.detail).toBe('PDT-42');
+    expect(file.keywords).toContain('pal');
+    file.run!();
+    expect(c.handlers.openFile).toHaveBeenCalledWith(found[0]);
+    expect(ids(paletteItems(ctx())).some((id) => id.startsWith('file:'))).toBe(false);
+  });
+
+  it('finds files in the worktree in context, else the project, else every project', () => {
+    const projects = [project('p1', 'PersonalDevTeam', 'PDT'), project('p2', 'Demo', 'DEMO'), { ...project('p3', 'Notes', 'NOTE'), kind: 'personal' as const }];
+    const infos = ctx().infos;
+    expect(fileCheckouts({ projects, infos, place: { projectId: 'p1', worktreeId: 'wt1' } })).toEqual([{ projectId: 'p1', worktreeId: 'wt1', label: 'fix-login' }]);
+    const withTicket = [sessionInfo(session({ id: 's9', worktreeId: 'wt1', ticket: { id: 'k42', key: 'PDT-42' } })), ...infos];
+    expect(fileCheckouts({ projects, infos: withTicket, place: { projectId: 'p1', worktreeId: 'wt1' } })[0].label).toBe('PDT-42');
+    expect(fileCheckouts({ projects, infos, place: { projectId: 'p1', worktreeId: null } })).toEqual([{ projectId: 'p1', worktreeId: null, label: 'PersonalDevTeam' }]);
+    expect(fileCheckouts({ projects, infos, place: null })).toEqual([
+      { projectId: 'p1', worktreeId: null, label: 'PersonalDevTeam' },
+      { projectId: 'p2', worktreeId: null, label: 'Demo' },
+    ]);
+    expect(fileCheckouts({ projects, infos, place: { projectId: 'p3', worktreeId: null } })).toEqual([]);
   });
 });
 

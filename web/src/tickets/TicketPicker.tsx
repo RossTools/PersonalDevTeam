@@ -1,19 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { CommandList, type CommandItem } from '@ui';
 import type { TicketQuery } from '../api/gen/TicketQuery';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { STAGE_LABEL } from '../common/StageStepper';
+import { useDebounced } from '../common/useDebounced';
 import { useTicketSearch } from './queries';
-
-/** Waits until typing pauses before asking the API. */
-function useDebounced<T>(value: T, ms = 200): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
 
 export interface TicketPickerProps {
   /** One project's tickets; every project's when null. */

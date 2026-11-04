@@ -13,7 +13,8 @@ import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useKeyboardBox } from '../common/viewport';
 import { CommandPalette } from '../palette/CommandPalette';
-import { paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
+import { fileCheckouts, paletteItems, type NewKind, type PaletteHandlers } from '../palette/paletteItems';
+import { useFileFind } from '../palette/useFileFind';
 import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import type { AddProjectMode } from '../projects/AddProjectForm';
@@ -612,13 +613,18 @@ export function AppShell() {
     openTicket,
     startTicket: (t, here) => startTicket(t, { here }),
     startNextPart: (t) => void runAction(() => startNextPart(startTicket, t)),
+    openFile: ({ checkout, path }) =>
+      go({ view: 'files', path, project: ws.projects.find((p) => p.id === checkout.projectId)?.key ?? null, worktree: checkout.worktreeId }),
   };
   const agents = useAgentAvailability();
   const defaults = useAgentDefaults();
   const acpAgents = useAcpAgents();
+  const paletteInfos = [...ws.allInfos, ...ws.ticketInfos];
+  const foundFiles = useFileFind(paletteOpen ? fileCheckouts({ projects: ws.projects, infos: paletteInfos, place }) : [], paletteQuery, paletteOpen);
   const items = paletteOpen
     ? paletteItems({
-        workspaces: ws.workspaces, infos: [...ws.allInfos, ...ws.ticketInfos], projects: ws.projects, tab: ws.tab, place, theme, handlers,
+        workspaces: ws.workspaces, infos: paletteInfos, projects: ws.projects, tab: ws.tab, place, theme, handlers,
+        files: { query: paletteQuery.trim(), found: foundFiles },
         tickets: looksLikeKey(keyQuery) ? ticketHits.data?.items ?? [] : [],
         ticketProjectId: view === 'tickets' ? backlog.projectId : null,
         issueRepo,
