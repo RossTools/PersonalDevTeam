@@ -147,8 +147,13 @@ have it), while the user's own workflows see and act on every link. A step given
 (`Store::external_links`: closing ones first). Plain links (an
 address and label) are `ticket_web_links`, kept apart.
 
-**Attempts.** One go at a ticket: its branch (`pdt-<KEY>-<n>-<slug>`), worktree, base branch, workspace and the merge
-state. Start (pdt-api `start.rs`) makes the branch and worktree, the attempt and the first agent session, whose
+**Attempts.** One go at a ticket: its branch, worktree, base branch, workspace and the merge
+state. The branch is named from the project's template (pdt-core `branch_name`: the parts table, empty parts dropped
+with their separator, git's rules and the 100-character cap; pdt-api `branch_names.rs`: the repository's `[branch]`
+over the `project_settings.branch_names` setting over the default `pdt-{key}-{slug}`), and `defaultBranch` in ticket
+responses is that name (`overlap::decorate`). Start adds `-2`, `-3`, … when another branch, here or on origin, or
+another ticket's worktree has the name, and records `attempts.branch_named` (PDT named it, or was given it). Start
+(pdt-api `start.rs`) makes the branch and worktree, the attempt and the first agent session, whose
 prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git
 `merge.rs`, run by the poll) counts a branch as merged when its head is in the base, its patch is (a squash), or the
 forge says its PR merged; it counts only once the branch had commits of its own. Finish (pdt-api `finish.rs`) moves
@@ -156,7 +161,8 @@ the ticket to Done and cleans up the worktree, sessions, runs and workspace. Clo
 abandoning its attempt, goes through `start::close_attempt` / `stop::wind_down`: the attempt's workflow runs are
 cancelled (but the run closing it) and its sessions and runs stopped; Won't do and Abandon also close its open PR and,
 when `stop::clean_up_closed` finds nothing to lose (no uncommitted changes, nothing unpushed), remove the worktree, the
-branch, the remote branch when it is PDT's (`pdt-<KEY>-…`, origin at the same head) and the workspace, as the
+branch, the remote branch when it is PDT's (`branch_named`, or `pdt-<KEY>-…` for an attempt from before it was recorded;
+origin at the same head) and the workspace, as the
 project's `StorageSettings::wont_do` says. A merge found outside PDT stops the attempt's sessions (`WindDown::Merged`)
 and leaves the workflow runs to take the merge (the Pipeline's Accept has an `event` port for it).
 

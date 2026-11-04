@@ -181,6 +181,8 @@ Each project has its own sections. A personal project (one without a repository)
   [automatic cleanup](your-data.md#disk-space) of finished tickets' worktrees.
 - **Runs on this host**: what **Run** and **Test** start, from the repository's file plus overrides kept on this
   machine. See [Run configuration](../automation/run-configuration.md).
+- **Branch names**: the template a ticket's branch is named from when work starts, with a live preview. See
+  [Branch names](../automation/run-configuration.md#branch-names).
 - **Agent instructions**: extra instructions for every agent in this project, on top of the repository's own
   `CLAUDE.md` or `AGENTS.md`. Kept on this machine, never written to the repository.
 - **Agents**: **Agent credentials** for this project, and the **Agent permission mode for workflow steps**.

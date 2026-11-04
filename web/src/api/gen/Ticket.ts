@@ -33,7 +33,8 @@ links: Array<LinkedTicket>,
  */
 attempts: Array<AttemptSummary>, 
 /**
- * The branch Start uses unless told otherwise: `pdt/<KEY>-<n>-<slug of the title>`.
+ * The branch Start uses unless told otherwise: the project's branch template's name for it (`pdt-<KEY>-<n>-<slug>` by
+ * default; the API fills it in, `pdt_core::branch_name`).
  */
 defaultBranch: string, 
 /**

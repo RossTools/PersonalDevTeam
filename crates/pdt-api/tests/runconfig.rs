@@ -82,7 +82,7 @@ async fn a_project_without_a_file_has_an_empty_config() {
         (v["file"].clone(), v["effective"].clone()),
         (
             Value::Null,
-            json!({"runs": [], "tests": [], "areas": [], "forge": null, "ci": null, "ciProviders": null, "push": null, "buildOutput": null, "regenerate": [], "ignored": []})
+            json!({"runs": [], "tests": [], "areas": [], "forge": null, "ci": null, "ciProviders": null, "push": null, "buildOutput": null, "regenerate": [], "branch": null, "branchError": null, "ignored": []})
         )
     );
 }

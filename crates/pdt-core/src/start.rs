@@ -33,7 +33,9 @@ pub fn attempt_branch(project_key: &str, number: u32, title: &str) -> String {
 }
 
 /// Whether `branch` is one [`attempt_branch`] names for the ticket `ticket_key` (`PDT-42`), whatever its title was:
-/// a branch PDT made for the ticket, which it may delete from the remote when the ticket goes to Won't do.
+/// a branch PDT made for the ticket, which it may delete from the remote when the ticket goes to Won't do. Only for
+/// attempts from before PDT recorded who named the branch (`AttemptInfo::branch_named`): a template's names need not
+/// have the prefix.
 pub fn is_attempt_branch(branch: &str, ticket_key: &str) -> bool {
     let prefix = format!("{SLUG}-{ticket_key}");
     branch.strip_prefix(&prefix).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))

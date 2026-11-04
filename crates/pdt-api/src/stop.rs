@@ -460,10 +460,13 @@ pub(crate) async fn clean_up_closed(st: &AppState, info: &AttemptInfo, now: bool
     notes
 }
 
-/// The remote to delete the attempt's branch from: `origin`, when PDT named the branch for the ticket and origin's
-/// copy is the local branch's head (so nothing pushed from elsewhere is lost).
+/// The remote to delete the attempt's branch from: `origin`, when PDT named the branch for the ticket (as recorded
+/// with the attempt; an attempt from before that by its `pdt-<KEY>` prefix) and origin's copy is the local branch's
+/// head (so nothing pushed from elsewhere is lost).
 fn remote_branch_to_delete(info: &AttemptInfo) -> Option<String> {
-    if !pdt_core::start::is_attempt_branch(&info.attempt.branch, &info.ticket_key) {
+    let named =
+        info.branch_named.unwrap_or_else(|| pdt_core::start::is_attempt_branch(&info.attempt.branch, &info.ticket_key));
+    if !named {
         return None;
     }
     let repo = PathBuf::from(&info.repo_path);
