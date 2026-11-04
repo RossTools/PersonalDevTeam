@@ -254,3 +254,21 @@ fn borders_widths_and_frozen_panes() {
     let back = Workbook::from_xlsx(&wb.to_xlsx().unwrap(), "x").unwrap();
     assert_eq!(back.model().get_frozen_columns_count(0).unwrap(), 1, "kept in the file");
 }
+
+#[test]
+fn edits_near_the_last_row_land_where_asked_and_past_it_are_refused() {
+    let mut wb = Workbook::new("Book").unwrap();
+    wb.set_cells("Sheet1", "XFD1048576", &[vec!["last".into()]]).unwrap();
+    assert_eq!(wb.input("Sheet1", "XFD1048576").unwrap(), "last");
+    assert_eq!(wb.input("Sheet1", "A1").unwrap(), "");
+    // Once wrapped to row 1 (or overflowed i32): now not a cell.
+    for past in ["A4294967297", "A2147483648", "A1048577", "XFE1"] {
+        assert!(wb.set_cells("Sheet1", past, &[vec!["x".into()]]).is_err(), "{past}");
+    }
+    assert_eq!(wb.input("Sheet1", "A1").unwrap(), "");
+    // Values that run past the last row are an error, not a wrap.
+    let err = wb.set_cells("Sheet1", "A1048576", &[vec!["a".into()], vec!["b".into()]]).unwrap_err();
+    assert!(err.contains("past a sheet's last row"), "{err}");
+    let err = wb.set_cells("Sheet1", "XFD1", &[vec!["a".into(), "b".into()]]).unwrap_err();
+    assert!(err.contains("XFE"), "{err}");
+}
