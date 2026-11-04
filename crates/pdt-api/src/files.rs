@@ -180,7 +180,7 @@ pub(crate) async fn resolve(
 /// Refuses a path that resolves (through symlinks) outside the checkout. Missing paths pass: git may list a deleted
 /// file. Blocking.
 pub(crate) fn contained(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
-    let root = std::fs::canonicalize(checkout).map_err(|_| ApiError::not_found("checkout"))?;
+    let root = std::fs::canonicalize(checkout).map_err(|e| ApiError::io_404("checkout", "opening the checkout", e))?;
     let full = checkout.join(rel);
     match std::fs::canonicalize(&full) {
         Ok(real) if !real.starts_with(&root) => Err(outside()),
@@ -191,7 +191,7 @@ pub(crate) fn contained(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiErro
 /// Like [`contained`], for a path that may not exist yet: its nearest existing folder must resolve inside the
 /// checkout too (so a symlinked folder can't lead out). Blocking.
 fn writable(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
-    let root = std::fs::canonicalize(checkout).map_err(|_| ApiError::not_found("checkout"))?;
+    let root = std::fs::canonicalize(checkout).map_err(|e| ApiError::io_404("checkout", "opening the checkout", e))?;
     let full = contained(checkout, rel)?;
     let mut dir = full.parent();
     while let Some(d) = dir {
@@ -210,7 +210,8 @@ fn writable(checkout: &FsPath, rel: &str) -> Result<PathBuf, ApiError> {
 /// beneath the handle), so a path can't leave the checkout even when a folder is swapped for a symlink between
 /// [`contained`] / [`writable`] and the operation. Blocking.
 pub(crate) fn checkout_dir(checkout: &FsPath) -> Result<Dir, ApiError> {
-    Dir::open_ambient_dir(checkout, cap_std::ambient_authority()).map_err(|_| ApiError::not_found("checkout"))
+    Dir::open_ambient_dir(checkout, cap_std::ambient_authority())
+        .map_err(|e| ApiError::io_404("checkout", "opening the checkout", e))
 }
 
 /// An error from an operation through [`checkout_dir`]: cap-std refuses a path that leads out as `PermissionDenied`.
@@ -422,7 +423,10 @@ pub(crate) async fn delete(
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
         writable(&checkout, &rel)?;
         let dir = checkout_dir(&checkout)?;
-        let meta = dir.symlink_metadata(&rel).map_err(|_| ApiError::not_found("file"))?;
+        let meta = dir.symlink_metadata(&rel).map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => ApiError::not_found("file"),
+            _ => io_err(e),
+        })?;
         if meta.is_dir() {
             return Err(ApiError::invalid("only files can be deleted here"));
         }

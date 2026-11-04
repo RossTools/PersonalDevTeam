@@ -3,7 +3,7 @@
 //! them again. The list it last got is a fingerprint in its folder, so a change made while pdtd was down (an update)
 //! is told too. Two ways reach it: the `GET /api/mcp` stream, and a POST answered as a stream with the notice first.
 
-use super::{authorize, session_tools, unauthorized};
+use super::{authorize, session_tools};
 use crate::routes::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -98,7 +98,10 @@ pub(crate) async fn get(State(st): State<AppState>, headers: HeaderMap) -> Respo
     if !accepts_stream(&headers) {
         return super::not_allowed().await;
     }
-    let Some(session) = authorize(&st, &headers).await else { return unauthorized() };
+    let session = match authorize(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r.into_response(),
+    };
     let init = Listening {
         changed: st.mcp_tools.changed.subscribe(),
         wake: st.resume_changed.subscribe(),
@@ -118,7 +121,15 @@ pub(crate) async fn get(State(st): State<AppState>, headers: HeaderMap) -> Respo
             if l.st.shutting_down.load(Ordering::SeqCst) {
                 return None;
             }
-            let s = l.st.store.get_session(&l.id).await.ok()??;
+            let s = match l.st.store.get_session(&l.id).await {
+                Ok(Some(s)) => s,
+                Ok(None) => return None,
+                // The client opens the stream again; it hears of changes since it listed through its next POST too.
+                Err(e) => {
+                    tracing::warn!(session = %l.id, error = %e, "could not read the session: ending its MCP stream");
+                    return None;
+                }
+            };
             if s.status == SessionStatus::Finished {
                 return None;
             }

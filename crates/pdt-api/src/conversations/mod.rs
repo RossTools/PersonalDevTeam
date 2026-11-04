@@ -450,8 +450,8 @@ fn idle(c: &Conv) -> bool {
 async fn stop_conv(st: &AppState, session: &Session, c: &Arc<Conv>) -> Result<(), ApiError> {
     // A terminal's exit is told where it ends (`session.exited`); a conversation's process, here.
     let terminal = st.ptys.is_running(&session.id);
-    if terminal {
-        let _ = st.kill_pty(&session.id).await;
+    if terminal && let Err(e) = st.kill_pty(&session.id).await {
+        tracing::warn!(session = %session.id, error = %e, "could not stop the conversation's terminal");
     }
     park(st, c).await;
     st.store.end_session(&session.id, SessionStatus::Finished, None, now_ms()).await?;
