@@ -62,25 +62,36 @@ pub(crate) fn command_failed(stderr: String) -> GitError {
     if NO_IDENTITY.iter().any(|s| stderr.contains(s)) { GitError::NoIdentity } else { GitError::Command(stderr) }
 }
 
-/// The `user.name` and `user.email` git commits with, as configured (system and global settings, not a repository's
-/// own); `None` for one that isn't set.
+/// The `user.name` and `user.email` git commits with, as configured; `None` for one that isn't set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identity {
     pub name: Option<String>,
     pub email: Option<String>,
 }
 
-/// The identity configured for every repository (see [`Identity`]). git may still guess one from the user and host
-/// names when it is missing, which is how merges end up authored as `user@host.local`.
-pub fn configured_identity() -> Result<Identity, GitError> {
-    configured_identity_with_env(&[])
+impl Identity {
+    pub fn is_complete(&self) -> bool {
+        self.name.is_some() && self.email.is_some()
+    }
 }
 
-fn configured_identity_with_env(env: &[(&str, &str)]) -> Result<Identity, GitError> {
+/// The identity in the system and global settings, which every repository gets unless it sets its own. git may
+/// still guess one from the user and host names when it is missing, which is how merges end up authored as
+/// `user@host.local`.
+pub fn global_identity() -> Result<Identity, GitError> {
     // Outside any repository, so only the system and global settings count.
-    let dir = std::env::temp_dir();
+    identity_with_env(&std::env::temp_dir(), &[])
+}
+
+/// The identity git commits with in the repository at `repo`: its own settings, the global ones and the includes
+/// that apply there (`includeIf "gitdir:…"`, a work and a personal identity).
+pub fn repo_identity(repo: &Path) -> Result<Identity, GitError> {
+    identity_with_env(repo, &[])
+}
+
+fn identity_with_env(dir: &Path, env: &[(&str, &str)]) -> Result<Identity, GitError> {
     let get = |key: &str| -> Result<Option<String>, GitError> {
-        Ok(git_with_env(&dir, &["config", "--get", key], env)?
+        Ok(git_with_env(dir, &["config", "--get", key], env)?
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty()))
@@ -457,19 +468,33 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_configured_identity() {
+    fn reads_the_identity_globally_and_as_a_repository_sees_it() {
         let tmp = tempfile::tempdir().unwrap();
         let global = tmp.path().join("gitconfig");
         std::fs::write(&global, "").unwrap();
         let g = global.to_str().unwrap();
         let env = [("GIT_CONFIG_GLOBAL", g), ("GIT_CONFIG_NOSYSTEM", "1")];
-        assert_eq!(configured_identity_with_env(&env).unwrap(), Identity { name: None, email: None });
+        let outside = std::env::temp_dir();
+        assert_eq!(identity_with_env(&outside, &env).unwrap(), Identity { name: None, email: None });
         std::fs::write(&global, "[user]\n\tname = Ada\n\temail = \n").unwrap();
-        assert_eq!(
-            configured_identity_with_env(&env).unwrap(),
-            Identity { name: Some("Ada".into()), email: None },
-            "an empty email is none"
+        let id = identity_with_env(&outside, &env).unwrap();
+        assert_eq!(id, Identity { name: Some("Ada".into()), email: None }, "an empty email is none");
+        assert!(!id.is_complete());
+
+        // A conditional include only a repository sees (here on its branch; `gitdir:` works the same way).
+        let repo = tmp.path().join("repo");
+        init_repo(&repo);
+        let work = tmp.path().join("work.gitconfig");
+        std::fs::write(&work, "[user]\n\temail = ada@work\n").unwrap();
+        let include = format!(
+            "[user]\n\tname = Ada\n[includeIf \"onbranch:main\"]\n\tpath = {}\n",
+            work.to_str().unwrap().replace('\\', "/")
         );
+        std::fs::write(&global, include).unwrap();
+        assert_eq!(identity_with_env(&outside, &env).unwrap().email, None);
+        let id = identity_with_env(&repo, &env).unwrap();
+        assert_eq!(id, Identity { name: Some("Ada".into()), email: Some("ada@work".into()) });
+        assert!(id.is_complete());
     }
 
     #[test]

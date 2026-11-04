@@ -135,7 +135,8 @@ folders.
 ### Checks
 
 Whether PDT found the programs it runs: git, the agents and Tailscale, with where it found them or what's wrong.
-**git identity** shows the name and email git commits merges with. **Run checks again** after installing something.
+**git identity** says whether git has a name and email to commit merges with in each of your projects (one set for a
+single repository or folder counts), naming any project without them. **Run checks again** after installing something.
 
 ### Setup
 

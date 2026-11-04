@@ -82,8 +82,8 @@ git config --global user.name "Your Name"
 git config --global user.email "you@example.com"
 ```
 
-Nothing was merged and the checkout is as it was. **git identity** in **Settings › This host › Checks** shows what git
-commits with; without one set, git may make up an address from your user and computer names.
+Nothing was merged and the checkout is as it was. **git identity** in **Settings › This host › Checks** names the projects
+without a name and email; in those, git may make up an address from your user and computer names.
 
 ## An agent is waiting for approval
 
