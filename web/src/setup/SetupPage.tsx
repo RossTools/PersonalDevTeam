@@ -47,14 +47,21 @@ export function foundAgents(checks: HostChecks | undefined, off: readonly AgentK
   return [...builtin, ...foundAcpAgents(checks, off)];
 }
 
-/** Pure: the step's summary: the agents found and logged in, else the ones found but logged out (PDT-556). */
+/**
+ * Pure: the step's summary: the agents found and logged in, else the ones found but logged out (PDT-556). An ACP agent
+ * found counts but is only "found": PDT can't tell whether it is logged in (PDT-561).
+ */
 export function agentsSummary(checks: HostChecks | undefined, off: readonly AgentKind[] = [], acp?: AcpAgentView[]): string {
   const list = (as: AgentKind[]) => new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(as.map((a) => agentName(a, acp)));
   const found = foundAgents(checks, off);
-  const ready = found.filter((a) => checkOf(checks, a)?.ok);
-  if (ready.length > 0) return `Found ${list(ready)}, logged in. PDT needs at least one, and git.`;
+  const loggedIn = found.filter((a) => !isAcp(a) && checks?.[a].ok);
+  const acpFound = found.filter(isAcp);
+  const needs = 'PDT needs at least one, and git.';
+  if (loggedIn.length > 0 && acpFound.length > 0) return `Found ${list(loggedIn)}, logged in, and ${list(acpFound)}. ${needs}`;
+  if (loggedIn.length > 0) return `Found ${list(loggedIn)}, logged in. ${needs}`;
+  if (acpFound.length > 0) return `Found ${list(acpFound)}. ${needs}`;
   if (found.length > 0) return `Found ${list(found)}, but not logged in. Log in to one, then Check again.`;
-  return 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
+  return 'No agent found yet. PDT needs at least one (Claude Code, Codex, Devin or an ACP agent such as Grok or Cursor), and git.';
 }
 
 export interface SetupPageProps {
@@ -237,8 +244,11 @@ function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { 
                   </td>
                   <td className="py-1.5 text-right whitespace-nowrap">
                     {c?.found && !c.ok && r.id !== 'git' ? <span className="text-waiting" title={c.detail}>Not logged in</span>
-                      : c?.found ? <span className="text-running">{r.id === 'git' ? 'Found' : 'Logged in'}</span> : (
-                      <span className="text-destructive">Missing{r.install && <> · <Link href={r.install} external>How to install</Link></>}</span>
+                      : c?.found ? <span className="text-running">{r.id === 'git' || isAcp(r.id) ? 'Found' : 'Logged in'}</span> : (
+                      // git is needed; each agent is optional (one is enough), so a missing one isn't an error.
+                      <span className={r.id === 'git' ? 'text-destructive' : 'text-muted-foreground'}>
+                        {r.id === 'git' ? 'Missing' : 'Not installed'}{r.install && <> · <Link href={r.install} external>How to install</Link></>}
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -413,8 +423,8 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
       void qc.invalidateQueries({ queryKey: hostKeys.setup });
     },
   });
-  const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless a persona says otherwise.`
-    : 'Which agent works on tickets by default. You can change it per persona later.';
+  const summary = step.state === 'done' ? `${agentName(v.defaultAgent, acp)} works on tickets unless you pick another for a role (Coder, Reviewer…) in Personas.`
+    : 'Which agent works on tickets by default. You can pick another for each role (Coder, Reviewer…) later.';
   return (
     <Step {...step} title="Pick a default agent" summary={summary}>
       <ChoiceCardGroup

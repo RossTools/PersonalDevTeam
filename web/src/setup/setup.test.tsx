@@ -202,7 +202,10 @@ describe('Get started', () => {
     const acpAgents = [{ agent: 'acp:omp', label: 'OhMyPi' }, { agent: 'acp:cursor', label: 'Cursor' }];
     expect(foundAgents(onlyAcp)).toEqual(['acp:omp']);
     expect(foundAgents(onlyAcp, ['acp:omp'])).toEqual([]);
-    expect(agentsSummary(onlyAcp, [], acpAgents as never)).toBe('Found OhMyPi, logged in. PDT needs at least one, and git.');
+    // PDT can't tell whether an ACP agent is logged in: it is only found.
+    expect(agentsSummary(onlyAcp, [], acpAgents as never)).toBe('Found OhMyPi. PDT needs at least one, and git.');
+    expect(agentsSummary({ ...onlyAcp, codex: tool(true) }, [], acpAgents as never)).toBe('Found Codex, logged in, and OhMyPi. PDT needs at least one, and git.');
+    expect(agentsSummary(checks({ claude: false }))).toMatch(/^No agent found yet\. PDT needs at least one \(Claude Code, Codex, Devin or an ACP agent/);
     const calls = stub(view({ steps: { agents: 'done', github: 'skipped', project: 'done' } }), {
       'GET /api/host/checks': onlyAcp,
       'GET /api/host/settings': { settings: { defaultAgent: 'claude' }, projectsDir: '/u/work', programs: [], acpAgents },
@@ -216,6 +219,7 @@ describe('Get started', () => {
     const agents = await step('Agents on this machine');
     await userEvent.click(within(agents).getByRole('button', { expanded: false }));
     expect(await within(agents).findByTitle('/u/bin/omp')).toBeInTheDocument();
+    expect(within(agents).getByRole('row', { name: /OhMyPi/ })).toHaveTextContent(/Found$/);
     // One not found isn't listed.
     expect(within(agents).queryByRole('row', { name: /Cursor/ })).toBeNull();
   });

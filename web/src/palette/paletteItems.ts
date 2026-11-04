@@ -98,6 +98,8 @@ export interface PaletteHandlers {
   showPersonas: () => void;
   showPm: () => void;
   showNotes: () => void;
+  /** The Add project form. */
+  addProject: () => void;
   /** The New ticket form. */
   newTicket: () => void;
   /** The New GitHub issue form, for {@link PaletteContext.issueRepo}. */
@@ -365,6 +367,7 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
       keywords: ['appearance', 'mode'], run: () => h.setTheme(pref),
     });
   }
+  actions.push({ id: 'projects:add', label: 'Add project…', group: ACTIONS, icon: 'add', keywords: ['repository', 'repo', 'folder', 'clone', 'new'], run: h.addProject });
   actions.push({ id: 'keys', label: 'Keyboard shortcuts', group: ACTIONS, icon: 'keys', shortcut: key('?'), keywords: ['help', 'keys'], run: h.showKeys });
   actions.push({ id: 'report-bug', label: 'Report a bug', group: ACTIONS, icon: 'bug', keywords: ['help', 'issue', 'feedback', 'problem'], run: h.reportBug });
 

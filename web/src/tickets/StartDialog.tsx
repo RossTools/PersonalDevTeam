@@ -262,7 +262,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
             </p>
           ) : (
             <>
-              <Field label="Branch" hint="Made from the base with a worktree; an existing .worktrees folder for it is reused.">
+              <Field label="Branch" hint="Made from the base branch, in a folder of its own so other work isn't disturbed. A branch that already has one keeps it.">
                 <Input mono value={branch} placeholder={t.defaultBranch} maxLength={200} onChange={(e) => setBranch(e.target.value)} />
               </Field>
               <Field label="Base branch">

@@ -6,13 +6,14 @@ merge it.
 ## 1. Write the ticket
 
 1. Open **Tickets** in the rail and click **New ticket**.
-2. Pick the **Project**, give it a **Title**, and describe what should change, why, and how you'll know it's done.
-   The agent gets exactly this, so write it as you would for a colleague.
+2. Give it a **Title** (with more than one project, pick its **Project** first) and describe what should change,
+   why, and how you'll know it's done. The agent gets exactly this, so write it as you would for a colleague.
 3. Click **Create ticket**.
 
-A new ticket is a **Draft**. When it's ready to be worked on, move it to **To do** (drag it, or **Move to** in its
-menu); **Ready** is for tickets that are refined but not picked yet. The **Board** shows **To do**, **In progress**
-and **Done** side by side.
+A new ticket is a **Draft**, in the backlog. When it's ready to be worked on, move it to **To do** (drag it, or
+**Move to** in its menu); **Ready** is for tickets that are refined but not picked yet. The **Board** shows **To do**,
+**In progress** and **Done** side by side, so a ticket you make there starts in **To do** (pick another **Stage** in the
+form if you like). When a new ticket lands where you aren't looking, PDT says where it went.
 
 To add a ticket fast, type a title in the box at the top of the backlog and press **Enter**; **Shift+Enter** opens the
 full form.
