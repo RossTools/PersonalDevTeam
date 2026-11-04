@@ -420,7 +420,7 @@ async fn run_command(dir: &Path, command: &str, path: Option<&str>) -> Result<()
     if let Some(p) = path {
         cmd.env("PATH", p);
     }
-    let mut child = cmd.spawn().map_err(|e| format!("couldn't run it: {e}"))?;
+    let mut child = pdt_agents::launch::spawn_child(cmd).await.map_err(|e| format!("couldn't run it: {e}"))?;
     let mut guard = command::TreeGuard(child.id());
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;

@@ -176,12 +176,11 @@ pub(crate) async fn switch_mode(
 
 /// A Claude conversation's transcript, read off the async runtime (None: Claude has not saved one, or no config dir
 /// known).
-pub(super) async fn read_transcript(st: &AppState, conversation_id: &str) -> Option<String> {
-    let id = conversation_id;
+pub(super) async fn read_transcript(st: &AppState, session: &Session) -> Option<String> {
     let dir = st.platform.claude_config_dir.clone()?;
-    let id = id.to_string();
+    let (cwd, id) = (session.cwd.clone(), session.claude_conversation_id().to_string());
     tokio::task::spawn_blocking(move || {
-        pdt_agents::launch::claude_transcript(&dir, &id).and_then(|p| std::fs::read_to_string(p).ok())
+        pdt_agents::launch::claude_transcript(&dir, &cwd, &id).and_then(|p| std::fs::read_to_string(p).ok())
     })
     .await
     .ok()
@@ -219,10 +218,7 @@ async fn to_terminal(
         // Devin stamps each prompt: the terminal's turns are the ones after now.
         now_ms().to_string()
     } else {
-        read_transcript(st, row.claude_conversation_id())
-            .await
-            .and_then(|t| pdt_core::conversation::claude::last_uuid(&t))
-            .unwrap_or_default()
+        read_transcript(st, &row).await.and_then(|t| pdt_core::conversation::claude::last_uuid(&t)).unwrap_or_default()
     };
     st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).remove(&session.id);
     st.store.switch_session_mode(&session.id, SessionMode::Terminal, Some(&anchor)).await?;
@@ -311,7 +307,7 @@ type Imported = (Option<String>, Option<String>, AgentEvent);
 /// `import_anchor`); a warning instead when the transcript no longer has that entry.
 async fn terminal_turns(st: &AppState, session: &Session, after: Option<Option<String>>) -> Vec<Imported> {
     let Some(after) = after else { return Vec::new() };
-    let Some(transcript) = read_transcript(st, session.claude_conversation_id()).await else { return Vec::new() };
+    let Some(transcript) = read_transcript(st, session).await else { return Vec::new() };
     match pdt_core::conversation::claude::history_events(&transcript, after.as_deref(), Some(&session.cwd)) {
         Ok(events) => events
             .into_iter()

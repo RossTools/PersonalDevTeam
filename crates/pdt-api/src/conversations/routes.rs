@@ -253,9 +253,12 @@ pub(crate) async fn ticket_draft(
     let (program, saved) = match session.agent {
         Some(AgentKind::Codex) => (st.agent_platform().await.codex_program, session.external_session_id.is_some()),
         _ => {
-            let on_disk = st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
-                pdt_agents::launch::claude_conversation_exists(dir, session.claude_conversation_id())
-            });
+            let on_disk = pdt_agents::launch::claude_conversation_saved(
+                st.platform.claude_config_dir.as_deref(),
+                &session.cwd,
+                session.claude_conversation_id(),
+            )
+            .await;
             (
                 st.agent_platform().await.claude_program,
                 on_disk && st.store.last_session_event_seq(&session.id).await? > 0,

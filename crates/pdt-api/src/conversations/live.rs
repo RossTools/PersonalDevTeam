@@ -82,7 +82,7 @@ async fn repair_gaps(st: &AppState, session: &Session) {
     if !matches!(st.store.history_from(&session.id).await, Ok(None)) {
         return;
     }
-    let Some(transcript) = read_transcript(st, session.claude_conversation_id()).await else { return };
+    let Some(transcript) = read_transcript(st, session).await else { return };
     let cwd = session.cwd.clone();
     let history = tokio::task::spawn_blocking(move || {
         pdt_core::conversation::claude::history_events(&transcript, None, Some(&cwd)).map(|events| {
@@ -154,10 +154,12 @@ pub(super) async fn ensure_live(
         }
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {
-            let saved =
-                st.platform.claude_config_dir.as_deref().is_none_or(|dir| {
-                    pdt_agents::launch::claude_conversation_exists(dir, row.claude_conversation_id())
-                });
+            let saved = pdt_agents::launch::claude_conversation_saved(
+                st.platform.claude_config_dir.as_deref(),
+                &row.cwd,
+                row.claude_conversation_id(),
+            )
+            .await;
             (st.agent_platform().await.claude_program, has_history && saved)
         }
     };

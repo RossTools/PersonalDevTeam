@@ -25,6 +25,19 @@ pub fn terminate_group(pid: u32, grace: Duration) {
     }
 }
 
+/// Kills the process group `pid` leads (unix: SIGKILL) or the process tree under `pid` (Windows) outright. Returns at
+/// once: on Windows `taskkill` starts on a thread of its own, so this is safe to call from async code and `Drop`.
+pub fn kill_group(pid: u32) {
+    #[cfg(unix)]
+    if let Some(pgid) = pgid(pid) {
+        unsafe {
+            libc::killpg(pgid, libc::SIGKILL);
+        }
+    }
+    #[cfg(windows)]
+    std::thread::spawn(move || crate::pty::kill_tree(pid));
+}
+
 /// `pid` as a process group id to signal: never 0 or 1 (`kill(-1)` signals every process the user owns).
 #[cfg(unix)]
 pub(crate) fn pgid(pid: u32) -> Option<libc::pid_t> {

@@ -385,9 +385,18 @@ pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
     for step in [RunStep::Setup, RunStep::Command] {
         st.remove_pty(&pty_id(&run.id, step)).await;
     }
-    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, &run.id));
-    let _ = std::fs::remove_file(run_manager::log_path(st, &run.id));
+    remove_files(st, &run.id).await;
     true
+}
+
+/// Deletes a run's scripts and log, best-effort, on the blocking pool: removing a project discards many runs.
+async fn remove_files(st: &AppState, id: &str) {
+    let (scripts, log) = (run_manager::scripts_dir(st, id), run_manager::log_path(st, id));
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = std::fs::remove_dir_all(scripts);
+        let _ = std::fs::remove_file(log);
+    })
+    .await;
 }
 
 pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -403,8 +412,7 @@ async fn delete(st: &AppState, id: &str) -> Result<(), ApiError> {
     for step in [RunStep::Setup, RunStep::Command] {
         st.remove_pty(&pty_id(id, step)).await;
     }
-    let _ = std::fs::remove_dir_all(run_manager::scripts_dir(st, id));
-    let _ = std::fs::remove_file(run_manager::log_path(st, id));
+    remove_files(st, id).await;
     st.store.delete_run(id).await?;
     Ok(())
 }
