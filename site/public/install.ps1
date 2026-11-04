@@ -27,7 +27,7 @@ param(
     [switch]$Force
 )
 
-# An ECDSA signature as DER (SEQUENCE of INTEGER r, INTEGER s; what openssl writes) → r and s as 32 bytes each, the
+# An ECDSA signature as DER (SEQUENCE of INTEGER r, INTEGER s; what openssl writes) to r and s as 32 bytes each, the
 # form .NET verifies. $null when it isn't one.
 function ConvertFrom-DerSignature([byte[]]$der) {
     if ($der.Length -lt 8 -or $der[0] -ne 0x30 -or $der[1] -ne $der.Length - 2) { return $null }
@@ -55,7 +55,7 @@ function Test-ReleaseSignature([string]$key, [string]$tag, [byte[]]$sums, [byte[
         $spki = [Convert]::FromBase64String($key)
         # A P-256 SubjectPublicKeyInfo is 91 bytes and ends with the uncompressed point: 0x04, X, Y.
         if ($spki.Length -ne 91 -or $spki[26] -ne 4) { return $false }
-        $rs = ConvertFrom-DerSignature $signature
+        $rs = ConvertFrom-DerSignature -der $signature
         if (-not $rs) { return $false }
         $point = New-Object System.Security.Cryptography.ECPoint
         $point.X = [byte[]]$spki[27..58]
@@ -175,7 +175,7 @@ function Install-Pdt {
             }
         } catch { return Write-Failure "could not download SHA256SUMS of $($tag): $($_.Exception.Message)" }
         if ($signingKey) {
-            if (-not (Test-ReleaseSignature $signingKey $tag ([IO.File]::ReadAllBytes($sumsFile)) ([IO.File]::ReadAllBytes($sigFile)))) {
+            if (-not (Test-ReleaseSignature -key $signingKey -tag $tag -sums ([IO.File]::ReadAllBytes($sumsFile)) -signature ([IO.File]::ReadAllBytes($sigFile)))) {
                 return Write-Failure "the signature of $tag's SHA256SUMS does not match $product's release key. Nothing was installed."
             }
             Write-Host 'Signature verified.'
