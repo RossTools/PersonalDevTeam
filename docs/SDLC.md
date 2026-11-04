@@ -313,7 +313,9 @@ Releases are deliberate: merges don't ship. Stable releases happen when the user
    once the queue dropped it), or close it, which releases nothing.
 3. **Tag and publish**: on merge, the workflow tags `vX.Y.Z` on the merge commit, builds the bundles again from it (the
    queue squashed the PR's commit away), and publishes the GitHub release with `SHA256SUMS` and the version's
-   `CHANGELOG.md` section. Re-running a failed job reuses the tag and release and replaces re-uploaded assets.
+   `CHANGELOG.md` section. Then `check-macos-download` downloads the published `.app.tar.gz` on macOS and fails
+   unless Gatekeeper accepts it (`spctl -a -t exec`, a stapled ticket). Re-running a failed job reuses the tag and
+   release and replaces re-uploaded assets.
 
 Setup: the `PDT_RELEASE_TOKEN` secret (fine-grained: Contents and Pull requests, read and write) and auto-merge
 allowed in the repository's settings; without the token the workflow stops before opening anything. **Dry run**: on
@@ -359,7 +361,10 @@ everyone.
 
 Every macOS release is signed (`scripts/sign-macos.sh`) with one certificate from the `MACOS_SIGNING_P12` and
 `MACOS_SIGNING_P12_PASSWORD` secrets, and notarized (`scripts/notarize-macos.sh`) with an App Store Connect API key
-(`MACOS_NOTARY_KEY`, base64 of the `.p8`; `MACOS_NOTARY_KEY_ID`; `MACOS_NOTARY_ISSUER`). A **Developer ID
+(`MACOS_NOTARY_KEY`, base64 of the `.p8`; `MACOS_NOTARY_KEY_ID`; `MACOS_NOTARY_ISSUER`). A release build (a release,
+a nightly, the release PR's bundles) fails in its first step, naming the secret, when any of the three is empty, and
+its check step fails unless the app has a stapled ticket and passes `spctl`: a release is never shipped unnotarized,
+which macOS refuses to open once downloaded. A **Developer ID
 Application** certificate carries a Team ID, so the keychain's partition list trusts every release (`teamid:<id>`)
 and the update token is read without a prompt once allowed. A self-signed one (`scripts/make-signing-cert.sh`, a
 stopgap) has no Team ID: the keychain then trusts each build's exact code hash, so every update asks again, and
