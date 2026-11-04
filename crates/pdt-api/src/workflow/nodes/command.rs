@@ -252,24 +252,9 @@ pub(crate) struct TreeGuard(pub(crate) Option<u32>);
 
 impl Drop for TreeGuard {
     fn drop(&mut self) {
-        let Some(pid) = self.0 else { return };
-        #[cfg(unix)]
-        if let Ok(pid) = i32::try_from(pid) {
-            // The child leads its own process group.
-            unsafe {
-                libc::killpg(pid, libc::SIGKILL);
-            }
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .creation_flags(0x0800_0000)
-                .spawn();
+        // The child leads its own process group; on Windows taskkill starts on a thread of its own.
+        if let Some(pid) = self.0 {
+            pdt_agents::proc::kill_group(pid);
         }
     }
 }
@@ -340,7 +325,7 @@ pub(crate) async fn run_command(c: &CommandConfig, dir: &Path, r: &Redactor) -> 
     cmd.process_group(0);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn().map_err(|e| format!("could not run {program}: {e}"))?;
+    let mut child = pdt_agents::launch::spawn_child(cmd).await.map_err(|e| format!("could not run {program}: {e}"))?;
     let mut guard = TreeGuard(child.id());
     if let Some(mut stdin) = child.stdin.take() {
         let body = serde_json::to_vec(&c.input).unwrap_or_default();

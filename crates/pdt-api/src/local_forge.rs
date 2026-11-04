@@ -557,19 +557,24 @@ impl CiProcess {
     /// Runs the command with its output in the log; how it ended.
     async fn execute(&self, stop: &tokio::sync::Notify) -> (CiState, Option<i64>) {
         use std::io::Write;
-        let opened = std::fs::create_dir_all(self.log.parent().unwrap_or(&self.dir))
-            .and_then(|_| std::fs::File::create(&self.log));
-        let mut log = match opened {
-            Ok(f) => f,
+        // The log's folder and file are made on the blocking pool, like the process itself.
+        let (folder, file, header) =
+            (self.log.parent().unwrap_or(&self.dir).to_path_buf(), self.log.clone(), format!("$ {}\n", self.command));
+        let opened = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&folder)?;
+            let mut log = std::fs::File::create(&file)?;
+            let _ = writeln!(log, "{header}");
+            let (out, err) = (log.try_clone()?, log.try_clone()?);
+            Ok::<_, std::io::Error>((log, out, err))
+        })
+        .await
+        .unwrap_or_else(|e| Err(std::io::Error::other(e)));
+        let (mut log, out, err) = match opened {
+            Ok(files) => files,
             Err(e) => {
                 tracing::warn!(run = self.id, error = %e, "could not create a local CI log");
                 return (CiState::Failed, None);
             }
-        };
-        let _ = writeln!(log, "$ {}\n", self.command);
-        let (out, err) = match (log.try_clone(), log.try_clone()) {
-            (Ok(o), Ok(e)) => (o, e),
-            _ => return (CiState::Failed, None),
         };
         #[cfg(windows)]
         let mut cmd = {
@@ -595,7 +600,7 @@ impl CiProcess {
         if let Some(p) = &self.path {
             cmd.env("PATH", p);
         }
-        let mut child = match cmd.spawn() {
+        let mut child = match pdt_agents::launch::spawn_child(cmd).await {
             Ok(c) => c,
             Err(e) => {
                 let _ = writeln!(log, "could not run the command: {e}");

@@ -330,7 +330,7 @@ async fn handle(st: &AppState, session: &Session, v: Value) -> Option<RpcRespons
         "ping" => Ok(json!({})),
         "tools/list" => {
             let list = listen::listed(st, session).await;
-            listen::record(st, session, &list);
+            listen::record(st, session, &list).await;
             Ok(json!({"tools": list}))
         }
         "tools/call" => {

@@ -320,7 +320,8 @@ pub(crate) async fn add_review_comment(
     let wt = st.store.get_worktree(&wt_id).await.map_err(store)?.ok_or("the attempt's worktree is gone")?;
     let end = c.end_line.unwrap_or(c.line).max(c.line);
     let file = crate::files::clean_path(&c.file).map_err(api)?;
-    let text = std::fs::read_to_string(std::path::Path::new(&wt.path).join(&file)).unwrap_or_default();
+    let path = std::path::Path::new(&wt.path).join(&file);
+    let text = tokio::fs::read_to_string(path).await.unwrap_or_default();
     let line_text: String = text
         .lines()
         .skip(usize::try_from(c.line.saturating_sub(1)).unwrap_or(0))

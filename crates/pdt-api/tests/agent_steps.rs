@@ -99,6 +99,17 @@ async fn open_card(env: &Env, session: &str) -> String {
     .to_string()
 }
 
+/// Allows each request open in a conversation, as the user's clicks.
+async fn allow_cards(env: &Env, session: &str) {
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+    for e in v.as_array().cloned().unwrap_or_default() {
+        if e["event"]["kind"] == "request" && e["event"]["state"] == "open" {
+            let url = format!("/api/sessions/{session}/requests/{}", e["event"]["id"].as_str().unwrap_or_default());
+            call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+        }
+    }
+}
+
 /// Answers a conversation's request as the user's click.
 async fn answer_card(env: &Env, session: &str, request: &str, answer: Value) {
     let url = format!("/api/sessions/{session}/requests/{request}");
@@ -462,8 +473,55 @@ async fn a_turn_end_stored_late_leaves_the_next_turns_card_open() {
     assert!(gh.issue_comments.lock().unwrap().is_empty(), "nothing posted after a Deny");
 }
 
+/// PDT-534: letting the PM act is the PM's alone. A Coder in Claude's own permission prompt, in a project that lets the
+/// PM act, still waits for the user: PDT doesn't answer its request for them.
+#[tokio::test]
+async fn another_personas_prompt_waits_for_the_user_where_the_pm_may_act() {
+    let env = setup().await;
+    let (_, list) = call(&env.app, "GET", "/api/personas", None).await;
+    let mut coder = list.as_array().unwrap().iter().find(|p| p["name"] == "Coder").unwrap().clone();
+    let mut tools: Vec<&str> = pdt_core::persona::DEFAULT_TOOLS.to_vec();
+    tools.push("edit_ticket");
+    coder["tools"] = json!(tools);
+    let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", coder["id"].as_str().unwrap()), Some(coder)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let mine = ticket(&env, "Mine").await;
+    let other = ticket(&env, "Other").await;
+    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+    let other_key = o["key"].as_str().unwrap().to_string();
+    let wf = create_workflow(&env, review_doc("Get going.", json!({"persona": "Coder"}))).await;
+    let run_id = run_now(&env, &wf, json!({"ticketId": mine})).await;
+    let session = step_session(&env, &run_id).await;
+    let n = agent_says(&env, &session).await.len();
+    let text = format!(r#"mcp: edit_ticket {{"ticket": "{other_key}", "title": "Renamed"}}"#);
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let card = open_card(&env, &session).await;
+    // Long enough for PDT to have answered it, had it thought the Coder could act.
+    for _ in 0..10 {
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+    let still =
+        v.as_array().unwrap().iter().any(|e| e["event"]["id"] == card.as_str() && e["event"]["state"] == "open");
+    assert!(still, "PDT answered the Coder's request: {v:#}");
+    let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+    assert_eq!(o["title"], "Other", "nothing before the user's yes");
+    answer_card(&env, &session, &card, json!({"type": "deny"})).await;
+    let said = tick_until(&env, "the agent's answer", || async {
+        agent_says(&env, &session).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
+    })
+    .await;
+    assert!(said.as_str().unwrap().contains("denied"), "{said}");
+}
+
 /// PDT-163: a Coder working on one ticket edits and comments on another; both name the Coder, its session and the
-/// ticket it works on, in the timeline and in `get_ticket`.
+/// ticket it works on, in the timeline and in `get_ticket`. Its edit asks even where the project lets the PM act.
 #[tokio::test]
 async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket() {
     let env = setup().await;
@@ -513,11 +571,18 @@ async fn an_agents_changes_to_another_ticket_name_its_persona_session_and_ticket
     };
     let (said, ()) = tokio::join!(answered, asking);
     assert!(said.contains("denied"), "{said}");
-    // Where the project lets the PM act, it goes ahead, as another agent's would.
+    // Letting the PM act is the PM's: the Coder still asks there (PDT-534), and goes ahead on the user's yes.
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let said = say(edit).await;
+    let answered = say(edit);
+    let asking = async {
+        let card = open_card(&env, &session).await;
+        let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
+        assert_eq!(o["title"], "Other", "nothing before the user's yes");
+        answer_card(&env, &session, &card, json!({"type": "approve"})).await;
+    };
+    let (said, ()) = tokio::join!(answered, asking);
     assert!(said.contains("\"updated\": true"), "{said}");
     let said = say(format!(r#"mcp: add_ticket_comment {{"ticket": "{other_key}", "body": "Mine needs this."}}"#)).await;
     assert!(said.contains("\"commented\": true"), "{said}");
@@ -1717,7 +1782,8 @@ async fn gate_session(env: &Env, t: &str) -> String {
 #[tokio::test]
 async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     let env = setup().await;
-    // A Bypass session's asking tools run where the project lets the PM act; elsewhere they ask in the Inbox (PDT-414).
+    // A Bypass session's asking tools ask in its conversation (PDT-414), even where the project lets the PM act
+    // (PDT-534): the user allows each (`allow_cards`).
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -1785,6 +1851,7 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
             assert_eq!(s, StatusCode::ACCEPTED, "{v}");
             // Its answer to the tool call, past PDT's nudges to finish the step.
             tick_until(env, "the agent's answer", || async {
+                allow_cards(env, &coder).await;
                 agent_says(env, &coder).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
             })
             .await
@@ -1897,7 +1964,8 @@ async fn builtin_workflow(env: &Env, id: &str) -> Value {
 #[tokio::test]
 async fn ticket_proposals_wait_for_the_user() {
     let env = setup().await;
-    // A Bypass session's asking tools run where the project lets the PM act; elsewhere they ask in the Inbox (PDT-414).
+    // A Bypass session's asking tools ask in its conversation (PDT-414), even where the project lets the PM act
+    // (PDT-534): the user allows each (`allow_cards`).
     let (s, v) =
         call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -1944,6 +2012,7 @@ async fn ticket_proposals_wait_for_the_user() {
                 call(&env.app, "POST", &format!("/api/sessions/{coder}/messages"), Some(json!({"text": text}))).await;
             assert_eq!(s, StatusCode::ACCEPTED, "{v}");
             tick_until(env, "the agent's answer", || async {
+                allow_cards(env, &coder).await;
                 agent_says(env, &coder).await.into_iter().skip(n).find(|m| m.starts_with("mcp ")).map(|m| json!(m))
             })
             .await

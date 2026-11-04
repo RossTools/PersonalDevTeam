@@ -526,7 +526,8 @@ async fn run_shell(
     cmd.process_group(0);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = cmd.spawn().map_err(|e| format!("could not run the command: {e}"))?;
+    let mut child =
+        pdt_agents::launch::spawn_child(cmd).await.map_err(|e| format!("could not run the command: {e}"))?;
     let mut guard = TreeGuard(child.id());
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;

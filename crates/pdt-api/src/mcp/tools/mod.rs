@@ -148,11 +148,12 @@ fn has_ask_rule(st: &crate::AppState, session_id: &str, tool: &str) -> bool {
 }
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
-/// there) runs where the project lets the PM act; elsewhere PDT asks the user (PDT-256). Claude asks through its
-/// permission prompt, unless it runs in Bypass, where PDT gives it no ask rules (PDT-414): then it is one that
-/// can't ask. Claude's prompt is trusted only for a tool its process has an ask rule for in the `--settings` PDT passed
-/// it, which no allow rule in another settings file overrides (PDT-535, `pdt_agents::mcp::claude_permissions`): not
-/// for a conversation launched in Bypass and switched out of it since, nor a tool its persona gained after launch.
+/// there) runs when it is the PM's and the project lets the PM act (PDT-534); elsewhere PDT asks the user (PDT-256).
+/// Claude asks through its permission prompt, unless it runs in Bypass, where PDT gives it no ask rules (PDT-414): then
+/// it is one that can't ask. Claude's prompt is trusted only for a tool its process has an ask rule for in the
+/// `--settings` PDT passed it, which no allow rule in another settings file overrides (PDT-535,
+/// `pdt_agents::mcp::claude_permissions`): not for a conversation launched in Bypass and switched out of it since, nor
+/// a tool its persona gained after launch.
 /// A public-posting tool asks outside a workflow step, which expects it (PDT-414).
 ///
 /// In a conversation PDT asks in the conversation itself, with an approval card that is also in the Inbox, and the call
@@ -176,7 +177,7 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         let claude_prompts = cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
             && !cx.session.asks_nothing()
             && has_ask_rule(cx.st, &cx.session.id, tool);
-        if claude_prompts || crate::pm::acts_without_asking(cx.st, target).await {
+        if claude_prompts || crate::pm::acts_without_asking(cx.st, cx.session, target).await {
             return Ok(());
         }
     }
