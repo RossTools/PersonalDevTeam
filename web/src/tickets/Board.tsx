@@ -569,6 +569,8 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   const status = (c: DisplayColumn, showEmpty: boolean) =>
     ownsStatus(c) ? (
       <ColumnStatus col={cols[c.stage]} title={c.title} stage={c.stage} showEmpty={showEmpty} doneDays={doneDays} />
+    ) : showEmpty && cols.in_progress.pages.isPending ? (
+      <Skeleton lines={3} label={`Loading ${c.title}`} className="p-1" />
     ) : showEmpty && cards(cols.in_progress.items, c).length === 0 ? (
       <EmptyState size="inline" className="p-2">No tickets.</EmptyState>
     ) : null;

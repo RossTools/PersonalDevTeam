@@ -326,17 +326,21 @@ export function useWorkspaces(routed?: RoutedChoice) {
   const deleteWorkspace = useCallback(async (id: string) => { await api.deleteWorkspace(id); await refresh(); }, [refresh]);
 
   const currentInfo = tab ? info(itemOf(tab)) : null;
-  const projectsLoaded = projects.isSuccess;
+  // Loaded: the first answer came (a later failed poll keeps it). Until then a view shows a placeholder, never its
+  // empty or first-run state (PDT-575).
+  const projectsLoaded = projects.data !== undefined;
+  const workspacesLoaded = workspacesQ.data !== undefined;
+  const sessionsLoaded = projectsLoaded && sessionQs.every((q) => q.data !== undefined);
   const workspacesError = workspacesQ.error;
   // One object while nothing in it changed, so the shell's other polls (the Inbox, the PM, updates) don't re-render the
   // views it is passed to (PDT-454).
   return useMemo(() => ({
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projects: projectList, projectsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
+    projects: projectList, projectsLoaded, workspacesLoaded, sessionsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh, currentInfo,
   }), [
     createWorkspace, renameWorkspace, moveWorkspace, deleteWorkspace,
-    projectList, projectsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
+    projectList, projectsLoaded, workspacesLoaded, sessionsLoaded, workspaces, workspacesError, workspace, tab, info, allInfos, everyInfo, ticketInfos,
     selectWorkspace, selectTab, focusItem, placementFor, closeTab, moveTab, openIn, refresh, currentInfo,
   ]);
 }

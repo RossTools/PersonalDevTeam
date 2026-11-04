@@ -88,7 +88,7 @@ export function PmList({ selection, onSelect, onNew }: {
             ])}
           />;
         })}
-        {(open.length === 0 || selection === 'new') && (
+        {((open.length === 0 && !pm.isPending) || selection === 'new') && (
           <ListRow id="new" title="New conversation" current={selection === 'new' || (!shown && selection === 'current')}
             secondary="Ask something to start one" />
         )}

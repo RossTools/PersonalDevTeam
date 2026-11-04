@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
-import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, useMenuAt, type ListDropEvent } from '@ui';
+import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, Skeleton, useMenuAt, type ListDropEvent } from '@ui';
 import type { Workspace } from '../api/gen/Workspace';
 import { AgentDot, AgentLabel, itemState, rollup, UnseenDot } from '../common/AgentState';
 import { SessionKindIcon } from '../common/SessionKindIcon';
@@ -260,7 +260,9 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
             if (a) void runAction(() => ws.focusItem(a.info.item, a.info.projectId));
             onChoose?.();
           }}
-          renderEmpty={() => <EmptyState>No agents yet. Click Start on a ticket to start one.</EmptyState>}
+          renderEmpty={() => (ws.sessionsLoaded
+            ? <EmptyState>No agents yet. Click Start on a ticket to start one.</EmptyState>
+            : <Skeleton lines={3} label="Loading agents" className="p-2" />)}
         >
           {agents.map(({ id, info, where }) => {
             const state = itemState(info);

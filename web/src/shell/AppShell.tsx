@@ -650,7 +650,7 @@ export function AppShell() {
   const list: ReactNode = view === 'sessions' ? (
     // The Sidebar has its own section headings (Workspaces, Agents).
     <>
-      {ws.projects.length === 0 && (
+      {ws.projectsLoaded && ws.projects.length === 0 && (
         <EmptyState action={<Button size="sm" onClick={() => { setSheetOpen(false); setAddingProject(true); }}>Add a project</Button>}>
           No projects yet.
         </EmptyState>
@@ -988,7 +988,7 @@ export function AppShell() {
               <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updateItems}
                 itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <ScreenSuspense><InboxView items={inboxItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} failed={inboxFailed} /></ScreenSuspense>
+              <ScreenSuspense><InboxView items={inboxItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} loading={inbox.isPending} failed={inboxFailed} /></ScreenSuspense>
             ) : view === 'pm' ? (
               <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (
@@ -1023,7 +1023,7 @@ export function AppShell() {
             ) : view === 'personas' ? (
               <ScreenSuspense><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></ScreenSuspense>
             ) : view === 'tickets' ? (
-              <ScreenSuspense><TicketsView backlog={backlog} projects={ws.projects} peek={peek} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></ScreenSuspense>
+              <ScreenSuspense><TicketsView backlog={backlog} projects={ws.projects} projectsLoaded={ws.projectsLoaded} peek={peek} onNewTicket={(projectId, title) => setNewTicket({ projectId, title: title ?? '' })} /></ScreenSuspense>
             ) : view === 'workflows' ? (
               <ScreenSuspense><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} projectInView={currentProject?.id ?? null} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></ScreenSuspense>
             ) : view === 'files' ? (
@@ -1057,8 +1057,12 @@ export function AppShell() {
                 {...(currentProject ? { forge: currentProject.forge ?? null, baseBranch: currentProject.baseBranch, projectKey: currentProject.key } : {})}
                 {...(!current.worktreeId ? { branch: null } : worktreeBranch !== undefined ? { branch: worktreeBranch } : {})}
               /></ScreenSuspense>
+            ) : !ws.projectsLoaded ? (
+              <Skeleton className="m-4 h-32 w-auto" label="Loading the workspace" />
             ) : ws.projects.length === 0 ? (
               <EmptyState><Link onClick={() => go({ view: 'setup' })}>Add a project to get started.</Link></EmptyState>
+            ) : !ws.workspacesLoaded ? (
+              <Skeleton className="m-4 h-32 w-auto" label="Loading the workspace" />
             ) : (
               <EmptyState>{ws.tab ? 'Loading…' : 'No tabs here. Press + to start an agent or a shell (Ctrl+] c).'}</EmptyState>
             )}
