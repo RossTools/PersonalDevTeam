@@ -3,7 +3,7 @@ description: pnpm and Node 24, with the pnpm store cached. Only main saves the c
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v6
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
     # No `cache: pnpm` here: setup-node saves its cache from every branch, and caches are per branch, so each PR and
     # queue run stored its own copy of the store (~150 MB) and filled the repo's 10 GB.
     - uses: actions/setup-node@v7
@@ -11,7 +11,7 @@ runs:
         node-version: 24
     - name: Cache volume (Namespace)
       if: startsWith(runner.name, 'nsc-runner')
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@1124a6f3ce44e5cf84cc22111530961f4d2a15f9 # v1.7.0
       with:
         cache: pnpm
     - id: store

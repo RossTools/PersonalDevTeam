@@ -268,6 +268,12 @@ every Monday: one grouped PR of minor and patch updates per ecosystem, and one P
 each. `rust-toolchain.toml` is bumped by hand.
 
 - Its PRs carry the `dependencies` and `no-changelog` labels and `deps:` commit messages.
+- Third-party actions (anything but GitHub's `actions/*` and the local `./.github/actions`) are pinned to a full
+  commit SHA with the tag in a comment, `uses: owner/repo@<sha> # v1.2.3`, so a moved tag can't change what CI or a
+  release runs. Dependabot bumps the SHA and the comment together. `scripts/check-action-pins.sh` (in `check.sh`'s
+  changelog group and CI's changelog job) fails on one pinned to a tag. To add or bump one by hand, take the commit
+  the release tag points to: `git ls-remote --tags https://github.com/<owner>/<repo> 'refs/tags/<tag>*'` (the
+  `^{}` line for an annotated tag).
 - They are outside PRs: PDT's external-PR workflow has an agent review each, and the user approves and merges it
   through the queue. A major update that needs code changes is fixed on its branch or in a ticket of its own.
 

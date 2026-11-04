@@ -9,7 +9,7 @@
 #
 # Groups, in the order they run (cheap ones first, so a slip fails fast):
 #   changelog  the changelog fragments and version (scripts/changelog.sh check, scripts/version.sh check) and the
-#              scripts' own tests
+#              scripts' own tests, and that third-party actions are pinned to a commit (check-action-pins.sh)
 #   site       the user docs check (pnpm --filter site check-docs), the website's tests and build
 #   lint       version, cargo fmt --check, clippy (and pdtd without its integration features)
 #   web        web typecheck, unused exports and files (knip), tests, build
@@ -54,6 +54,7 @@ check_changelog() {
   step scripts/clean-targets.test.sh
   step scripts/google-build-values.test.sh
   step scripts/release-sign.test.sh
+  step scripts/check-action-pins.sh
 }
 
 check_site() {
