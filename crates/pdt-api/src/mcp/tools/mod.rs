@@ -141,11 +141,18 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
     }
 }
 
+/// Whether the session's running Claude process was launched with an ask rule for `tool` (`mcp::server_for`).
+fn has_ask_rule(st: &crate::AppState, session_id: &str, tool: &str) -> bool {
+    let rules = st.claude_ask_rules.lock().unwrap_or_else(|e| e.into_inner());
+    rules.get(session_id).is_some_and(|r| r.iter().any(|t| t == tool))
+}
+
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
 /// there) runs where the project lets the PM act; elsewhere PDT asks the user (PDT-256). Claude asks through its
 /// permission prompt, unless it runs in Bypass, where PDT gives it no ask rules (PDT-414): then it is one that
-/// can't ask. Claude's prompt holds because each asking tool has an ask rule in the `--settings` PDT passes, which no
-/// allow rule in another settings file overrides (PDT-535, `pdt_agents::mcp::claude_permissions`).
+/// can't ask. Claude's prompt is trusted only for a tool its process has an ask rule for in the `--settings` PDT passed
+/// it, which no allow rule in another settings file overrides (PDT-535, `pdt_agents::mcp::claude_permissions`): not
+/// for a conversation launched in Bypass and switched out of it since, nor a tool its persona gained after launch.
 /// A public-posting tool asks outside a workflow step, which expects it (PDT-414).
 ///
 /// In a conversation PDT asks in the conversation itself, with an approval card that is also in the Inbox, and the call
@@ -166,8 +173,9 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         }
     } else if !in_inbox {
         // One that asks in PDT's Inbox (PDT-475) asks there for every agent, whatever the project lets the PM do.
-        let claude_prompts =
-            cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude && !cx.session.asks_nothing();
+        let claude_prompts = cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
+            && !cx.session.asks_nothing()
+            && has_ask_rule(cx.st, &cx.session.id, tool);
         if claude_prompts || crate::pm::acts_without_asking(cx.st, target).await {
             return Ok(());
         }

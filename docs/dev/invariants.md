@@ -115,8 +115,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   conversation's `claude-permissions.json`; Claude reads one `--settings`). Claude weighs ask rules before allow rules
   from every scope and prompts for them in every mode, so an allow rule in the user's, the project's or the worktree's
   `.claude/settings*.json`, or a mode switched in the terminal, doesn't skip the prompt. Leaving a tool out of
-  `--allowedTools` alone is not enough. "Always allow" isn't offered on Claude's prompt for PDT's tools (an ask rule
-  beats a session allow rule).
+  `--allowedTools` alone is not enough. `mcp::server_for` records each launch's rules (`AppState::claude_ask_rules`),
+  and `confirmable` trusts Claude's prompt only for a tool the running process has a rule for: a conversation's mode
+  changes without a relaunch, so one launched in Bypass and switched out of it has none, and PDT asks itself. "Always
+  allow" isn't offered on Claude's prompt for PDT's tools (an ask rule beats a session allow rule).
 - **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
   list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
   `DEFAULT_TOOLS`.

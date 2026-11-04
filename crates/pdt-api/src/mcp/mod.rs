@@ -236,6 +236,9 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
                 return None;
             }
         }
+        // What this launch's process asks for; a conversation's mode changes without a relaunch, so `confirmable`
+        // goes by this, not by the mode it is in now.
+        st.claude_ask_rules.lock().unwrap_or_else(|e| e.into_inner()).insert(s.id.clone(), m.asks.clone());
         if s.mode == SessionMode::Conversation {
             // A terminal's hook settings file takes the rules instead (Claude reads one `--settings` file).
             match pdt_agents::mcp::write_claude_settings(&dir, &m) {
