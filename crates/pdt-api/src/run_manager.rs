@@ -511,7 +511,7 @@ pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
 /// Watches a detached run a previous pdtd started, whose processes are still alive: its log in the Output
 /// terminal, readiness, the port mapping and the outcome, as if this pdtd had started it. `def` (when the
 /// configuration still has the run) says whether it depends on the run's host.
-fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>) {
+async fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>) {
     let ctl = Arc::new(RunControl {
         web_port: run.port,
         uses_host: def.as_ref().is_some_and(uses_run_host),
@@ -519,7 +519,9 @@ fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>) {
         ..Default::default()
     });
     let id = pty_id(&run.id, RunStep::Command);
-    st.ptys.remove(&id);
+    // Removing kills a terminal still running there (taskkill on Windows): off the runtime's threads.
+    let (ptys, old) = (st.ptys.clone(), id.clone());
+    let _ = tokio::task::spawn_blocking(move || ptys.remove(&old)).await;
     if let Err(e) = st.ptys.follow_log(&id, log_path(st, &run.id)) {
         tracing::warn!(run = %run.id, error = %e, "could not follow a detached run's log");
     }
@@ -653,7 +655,7 @@ pub async fn resume_runs(st: &AppState) -> usize {
                 }
                 let def = crate::runs::definition_for(st, &run).await.ok();
                 tracing::info!(run = %run.id, name = %run.name, "reattached a detached run that kept running");
-                reattach(st, run, process, def);
+                reattach(st, run, process, def).await;
                 started += 1;
             } else {
                 let msg = "the command exited while PDT was not running";
