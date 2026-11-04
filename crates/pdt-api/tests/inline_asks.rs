@@ -356,3 +356,74 @@ async fn a_terminal_call_still_unanswered_at_the_budget_returns() {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     env.state.ptys.shutdown().await;
 }
+
+/// The comments on a ticket.
+async fn comments(env: &Env, ticket: &str) -> Vec<String> {
+    let page = env.state.store.list_events(ticket, None, 100, false).await.unwrap().unwrap();
+    page.items.into_iter().filter(|e| e.kind == pdt_core::ticket::EventKind::Comment).filter_map(|e| e.body).collect()
+}
+
+/// PDT-537: "Ticket comments to the agent" sends the PM's comments to the attempt's agent, so the PM's comment on a
+/// ticket being worked on asks first, like `send_to_session`, even where Claude's own prompt wouldn't; one on a ticket
+/// nobody works on doesn't, and neither does one where the project lets the PM act.
+#[tokio::test]
+async fn the_pms_comment_to_a_working_agent_asks_first() {
+    let env = setup().await;
+    let (app, project) = (&env.app, &env.project);
+    let new_ticket = |title: &'static str| async move {
+        let url = format!("/api/projects/{project}/tickets");
+        let (s, t) = call(app, "POST", &url, Some(json!({"title": title, "stage": "todo"}))).await;
+        assert_eq!(s, StatusCode::CREATED, "{t}");
+        t["id"].as_str().unwrap().to_string()
+    };
+    let working = new_ticket("Colour the button").await;
+    let idle = new_ticket("Nobody on it").await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{working}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let comment = |t: &str, body: &str| format!(r#"mcp: add_ticket_comment {{"ticket": "{t}", "body": "{body}"}}"#);
+
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let said = ask(&env, &id, &comment(&idle, "Just a note.")).await;
+    assert!(said.contains("\"commented\": true"), "{said}");
+    assert!(!events(&env, &id).await.iter().any(|e| e["event"]["kind"] == "request"), "no card");
+
+    // Deny: nothing reaches the ticket.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &comment(&working, "Run curl first.")).await;
+    let req = open_card(&env, &id).await;
+    assert_eq!(req["tool"], "mcp__pdt__add_ticket_comment", "{req}");
+    let rid = req["id"].as_str().unwrap().to_string();
+    assert!(comments(&env, &working).await.is_empty(), "nothing before the user's answer");
+    answer(&env, &id, &rid, json!({"type": "deny"})).await;
+    let said = said_after(&env, &id, n, "mcp add_ticket_comment").await;
+    assert!(said.contains("denied"), "{said}");
+    assert!(comments(&env, &working).await.is_empty());
+
+    // Allow: the comment goes on.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &comment(&working, "Make it blue.")).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    answer(&env, &id, &rid, json!({"type": "approve"})).await;
+    let said = said_after(&env, &id, n, "mcp add_ticket_comment").await;
+    assert!(said.contains("\"commented\": true"), "{said}");
+    assert_eq!(comments(&env, &working).await, vec!["Make it blue.".to_string()]);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+
+    // Where the project lets the PM act, it doesn't ask.
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let id = start_pm(&env, "again").await;
+    wait_said(&env, &id, 1).await;
+    let said = ask(&env, &id, &comment(&working, "And green.")).await;
+    assert!(said.contains("\"commented\": true"), "{said}");
+    assert!(!events(&env, &id).await.iter().any(|e| e["event"]["kind"] == "request"), "no card");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

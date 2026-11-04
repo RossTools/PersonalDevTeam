@@ -79,7 +79,9 @@ pub(super) fn defs() -> Vec<Tool> {
             decl: ToolDecl::new("add_ticket_comment", "Comment on the ticket").pm(),
             title: "Comment on the ticket",
             description: "Adds a comment to the ticket's timeline (this session's ticket unless you name one), with \
-                          files attached by local path if you give `files` (a screenshot shows in the comment).",
+                          files attached by local path if you give `files` (a screenshot shows in the comment). The PM's comment on \
+                          a ticket being worked on reaches its agent, so the user confirms it unless the project lets \
+                          the PM act.",
             schema: schema::<AddTicketComment>,
         },
         Tool {
@@ -112,6 +114,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: AddTicketComment = args(a)?;
             let id = ticket_for(cx, a.ticket.as_deref()).await?;
             let mut body = valid_comment(&a.body).map_err(|e| api(e.into()))?;
+            confirm_pm_comment(cx, name, &id).await?;
             let by = agent_by(st, cx.session).await;
             let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
             let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;

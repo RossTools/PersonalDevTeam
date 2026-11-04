@@ -10,8 +10,8 @@ pub(super) fn comments_to_agent() -> WorkflowDoc {
                         local paths of the files they attach. Other agents' comments and workflows' notes stay on \
                         the ticket.",
         "nodes": [
-            // PDT-341: the PM's comments too (its persona is the author); the ticket's own agents' never, so an agent
-            // doesn't hear back what it wrote.
+            // PDT-341: the PM's comments too (its persona is the author), which the user confirmed before they were
+            // made (PDT-537); the ticket's own agents' never, so an agent doesn't hear back what it wrote.
             {"id": "commented", "kind": "ticket.commented", "version": 1, "position": {"x": 0, "y": 0}, "config": {"where": [
                 {"left": "{{trigger.attemptId}}", "op": "exists"},
                 {"left": "{{trigger.author}}", "op": "in", "right": ["user", "PM"]},

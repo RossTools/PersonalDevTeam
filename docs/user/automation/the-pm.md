@@ -19,7 +19,7 @@ looked yet.
   requests, CI, running agents and the Inbox.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again." A comment the PM adds to a
   ticket that is being worked on reaches its agent too, with any screenshots or files attached, as yours do
-  (**Ticket comments to the agent**, in [Workflows](workflows.md)).
+  (**Ticket comments to the agent**, in [Workflows](workflows.md)), so the PM asks you before it adds one.
 - **Keep an eye on something**: "Tell me when ABC-12's agent reports", "Let me know when the release run finishes."
   See [Watch a ticket or run](#watch-a-ticket-or-run).
 - **Run or write a workflow**: "Cut a minor release", "Write a workflow that posts merged tickets to Discord." A
@@ -87,7 +87,8 @@ condensed.
 
 ## When it asks first
 
-Before the PM creates, edits, stops or links a ticket, messages an agent, or runs or saves a workflow, it asks you. An
+Before the PM creates, edits, stops or links a ticket, messages an agent (comments on a ticket that is being worked on
+too), or runs or saves a workflow, it asks you. An
 approval card in the conversation (and under **Approvals** in the Inbox) says exactly what it's about to do: **Allow**,
 **Always allow in this session** or **Deny**. Answer in either place; the PM carries on in the same turn once you do,
 whichever agent it runs on.
