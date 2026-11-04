@@ -451,7 +451,8 @@ pub const DOCUMENT_EVENT_TYPES: &[EventType] = &[
                       minute for the documents a workflow watches: the one it names, else those linked to its \
                       projects; the first look only records the version.",
         schema: schema_of::<DocumentChanged>,
-        outside: &[],
+        // A shared document's title is whoever named it: fenced for an agent.
+        outside: &["title"],
     },
     EventType {
         id: DOCUMENT_COMMENT_ADDED,
@@ -460,8 +461,9 @@ pub const DOCUMENT_EVENT_TYPES: &[EventType] = &[
                       comment to reply to). Agents' and workflows' own comments don't count. Checked every minute for \
                       the documents a workflow watches; the first look only records the comments already there.",
         schema: schema_of::<DocumentCommentAdded>,
-        // What the people a document is shared with wrote: fenced for an agent unless the user wrote it (`byUser`).
-        outside: &["body", "quote"],
+        // What the people a document is shared with wrote (the comment, and the document's title): fenced for an agent.
+        // The user's own comment (`byUser`) leaves only the title fenced (`USER_WRITTEN`).
+        outside: &["title", "body", "quote"],
     },
 ];
 

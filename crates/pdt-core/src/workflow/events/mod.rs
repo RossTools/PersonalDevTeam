@@ -111,11 +111,15 @@ pub fn by_outsider(payload: &serde_json::Value) -> bool {
     payload.get("outside").and_then(serde_json::Value::as_bool) == Some(true)
 }
 
-/// Whether an event's payload (a trigger) says the user wrote its outside fields (`byUser` on
-/// `document.comment_added`, PDT-318): they are not fenced, and no outside input is recorded.
+/// Whether an event's payload (a trigger) says the user wrote it (`byUser` on `document.comment_added`, PDT-318): the
+/// fields they wrote ([`USER_WRITTEN`]) are not fenced.
 pub fn by_user(payload: &serde_json::Value) -> bool {
     payload.get("byUser").and_then(serde_json::Value::as_bool) == Some(true)
 }
+
+/// The outside fields the user wrote when a payload says so ([`by_user`]): a comment's text, not the title of the
+/// document it is on, which whoever can edit it may have set (PDT-597).
+pub const USER_WRITTEN: &[&str] = &["body", "quote"];
 
 /// The event types a workflow's own runs can cause (PDT-364): their payload's `workflowId` names the workflow whose run
 /// caused them (the run itself, its Inbox item, its agent step's session). A trigger skips its own workflow's unless
@@ -189,6 +193,15 @@ pub struct EventType {
     pub outside: &'static [&'static str],
 }
 
+impl EventType {
+    /// The outside fields of one of its payloads: its `outside`, less those the user wrote ([`USER_WRITTEN`]) when the
+    /// payload says they did ([`by_user`]).
+    pub fn outside_of(&self, payload: &serde_json::Value) -> Vec<&'static str> {
+        let mine = by_user(payload);
+        self.outside.iter().copied().filter(|f| !(mine && USER_WRITTEN.contains(f))).collect()
+    }
+}
+
 /// `T`'s JSON Schema, for an [`EventType`]'s `schema`.
 pub fn schema_of<T: JsonSchema>() -> Schema {
     schemars::schema_for!(T)
@@ -207,6 +220,14 @@ mod tests {
             assert!((t.schema)().as_object().is_some_and(|o| o.contains_key("properties")), "{}", t.id);
         }
         assert!(event_type(PR_CONFLICT).is_some() && event_type("nope").is_none());
+    }
+
+    #[test]
+    fn the_users_own_comment_leaves_only_the_documents_title_outside() {
+        let t = event_type(DOCUMENT_COMMENT_ADDED).unwrap();
+        assert_eq!(t.outside_of(&serde_json::json!({"byUser": false})), ["title", "body", "quote"]);
+        assert_eq!(t.outside_of(&serde_json::json!({"byUser": true})), ["title"]);
+        assert_eq!(event_type(DOCUMENT_CHANGED).unwrap().outside_of(&serde_json::json!({"byUser": true})), ["title"]);
     }
 
     #[test]
