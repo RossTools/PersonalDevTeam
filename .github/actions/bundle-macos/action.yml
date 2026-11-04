@@ -2,7 +2,7 @@ name: PDT universal macOS app
 description: Joins the two macOS apps .github/actions/bundle built (macos-app-aarch64-apple-darwin and macos-app-x86_64-apple-darwin artifacts) into the universal app with lipo, signs and notarizes it, checks it, and keeps it as the bundle-app workflow artifact (*.app.tar.gz). It publishes nothing. Needs a checkout (the signing scripts) on macOS.
 inputs:
   release:
-    description: '"true" for a release build: must be signed, and is notarized when the API key is given'
+    description: '"true" for a release build: must be signed and notarized (it fails without the certificate or the API key)'
     default: "false"
   signing-p12:
     description: base64 .p12 of the macOS release certificate
@@ -11,7 +11,7 @@ inputs:
     description: its password
     default: ''
   notary-key:
-    description: base64 App Store Connect API key (.p8) for notarization; notarizes when set with the id and issuer
+    description: base64 App Store Connect API key (.p8) for notarization, with the id and issuer; a release needs all three
     default: ''
   notary-key-id:
     description: the API key's id
@@ -22,6 +22,29 @@ inputs:
 runs:
   using: composite
   steps:
+    # A release is always notarized: without it macOS refuses to open a downloaded app ("Apple could not verify…").
+    # A missing API key secret fails the build here, in seconds, instead of shipping an app Gatekeeper rejects.
+    - name: Check the notarization key
+      if: inputs.release == 'true'
+      shell: bash
+      env:
+        MACOS_NOTARY_KEY: ${{ inputs.notary-key }}
+        MACOS_NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        MACOS_NOTARY_ISSUER: ${{ inputs.notary-issuer }}
+      run: |
+        missing=()
+        for n in MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER; do
+          if [ -z "${!n:-}" ]; then missing+=("$n"); fi
+        done
+        [ "${#missing[@]}" = 0 ] && exit 0
+        for n in "${missing[@]}"; do
+          echo "::error title=Notarization key missing::$n is empty: a release must be notarized (set the Actions secret $n; docs/SDLC.md \"Signing\")."
+        done
+        {
+          echo "### ❌ This release can't be notarized"
+          for n in "${missing[@]}"; do echo "- \`$n\` is empty: set the Actions secret of that name."; done
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit 1
     - uses: actions/download-artifact@v8
       with:
         pattern: macos-app-*
@@ -71,10 +94,10 @@ runs:
         fi
         scripts/sign-macos.sh "$PDT_APP"
         echo "PDT_SIGNED=true" >> "$GITHUB_ENV"
-    # Notarized only when the API key secrets are set (they need a Developer ID signature), and only for releases:
-    # Apple's service takes minutes.
+    # Releases only (Apple's service takes minutes); the first step made sure the key is there. Notarizing needs a
+    # Developer ID signature.
     - name: Notarize the app bundle
-      if: inputs.notary-key != '' && inputs.release == 'true'
+      if: inputs.release == 'true'
       shell: bash
       env:
         MACOS_NOTARY_KEY: ${{ inputs.notary-key }}
@@ -83,8 +106,8 @@ runs:
       run: |
         scripts/notarize-macos.sh "$PDT_APP"
         echo "PDT_NOTARIZED=true" >> "$GITHUB_ENV"
-    # Every executable in the app runs on both CPUs; a signed app passes codesign's strict check, and a notarized one
-    # Gatekeeper's.
+    # Every executable in the app runs on both CPUs; a signed app passes codesign's strict check, and a release has its
+    # notarization ticket stapled and passes Gatekeeper's check.
     - name: Check the app bundle
       shell: bash
       run: |
@@ -96,7 +119,11 @@ runs:
           case " $archs " in *" arm64 "*) ;; *) echo "::error::$exe is not built for arm64"; status=1 ;; esac
         done < <(find "$PDT_APP/Contents/MacOS" -type f -perm -u+x)
         if [ "${PDT_SIGNED:-}" = true ]; then codesign --verify --deep --strict --verbose=2 "$PDT_APP" || status=1; fi
-        if [ "${PDT_NOTARIZED:-}" = true ]; then spctl -a -vv "$PDT_APP" || status=1; fi
+        if [ "${{ inputs.release }}" = true ]; then
+          if [ "${PDT_NOTARIZED:-}" != true ]; then echo "::error::this release build was not notarized"; status=1; fi
+          xcrun stapler validate "$PDT_APP" || { echo "::error::no notarization ticket is stapled to the app"; status=1; }
+          spctl -a -t exec -vv "$PDT_APP" || { echo "::error::Gatekeeper rejects the app"; status=1; }
+        fi
         exit "$status"
     # The asset name must match what hosts install (pdt_core::release::select_asset): *.app.tar.gz.
     - name: Collect the bundle

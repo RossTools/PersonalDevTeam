@@ -433,6 +433,28 @@ jobs:
             echo "Deleted $t" | tee -a "$GITHUB_STEP_SUMMARY"
           done
 
+  # The macOS app as people download it: the published asset, checked against SHA256SUMS, must pass Gatekeeper (a
+  # stapled notarization ticket), so a release macOS refuses to open fails here instead of in a user's Downloads.
+  check-macos-download:
+    needs: [tag, nightly, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: macos-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag || needs.nightly.outputs.tag }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.app.tar.gz' --pattern SHA256SUMS
+          grep -E '\.app\.tar\.gz$' SHA256SUMS | shasum -a 256 -c -
+          tar -xzf ./*.app.tar.gz
+          app="$(find . -maxdepth 1 -name '*.app' | head -n 1)"
+          status=0
+          codesign --verify --deep --strict --verbose=2 "$app" || status=1
+          xcrun stapler validate "$app" || { echo "::error::no notarization ticket is stapled to the published app"; status=1; }
+          spctl -a -t exec -vv "$app" || { echo "::error::Gatekeeper rejects the published app"; status=1; }
+          if [ "$status" = 0 ]; then echo "The published macOS app passes Gatekeeper." >> "$GITHUB_STEP_SUMMARY"; fi
+          exit "$status"
+
   # The bundles' build caches are saved on main (a nightly); a changed Cargo.lock or toolchain saves new ones beside
   # the old. Over the repo's 10 GB GitHub evicts the least recently used caches, and those are the nightly's, so each
   # nightly prunes to main's newest cache of each kind as cache.yml does (docs/SDLC.md "Caching").
