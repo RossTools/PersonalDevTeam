@@ -7,9 +7,15 @@ agent. GitHub is optional.
 
 1. Install the agent: [Claude Code](https://code.claude.com/docs/en/setup),
    [Codex](https://developers.openai.com/codex/cli) or [Devin](https://cli.devin.ai).
-2. Run it once in a terminal (`claude`, `codex` or `devin`) and log in. PDT uses that login.
-3. In **Get started**, open **Agents on this machine** and click **Check again**. The agent shows as **Found**, with
-   the path PDT will run.
+2. Log in once in a terminal: run `claude` and type `/login`, or run `codex login` or `devin auth login`. PDT uses
+   that login.
+3. In **Get started**, open **Agents on this machine** and click **Check again**. The agent shows as **Logged in**,
+   with the path PDT will run. One that's installed but not logged in shows **Not logged in**, with how to log in, and
+   doesn't count yet.
+
+Using an API key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) instead of a login? PDT removes those keys from agents
+while **Settings › This host › Agents › Credentials** is **Subscription** (the default), so the agent reads as not
+logged in. Set it to **Pass through**, then **Check again**.
 
 If PDT doesn't find an agent you installed, click **Set a path by hand…**, pick the agent, enter the full path to its
 program and click **Save path** (also in **Settings › This host › Agents › Programs**).
