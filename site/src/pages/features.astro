@@ -14,9 +14,11 @@ import pmShot from '../assets/screens/pm.webp';
 import inboxShot from '../assets/screens/inbox.webp';
 import phoneShot from '../assets/screens/phone.webp';
 import secretsShot from '../assets/screens/secrets.webp';
-import { siteLinks } from '../links.mjs';
+import { siteLinks, STABLE_PORT } from '../links.mjs';
 
 const links = siteLinks(import.meta.env.BASE_URL);
+// The runs-locally diagram, for screen readers: the boxes say the same.
+const whereLabel = `What runs where. On your computer: the PDT window (a browser or the tray app, or your phone over your tailnet) and your terminal talk to PDT on 127.0.0.1:${STABLE_PORT}, which runs Claude Code, Codex, Devin and ACP agents with your own logins, over your repositories and PDT's own data folder. Outside it, each agent talks to its own provider on your plan, and GitHub or your forge has the pull requests, CI and PDT's updates. There is no PDT cloud: nothing goes through us.`;
 
 // Each area: `id` is its anchor (the landing page's feature cards link to them), `docs` its user docs page, `more`
 // further docs pages, and `shots` its screenshots (`narrow` for a tall one, a phone's or a panel's, shown narrow beside
@@ -199,7 +201,7 @@ const areas = [
 				<h2>Your machine, your subscriptions.</h2>
 				<p class="lead">PDT is a small daemon on your own computer, not a cloud service. Your code, tickets and history stay on your disk, and your agents run with your own logins.</p>
 				<ul class="checks">
-					<li><span><b>A daemon, not a cloud.</b> It answers on 127.0.0.1, and your repositories never leave your disk.</span></li>
+					<li><span><b>A daemon, not a cloud.</b> It answers on 127.0.0.1, and there's no PDT server in between: your repositories, tickets and history stay on your disk.</span></li>
 					<li><span><b>Your subscriptions.</b> PDT runs the agents' official CLIs with your own logins: no resold tokens, no middleman.</span></li>
 					<li><span><b>Updates with rollback.</b> Each release is checked against its checksums, health-checked once installed, and rolled back with your data as it was if it fails.</span></li>
 					<li><span><b>macOS, Windows and Linux.</b> PDT starts when you log in, with a tray icon to open, update or restart it.</span></li>
@@ -209,15 +211,35 @@ const areas = [
 					<a href={links.doc('your-machine/your-data')}>Your data</a>
 				</p>
 			</div>
-			<div class="term" aria-hidden="true">
-				<div><span class="p">update</span> downloading v0.4.1</div>
-				<div><span class="p">update</span> checksums <span class="g">✓</span></div>
-				<div><span class="p">update</span> database copied</div>
-				<div><span class="p">update</span> installed, starting</div>
-				<div><span class="p">update</span> health check <span class="y">failed</span></div>
-				<div><span class="p">update</span> rolled back to <span class="w">v0.4.0</span>, data as it was</div>
-				<div><span class="p">pdt</span> running on <span class="w">127.0.0.1</span><span class="w cursor">▍</span></div>
-			</div>
+			<figure class="where">
+				<div class="where-box" role="img" aria-label={whereLabel}>
+					<span class="where-tag">your computer</span>
+					<div class="where-row two">
+						<div class="where-node"><b>Browser or tray app</b><span>the PDT window, on this machine or your phone over your tailnet</span></div>
+						<div class="where-node"><b>Your terminal</b><span>sessions you open, attached live</span></div>
+					</div>
+					<svg class="where-wires" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d="M25 0C25 12 50 12 50 24M75 0C75 12 50 12 50 24" /></svg>
+					<div class="where-row one">
+						<div class="where-node pdt"><b><i class="where-live"></i>PDT</b><code>127.0.0.1:{STABLE_PORT}</code><span>tickets · board · workflows · the PM</span></div>
+					</div>
+					<svg class="where-wires" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d="M50 0C50 12 16.7 12 16.7 24M50 0V24M50 0C50 12 83.3 12 83.3 24" /></svg>
+					<div class="where-row three">
+						<div class="where-node"><b><i class="where-mark claude">C</i>Claude Code</b><code class="where-login">● your login</code></div>
+						<div class="where-node"><b><i class="where-mark codex">O</i>Codex</b><code class="where-login">● your login</code></div>
+						<div class="where-node"><b><i class="where-mark acp">+</i>Devin, ACP agents</b><code class="where-login">● your login</code></div>
+					</div>
+					<svg class="where-wires" viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d="M16.7 0C16.7 12 25 12 25 24M50 0C50 12 25 12 25 24M50 0C50 12 75 12 75 24M83.3 0C83.3 12 75 12 75 24" /></svg>
+					<div class="where-row two">
+						<div class="where-node"><b>Your repositories</b><code>~/work/… · a worktree per ticket</code></div>
+						<div class="where-node"><b>PDT's data</b><code>tickets, history, settings · one folder</code></div>
+					</div>
+				</div>
+				<div class="where-row two outside" aria-hidden="true">
+					<div class="where-node"><b>Anthropic, OpenAI, …</b><span>each agent talks to its own provider, on your plan</span></div>
+					<div class="where-node"><b>GitHub (or your forge)</b><span>pull requests, CI, PDT's own updates</span></div>
+				</div>
+				<figcaption>No PDT cloud: <b>nothing goes through us.</b></figcaption>
+			</figure>
 		</div>
 	</section>
 
