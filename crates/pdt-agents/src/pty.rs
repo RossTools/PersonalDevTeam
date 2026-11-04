@@ -404,6 +404,39 @@ struct Sessions {
     starting: HashSet<String>,
 }
 
+/// An id reserved in [`Sessions::starting`] while its process starts. Dropping it (an unwind) frees the id, so a
+/// spawn that never finishes can't keep that session from starting again.
+struct Reservation<'a> {
+    sessions: &'a Mutex<Sessions>,
+    id: &'a str,
+    held: bool,
+}
+
+impl Reservation<'_> {
+    /// Frees the id under the lock the caller already holds.
+    fn release(mut self, sessions: &mut Sessions) {
+        sessions.starting.remove(self.id);
+        self.held = false;
+    }
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if self.held {
+            self.sessions.lock().unwrap_or_else(|e| e.into_inner()).starting.remove(self.id);
+        }
+    }
+}
+
+/// What a caught panic said, when it said it with a string.
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("no message")
+}
+
 #[derive(Clone, Default)]
 pub struct PtyManager {
     /// Held only to look up, reserve or insert: never while a process starts or is killed (both can take a second
@@ -424,8 +457,18 @@ impl PtyManager {
     /// Starts the process. The receiver resolves with the exit code once it has ended. Blocking (it opens a PTY and
     /// starts a process): call it from the blocking pool in async code.
     pub fn spawn(&self, spec: SpawnSpec) -> Result<oneshot::Receiver<i32>, PtyError> {
+        self.spawn_with(spec, start)
+    }
+
+    /// [`PtyManager::spawn`], starting the process with `start`. The id is reserved while `start` runs, and released
+    /// on every way out of it: an error, a panic (which becomes a spawn error) or an unwind through this frame.
+    fn spawn_with(
+        &self,
+        spec: SpawnSpec,
+        start: impl FnOnce(SpawnSpec) -> Result<Started, PtyError>,
+    ) -> Result<oneshot::Receiver<i32>, PtyError> {
         let id = spec.id.clone();
-        {
+        let reservation = {
             let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
             if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(PtyError::ShuttingDown);
@@ -433,10 +476,13 @@ impl PtyManager {
             if sessions.live.contains_key(&id) || !sessions.starting.insert(id.clone()) {
                 return Err(PtyError::AlreadyExists(id));
             }
-        }
-        let started = start(spec);
+            Reservation { sessions: &self.sessions, id: &id, held: true }
+        };
+        let started = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| start(spec))).unwrap_or_else(|panic| {
+            Err(PtyError::Spawn(format!("starting the process panicked: {}", panic_text(&*panic))))
+        });
         let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-        sessions.starting.remove(&id);
+        reservation.release(&mut sessions);
         let started = started?;
         if self.shut_down.load(std::sync::atomic::Ordering::SeqCst) {
             drop(sessions);
@@ -671,7 +717,7 @@ fn follow(h: &Handle, path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{PtyEvent, PtyManager, Scrollback, crlf, strip_cursor_query};
+    use super::{PtyError, PtyEvent, PtyManager, Scrollback, SpawnSpec, crlf, start, strip_cursor_query};
     use std::time::Duration;
 
     #[test]
@@ -753,5 +799,45 @@ mod tests {
         assert_eq!(s.snapshot(), b"cdefghij");
         s.push(b"0123456789");
         assert_eq!(s.snapshot(), b"23456789");
+    }
+
+    /// A command that exits at once.
+    fn quick(id: &str) -> SpawnSpec {
+        let (program, args) = if cfg!(windows) {
+            ("cmd.exe".into(), vec!["/d".into(), "/c".into(), "exit 0".into()])
+        } else {
+            ("/bin/sh".into(), vec!["-c".into(), "exit 0".into()])
+        };
+        SpawnSpec {
+            id: id.into(),
+            program,
+            args,
+            cwd: std::env::temp_dir(),
+            env_remove: vec![],
+            env: vec![],
+            cols: 80,
+            rows: 24,
+            output_file: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_start_that_panics_frees_its_id_for_a_retry() {
+        let m = PtyManager::new();
+        let r = m.spawn_with(quick("p"), |_| panic!("the PTY broke"));
+        assert!(matches!(&r, Err(PtyError::Spawn(e)) if e.contains("the PTY broke")), "{r:?}");
+        assert!(m.sessions.lock().unwrap().starting.is_empty(), "the reservation is released");
+        assert_eq!(m.spawn(quick("p")).unwrap().await.unwrap(), 0, "the same session starts on a retry");
+        m.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn a_start_that_fails_frees_its_id_for_a_retry() {
+        let m = PtyManager::new();
+        let r = m.spawn_with(quick("f"), |_| Err(PtyError::Spawn("no PTY".into())));
+        assert!(matches!(&r, Err(PtyError::Spawn(e)) if e == "no PTY"), "{r:?}");
+        assert!(m.sessions.lock().unwrap().starting.is_empty(), "the reservation is released");
+        assert_eq!(m.spawn_with(quick("f"), start).unwrap().await.unwrap(), 0, "the same session starts on a retry");
+        m.shutdown().await;
     }
 }

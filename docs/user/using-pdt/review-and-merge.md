@@ -99,6 +99,17 @@ A pull request that was set to merge is set to merge again after the fix. If no 
 get the news instead, as a ticket comment and an [Inbox](the-inbox.md) item. This is the **PR notices** workflow; turn
 it off in **Workflows** to handle these yourself.
 
+## When CI is cancelled
+
+CI on the pull request's newest commit can end **cancelled** rather than passed or failed, for example when a newer run
+on the same branch cancels it. Nothing would move the ticket on, so PDT re-runs that commit's CI once and notes it on
+the ticket. If it is cancelled again, or can't be re-run, the ticket shows as stalled and goes to the
+[Inbox](the-inbox.md) with **Re-run CI** and a link to the pull request; the item goes away by itself once a new
+commit is pushed or CI runs again. Only the newest commit counts: a cancelled run on an older commit is left alone.
+
+To re-run CI yourself, re-run the newest commit's run. Re-running an older commit's jobs can cancel the newest one's.
+This is the **When CI is cancelled** workflow; turn it off in **Workflows** to handle cancelled CI yourself.
+
 ## Conflicts
 
 A conflict means the base branch changed the same lines as the ticket's branch. The base keeps moving while a ticket

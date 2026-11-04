@@ -174,7 +174,9 @@ fn ticket_section(api: &str, t: &TicketWork, forge: Option<&ForgeNotes>) -> Stri
         (
             has(ev::CI_RUN_FAILED),
             "CI failed: read the failed jobs' logs (the message names the run), fix the cause, \
-                                  run the checks and push.",
+                                  run the checks and push. A flake outside your change: re-run only the newest run on \
+                                  the pull request's head commit, never an older commit's (that cancels the head's \
+                                  run), or push.",
         ),
         (
             has(ev::PR_CONFLICT) || has(ev::PR_BEHIND),

@@ -497,11 +497,15 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         const question = gateQuestion(item);
         const text = nonBlank(item.body.text);
         const from = workflow ?? 'Workflow';
+        // A ticket stalled with nothing going on (PDT-510: its CI cancelled, or idle): it closes once something does.
+        const stalled = item.group === 'stalled';
         return {
-          region: 'Gate',
-          why: item.group === 'accept'
-            ? `The work is done${workflow ? ` (${workflow})` : ''} and waits for your Accept before it goes on.`
-            : `${workflow ? `Workflow ${workflow}` : 'A workflow'} waits for your choice.`,
+          region: stalled ? 'Stalled' : 'Gate',
+          why: stalled
+            ? `Nothing is moving this ticket on${workflow ? ` (found by ${workflow})` : ''}. It goes away by itself once something does.`
+            : item.group === 'accept'
+              ? `The work is done${workflow ? ` (${workflow})` : ''} and waits for your Accept before it goes on.`
+              : `${workflow ? `Workflow ${workflow}` : 'A workflow'} waits for your choice.`,
           content: (
             <>
               {/* The whole question, when the title is only its step's name or first line (PDT-306: a pull request's review). */}
