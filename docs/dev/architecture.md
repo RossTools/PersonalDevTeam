@@ -343,12 +343,13 @@ has a switch for that.
 
 **Idle tickets** (`workflow/idle.rs`). The poll's idle check is the safety net for tickets stuck in ways nothing else
 notices: a ticket in progress (not waiting until clear) with an unfinished workflow run, but no agent step that isn't
-done or waits for a slot, no busy session on its attempt, no open Inbox item about it, and a pull request (if any) that
+done or waits for a slot, no busy session on its attempt, no open Inbox item about it (the idle net's own, `reason:
+idle`, aside: open or dismissed, it neither ends the spell nor starts a new one), and a pull request (if any) that
 is open with no CI running or queued and neither on auto-merge nor queued. Each spell's start is kept in memory
 (`Sensors::idle`); after the Idle tickets input of "When an agent is stuck" (`idleMinutes`, read from its current
 document; 0 or the workflow off: no check) it logs `ticket.idle` once per spell (keyed by ticket and start). The
 built-in's `ticket.stalled` (`nodes/ticket_idle.rs`) puts a stalled gate in the Inbox and looks again every minute,
-leaving by `moved_on` (closing it) once the ticket isn't idle, its own item aside.
+leaving by `moved_on` (closing it) once the ticket isn't idle, its own run not counting as unfinished work.
 
 **Notification rules** (`builtins/notification_rules.rs`). Each kind's level and quiet hours live in the built-in's
 `notification.levels` nodes (`nodes/notification_levels.rs`: a trigger kind with no event type and no ports, so it

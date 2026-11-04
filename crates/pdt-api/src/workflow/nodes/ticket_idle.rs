@@ -68,7 +68,7 @@ impl NodeKind for TicketStalled {
             let store = &cx.st.store;
             let info = store.get_attempt(&c.attempt).await.map_err(crate::workflow::err)?.ok_or("no such attempt")?;
             let active = info.attempt.state == pdt_core::ticket::AttemptState::Active;
-            if !active || !idle(cx.st, &info, &Busy::read(cx.st).await, Some(&cx.step.id)).await {
+            if !active || !idle(cx.st, &info, &Busy::read(cx.st).await, Some(&cx.run.id)).await {
                 return Ok(Outcome::Next { port: MOVED_ON.into(), output: json!({"quiet": true}) });
             }
             let title = format!("{} is stalled: nothing is going on", info.ticket_key);
@@ -76,7 +76,7 @@ impl NodeKind for TicketStalled {
                 let pr = crate::github::watched_pr(cx.st, &info.attempt.id).map(|p| (p.number, p.url));
                 let minutes = cx.ctx.pointer("/trigger/idleMinutes").and_then(Value::as_u64).unwrap_or(0);
                 let body = json!({
-                    "question": title, "text": text(pr.clone(), minutes), "url": pr.map(|p| p.1), "reason": "idle",
+                    "question": title, "text": text(pr.clone(), minutes), "url": pr.map(|p| p.1), "reason": crate::workflow::idle::IDLE_REASON,
                     "who": "Ticket", "workflow": cx.workflow.name, "node": cx.node_title(),
                 });
                 let item = cx

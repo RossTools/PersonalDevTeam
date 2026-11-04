@@ -1361,11 +1361,55 @@ async fn a_ticket_waiting_on_nothing_goes_to_the_inbox_as_stalled() {
     let (_, list) = call(&env.app, "GET", "/api/tickets", None).await;
     let agent = &list["items"][0]["agent"];
     assert_eq!((agent["state"].as_str(), agent["persona"].as_str()), (Some("stalled"), Some("Ticket")), "{agent}");
+    // The poll goes on while the item is open: its own item is no news, so the spell goes on and isn't told again.
+    for m in [26, 40, 60] {
+        pdt_api::check_idle_at(&env.state, again + m * 60_000).await;
+    }
+    assert_eq!(idle_events().await.len(), 1, "one spell, one event, item open");
     let id = items[0]["id"].as_str().unwrap();
     let (s, v) = call(&env.app, "POST", &format!("/api/inbox/{id}/answer"), Some(json!({"choice": "dismiss"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert!(stalled_items(&env).await.is_empty());
-    pdt_api::check_idle_at(&env.state, again + 40 * 60_000).await;
-    assert_eq!(idle_events().await.len(), 1, "dismissed for this spell");
+    for m in [61, 80, 120, 200] {
+        pdt_api::check_idle_at(&env.state, again + m * 60_000).await;
+    }
+    assert_eq!(idle_events().await.len(), 1, "dismissed for this spell, however long it lasts");
+
+    // Something goes on (CI runs), then a new spell is told again.
+    env.gh.set_runs(BRANCH, vec![run(9, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_idle_at(&env.state, again + 201 * 60_000).await;
+    env.gh.set_runs(BRANCH, vec![run(9, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let third = again + 202 * 60_000;
+    pdt_api::check_idle_at(&env.state, third).await;
+    pdt_api::check_idle_at(&env.state, third + 20 * 60_000).await;
+    assert_eq!(idle_events().await.len(), 2, "a new spell");
+    tick_until(&env, "the second idle item", || async { (stalled_items(&env).await.len() == 1).then_some(()) }).await;
+
+    // The run that was stuck is cancelled: the item's next look finds nothing unfinished but its own run, and closes it.
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/workflow-runs/{}/cancel", r["runId"].as_str().unwrap()), None).await;
+    assert!(s.is_success(), "{v}");
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let stuck = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["workflowName"] == "When an agent is stuck" && r["status"] == "waiting")
+        .expect("the idle item's run waits")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for st in env.state.store.list_steps(&stuck).await.unwrap() {
+        if st.node_id == "ask_idle" && st.wake_at.is_some() {
+            env.state.store.put_step(&pdt_core::workflow::api::Step { wake_at: Some(0), ..st }).await.unwrap();
+        }
+    }
+    env.state.store.wake_workflow_run(&stuck, 0).await.unwrap();
+    tick_until(&env, "the idle item closing by itself", || async {
+        stalled_items(&env).await.is_empty().then_some(())
+    })
+    .await;
     env.state.ptys.shutdown().await;
 }

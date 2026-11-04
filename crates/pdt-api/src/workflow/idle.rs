@@ -20,8 +20,9 @@ use std::collections::{HashMap, HashSet};
 pub(crate) struct Busy {
     /// Tickets with an agent step that isn't done, or one waiting for a slot.
     steps: HashSet<String>,
-    /// Open Inbox items: their ticket and step.
-    items: Vec<(String, Option<String>)>,
+    /// Tickets with an open Inbox item, the idle net's own aside (`reason: idle`): they say the ticket is idle, so they
+    /// neither end its spell nor start a new one, and Dismiss leaves the spell as it is.
+    items: HashSet<String>,
     /// Attempts with a busy session.
     sessions: HashSet<String>,
 }
@@ -40,7 +41,11 @@ impl Busy {
             steps.extend(t);
         }
         let items = st.store.open_inbox_items(None).await.unwrap_or_default();
-        let items = items.into_iter().filter_map(|i| Some((i.ticket_id?, i.step_id))).collect();
+        let items = items
+            .into_iter()
+            .filter(|i| i.body.get("reason").and_then(serde_json::Value::as_str) != Some(IDLE_REASON))
+            .filter_map(|i| i.ticket_id)
+            .collect();
         let busy = crate::scheduler::busy_sessions(st);
         let running = st.store.list_sessions_by_status(SessionStatus::Running).await.unwrap_or_default();
         let sessions = running.into_iter().filter(|s| busy.contains(&s.id)).filter_map(|s| s.attempt_id).collect();
@@ -48,13 +53,14 @@ impl Busy {
     }
 }
 
-/// Whether the attempt's ticket is idle now. `own_step`: the step whose Inbox item says so (it doesn't count).
-pub(crate) async fn idle(st: &AppState, info: &AttemptInfo, busy: &Busy, own_step: Option<&str>) -> bool {
+/// The `reason` in the body of the idle net's own Inbox items.
+pub(crate) const IDLE_REASON: &str = "idle";
+
+/// Whether the attempt's ticket is idle now. `own_run`: the run reporting it (`ticket.stalled`'s), which is no
+/// unfinished work of the ticket's.
+pub(crate) async fn idle(st: &AppState, info: &AttemptInfo, busy: &Busy, own_run: Option<&str>) -> bool {
     let ticket = &info.ticket_id;
-    if busy.steps.contains(ticket)
-        || busy.sessions.contains(&info.attempt.id)
-        || busy.items.iter().any(|(t, step)| t == ticket && (own_step.is_none() || step.as_deref() != own_step))
-    {
+    if busy.steps.contains(ticket) || busy.sessions.contains(&info.attempt.id) || busy.items.contains(ticket) {
         return false;
     }
     if let Some(pr) = crate::github::watched_pr(st, &info.attempt.id) {
@@ -72,7 +78,12 @@ pub(crate) async fn idle(st: &AppState, info: &AttemptInfo, busy: &Busy, own_ste
         _ => return false,
     }
     let f = RunFilter { workflow_id: None, ticket_id: Some(ticket.clone()), status: None, limit: 50 };
-    st.store.list_workflow_runs(&f).await.unwrap_or_default().iter().any(|r| !r.status.is_finished())
+    st.store
+        .list_workflow_runs(&f)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|r| !r.status.is_finished() && Some(r.id.as_str()) != own_run)
 }
 
 /// The Idle tickets input of the enabled "When an agent is stuck": None when it is off, or 0.
