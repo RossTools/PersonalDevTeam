@@ -107,18 +107,10 @@ pub fn check_xlsx(bytes: &[u8]) -> Result<()> {
     for i in 0..zip.len() {
         let entry = zip.by_index(i).map_err(|e| unreadable(&e))?;
         let name = entry.name().map_err(|e| unreadable(&e))?.into_owned();
-        let part = if name.starts_with("xl/worksheets/") {
-            Part::Worksheet
-        } else if name == "xl/sharedStrings.xml" {
-            Part::SharedStrings
-        } else {
-            Part::Other
-        };
         let left = MAX_UNPACKED - count.bytes;
         let mut reader = Counted { inner: entry.take(left + 1), n: 0 };
-        if name.ends_with(".xml") || name.ends_with(".rels") {
-            scan_xml(BufReader::new(&mut reader), part, &mut count).map_err(|e| format!("{name}: {e}"))?;
-        }
+        // Every part, whatever its name: IronCalc reads a worksheet from wherever the workbook's rels point.
+        scan_xml(BufReader::new(&mut reader), &mut count).map_err(|e| format!("{name}: {e}"))?;
         std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| unreadable(&e))?;
         if reader.n > left {
             return Err(too_big());
@@ -126,13 +118,6 @@ pub fn check_xlsx(bytes: &[u8]) -> Result<()> {
         count.bytes += reader.n;
     }
     Ok(())
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Part {
-    Worksheet,
-    SharedStrings,
-    Other,
 }
 
 #[derive(Default)]
@@ -162,15 +147,20 @@ fn is_formula(name: &str) -> bool {
     matches!(name, "f" | "formula" | "formula1" | "formula2" | "definedName")
 }
 
-/// Walks one XML part, counting its elements, cells and shared strings, and checking its formulas.
-fn scan_xml(reader: impl std::io::BufRead, part: Part, count: &mut Count) -> Result<()> {
+/// Walks one part as XML, counting its elements, cells and shared strings (in any part), and checking its formulas.
+/// A part stops being read where it stops being XML (a picture, say): IronCalc can't read past there either, and
+/// every formula closed before it has been checked (one still open is checked as far as it goes).
+fn scan_xml(reader: impl std::io::BufRead, count: &mut Count) -> Result<()> {
     let mut xml = quick_xml::Reader::from_reader(reader);
     let mut buf = Vec::new();
     let mut depth = 0usize;
     // The formula being read: the depth of its element, and its text so far (cut off just past the longest).
     let mut formula: Option<(usize, String)> = None;
     loop {
-        let event = xml.read_event_into(&mut buf).map_err(|e| e.to_string())?;
+        let event = match xml.read_event_into(&mut buf) {
+            Ok(event) => event,
+            Err(_) => return formula.map_or(Ok(()), |(_, text)| check_formula(&text)),
+        };
         let opened = match &event {
             Event::Start(e) | Event::Empty(e) => Some(e.local_name().as_ref().to_string()),
             _ => None,
@@ -180,9 +170,9 @@ fn scan_xml(reader: impl std::io::BufRead, part: Part, count: &mut Count) -> Res
             if count.elements > MAX_ELEMENTS {
                 return Err(format!("it has more than {MAX_ELEMENTS} elements"));
             }
-            match (part, name.as_str()) {
-                (Part::Worksheet, "c") => count.cells += 1,
-                (Part::SharedStrings, "si") => count.strings += 1,
+            match name.as_str() {
+                "c" => count.cells += 1,
+                "si" => count.strings += 1,
                 _ => {}
             }
             if count.cells > MAX_CELLS || count.strings > MAX_CELLS {

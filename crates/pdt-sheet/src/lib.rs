@@ -83,7 +83,10 @@ impl Workbook {
     /// formulas) is refused before IronCalc reads it.
     pub fn from_xlsx(bytes: &[u8], name: &str) -> Result<Self> {
         limits::check_xlsx(bytes)?;
-        let wb = load_from_xlsx_bytes(bytes, name, LOCALE, TZ)
+        // IronCalc's importer panics on some packages (a worksheet outside `worksheets/`): an error like any other.
+        let loaded = std::panic::catch_unwind(|| load_from_xlsx_bytes(bytes, name, LOCALE, TZ));
+        let wb = loaded
+            .map_err(|_| "not a spreadsheet PDT can read".to_string())?
             .map_err(|e| format!("not a spreadsheet PDT can read: {e}"))?;
         let model = ironcalc::base::Model::from_workbook(wb, LANGUAGE)?;
         let mut model = UserModel::from_model(model);

@@ -399,3 +399,39 @@ fn a_csv_with_too_many_cells_is_refused_before_it_is_read() {
     let csv = line.repeat(MAX_CELLS / 1000 + 1);
     assert!(Workbook::from_csv(&csv, "x", "Sheet1").unwrap_err().contains("at most"));
 }
+
+#[test]
+fn a_worksheet_is_checked_wherever_the_workbook_puts_it() {
+    let xlsx = Workbook::new("x").unwrap().to_xlsx().unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(&xlsx)).unwrap();
+    let mut rels = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/_rels/workbook.xml.rels").unwrap(), &mut rels).unwrap();
+    let moved = |to: &str| rels.replace("Target=\"worksheets/sheet1.xml\"", &format!("Target=\"{to}\""));
+    let rels = moved("worksheets/sheet1.dat");
+    let at = |sheet: &[u8]| {
+        let rels: &[u8] = rels.as_bytes();
+        repack(&xlsx, &[("xl/_rels/workbook.xml.rels", rels), ("xl/worksheets/sheet1.dat", sheet)])
+    };
+    let ok = at(&sheet_with_formula("SUM(1,2)*2"));
+    let wb = Workbook::from_xlsx(&ok, "x").unwrap();
+    assert_eq!(wb.input("Sheet1", "A1").unwrap(), "=SUM(1,2)*2", "read from sheet1.dat");
+    let deep = format!("{}1{}", "(".repeat(20_000), ")".repeat(20_000));
+    let err = Workbook::from_xlsx(&at(&sheet_with_formula(&deep)), "x").unwrap_err();
+    assert!(err.contains("a formula"), "{err}");
+    let deep = format!("{}1{}", "(".repeat(2000), ")".repeat(2000));
+    assert!(Workbook::from_xlsx(&at(&sheet_with_formula(&deep)), "x").unwrap_err().contains("levels of brackets"));
+    let cells = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">{}</row></sheetData></worksheet>"#,
+        "<c/>".repeat(MAX_CELLS + 1)
+    );
+    assert!(Workbook::from_xlsx(&at(cells.as_bytes()), "x").unwrap_err().contains("at most"));
+    // A part that isn't XML (a picture) is read as far as it looks like XML, and doesn't stop the import.
+    let picture: Vec<u8> = (0..100_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+    let with_picture = repack(&ok, &[("xl/media/image1.png", &picture), ("xl/media/x.bin", b"<a><b>\xff<<\x00")]);
+    assert!(Workbook::from_xlsx(&with_picture, "x").is_ok());
+    // Outside `worksheets/` IronCalc panics on it: refused, not a crash.
+    let rels = moved("s.xml");
+    let elsewhere =
+        repack(&xlsx, &[("xl/_rels/workbook.xml.rels", rels.as_bytes()), ("xl/s.xml", &sheet_with_formula("1"))]);
+    assert!(Workbook::from_xlsx(&elsewhere, "x").is_err());
+}
