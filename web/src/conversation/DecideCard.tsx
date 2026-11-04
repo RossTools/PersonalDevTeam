@@ -2,7 +2,7 @@
 // rows they don't want, then allows the rest or denies the call. The same request is the Inbox's approval item.
 import { ApprovalCard, type ApprovalAnswer } from '@ui';
 import type { DecideRow } from '../api/gen/DecideRow';
-import { allowRowsTitle, DecideRows, useKeptRows } from '../common/DecideRows';
+import { DecideRows, useRowsDecision } from '../common/DecideRows';
 
 export function DecideCard({ id, rows, keyboard, onAnswer }: {
   /** The card's DOM id. */
@@ -12,17 +12,17 @@ export function DecideCard({ id, rows, keyboard, onAnswer }: {
   /** `kept`: the rows an Allow keeps. */
   onAnswer: (answer: ApprovalAnswer, kept?: number[]) => Promise<unknown>;
 }) {
-  const { kept, isKept, toggle } = useKeptRows(rows.length);
+  const d = useRowsDecision(rows);
   return (
     <ApprovalCard
       id={id}
-      title={rows.length === 1 ? 'Make this decision?' : `Make these ${rows.length} decisions?`}
-      preview={<DecideRows rows={rows} kept={isKept} onToggle={toggle} />}
-      description="Untick any you don't want. Allow applies the rest as your own decisions; Deny changes nothing."
-      approveLabel={allowRowsTitle(kept.length, rows.length)}
-      approveDisabled={kept.length === 0}
+      title={d.title}
+      preview={<DecideRows rows={rows} kept={d.isKept} onToggle={d.toggle} />}
+      description={<>{d.help} <span aria-live="polite">{d.ticked}.</span></>}
+      approveLabel={d.allowTitle}
+      approveDisabled={!d.canAllow}
       keyboard={keyboard}
-      onAnswer={(a) => onAnswer(a, a.type === 'approve' ? kept : undefined)}
+      onAnswer={(a) => onAnswer(a, a.type === 'approve' ? d.kept : undefined)}
     />
   );
 }
