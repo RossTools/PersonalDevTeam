@@ -171,7 +171,9 @@ the list leave the selection; **Clear** or **Esc** clears it.
 
 - **Session**: **Conversation** (a chat view), **Terminal** (the agent's own interface) or **No session** (just the
   branch and worktree, for you).
-- **Agent**, **Branch** and **Base branch** (PDT names the branch after the ticket).
+- **Agent**, **Branch** and **Base branch** (PDT names the branch after the ticket). An agent that's installed but
+  not logged in is marked **not logged in**: the dialog says how to log in, **Check again** looks again, and the
+  button reads **Start anyway**.
 - **Permissions**: see [Models and permission modes](workspaces-and-sessions.md#models-and-permission-modes).
 - **Open in a new workspace**: give the ticket and session a workspace of their own.
 

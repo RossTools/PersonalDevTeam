@@ -13,6 +13,7 @@ import { useAction } from '../common/useAction';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import { agentLabel, isAcp, useAcpAgents, useAgentsOff, type BuiltinAgent } from '../common/agents';
 import { checkOf } from '../common/useAgentAvailability';
+import { LoginHint } from '../common/LoginHint';
 import { useProjects } from '../projects/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../host/queries';
 import { POLL } from '../common/poll';
@@ -38,6 +39,16 @@ export function firstOpenStep(v: SetupView): StepId | null {
 /** Pure: the agents the checks found, in page order, less the ones switched off (PDT-270). */
 export function foundAgents(checks: HostChecks | undefined, off: readonly AgentKind[] = []): BuiltinAgent[] {
   return AGENTS.map((a) => a.id).filter((a) => checks?.[a].found && !off.includes(a));
+}
+
+/** Pure: the step's summary: the agents found and logged in, else the ones found but logged out (PDT-556). */
+export function agentsSummary(checks: HostChecks | undefined, off: readonly AgentKind[] = []): string {
+  const list = (as: BuiltinAgent[]) => new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(as.map((a) => agentName(a)));
+  const found = foundAgents(checks, off);
+  const ready = found.filter((a) => checks?.[a].ok);
+  if (ready.length > 0) return `Found ${list(ready)}, logged in. PDT needs at least one, and git.`;
+  if (found.length > 0) return `Found ${list(found)}, but not logged in. Log in to one, then Check again.`;
+  return 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
 }
 
 export interface SetupPageProps {
@@ -103,7 +114,7 @@ export function SetupPage(props: SetupPageProps) {
         </div>
       )}
       <div className="flex flex-col gap-2">
-        <AgentsStep {...step('agents')} v={v} checks={checks.data} loading={checks.isPending} />
+        <AgentsStep {...step('agents')} checks={checks.data} loading={checks.isPending} onHostSettings={props.onHostSettings} />
         <GithubStep {...step('github')} onDone={() => next('github')} />
         <ProjectStep {...step('project')} {...props} />
         <DefaultAgentStep {...step('defaultAgent')} v={v} checks={checks.data} />
@@ -184,7 +195,7 @@ function Step({ id, state, open, onToggle, title, summary, tag, children }: Step
   );
 }
 
-function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView; checks: HostChecks | undefined; loading: boolean }) {
+function AgentsStep({ checks, loading, onHostSettings, ...step }: StepProps & { checks: HostChecks | undefined; loading: boolean; onHostSettings: (section: string) => void }) {
   const qc = useQueryClient();
   const [byHand, setByHand] = useState(false);
   const [check, checking] = useAction(async () => {
@@ -192,11 +203,9 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
     await qc.invalidateQueries({ queryKey: hostKeys.setup });
   });
   const off = useAgentsOff();
-  const found = foundAgents(checks, off);
-  const summary = loading ? 'Looking for git and the agents…'
-    : found.length > 0
-      ? `Found ${new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(found.map((a) => agentName(a)))}. PDT needs at least one, and git.`
-      : 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
+  const summary = loading ? 'Looking for git and the agents…' : agentsSummary(checks, off);
+  // Installed but logged out: each gets how to log in under the table (PDT-556).
+  const loggedOut = foundAgents(checks, off).filter((a) => !checks?.[a].ok);
   // An agent switched off in Settings → Agents isn't one PDT needs (PDT-270).
   const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS.filter((a) => !off.includes(a.id))];
   return (
@@ -214,7 +223,8 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
                     {c?.found && c.path ? <MiddlePath path={c.path} /> : c?.found ? '' : 'not found'}
                   </td>
                   <td className="py-1.5 text-right whitespace-nowrap">
-                    {c?.found ? <span className="text-running">Found</span> : (
+                    {c?.found && !c.ok && r.id !== 'git' ? <span className="text-waiting" title={c.detail}>Not logged in</span>
+                      : c?.found ? <span className="text-running">{r.id === 'git' ? 'Found' : 'Logged in'}</span> : (
                       <span className="text-destructive">Missing · <Link href={r.install} external>How to install</Link></span>
                     )}
                   </td>
@@ -224,6 +234,11 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
           </tbody>
         </table>
       )}
+      {!loading && loggedOut.map((a) => (
+        <p key={a} className="text-xs text-muted-foreground">
+          <b className="text-foreground">{agentName(a)}</b>: <LoginHint agent={a} onAgentSettings={() => onHostSettings('agents')} />
+        </p>
+      ))}
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" pending={checking} onClick={() => void check()}>Check again</Button>
         <Button size="sm" variant="ghost" aria-expanded={byHand} onClick={() => setByHand(!byHand)}>Set a path by hand…</Button>
@@ -389,8 +404,9 @@ function DefaultAgentStep({ v, checks, ...step }: StepProps & { v: SetupView; ch
         value={agent}
         onChange={(a) => setPicked(a)}
         options={AGENTS.filter((a) => !off.includes(a.id)).map((a) => {
-          const there = !checks || checks[a.id].found;
-          return { value: a.id, title: a.name, description: there ? 'Found' : 'Not installed', disabled: !there };
+          const c = checks?.[a.id];
+          const there = !c || c.found;
+          return { value: a.id, title: a.name, description: !there ? 'Not installed' : c && !c.ok ? 'Not logged in' : 'Found', disabled: !there };
         })}
       />
       <div className="flex flex-wrap items-center gap-2">
