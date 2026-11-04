@@ -233,6 +233,9 @@ These ones react to [documents](../using-pdt/documents.md):
   the text, and the text it's on. Your own comments count; agents' and workflows' don't, so an agent answering
   comments never answers itself. What other people wrote reaches agents marked as outside input.
 
+From either one, the document's title also reaches agents marked as outside input, since anyone who can edit the
+document can rename it (on a comment you wrote yourself, it doesn't).
+
 Each watches the document you name, or every document linked to the workflow's project (for **This host**, every
 document linked to a project). PDT looks every minute; the first look only notes where a document is, so turning a
 workflow on, or on again, never replays old changes or comments. A document linked to several projects starts each workflow once.
