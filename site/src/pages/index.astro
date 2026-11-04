@@ -10,13 +10,15 @@ import workspacesShot from '../assets/screens/workspaces.webp';
 import backlogShot from '../assets/screens/backlog.webp';
 import workflowsShot from '../assets/screens/workflows.webp';
 import pmChatShot from '../assets/screens/pm-chat.webp';
-import { siteLinks } from '../links.mjs';
+import { siteLinks, STABLE_PORT } from '../links.mjs';
 import { repoStats } from '../stats.mjs';
 import { NAME, SHORT_NAME, SITE_NAME } from '../brand.mjs';
 
 const links = siteLinks(import.meta.env.BASE_URL);
 const base = links.home;
 const stats = repoStats();
+// The local-first diagram, for screen readers: the boxes say the same.
+const whereLabel = `What runs where. On your computer: PDT on 127.0.0.1:${STABLE_PORT} runs Claude Code, Codex and ACP agents with your own logins, over your repositories, with secrets in the keychain that agents never see. Outside it, each agent talks to its own provider, and GitHub has the pull requests, CI and PDT's updates.`;
 // The hero's carousel: the board first.
 const shots = [
 	{
@@ -148,35 +150,42 @@ const shots = [
 			<div class="kicker">// built inside PDT</div>
 			<h2>PDT is built by PDT.</h2>
 			<p class="lead">Every feature on this page went through PDT's own board: an agent took the ticket, built it in a worktree, tested it as a dev instance of PDT and opened the PR.</p>
-			<div class="stats">
-				<div class="stat"><b>{stats.tickets}</b><span>tickets</span></div>
-				<div class="stat"><b>{stats.prs}</b><span>PRs merged</span></div>
-				<div class="stat"><b>{stats.releases}</b><span>releases</span></div>
-				<div class="stat"><b>1</b><span>human</span></div>
-			</div>
 		</div>
-		<div class="term" aria-hidden="true">
-			<div><span class="p">pdt</span> <span class="w">PDT-196</span> moved to <span class="y">In progress</span></div>
-			<div><span class="p">coder</span> worktree <span class="w">.worktrees/pdt-PDT-196</span> ready</div>
-			<div><span class="p">coder</span> 3 files changed, tests pass</div>
-			<div><span class="p">reviewer</span> 1 comment → sent to coder</div>
-			<div><span class="p">coder</span> fixed, pushed</div>
-			<div><span class="p">qa</span> dev build on :7431, checked <span class="g">✓</span></div>
-			<div><span class="p">github</span> PR #194 CI <span class="g">passed</span></div>
-			<div><span class="p">pdt</span> waiting on <span class="w">you</span> to approve<span class="w cursor">▍</span></div>
+		<div class="stats">
+			<div class="stat"><b>{stats.tickets}</b><span>tickets</span></div>
+			<div class="stat"><b>{stats.prs}</b><span>PRs merged</span></div>
+			<div class="stat"><b>{stats.releases}</b><span>releases</span></div>
+			<div class="stat"><b>1</b><span>human</span></div>
 		</div>
 	</div>
 </section>
 
 <section>
 	<div class="wrap split">
-		<div class="term" aria-hidden="true">
-			<div><span class="p">pdt</span> <span class="w">host</span></div>
-			<div>pdtd        <span class="g">running</span>  127.0.0.1:7420</div>
-			<div>update      ready, <span class="y">waiting for idle</span></div>
-			<div>secrets     OS keychain</div>
-			<div>remote      tailscale · owner only</div>
-		</div>
+		<!-- A compact version of the Features page's "what runs where" diagram (same classes, `.compact` sizes it down). -->
+		<figure class="where compact">
+			<div class="where-box" role="img" aria-label={whereLabel}>
+				<span class="where-tag">your computer</span>
+				<div class="where-row one">
+					<div class="where-node pdt"><b><i class="where-live"></i>PDT</b><code>127.0.0.1:{STABLE_PORT}</code></div>
+				</div>
+				<svg class="where-wires" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M50 0C50 8 16.7 8 16.7 16M50 0V16M50 0C50 8 83.3 8 83.3 16" /></svg>
+				<div class="where-row three">
+					<div class="where-node"><b><i class="where-mark claude">C</i>Claude Code</b><code class="where-login">● your login</code></div>
+					<div class="where-node"><b><i class="where-mark codex">O</i>Codex</b><code class="where-login">● your login</code></div>
+					<div class="where-node"><b><i class="where-mark acp">+</i>ACP agents</b><code class="where-login">● your login</code></div>
+				</div>
+				<svg class="where-wires" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M16.7 0C16.7 8 25 8 25 16M50 0C50 8 25 8 25 16M50 0C50 8 75 8 75 16M83.3 0C83.3 8 75 8 75 16" /></svg>
+				<div class="where-row two">
+					<div class="where-node"><b>Your repositories</b><code>a worktree per ticket</code></div>
+					<div class="where-node"><b>Keychain</b><code>secrets agents never see</code></div>
+				</div>
+			</div>
+			<div class="where-row two outside" aria-hidden="true">
+				<div class="where-node"><b>Anthropic, OpenAI, …</b><span>each agent's own provider</span></div>
+				<div class="where-node"><b>GitHub</b><span>PRs, CI, updates</span></div>
+			</div>
+		</figure>
 		<div>
 			<div class="kicker">// local first</div>
 			<h2>Runs on your machine, not our cloud.</h2>
