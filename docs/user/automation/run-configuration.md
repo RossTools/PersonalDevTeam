@@ -4,8 +4,8 @@ Tell PDT how to run and test your project, and any branch can start on its own p
 the ticket an agent just finished, next to the one on `main`, without them getting in each other's way.
 
 A project's run configuration lists its **runs** (dev servers, apps), its **tests**, its **areas** (the parts of the
-code that belong together) and, optionally, its **forge** and **CI**. To start a run, see [Runs: dev servers and
-tests](../using-pdt/workspaces-and-sessions.md#runs-dev-servers-and-tests).
+code that belong together) and, optionally, its **forge** and **CI**. To start a run, see **Runs: dev servers and
+tests** in Workspaces and sessions.
 
 ## Let an agent write it
 
@@ -226,9 +226,8 @@ uncommitted work. The host overrides' list replaces the file's.
 
 ## Generated files at merge time
 
-When PDT brings a branch up to date with its base at merge time (see
-[Conflicts](../using-pdt/review-and-merge.md#conflicts)), a conflict only in generated files needs no agent if you say
-how to regenerate them:
+When PDT brings a branch up to date with its base at merge time (see **Conflicts** in Review and merge), a conflict
+only in generated files needs no agent if you say how to regenerate them:
 
 ```toml
 [[merge.regenerate]]
