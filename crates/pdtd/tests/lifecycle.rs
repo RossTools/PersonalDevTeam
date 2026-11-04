@@ -1,7 +1,6 @@
 //! Starts the real pdtd binary on a free port with a temp data dir. Never touches the stable instance.
 
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::common;
@@ -179,7 +178,7 @@ fn sighup_shuts_down_gracefully() {
     let tmp = tempfile::tempdir().unwrap();
     let port = free_port();
     let mut d = start(port, &tmp.path().join("data"));
-    let status = Command::new("kill").args(["-HUP", &d.0.id().to_string()]).status().unwrap();
+    let status = std::process::Command::new("kill").args(["-HUP", &d.0.id().to_string()]).status().unwrap();
     assert!(status.success());
     let exit = wait_exit(&mut d, Duration::from_secs(20));
     assert!(exit.success(), "a graceful shutdown exits 0, not by the signal: {exit:?}");

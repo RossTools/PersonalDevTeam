@@ -763,7 +763,8 @@ async fn a_pasted_code_finishes_a_sign_in_through_the_website() {
     // Not a code at all, or a state PDT never issued.
     let (s, v) = paste(&env, "nonsense!".into()).await;
     assert_eq!(s, 400, "{v}");
-    let (s, v) = paste(&env, pdt_int_google::builtin::paste_code(&format!("x{}", &state[1..]), "4/0good")).await;
+    let forged = format!("{}{}", if state.starts_with('x') { 'y' } else { 'x' }, &state[1..]);
+    let (s, v) = paste(&env, pdt_int_google::builtin::paste_code(&forged, "4/0good")).await;
     assert_eq!((s.as_u16(), v["message"].as_str().unwrap().contains("unknown or too old")), (400, true), "{v}");
     assert!(env.google.sent().is_empty());
 
