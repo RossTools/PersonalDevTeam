@@ -10,7 +10,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '', path: null });
 const checks = (devinFound: boolean) =>
-  ({ claude: tool(true, true), codex: tool(true, false), devin: tool(devinFound, false), git: tool(true, true), tailscale: tool(true, true), acp: {}, checkedAt: 1 });
+  ({ claude: tool(true, true), codex: tool(true, false), devin: tool(devinFound, false), git: tool(true, true), gitIdentity: tool(true, true), tailscale: tool(true, true), acp: {}, checkedAt: 1 });
 
 /** Lists the offered agents; the button does what Host settings' "Run checks again" does. */
 function Probe() {

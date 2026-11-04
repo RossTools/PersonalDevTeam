@@ -40,7 +40,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     state.integrations = std::sync::Arc::new(pdt_api::Integrations::new(vec![std::sync::Arc::new(pdt_int_jira::Jira)]));
     state.integrations.enable(&["jira".into()]);
     state.sensor_timeout = Duration::from_millis(300);

@@ -1,5 +1,6 @@
-//! Report a bug (PDT-153): issues on the release repository with the update token, local Draft tickets on the instance
-//! PDT is developed on (no GitHub request), errors, the nonce, and redacted diagnostics. GitHub is a local fake.
+//! Report a bug (PDT-153): issues on the release repository as the GitHub login or with the update token (PDT-559),
+//! the browser's bug form with neither, local Draft tickets on the instance PDT is developed on (no GitHub request),
+//! errors, the nonce, and redacted diagnostics. GitHub is a local fake.
 
 use crate::common;
 
@@ -149,14 +150,15 @@ async fn local_without_the_release_project_says_so() {
 async fn token_problems_are_plain_errors() {
     let env = setup().await;
     let (s, e) = report(&env, json!({"title": "x"})).await;
-    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("no_token")));
-    assert!(e["message"].as_str().unwrap().contains("Settings → This host → Updates"), "{e}");
+    assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("no_github_login")));
+    let m = e["message"].as_str().unwrap();
+    assert!(m.contains("Connect GitHub") && m.contains("https://github.com/o/r/issues/new?template=bug.yml"), "{e}");
     assert_eq!(env.gh.request_count(), 0);
 
     store_token(&env, READ_ONLY);
     let (s, e) = report(&env, json!({"title": "x"})).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("token_no_issue_access")), "{e}");
-    assert!(e["message"].as_str().unwrap().contains("Issues: write"), "{e}");
+    assert!(e["message"].as_str().unwrap().contains("Connect GitHub"), "{e}");
 
     store_token(&env, "github_pat_revoked");
     let (s, e) = report(&env, json!({"title": "x"})).await;
@@ -165,6 +167,33 @@ async fn token_problems_are_plain_errors() {
 
     let (s, e) = report(&env, json!({"title": "  "})).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
+}
+
+#[tokio::test]
+async fn the_github_login_files_the_issue_before_the_token_and_neither_means_the_browser() {
+    let mut env = setup().await;
+    let (_, p) = call(&env.app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!((p["via"].as_str(), p["githubLogin"].as_str()), (Some("browser"), None));
+    assert_eq!(p["version"].as_str(), Some(pdt_core::BUILD_VERSION));
+    assert!(p["os"].as_str().unwrap().starts_with(std::env::consts::OS), "{p}");
+    store_token(&env, TOKEN);
+    let (_, p) = call(&env.app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!(p["via"], "token");
+
+    // Signed in to GitHub: the login files it, not the token.
+    let forge = Arc::new(pdt_forge::testing::FakeForge::default());
+    env.state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(&forge))]);
+    env.app = pdt_api::router(env.state.clone(), None);
+    let (_, p) = call(&env.app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!(p["via"], "login");
+    let (s, filed) = report(&env, json!({"title": "Board freezes", "description": "It stops."})).await;
+    assert_eq!(s, StatusCode::OK, "{filed}");
+    assert_eq!(filed, json!({"kind": "issue", "number": 500, "url": "https://github.com/o/r/issues/500"}));
+    let (repo, issue) = forge.created_issues.lock().unwrap()[0].clone();
+    assert_eq!((repo.as_str(), issue.title.as_str()), ("o/r", "Board freezes"));
+    assert_eq!(issue.labels, ["bug", "from-pdt"]);
+    assert!(issue.body.starts_with("### What happened\n\nIt stops."), "{}", issue.body);
+    assert_eq!(env.gh.request_count(), 0, "the token is not used");
 }
 
 #[tokio::test]

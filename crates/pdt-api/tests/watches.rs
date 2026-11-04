@@ -293,7 +293,11 @@ async fn the_user_watches_a_ticket_and_a_restart_catches_up_once() {
     moved(&env, &t, "done").await;
     // PDT was down: a second daemon on the same database looks.
     let store = pdt_store::Store::open(&env._tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, env._tmp.path().join("data2"));
+    let mut state = pdt_api::AppState::with_platform(
+        store,
+        env._tmp.path().join("data2"),
+        pdt_api::isolated_platform(env._tmp.path()),
+    );
     state.watch_wait_ms = (0, 0);
     let app = pdt_api::router(state.clone(), None);
     pdt_api::tick_watches(&state).await;

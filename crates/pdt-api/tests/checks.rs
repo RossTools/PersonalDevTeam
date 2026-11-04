@@ -20,6 +20,23 @@ fn fake(dir: &std::path::Path, name: &str, out: &str, code: i32) -> String {
     }
 }
 
+/// A test's state starts no agent from the machine (PDT-521): its programs resolve to nothing, even with the test
+/// process's own PATH (where a developer has the real CLIs), and it has no login-shell PATH.
+#[tokio::test]
+async fn a_test_state_finds_none_of_the_machine_s_agents() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    let mut st = crate::common::app_state(store, tmp.path());
+    assert_eq!(st.platform.login_path, None, "no login shell was asked for its PATH");
+    for program in [&st.platform.claude_program, &st.platform.codex_program, &st.platform.devin_program] {
+        assert!(std::path::Path::new(program).starts_with(tmp.path()), "{program} is not the test's own");
+        assert!(pdt_agents::launch::resolve_launch(program, &[], None).is_err(), "{program} resolves");
+    }
+    st.tailscale = Arc::new(RecordingTailscale::new(Err(pdt_tailscale::TsError::NotInstalled)));
+    let c = run_host_checks(&st).await;
+    assert!(!c.claude.found && !c.codex.found && !c.devin.found, "{c:?}");
+}
+
 #[tokio::test]
 async fn reports_logins_and_missing_tools() {
     let tmp = tempfile::tempdir().unwrap();

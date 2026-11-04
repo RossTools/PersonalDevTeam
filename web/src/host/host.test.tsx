@@ -42,7 +42,7 @@ const update = (over: object = {}) => ({
   releaseRepo: { repo: 'RossTools/PersonalDevTeam', id: 1, movedTo: null, overriddenBy: null }, ...over,
 });
 const tool = (ok: boolean) => ({ found: true, ok, detail: ok ? 'ok' : 'not logged in' });
-const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), tailscale: tool(true), checkedAt: 1 });
+const checks = (ok: boolean) => ({ claude: tool(ok), codex: tool(ok), devin: { found: false, ok: false, detail: 'not found' }, git: tool(true), gitIdentity: tool(true), tailscale: tool(true), checkedAt: 1 });
 const local = { caller: 'local', login: null };
 const release = { version: '0.1.7', tag: 'v0.1.7', nightly: false, notes: 'Fixes', publishedAt: null, changes: null, releases: null };
 
@@ -642,6 +642,7 @@ describe('HostSettingsPage', () => {
     expect(claude).toHaveTextContent('not found');
     expect(within(claude).getByRole('img', { name: 'not found' })).toHaveAttribute('data-status', 'failed');
     expect(within(screen.getByText('git').closest('li')!).getByRole('img', { name: 'OK' })).toHaveAttribute('data-status', 'running');
+    expect(within(screen.getByText('git identity').closest('li')!).getByRole('img', { name: 'OK' })).toBeInTheDocument();
     // Devin is optional: missing is not a failure.
     const devin = screen.getByText('devin').closest('li')!;
     expect(within(devin).getByRole('img', { name: 'not installed (optional)' })).toHaveAttribute('data-status', 'idle');

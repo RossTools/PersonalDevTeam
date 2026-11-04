@@ -967,11 +967,10 @@ async fn the_pm_reads_the_users_todos_but_cannot_change_them() {
 
 #[tokio::test]
 async fn the_pm_reports_a_bug_after_a_yes() {
-    use common::issues::{FakeIssues, TOKEN};
-    let (base, gh) = FakeIssues::serve().await;
+    // Filed as the GitHub login (the fake forge), not with a token.
+    let (base, _) = common::issues::FakeIssues::serve().await;
     let env = setup_with(|st| {
         st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
-        st.secrets.set(&st.update_token_account, TOKEN).unwrap();
     })
     .await;
     let id = start_pm(&env, "who").await;
@@ -979,16 +978,16 @@ async fn the_pm_reports_a_bug_after_a_yes() {
     let n = agent_says(&env, &id).await.len();
     send(&env, &id, r#"mcp: report_bug {"title": "The board flickers", "description": "On every poll.", "includeDiagnostics": true}"#).await;
     let req = open_request(&env, &id).await;
-    assert_eq!(gh.request_count(), 0, "nothing before the yes");
+    assert!(env.gh.created_issues.lock().unwrap().is_empty(), "nothing before the yes");
     let url = format!("/api/sessions/{id}/requests/{req}");
     let (s, _) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
     assert!(said.starts_with("mcp report_bug:") && said.contains("\"kind\": \"issue\""), "{said}");
-    let issue = gh.created.lock().unwrap()[0].clone();
-    assert_eq!(issue["title"], "The board flickers");
-    assert_eq!(issue["labels"], json!(["bug", "from-pdt"]));
-    assert!(issue["body"].as_str().unwrap().contains("PDT version:"), "{issue}");
+    let (repo, issue) = env.gh.created_issues.lock().unwrap()[0].clone();
+    assert_eq!((repo.as_str(), issue.title.as_str()), ("o/r", "The board flickers"));
+    assert_eq!(issue.labels, ["bug", "from-pdt"]);
+    assert!(issue.body.contains("PDT version:"), "{}", issue.body);
 }
 
 /// PDT-256, PDT-490: a PM on an agent that can't ask in its own prompt (Codex) asks in its conversation, with a card
@@ -996,13 +995,12 @@ async fn the_pm_reports_a_bug_after_a_yes() {
 /// tells it no.
 #[tokio::test]
 async fn a_codex_pm_reports_a_bug_after_the_users_allow() {
-    use common::issues::{FakeIssues, TOKEN};
-    let (base, gh) = FakeIssues::serve().await;
+    let (base, _) = common::issues::FakeIssues::serve().await;
     let env = setup_with(|st| {
         st.update = std::sync::Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
-        st.secrets.set(&st.update_token_account, TOKEN).unwrap();
     })
     .await;
+    let filed = || env.gh.created_issues.lock().unwrap().clone();
     let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
     let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
     let setup = json!({"note": "", "agent": "codex", "model": null, "instructions": pm["instructions"],
@@ -1019,7 +1017,7 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow() {
     let n = agent_says(&env, &id).await.len();
     send(&env, &id, r#"mcp: report_bug {"title": "The board flickers", "description": "On every poll."}"#).await;
     let req = open_request(&env, &id).await;
-    assert_eq!(gh.request_count(), 0, "nothing before the yes");
+    assert!(filed().is_empty(), "nothing before the yes");
     let item = approval().await.expect("the card is in the Inbox too");
     assert_eq!((item["group"].as_str(), item["sessionId"].as_str()), (Some("approval"), Some(id.as_str())), "{item}");
     assert_eq!(item["body"]["requestId"], req.as_str());
@@ -1030,19 +1028,18 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow() {
     // An Allow that isn't the user's click (an agent's curl, without the UI token) runs nothing.
     let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "{v}");
-    assert_eq!(gh.request_count(), 0);
+    assert!(filed().is_empty());
 
     // The user's Allow runs the call as given, and the PM reads its result.
     let (s, v) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
     let said = tool_answer(&env, &id, n, "mcp report_bug").await;
     assert!(said.contains("\"kind\": \"issue\"") || said.contains("\"kind\":\"issue\""), "{said}");
-    let issue = gh.created.lock().unwrap()[0].clone();
-    assert_eq!(issue["title"], "The board flickers");
+    assert_eq!(filed()[0].1.title, "The board flickers");
     assert!(approval().await.is_none(), "answered");
     let (s, _) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::CONFLICT, "a second click runs nothing");
-    assert_eq!(gh.created.lock().unwrap().len(), 1);
+    assert_eq!(filed().len(), 1);
 
     // A Deny files nothing, and the PM hears it.
     let n = agent_says(&env, &id).await.len();
@@ -1053,7 +1050,7 @@ async fn a_codex_pm_reports_a_bug_after_the_users_allow() {
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
     let said = tool_answer(&env, &id, n, "mcp report_bug").await;
     assert!(said.contains("denied"), "{said}");
-    assert_eq!(gh.created.lock().unwrap().len(), 1);
+    assert_eq!(filed().len(), 1);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 

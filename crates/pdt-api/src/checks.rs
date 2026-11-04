@@ -84,6 +84,8 @@ pub struct HostChecks {
     /// Optional: most hosts never install Devin, so a missing one is no problem.
     pub devin: ToolCheck,
     pub git: ToolCheck,
+    /// Whether git has a name and email to commit with (`user.name`, `user.email`): merges and updates need them.
+    pub git_identity: ToolCheck,
     pub tailscale: ToolCheck,
     /// Each ACP agent's (by agent kind, `acp:<id>`): whether its command is found. PDT can't tell whether one is
     /// logged in, so a found one is `ok`.
@@ -195,6 +197,7 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         }
     });
     let git = check("git", run(st, "git", &["--version"], SessionKind::Shell, creds).await, ToolCheck::answered);
+    let git_identity = if git.found { identity_check(st).await } else { ToolCheck::missing("git is missing".into()) };
     let ts = st.tailscale.clone();
     let tailscale = match tokio::task::spawn_blocking(move || ts.status()).await {
         Ok(Ok(s)) => ToolCheck::answered(true, s.dns_name),
@@ -213,9 +216,65 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
             (v.agent.as_str().to_string(), check)
         })
         .collect();
-    let c = HostChecks { claude, codex, devin, git, tailscale, acp, checked_at: now_ms() };
+    let c = HostChecks { claude, codex, devin, git, git_identity, tailscale, acp, checked_at: now_ms() };
     *st.checks.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
     c
+}
+
+/// What to run when git has no identity.
+const SET_IDENTITY: &str =
+    "git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\"";
+
+/// The check of git's identity: as each project's repository sees it (its own settings and the includes that apply
+/// there count), or, with no project yet, in the global settings (see [`identity_verdict`]).
+async fn identity_check(st: &AppState) -> ToolCheck {
+    let repos: Vec<(String, std::path::PathBuf)> = match st.store.list_projects().await {
+        Ok(ps) => ps.into_iter().map(|p| (p.name, std::path::PathBuf::from(p.repo_path))).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not list the projects; checking git's global identity only");
+            vec![]
+        }
+    };
+    let read = tokio::task::spawn_blocking(move || -> Result<_, pdt_git::GitError> {
+        let global = pdt_git::global_identity()?;
+        // A project whose folder is gone can't say; its own page shows that.
+        let projects = repos
+            .into_iter()
+            .filter(|(_, repo)| repo.is_dir())
+            .map(|(name, repo)| Ok((name, pdt_git::repo_identity(&repo)?)))
+            .collect::<Result<Vec<_>, pdt_git::GitError>>()?;
+        Ok((global, projects))
+    })
+    .await;
+    match read {
+        Ok(Ok((global, projects))) => {
+            let (ok, detail) = identity_verdict(&global, &projects);
+            ToolCheck::answered(ok, detail)
+        }
+        Ok(Err(e)) => ToolCheck::answered(false, format!("could not read git's settings: {e}")),
+        Err(e) => ToolCheck::answered(false, format!("could not read git's settings: {e}")),
+    }
+}
+
+/// Whether git has a name and email to commit with, and what the check says. With projects: whether each project's
+/// repository has both (the ones that lack them named); without: whether the global settings have them.
+fn identity_verdict(global: &pdt_git::Identity, projects: &[(String, pdt_git::Identity)]) -> (bool, String) {
+    let shown = |id: &pdt_git::Identity| match (&id.name, &id.email) {
+        (Some(n), Some(e)) => Some(format!("{n} <{e}>")),
+        _ => None,
+    };
+    if projects.is_empty() {
+        return match shown(global) {
+            Some(s) => (true, s),
+            None => (false, format!("no name and email in your global git settings: run {SET_IDENTITY}")),
+        };
+    }
+    let lacking: Vec<&str> = projects.iter().filter(|(_, id)| !id.is_complete()).map(|(n, _)| n.as_str()).collect();
+    if lacking.is_empty() {
+        return (true, shown(global).unwrap_or_else(|| "set in each project's repository".into()));
+    }
+    let which = if lacking.len() == projects.len() { "any project".to_string() } else { lacking.join(", ") };
+    (false, format!("no name and email for {which}, so merges there fail or get a made-up address: run {SET_IDENTITY}"))
 }
 
 impl HostChecks {
@@ -250,6 +309,28 @@ mod tests {
         assert_eq!(super::claude_logged_in("{\n \"loggedIn\": true, \"authMethod\": \"claude.ai\"\n}"), Some(true));
         assert_eq!(super::claude_logged_in("warning\n{\"loggedIn\": false}"), Some(false));
         assert_eq!(super::claude_logged_in("Logged in"), None);
+    }
+
+    #[test]
+    fn checks_the_identity_each_project_commits_with() {
+        let id =
+            |n: Option<&str>, e: Option<&str>| pdt_git::Identity { name: n.map(Into::into), email: e.map(Into::into) };
+        let (ada, none) = (id(Some("Ada"), Some("a@b")), id(None, None));
+        let verdict = super::identity_verdict;
+        assert_eq!(verdict(&ada, &[]), (true, "Ada <a@b>".to_string()));
+        let (ok, detail) = verdict(&id(Some("Ada"), None), &[]);
+        assert!(!ok && detail.starts_with("no name and email in your global git settings"), "{detail}");
+        assert!(detail.contains("git config --global user.email"), "{detail}");
+        // Set per repository or by an include: fine, though the global settings have none.
+        let work = id(Some("Ada"), Some("ada@work"));
+        assert_eq!(
+            verdict(&none, &[("Shop".into(), work.clone()), ("Blog".into(), ada.clone())]),
+            (true, "set in each project's repository".to_string())
+        );
+        let (ok, detail) = verdict(&none, &[("Shop".into(), work), ("Blog".into(), none.clone())]);
+        assert!(!ok && detail.starts_with("no name and email for Blog, so merges there fail"), "{detail}");
+        let (_, detail) = verdict(&none, &[("Blog".into(), none.clone())]);
+        assert!(detail.starts_with("no name and email for any project"), "{detail}");
     }
 
     #[test]

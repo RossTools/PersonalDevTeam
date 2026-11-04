@@ -4,18 +4,29 @@ import { Alert, Button, Checkbox, Dialog, DialogActions, Field, Input, Link, Ske
 import { ApiError, api } from '../api/client';
 import type { BugReportFiled } from '../api/gen/BugReportFiled';
 import type { BugReportPreview } from '../api/gen/BugReportPreview';
+import { copyToClipboard } from '../common/clipboard';
 import { actionError } from '../common/useAction';
-import { OpenTicketContext } from '../common/open';
+import { OpenTicketContext, openExternal, openPlugin } from '../common/open';
+import { bugFormUrl } from './bugForm';
 import { hostKeys } from './queries';
 
 /** Error codes whose fix is in Host settings (the token, or the bug reports setting). */
-const SETTINGS_CODES = ['no_token', 'token_rejected', 'token_no_issue_access', 'bug_reports_off', 'no_bug_project'];
+const SETTINGS_CODES = ['token_rejected', 'token_no_issue_access', 'bug_reports_off', 'no_bug_project'];
 
 /** Where a report will go, said before it is sent. */
 function destination(p: BugReportPreview) {
   switch (p.route) {
-    case 'github':
-      return <>It becomes a public issue on <span className="font-medium">{p.repo}</span> on GitHub, filed with this host's update token.</>;
+    case 'github': {
+      const repo = <span className="font-medium">{p.repo}</span>;
+      switch (p.via) {
+        case 'login':
+          return <>It becomes a public issue on {repo} on GitHub, filed as {p.githubLogin ? <span className="font-medium">{p.githubLogin}</span> : 'your GitHub login'}.</>;
+        case 'token':
+          return <>It becomes a public issue on {repo} on GitHub, filed with this host's update token.</>;
+        case 'browser':
+          return <>PDT isn't connected to GitHub, so it opens the bug form on {repo} filled in, for you to send from your browser. Connect GitHub to file reports from here.</>;
+      }
+    }
     case 'local':
       return <>It becomes a Draft ticket labelled <span className="font-medium">bug</span> in {p.project ? <span className="font-medium">{p.project.key} · {p.project.name}</span> : 'the PDT project'} on this instance. Nothing is sent to GitHub.</>;
     case 'off':
@@ -43,13 +54,28 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
   const [error, setError] = useState<{ message: string; settings: boolean } | null>(null);
   const [pending, setPending] = useState(false);
   const [filed, setFiled] = useState<BugReportFiled | null>(null);
+  /** The bug form opened on GitHub (no login or token to file with), and whether the diagnostics were copied. */
+  const [opened, setOpened] = useState<{ url: string; copied: boolean } | null>(null);
   // One per form: a resend after a dropped answer returns the first report instead of filing another.
   const nonce = useRef(crypto.randomUUID());
   const p = preview.data;
   const ready = !!title.trim() && !!p && p.route !== 'off';
+  const inBrowser = p?.route === 'github' && p.via === 'browser';
+
+  /** Opens GitHub's bug form with the report in it, from the click (a pop-up after an await is blocked). The
+   *  diagnostics are too long for the link: they go on the clipboard. */
+  const openForm = (p: BugReportPreview) => {
+    const url = bugFormUrl({
+      repo: p.repo, title, whatHappened: description, expected, steps, version: p.version, os: diagnostics ? p.os : undefined,
+    });
+    openExternal(url);
+    if (diagnostics) void copyToClipboard(p.diagnostics, 'Diagnostics copied');
+    setOpened({ url, copied: diagnostics });
+  };
 
   const send = async () => {
     if (!ready || pending) return;
+    if (inBrowser) return openForm(p);
     setPending(true);
     setError(null);
     try {
@@ -61,6 +87,17 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
       setPending(false);
     }
   };
+
+  if (opened) {
+    return (
+      <Dialog onClose={onClose} title="Finish on GitHub" size="md" footer={<Button variant="primary" onClick={onClose}>Done</Button>}>
+        <p className="text-sm">
+          GitHub's bug form opened in a new tab with your report in it (<Link external href={opened.url}>open it again</Link>).
+          {opened.copied && ' The diagnostics are on the clipboard: paste them at the end of What happened.'} Then submit it there.
+        </p>
+      </Dialog>
+    );
+  }
 
   if (filed) {
     return (
@@ -89,7 +126,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
       footer={
         <DialogActions
           onCancel={onClose}
-          action={p?.route === 'local' ? 'File ticket' : 'Send report'}
+          action={p?.route === 'local' ? 'File ticket' : inBrowser ? 'Open on GitHub' : 'Send report'}
           form="bug-report"
           pending={pending}
           disabled={!ready}
@@ -102,10 +139,11 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
         {p && (
           <Alert
             tone={p.route === 'off' ? 'warning' : 'info'}
-            action={p.route === 'off' || (p.route === 'github' && !p.tokenPresent) ? <Button size="sm" onClick={onOpenSettings}>Host settings</Button> : undefined}
+            action={p.route === 'off' ? <Button size="sm" onClick={onOpenSettings}>Host settings</Button>
+              : inBrowser ? <Button size="sm" onClick={() => { openPlugin('github'); onClose(); }}>Connect GitHub</Button>
+                : undefined}
           >
             {destination(p)}
-            {p.route === 'github' && !p.tokenPresent && ' This host has no GitHub token yet: add one in Host settings, under Updates › Advanced.'}
           </Alert>
         )}
         <Field label="Title">

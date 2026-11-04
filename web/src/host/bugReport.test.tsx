@@ -10,7 +10,8 @@ afterEach(() => {
 });
 
 const preview = (over: object = {}) => ({
-  setting: 'auto', route: 'github', repo: 'o/r', project: null, tokenPresent: true,
+  setting: 'auto', route: 'github', repo: 'o/r', project: null, tokenPresent: true, via: 'login', githubLogin: 'octo',
+  version: '0.1.42', os: 'macos (aarch64)',
   diagnostics: 'PDT version: 0.1.42\nLast 1 lines of the pdtd log:\nINFO ~/work started\n', ...over,
 });
 
@@ -21,7 +22,7 @@ describe('BugReportDialog', () => {
       'POST /api/bug-reports': { kind: 'issue', number: 7, url: 'https://github.com/o/r/issues/7' },
     });
     renderWithQuery(<BugReportDialog onClose={() => {}} onOpenSettings={() => {}} />);
-    expect(await screen.findByText(/public issue on/)).toHaveTextContent('o/r');
+    expect(await screen.findByText(/public issue on/)).toHaveTextContent('o/r on GitHub, filed as octo.');
     await userEvent.click(screen.getByRole('button', { name: 'Show what is sent' }));
     expect(screen.getByLabelText('Diagnostics')).toHaveTextContent('INFO ~/work started');
     const send = screen.getByRole('button', { name: 'Send report' });
@@ -71,6 +72,28 @@ describe('BugReportDialog', () => {
     expect(a).toBe(b);
   });
 
+  it('without a GitHub login or token, opens the filled-in bug form and copies the diagnostics', async () => {
+    const calls = stubApi({ 'GET /api/bug-reports/preview': preview({ via: 'browser', githubLogin: null, tokenPresent: false }) });
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    renderWithQuery(<BugReportDialog onClose={() => {}} onOpenSettings={() => {}} />);
+    expect(await screen.findByText(/isn't connected to GitHub/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText('Title'), 'Board freezes');
+    await userEvent.type(screen.getByLabelText('What happened'), 'It stops.');
+    await userEvent.click(screen.getByRole('button', { name: 'Open on GitHub' }));
+    const url = new URL(open.mock.calls[0][0] as string);
+    expect(url.pathname).toBe('/o/r/issues/new');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      template: 'bug.yml', title: 'Board freezes', 'what-happened': 'It stops.', version: '0.1.42', os: 'macos (aarch64)',
+    });
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(expect.stringContaining('INFO ~/work started')));
+    expect(await screen.findByText(/diagnostics are on the clipboard/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
   it('cannot send while reports are off', async () => {
     stubApi({ 'GET /api/bug-reports/preview': preview({ route: 'off', setting: 'off' }) });
     renderWithQuery(<BugReportDialog onClose={() => {}} onOpenSettings={() => {}} />);
@@ -92,7 +115,7 @@ describe('Host settings: Bug reports', () => {
     const calls = stubApi({
       'GET /api/host/settings': view,
       'GET /api/host/update': { current: '0.1.6', state: 'idle', disabledReason: null, policy: 'notify', latest: null, lastCheckedAt: null, error: null, token: { state: 'missing' }, lastResult: null },
-      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, checkedAt: 1 },
+      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, gitIdentity: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, checkedAt: 1 },
       'GET /api/host/whoami': { caller: 'local', login: null },
       'GET /api/connections': [],
       'GET /api/bug-reports/preview': preview({ route: 'local', project: { id: 'p', key: 'PDT', name: 'Personal Dev Team' } }),

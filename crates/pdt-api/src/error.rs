@@ -72,6 +72,7 @@ pub mod codes {
     pub const GITHUB_ERROR: &str = "github_error";
     pub const GITHUB_UNREACHABLE: &str = "github_unreachable";
     pub const GIT_ERROR: &str = "git_error";
+    pub const GIT_IDENTITY_MISSING: &str = "git_identity_missing";
     pub const GIT_MISSING: &str = "git_missing";
     pub const HOST_BUSY: &str = "host_busy";
     pub const IMAGE_TOO_LARGE: &str = "image_too_large";
@@ -122,11 +123,11 @@ pub mod codes {
     pub const NO_DEVICE_FLOW: &str = "no_device_flow";
     pub const NO_DRAFTS: &str = "no_drafts";
     pub const NO_FREE_PORT: &str = "no_free_port";
+    pub const NO_GITHUB_LOGIN: &str = "no_github_login";
     pub const NO_NEXT_PART: &str = "no_next_part";
     pub const NO_PROVIDER: &str = "no_provider";
     pub const NO_REFINE_WORKFLOW: &str = "no_refine_workflow";
     pub const NO_SIGN_IN: &str = "no_sign_in";
-    pub const NO_TOKEN: &str = "no_token";
     pub const NO_TURN_YET: &str = "no_turn_yet";
     pub const NO_UPDATE: &str = "no_update";
     pub const OWNER_REQUIRED: &str = "owner_required";
@@ -506,6 +507,7 @@ impl From<GitError> for ApiError {
             GitError::BranchExists(_) => Self::conflict(codes::BRANCH_EXISTS, e.to_string()),
             GitError::UnknownRef(_) => Self::bad_request(codes::UNKNOWN_REF, e.to_string()),
             GitError::BadPattern(_) => Self::bad_request(codes::BAD_PATTERN, e.to_string()),
+            GitError::NoIdentity => Self::conflict(codes::GIT_IDENTITY_MISSING, e.to_string()),
         }
     }
 }
@@ -583,6 +585,13 @@ mod tests {
         assert_eq!(e.status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(e.code, "git_error");
         assert_eq!(e.message, "git failed: 'feat' already exists");
+    }
+
+    #[test]
+    fn a_missing_git_identity_says_how_to_set_it() {
+        let e = ApiError::from(GitError::NoIdentity);
+        assert_eq!((e.status, e.code), (StatusCode::CONFLICT, "git_identity_missing"));
+        assert!(e.message.contains("git config --global user.name"), "{}", e.message);
     }
 
     #[test]

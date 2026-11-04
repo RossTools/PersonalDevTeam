@@ -344,7 +344,7 @@ function Updates({ v }: { v: HostSettingsView }) {
             label={<span className="flex items-center gap-2">GitHub token {!v.tokenError && <Badge tone={badge.tone}>{badge.text}</Badge>}</span>}
             description={u?.token.state === 'expired' ? 'GitHub rejected it, so updates go on without it. Paste a new one, or remove it under Danger zone.'
               : v.tokenPresent ? 'Only needed for a private repository or a fork. Kept in the OS keychain; paste a new one to replace it.'
-                : 'Only needed for a private repository or a fork. Kept in the OS keychain.'}
+                : 'Only needed for a private repository or a fork. Kept in the OS keychain. Report a bug uses your GitHub login, not this.'}
           >
             <Input ref={tokenInput} aria-label="GitHub token" type="password" autoComplete="off" className="w-56" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="github_pat_…" />
             <Button type="submit" size="sm" variant="primary" disabled={!secret.trim()} pending={token.isPending}>Save token</Button>
@@ -809,7 +809,7 @@ function Checks() {
       {checks.data && (
         <ul className="flex flex-col gap-1.5">
           {[
-            ...(['claude', 'codex', 'devin', 'git', 'tailscale'] as const).map((k) => ({ key: k, name: k, c: checks.data[k], optional: k === 'devin' })),
+            ...(['claude', 'codex', 'devin', 'git', 'gitIdentity', 'tailscale'] as const).map((k) => ({ key: k, name: k === 'gitIdentity' ? 'git identity' : k, c: checks.data[k], optional: k === 'devin' })),
             ...Object.entries(checks.data.acp ?? {}).map(([k, c]) => ({ key: k, name: agents.label(k as AgentKind), c, optional: true })),
           ].map(({ key: k, name, c, optional: canLack }) => {
             // An agent switched off is not checked for (PDT-270).
@@ -820,7 +820,7 @@ function Checks() {
             return (
               <li key={k} className="flex min-w-0 items-center gap-2">
                 <StatusDot status={status} label={text} />
-                <span className="w-20 shrink-0 truncate font-medium" title={name}>{name}</span>
+                <span className="w-24 shrink-0 truncate font-medium" title={name}>{name}</span>
                 <span className={c.ok || optional ? 'text-muted-foreground' : status === 'failed' ? 'text-destructive' : 'text-waiting'}>{text}</span>
                 {!optional && <span className="min-w-0 truncate text-xs text-muted-foreground" title={c.detail}>{c.detail}</span>}
               </li>
@@ -863,7 +863,8 @@ function BugReports({ v }: { v: HostSettingsView }) {
   const [open, setOpen] = useState(false);
   const p = preview.data;
   const where = !p ? null
-    : p.route === 'github' ? `Reports go to ${p.repo} on GitHub as issues, filed with the update token.`
+    : p.route === 'github' ? `Reports go to ${p.repo} on GitHub as issues, ${p.via === 'login' ? `filed as ${p.githubLogin ?? 'your GitHub login'}`
+      : p.via === 'token' ? 'filed with the update token' : 'sent from your browser on GitHub\'s bug form until you connect GitHub'}.`
     : p.route === 'local' ? `Reports become Draft bug tickets in ${p.project ? `${p.project.key} · ${p.project.name}` : 'the project whose origin is ' + p.repo}; nothing goes to GitHub.`
     : 'Report a bug is turned off.';
   return (

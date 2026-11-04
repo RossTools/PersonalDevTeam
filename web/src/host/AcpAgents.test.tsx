@@ -50,7 +50,7 @@ describe('Settings → Agents → ACP agents', () => {
     const calls = stubApi({
       'GET /api/host/settings': () => view(saved),
       'GET /api/host/update': { current: '0.1.0', state: 'idle', token: { state: 'missing' }, releaseRepo: { repo: 'a/b' } },
-      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, acp: {}, checkedAt: 1 },
+      'GET /api/host/checks': { claude: { found: true, ok: true, detail: '' }, codex: { found: true, ok: true, detail: '' }, devin: { found: false, ok: false, detail: '' }, git: { found: true, ok: true, detail: '' }, gitIdentity: { found: true, ok: true, detail: '' }, tailscale: { found: true, ok: true, detail: '' }, acp: {}, checkedAt: 1 },
       'PUT /api/host/settings': (c) => {
         saved = (c.body as { acpAgents: AcpAgentConfig[] }).acpAgents;
         return view(saved);

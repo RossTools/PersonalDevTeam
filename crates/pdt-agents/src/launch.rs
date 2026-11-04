@@ -47,6 +47,26 @@ pub fn detect_platform() -> Platform {
     }
 }
 
+/// A platform for tests: like [`detect_platform`] but it runs no login shell, its agent programs are missing files in
+/// `dir` (so no test starts the machine's `claude`, `codex` or `devin`; a test that wants one sets a fake), and the
+/// agents' config folders are in `<dir>/home`.
+pub fn isolated_platform(dir: &Path) -> Platform {
+    let missing = |name: &str| dir.join(format!("no-such-{name}")).to_string_lossy().into_owned();
+    let home = dir.join("home");
+    Platform {
+        windows: cfg!(windows),
+        has_pwsh: cfg!(windows) && which::which("pwsh").is_ok(),
+        unix_shell: std::env::var("SHELL").ok(),
+        claude_program: missing("claude"),
+        codex_program: missing("codex"),
+        devin_program: missing("devin"),
+        login_path: None,
+        codex_home: Some(home.join(".codex")),
+        claude_config_dir: Some(home.join(".claude")),
+        devin_config_file: Some(home.join(".config").join("devin").join("config.yaml")),
+    }
+}
+
 /// Where the agents install on macOS: Claude's and Devin's installers (~/.local/bin; ~/.claude/local for older
 /// Claude installs), Homebrew and npm under Homebrew's Node.
 fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
