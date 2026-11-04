@@ -361,6 +361,8 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
 export interface TicketsViewProps {
   backlog: BacklogState;
   projects: Project[];
+  /** The projects have loaded: until then the view shows a placeholder, not "Add a project". */
+  projectsLoaded?: boolean;
   /** Opens the full New ticket form (in this project, with this title). */
   onNewTicket: (projectId: string | null, title?: string) => void;
   /** The ticket peeked at, by key or id, when something else holds it (the app's route, PDT-111). */
@@ -374,7 +376,7 @@ export interface TicketPeekState {
 }
 
 /** The Tickets view's work area: header (Backlog | Board, New ticket), filters or bulk actions, the paged backlog, the peek. */
-export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsViewProps) {
+export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTicket, peek }: TicketsViewProps) {
   const phone = useMediaQuery(PHONE_QUERY);
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -598,7 +600,9 @@ export function TicketsView({ backlog, projects, onNewTicket, peek }: TicketsVie
   useTopBarActions(phoneImports.length > 0 ? () => phoneImports.map((i) => ({ label: `${i.title}…`, onSelect: () => setImporting(i) })) : null);
 
   let body: ReactNode;
-  if (projects.length === 0) {
+  if (!projectsLoaded) {
+    body = <div className="p-3"><Skeleton lines={3} label="Loading tickets" /></div>;
+  } else if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
   } else if (mode === 'board') {
     body = <Board projectId={project?.id ?? null} onPeek={peekTo} phone={phone} />;
