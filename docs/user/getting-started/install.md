@@ -50,6 +50,9 @@ $env:PDT_CHANNEL = 'nightly'   # or: $env:PDT_VERSION = '0.3.0'; $env:PDT_FORCE 
 irm https://pdt.dev/install.ps1 | iex
 ```
 
+With `PDT_FORCE`, a PDT that is running is stopped first, and the script checks that the PDT it starts afterwards is
+the version it installed.
+
 `PDT_CHANNEL`, `PDT_VERSION` and `PDT_FORCE` work on macOS and Linux too, where `PDT_YES` also answers the script's
 questions. You don't need a GitHub token.
 Set `GITHUB_TOKEN` only to install from a private fork, or if GitHub says its rate limit is used up.
