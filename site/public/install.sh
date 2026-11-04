@@ -11,14 +11,16 @@
 #   --yes                     PDT_YES=1     answer yes to questions (Linux: keep PDT running after you log out)
 #   GITHUB_TOKEN                            optional: only for a private fork, or when GitHub's rate limit is used up
 #
-# It downloads the release for this system from GitHub, checks it against the release's SHA256SUMS and installs it:
+# It downloads the release for this system from GitHub, checks that the release's SHA256SUMS carries PDT's release
+# signature (SHA256SUMS.sig, checked with openssl against the key below) and the download against SHA256SUMS, and
+# installs it:
 # macOS into ~/Applications (then opens it once, which starts it at login), Linux into ~/.local/opt/pdt as a systemd
 # user service. Windows has install.ps1.
 #
 # Everything runs from pdt_install, called on the last line: a download cut short runs nothing.
 #
 # For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_LOCAL (where a running PDT
-# answers, http://127.0.0.1:7420) and PDT_INSTALL_SYSTEM_APPS (/Applications).
+# answers, http://127.0.0.1:7420), PDT_INSTALL_SYSTEM_APPS (/Applications) and PDT_INSTALL_SIGNING_KEY (the key below).
 
 set -eu
 
@@ -28,6 +30,10 @@ pdt_install() {
 	slug="pdt"
 	port=7420
 	site="https://pdt.dev"
+	# The release signing key (base64 of its public key's DER; the same as RELEASE_SIGNING_KEY in PDT's source). Empty
+	# until releases are signed: then SHA256SUMS alone is checked.
+	signing_key=""
+	signing_key="${PDT_INSTALL_SIGNING_KEY:-$signing_key}"
 	api="${PDT_INSTALL_API:-https://api.github.com}"
 	local_url="${PDT_INSTALL_LOCAL:-http://127.0.0.1:$port}"
 	sys_apps="${PDT_INSTALL_SYSTEM_APPS:-/Applications}"
@@ -64,6 +70,9 @@ pdt_install() {
 		sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
 	else
 		die "this needs sha256sum or shasum to check the download, and found neither"
+	fi
+	if [ -n "$signing_key" ] && ! command -v openssl >/dev/null 2>&1; then
+		die "this needs openssl to check the release's signature. Install openssl and run it again."
 	fi
 
 	# The system, and the release asset for it (the names hosts update from: pdt_core::release::select_asset).
@@ -155,6 +164,14 @@ pdt_install() {
 
 	say "Downloading $product $tag ($asset)..."
 	download "$sums_id" "$tmp/SHA256SUMS" || die "could not download SHA256SUMS of $tag."
+	if [ -n "$signing_key" ]; then
+		sig_id="$(find_asset SHA256SUMS.sig <"$tmp/assets")" ||
+			die "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
+		download "$sig_id" "$tmp/SHA256SUMS.sig" || die "could not download SHA256SUMS.sig of $tag."
+		verify_signature ||
+			die "the signature of $tag's SHA256SUMS does not match $product's release key. Nothing was installed."
+		say "Signature verified."
+	fi
 	download "$asset_id" "$tmp/$asset" || die "could not download $asset."
 	want="$(awk -v n="$asset" '{ f = $2; sub(/^\*/, "", f) } f == n { print tolower($1); exit }' "$tmp/SHA256SUMS")"
 	[ -n "$want" ] || die "SHA256SUMS of $tag does not list $asset, so it can't be checked. Nothing was installed."
@@ -304,6 +321,21 @@ assets() {
 }
 
 # The id of the asset named $1 (stdin: assets' lines). Fails when there is none.
+# SHA256SUMS.sig is an ECDSA P-256 signature (DER) over the tag, a newline, then SHA256SUMS: it vouches for this
+# release only.
+verify_signature() {
+	{
+		echo '-----BEGIN PUBLIC KEY-----'
+		printf '%s\n' "$signing_key" | fold -w 64
+		echo '-----END PUBLIC KEY-----'
+	} >"$tmp/release-key.pem"
+	{
+		printf '%s\n' "$tag"
+		cat "$tmp/SHA256SUMS"
+	} >"$tmp/signed"
+	openssl dgst -sha256 -verify "$tmp/release-key.pem" -signature "$tmp/SHA256SUMS.sig" "$tmp/signed" >/dev/null 2>&1
+}
+
 find_asset() {
 	awk -v n="$1" '$2 == n { print $1; found = 1; exit } END { exit !found }'
 }

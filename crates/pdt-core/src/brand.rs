@@ -32,6 +32,14 @@ pub const RELEASE_REPO: &str = "RossTools/PersonalDevTeam";
 /// survives renames, org renames and transfers (PDT-195); the name is the fallback. Renaming or moving the repository:
 /// docs/SDLC.md "Moving the release repository".
 pub const RELEASE_REPO_ID: u64 = 1420061987;
+/// The public key that signs each release's SHA256SUMS (PDT-531; docs/SDLC.md "Release signing"): base64 of its
+/// SubjectPublicKeyInfo DER, an ECDSA P-256 key. With a key, updates and the install scripts refuse a release whose
+/// `SHA256SUMS.sig` doesn't verify; None trusts SHA256SUMS alone (until the release key exists). The install scripts
+/// pin the same value (a test checks).
+pub const RELEASE_SIGNING_KEY: Option<&str> = None;
+/// The Apple Developer Team ID that signs the macOS app. pdt-host installs an update's `.app` only when
+/// `codesign` verifies it as signed by this team.
+pub const MACOS_TEAM_ID: &str = "DX69RXFP5X";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
 /// The client ID of PDT's GitHub OAuth App (PDT-177): the in-app "Connect GitHub" login (OAuth device flow) uses it.
@@ -164,6 +172,7 @@ mod tests {
             format!("product=\"{PRODUCT_NAME}\""),
             format!("slug=\"{SLUG}\""),
             format!("port={STABLE_PORT}"),
+            format!("signing_key=\"{}\"", RELEASE_SIGNING_KEY.unwrap_or_default()),
         ] {
             assert!(sh.contains(&line), "install.sh lacks {line}");
         }
@@ -174,6 +183,7 @@ mod tests {
             format!("$product = '{PRODUCT_NAME}'"),
             format!("$port = {STABLE_PORT}"),
             format!("'{HOST_BIN}.exe'"),
+            format!("$signingKey = '{}'", RELEASE_SIGNING_KEY.unwrap_or_default()),
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }

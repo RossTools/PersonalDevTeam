@@ -319,6 +319,18 @@ pub fn previous_bundle(bundle: &Path) -> PathBuf {
 pub struct BundleInstaller {
     pub bundle: PathBuf,
     pub timeout: Duration,
+    /// The Team ID whose Developer ID signature the new `.app` must carry (`brand::MACOS_TEAM_ID`); None checks
+    /// nothing (tests, whose bundles are unsigned).
+    pub team_id: Option<&'static str>,
+}
+
+/// The code requirement an update's `.app` must satisfy: Apple-anchored (a Developer ID), PDT's bundle identifier,
+/// signed by `team_id`.
+fn bundle_requirement(team_id: &str) -> String {
+    format!(
+        "anchor apple generic and identifier \"{}\" and certificate leaf[subject.OU] = \"{team_id}\"",
+        pdt_core::brand::APP_BUNDLE_ID
+    )
 }
 
 impl BundleInstaller {
@@ -342,6 +354,24 @@ impl BundleInstaller {
             .find(|p| p.extension().is_some_and(|e| e == "app"))
             .ok_or_else(|| "the archive has no .app bundle".into())
     }
+
+    /// Defence in depth beside the signed SHA256SUMS (PDT-531): the extracted bundle must pass `codesign --verify`
+    /// (deep, strict) against [`bundle_requirement`] before it replaces the running one, since removing the
+    /// quarantine attribute means Gatekeeper never looks at it.
+    fn verify_signature(&self, app: &Path) -> Result<(), String> {
+        let Some(team) = self.team_id else { return Ok(()) };
+        let mut cs = Command::new("codesign");
+        cs.args(["--verify", "--deep", "--strict"])
+            .arg(format!("-R={}", bundle_requirement(team)))
+            .arg(app)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        if run_with_timeout(&mut cs, self.timeout)?.success() {
+            Ok(())
+        } else {
+            Err(format!("the update's app is not signed by {}'s developer certificate", pdt_core::brand::PRODUCT_NAME))
+        }
+    }
 }
 
 impl Installer for BundleInstaller {
@@ -364,6 +394,10 @@ impl Installer for BundleInstaller {
                 return Err(e);
             }
         };
+        if let Err(e) = self.verify_signature(&new) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
         let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(&new).status();
         let _tray = TrayPause::stop(&self.bundle);
         let prev = previous_bundle(&self.bundle);
@@ -433,7 +467,11 @@ pub fn installer_for(cfg: &HostConfig) -> Result<Box<dyn Installer + Send>, Stri
         if let Some(reason) = crate::placement::bundle_problem(&cfg.install_dir) {
             return Err(reason);
         }
-        Ok(Box::new(BundleInstaller { bundle, timeout: INSTALL_TIMEOUT }))
+        Ok(Box::new(BundleInstaller {
+            bundle,
+            timeout: INSTALL_TIMEOUT,
+            team_id: Some(pdt_core::brand::MACOS_TEAM_ID),
+        }))
     } else if cfg!(target_os = "linux") {
         linux_installer(cfg)
     } else {
@@ -707,13 +745,39 @@ mod tests {
         let prev = previous_bundle(&bundle);
         std::fs::create_dir_all(&prev).unwrap();
         std::fs::write(prev.join("v"), "old").unwrap();
-        let i = BundleInstaller { bundle: bundle.clone(), timeout: INSTALL_TIMEOUT };
+        let i = BundleInstaller { bundle: bundle.clone(), timeout: INSTALL_TIMEOUT, team_id: None };
         i.rollback().unwrap();
         assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "old");
         assert!(!prev.exists() && !with_suffix(&bundle, ".failed").exists());
         // Nothing moved aside: nothing to undo.
         i.rollback().unwrap();
         assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "old");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_app_not_signed_by_the_team_is_never_swapped_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = tmp.path().join("P.app");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(bundle.join("v"), "old").unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("New.app/Contents/MacOS")).unwrap();
+        std::fs::write(src.join("New.app/Contents/MacOS/x"), "trojan").unwrap();
+        let archive = tmp.path().join("new.app.tar.gz");
+        let tar = Command::new("tar").arg("-czf").arg(&archive).arg("-C").arg(&src).arg("New.app").status().unwrap();
+        assert!(tar.success());
+        let i =
+            BundleInstaller { bundle: bundle.clone(), timeout: Duration::from_secs(30), team_id: Some("ABCDE12345") };
+        i.backup().unwrap();
+        let err = i.install(&archive).unwrap_err();
+        assert!(err.contains("not signed"), "{err}");
+        assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "old");
+        assert!(!previous_bundle(&bundle).exists() && !tmp.path().join(".pdt-update-staging").exists());
+        // Without a team the same bundle goes in (what the other tests rely on).
+        let i = BundleInstaller { team_id: None, ..i };
+        i.install(&archive).unwrap();
+        assert_eq!(std::fs::read_to_string(bundle.join("Contents/MacOS/x")).unwrap(), "trojan");
     }
 
     #[test]
@@ -723,7 +787,7 @@ mod tests {
         std::fs::create_dir_all(&bundle).unwrap();
         let junk = tmp.path().join("junk.tar.gz");
         std::fs::write(&junk, "not an archive").unwrap();
-        let i = BundleInstaller { bundle: bundle.clone(), timeout: Duration::from_secs(30) };
+        let i = BundleInstaller { bundle: bundle.clone(), timeout: Duration::from_secs(30), team_id: None };
         i.backup().unwrap();
         assert!(i.install(&junk).is_err());
         assert!(bundle.is_dir());

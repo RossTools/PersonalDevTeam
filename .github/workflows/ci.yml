@@ -181,6 +181,7 @@ jobs:
       - run: scripts/release-tag.test.sh
       - run: scripts/nightly-tag.test.sh
       - run: scripts/google-build-values.test.sh
+      - run: scripts/release-sign.test.sh
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
       - name: The pull request adds a changelog fragment
@@ -279,6 +280,7 @@ jobs:
           $found = Invoke-ScriptAnalyzer -Path site/public/install.ps1 -ExcludeRule PSAvoidUsingWriteHost
           $found | Format-Table -AutoSize -Wrap
           if ($found) { exit 1 }
+      - run: pwsh site/src/install.test.ps1
       - run: pnpm --filter site test
       - run: pnpm --filter site build
 

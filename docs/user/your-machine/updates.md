@@ -98,7 +98,8 @@ To add steps of your own, click **Customize as a workflow →**. Once you change
 Settings says **Updates follow your customized workflow** and offers **Open** and **Reset to default**. Turned off, no
 update installs by itself.
 
-Each update is checked against the release's checksums, and PDT copies its database before installing. If the new
+Each update is checked against the release's checksums (on a Mac, the new app must also carry PDT's developer
+signature), and PDT copies its database before installing. If the new
 version doesn't start properly, PDT puts back the version you had (on Windows, with its entry in **Settings › Apps**)
 and the database copy, and a banner says **Update to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its
 own. See [An update rolled back](../troubleshooting/troubleshooting.md#an-update-rolled-back).

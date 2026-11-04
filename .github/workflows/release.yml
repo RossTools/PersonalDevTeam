@@ -30,6 +30,7 @@ name: release
 # App's). Pull requests, pushes and merges made with the workflow's own GITHUB_TOKEN start no workflows, so the release
 # PR would get no CI and its merge would tag nothing. The bundles use the signing secrets ci.yml does
 # (MACOS_SIGNING_P12, MACOS_SIGNING_P12_PASSWORD, MACOS_NOTARY_KEY, MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER).
+# PDT_RELEASE_SIGNING_KEY, a secret of the `release-signing` environment, signs SHA256SUMS (scripts/release-sign.sh).
 #
 # Repo variable PDT_RELEASE_TAG_PREFIX (default `v`) is for a dry run on a fork: with any other prefix (`test-v`) the
 # release is published as a pre-release, which no PDT installs as an update.
@@ -362,6 +363,8 @@ jobs:
       ${{ !cancelled() && needs.bundle-macos.result == 'success' && needs.bundle-windows.result == 'success' &&
       needs.bundle-linux.result == 'success' }}
     runs-on: ubuntu-latest
+    # The release signing key (PDT_RELEASE_SIGNING_KEY) is a secret of this environment only, so no other job sees it.
+    environment: release-signing
     permissions:
       contents: write
     steps:
@@ -380,6 +383,13 @@ jobs:
           for f in *; do n="${f// /.}"; if [ "$f" != "$n" ]; then mv "$f" "$n"; fi; done
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
+      # SHA256SUMS.sig (docs/SDLC.md "Release signing"): hosts and the install scripts that pin a key refuse a release
+      # without it. Without the secret, and no key pinned yet, it only warns.
+      - name: Sign
+        env:
+          PDT_RELEASE_SIGNING_KEY: ${{ secrets.PDT_RELEASE_SIGNING_KEY }}
+          TAG: ${{ needs.tag.outputs.tag || needs.nightly.outputs.tag }}
+        run: scripts/release-sign.sh "$TAG" assets/SHA256SUMS
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

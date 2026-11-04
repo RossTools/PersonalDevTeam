@@ -7,7 +7,8 @@
 use futures_util::StreamExt;
 use pdt_core::host::UpdateChannel;
 use pdt_core::release::{
-    Change, HostOs, SUMS_ASSET, Version, newest_on_channel, parse_change, parse_sums, parse_version, select_asset,
+    Change, HostOs, SIG_ASSET, SUMS_ASSET, Version, newest_on_channel, parse_change, parse_sums, parse_version,
+    select_asset,
 };
 use reqwest::header::{ACCEPT, LOCATION};
 use serde::Deserialize;
@@ -16,6 +17,9 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
+
+mod signature;
+pub use signature::{signed_message, verify_sums};
 
 pub const GITHUB_API: &str = "https://api.github.com";
 const MAX_REDIRECTS: usize = 5;
@@ -29,6 +33,8 @@ const RELEASES_PER_PAGE: usize = 100;
 const MAX_RELEASE_PAGES: usize = 10;
 /// SHA256SUMS lists a handful of assets; anything bigger is not ours.
 const SUMS_MAX_BYTES: u64 = 64 * 1024;
+/// A DER ECDSA P-256 signature is at most 72 bytes.
+const SIG_MAX_BYTES: u64 = 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Asset {
@@ -123,6 +129,10 @@ pub enum UpdateError {
     NoAsset,
     #[error("the release has no SHA256SUMS file")]
     NoChecksums,
+    #[error("the release has no signature (SHA256SUMS.sig), so its SHA256SUMS can't be trusted")]
+    NoSignature,
+    #[error("the release's SHA256SUMS is not signed by PDT's release key: {0}")]
+    Signature(String),
     #[error("the checksum of {0} does not match SHA256SUMS")]
     Checksum(String),
     #[error("{0} is larger than the release says")]
@@ -639,15 +649,17 @@ async fn sha256_of(path: &Path) -> Result<String, UpdateError> {
         .map_err(|e| UpdateError::Io(e.to_string()))
 }
 
-/// Downloads this platform's asset of `release` into `dir` and checks it against the release's SHA256SUMS. Returns
-/// the verified file; on any failure nothing is left under the asset's name. A file already there that matches
-/// SHA256SUMS is reused instead of downloaded again.
+/// Downloads this platform's asset of `release` into `dir` and checks it against the release's SHA256SUMS. With a
+/// signing `key` (base64 SPKI DER, `pdt_core::brand::RELEASE_SIGNING_KEY`) SHA256SUMS is trusted only once its
+/// signature verifies; a release without one is refused. Returns the verified file; on any failure nothing is left
+/// under the asset's name. A file already there that matches SHA256SUMS is reused instead of downloaded again.
 pub async fn fetch_verified(
     client: &GitHubClient,
     token: Option<&str>,
     release: &Release,
     os: HostOs,
     dir: &Path,
+    key: Option<&str>,
 ) -> Result<PathBuf, UpdateError> {
     let names: Vec<&str> = release.assets.iter().map(|a| a.name.as_str()).collect();
     let name = select_asset(&names, os).ok_or(UpdateError::NoAsset)?;
@@ -659,7 +671,15 @@ pub async fn fetch_verified(
     tokio::fs::create_dir_all(dir).await.map_err(|e| UpdateError::Io(e.to_string()))?;
     let sums_file = dir.join(SUMS_ASSET);
     client.download_capped(token, sums_asset, &sums_file, SUMS_MAX_BYTES).await?;
-    let sums = parse_sums(&tokio::fs::read_to_string(&sums_file).await.map_err(|e| UpdateError::Io(e.to_string()))?);
+    let sums_bytes = tokio::fs::read(&sums_file).await.map_err(|e| UpdateError::Io(e.to_string()))?;
+    if let Some(key) = key {
+        let sig_asset = release.assets.iter().find(|a| a.name == SIG_ASSET).ok_or(UpdateError::NoSignature)?;
+        let sig_file = dir.join(SIG_ASSET);
+        client.download_capped(token, sig_asset, &sig_file, SIG_MAX_BYTES).await?;
+        let sig = tokio::fs::read(&sig_file).await.map_err(|e| UpdateError::Io(e.to_string()))?;
+        verify_sums(key, &release.tag, &sums_bytes, &sig).map_err(UpdateError::Signature)?;
+    }
+    let sums = parse_sums(&String::from_utf8_lossy(&sums_bytes));
     let expected = sums.get(name).cloned().ok_or_else(|| UpdateError::Checksum(name.to_string()))?;
     let fin = dir.join(name);
     if tokio::fs::try_exists(&fin).await.unwrap_or(false) && sha256_of(&fin).await.is_ok_and(|h| h == expected) {

@@ -20,6 +20,12 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The stable instance (port 7420) is the user's.** Agents never stop, restart or update it, never call its
   `/api/shutdown`, and tests never touch it or the real data folders ([testing.md](testing.md)). Only pdt-host and the
   user's Update do. A dev instance never updates; updates never install an older version.
+- **Nothing from a release runs before it is verified.** pdt-update's `fetch_verified` trusts a release's
+  `SHA256SUMS` only once `SHA256SUMS.sig` verifies against `brand::RELEASE_SIGNING_KEY` (when one is pinned), over the
+  release's tag and `SHA256SUMS`, and the asset only once it matches. On macOS pdt-host also runs `codesign --verify`
+  against `brand::MACOS_TEAM_ID` on the extracted `.app` before it removes quarantine and swaps it in. The install
+  scripts pin the same key (a test checks) and check the same signature. Pinning a key or changing it:
+  [SDLC.md](../SDLC.md) "Release signing".
 
 ## Talking to agents
 
