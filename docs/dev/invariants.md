@@ -347,8 +347,14 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `BEGIN`.
 - **Processes start off the runtime's threads.** Creating a process (and scanning the search path for it) can take a
   second or more on a loaded Windows host, and tokio's `Command::spawn` does it inline in the poll. Async code starts
-  them on the blocking pool: pdt-agents `launch::find_launch` and `launch::spawn_child`, `spawn_blocking` around
-  `PtyManager::spawn`/`remove`/`kill` (`AppState::kill_pty`/`remove_pty`). `PtyManager` holds its map lock only to look
+  every process with pdt-agents `launch::spawn_child` (agents, workflow command and conflict steps, local CI,
+  `run_with_secrets`, sign-in), never `Command::spawn` itself; a library that spawns its own child (rmcp's
+  `TokioChildProcess` for stdio MCP servers) is spawned inside `spawn_blocking` and handed over. Search-path lookups
+  go through `launch::find_launch` or `spawn_blocking`, and so do `PtyManager::spawn`/`remove`/`kill`
+  (`AppState::kill_pty`/`remove_pty`). Killing a tree from async code or a `Drop` uses `proc::kill_group` (Windows'
+  `taskkill` starts on a thread of its own). The same goes for folders that grow with use: Claude's transcript is
+  looked up in its working folder's project first (`launch::claude_transcript`), and only scanned for on a miss, on
+  the blocking pool. `PtyManager` holds its map lock only to look
   up, reserve an id or insert, never while a PTY opens, a process starts or one is killed, so attaching, writing and
   resizing other terminals never wait on them. The id reserved while a process starts is released on every way out
   (a `Reservation` drop guard; a panic while starting becomes a spawn error), or that session could not start again
