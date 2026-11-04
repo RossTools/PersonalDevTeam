@@ -92,29 +92,43 @@ const OPEN_MAX_ZOOM = 1;
 /** Space (px) kept between the graph and the canvas's edges when it opens. */
 const OPEN_PADDING = 40;
 
+type Rect = { x: number; y: number; width: number; height: number };
+
 /**
  * Where the graph opens without a remembered viewport: the whole graph when it fits at a readable zoom, centred;
- * otherwise at the minimum zoom, pinned to the left (and the top) along the side it overflows, for the user to pan.
+ * otherwise at the minimum zoom, for the user to pan, showing `anchor` (the node the graph starts from): along the
+ * width the anchor sits at the left, along the height it is centred, and neither shows more than the padding past the
+ * graph's bounds. Without an anchor the graph's top-left corner is pinned.
  */
-export function openingViewport(
-  bounds: { x: number; y: number; width: number; height: number },
-  canvas: { width: number; height: number },
-): FlowViewport {
+export function openingViewport(bounds: Rect, canvas: { width: number; height: number }, anchor?: Rect): FlowViewport {
   const room = { width: Math.max(canvas.width - 2 * OPEN_PADDING, 1), height: Math.max(canvas.height - 2 * OPEN_PADDING, 1) };
   const fit = Math.min(room.width / Math.max(bounds.width, 1), room.height / Math.max(bounds.height, 1));
   const zoom = Math.min(OPEN_MAX_ZOOM, Math.max(OPEN_MIN_ZOOM, fit));
-  const axis = (start: number, size: number, space: number, total: number) =>
-    size * zoom <= space ? (total - size * zoom) / 2 - start * zoom : OPEN_PADDING - start * zoom;
+  const pad = OPEN_PADDING / zoom;
+  // `seen`: the first graph coordinate in view when the graph overflows, kept within the bounds and their padding.
+  const axis = (start: number, size: number, space: number, total: number, seen: number) => {
+    if (size * zoom <= space) return (total - size * zoom) / 2 - start * zoom;
+    const first = Math.min(Math.max(seen, start - pad), start + size + pad - total / zoom);
+    return -first * zoom;
+  };
+  const a = anchor ?? { x: bounds.x, y: bounds.y, width: 0, height: 0 };
   return {
-    x: axis(bounds.x, bounds.width, room.width, canvas.width),
-    y: axis(bounds.y, bounds.height, room.height, canvas.height),
+    x: axis(bounds.x, bounds.width, room.width, canvas.width, a.x - pad),
+    y: axis(bounds.y, bounds.height, room.height, canvas.height, a.y + a.height / 2 - canvas.height / zoom / 2),
     zoom,
   };
 }
 
+/** The node a graph starts from: the left-most trigger (then the top-most), or the left-most node without triggers. */
+function startNode(nodes: Node<CardData>[]): Node<CardData> {
+  const triggers = nodes.filter((n) => n.data.input === false);
+  return (triggers.length ? triggers : nodes)
+    .reduce((a, b) => (b.position.x < a.position.x || (b.position.x === a.position.x && b.position.y < a.position.y) ? b : a));
+}
+
 /** Opens the graph at openingViewport once its nodes are measured (React Flow's own fitView only centres). */
 function OpeningFit() {
-  const { getNodes, getNodesBounds, setViewport } = useReactFlow();
+  const { getNodes, getNodesBounds, setViewport } = useReactFlow<Node<CardData>>();
   const measured = useNodesInitialized();
   const width = useStore((s) => s.width);
   const height = useStore((s) => s.height);
@@ -124,7 +138,7 @@ function OpeningFit() {
     const nodes = getNodes();
     if (!nodes.length) return;
     done.current = true;
-    void setViewport(openingViewport(getNodesBounds(nodes), { width, height }));
+    void setViewport(openingViewport(getNodesBounds(nodes), { width, height }, getNodesBounds([startNode(nodes)])));
   }, [measured, width, height, getNodes, getNodesBounds, setViewport]);
   return null;
 }
