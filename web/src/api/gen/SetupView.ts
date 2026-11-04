@@ -5,7 +5,7 @@ import type { SetupSteps } from "./SetupSteps";
 
 export type SetupView = { state: SetupState, steps: SetupSteps, 
 /**
- * How many of the four steps are done.
+ * How many of the five steps are done.
  */
 done: number, 
 /**

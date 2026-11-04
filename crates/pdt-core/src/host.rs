@@ -123,7 +123,8 @@ pub struct HostSettings {
     pub default_agent: AgentKind,
     /// Whether a new agent session is a conversation or the agent's terminal by default.
     pub default_session_mode: SessionMode,
-    /// The permission mode a ticket's Start offers first (bypass: the agent works on its own branch, PDT-75).
+    /// The permission mode a ticket's Start offers first. Ask on a new install (PDT-562): Bypass only once the user
+    /// picks it (Get started, Settings). Installs from before keep Bypass, the old default (a migration pins it).
     pub ticket_permission_mode: PermissionMode,
     /// The permission mode a new session offers first (the new-tab chooser).
     pub session_permission_mode: PermissionMode,
@@ -196,7 +197,7 @@ impl Default for HostSettings {
             projects_dir: None,
             default_agent: AgentKind::Claude,
             default_session_mode: SessionMode::Conversation,
-            ticket_permission_mode: PermissionMode::Bypass,
+            ticket_permission_mode: PermissionMode::Ask,
             session_permission_mode: PermissionMode::Ask,
             update_check_minutes: DEFAULT_UPDATE_CHECK_MINUTES,
             max_agent_turns: DEFAULT_MAX_AGENT_TURNS,
@@ -635,10 +636,7 @@ mod tests {
         assert_eq!(s.agent_credentials, CredentialPolicy::Subscription);
         assert_eq!(s.default_agent, AgentKind::Claude);
         assert_eq!(s.default_session_mode, SessionMode::Conversation);
-        assert_eq!(
-            (s.ticket_permission_mode, s.session_permission_mode),
-            (PermissionMode::Bypass, PermissionMode::Ask)
-        );
+        assert_eq!((s.ticket_permission_mode, s.session_permission_mode), (PermissionMode::Ask, PermissionMode::Ask));
         assert_eq!(s.update_check_minutes, 60);
     }
 
@@ -648,7 +646,7 @@ mod tests {
         let s: HostSettings = serde_json::from_str(r#"{"remoteAccess":true,"maxConcurrentRuns":2}"#).unwrap();
         assert_eq!(s.default_agent, AgentKind::Claude);
         assert_eq!(s.default_session_mode, SessionMode::Conversation);
-        assert_eq!(s.ticket_permission_mode, PermissionMode::Bypass);
+        assert_eq!(s.ticket_permission_mode, PermissionMode::Ask, "pdt-store's migration pins Bypass for old installs");
         assert_eq!(s.update_check_minutes, DEFAULT_UPDATE_CHECK_MINUTES);
     }
 
