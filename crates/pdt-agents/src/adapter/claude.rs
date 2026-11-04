@@ -269,7 +269,8 @@ impl AgentAdapter for ClaudeAdapter {
 
     async fn draft(&self, spec: OpenSpec, prompt: &str, schema: &Value) -> Result<Value, AdapterError> {
         let args = claude_draft_args(&spec, schema);
-        let resolved = crate::launch::resolve_launch(&spec.program, &args, spec.search_path.as_deref())
+        let resolved = crate::launch::find_launch(&spec.program, &args, spec.search_path.as_deref())
+            .await
             .map_err(|_| AdapterError::ProgramNotFound(spec.program.clone()))?;
         let mut cmd = tokio::process::Command::new(&resolved.program);
         cmd.args(&resolved.args)
@@ -284,7 +285,7 @@ impl AgentAdapter for ClaudeAdapter {
         cmd.envs(spec.env.iter().map(|(k, v)| (k, v)));
         #[cfg(windows)]
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        let mut child = cmd.spawn().map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        let mut child = crate::launch::spawn_child(cmd).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(prompt.as_bytes()).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
             // Dropped here: stdin closes, so Claude reads the whole prompt.
@@ -313,7 +314,8 @@ impl AgentAdapter for ClaudeAdapter {
 impl ClaudeLive {
     pub async fn spawn(spec: OpenSpec, sink: EventSink) -> Result<Self, AdapterError> {
         let args = claude_args(&spec);
-        let resolved = crate::launch::resolve_launch(&spec.program, &args, spec.search_path.as_deref())
+        let resolved = crate::launch::find_launch(&spec.program, &args, spec.search_path.as_deref())
+            .await
             .map_err(|_| AdapterError::ProgramNotFound(spec.program.clone()))?;
         let mut cmd = tokio::process::Command::new(&resolved.program);
         cmd.args(&resolved.args)
@@ -330,7 +332,7 @@ impl ClaudeLive {
         cmd.process_group(0);
         #[cfg(windows)]
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        let mut child = cmd.spawn().map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        let mut child = crate::launch::spawn_child(cmd).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
         let (Some(stdin), Some(stdout), Some(stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
             return Err(AdapterError::Spawn("the agent's pipes were not available".into()));

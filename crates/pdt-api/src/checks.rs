@@ -98,24 +98,38 @@ async fn run(
     kind: SessionKind,
     creds: CredentialPolicy,
 ) -> Result<Ran, RunError> {
+    let program_name = program.to_string();
     let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let l = pdt_agents::launch::resolve_launch(program, &args, st.platform.login_path.as_deref())
-        .map_err(|e| RunError::NotFound(e.to_string()))?;
-    // A Windows shim runs through cmd.exe: the program found is its third argument (`/d /c <shim>`).
-    let path = if l.via_cmd { l.args[2].clone() } else { l.program.to_string_lossy().into_owned() };
-    let mut cmd = tokio::process::Command::new(&l.program);
-    cmd.args(&l.args).stdin(std::process::Stdio::null()).kill_on_drop(true);
-    if let Some(p) = &st.platform.login_path {
-        cmd.env("PATH", p);
-    }
-    for (k, _) in std::env::vars_os() {
-        if let Some(k) = k.to_str()
-            && is_scrubbed(kind, k, creds)
-        {
-            cmd.env_remove(k);
+    let (program, login_path) = (program.to_string(), st.platform.login_path.clone());
+    // Finding the program scans the search path and starting it can take a second on a loaded Windows host
+    // (PDT-48): both run on the blocking pool, and only the wait for its output on the runtime.
+    let started = tokio::task::spawn_blocking(move || {
+        let l = pdt_agents::launch::resolve_launch(&program, &args, login_path.as_deref())
+            .map_err(|e| RunError::NotFound(e.to_string()))?;
+        // A Windows shim runs through cmd.exe: the program found is its third argument (`/d /c <shim>`).
+        let path = if l.via_cmd { l.args[2].clone() } else { l.program.to_string_lossy().into_owned() };
+        let mut cmd = tokio::process::Command::new(&l.program);
+        cmd.args(&l.args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(p) = &login_path {
+            cmd.env("PATH", p);
         }
-    }
-    let out = tokio::time::timeout(RUN_TIMEOUT, cmd.output())
+        for (k, _) in std::env::vars_os() {
+            if let Some(k) = k.to_str()
+                && is_scrubbed(kind, k, creds)
+            {
+                cmd.env_remove(k);
+            }
+        }
+        cmd.spawn().map(|child| (child, path.clone())).map_err(|e| RunError::Failed(e.to_string(), path))
+    })
+    .await
+    .map_err(|e| RunError::Failed(e.to_string(), program_name.clone()))??;
+    let (child, path) = started;
+    let out = tokio::time::timeout(RUN_TIMEOUT, child.wait_with_output())
         .await
         .map_err(|_| RunError::Failed(format!("timed out after {} s", RUN_TIMEOUT.as_secs()), path.clone()))?
         .map_err(|e| RunError::Failed(e.to_string(), path.clone()))?;

@@ -244,7 +244,8 @@ impl CodexServer {
             "--ws-token-file".into(),
             token_file.to_string_lossy().into_owned(),
         ];
-        let resolved = crate::launch::resolve_launch(&self.config.program, &args, self.config.search_path.as_deref())
+        let resolved = crate::launch::find_launch(&self.config.program, &args, self.config.search_path.as_deref())
+            .await
             .map_err(|_| AdapterError::ProgramNotFound(self.config.program.clone()))?;
         let mut cmd = tokio::process::Command::new(&resolved.program);
         cmd.args(&resolved.args)
@@ -261,7 +262,7 @@ impl CodexServer {
         cmd.process_group(0);
         #[cfg(windows)]
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        let mut child = cmd.spawn().map_err(|e| AdapterError::Spawn(e.to_string()))?;
+        let mut child = crate::launch::spawn_child(cmd).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
         let pid = child.id();
         let stderr_tail = Arc::new(Mutex::new(String::new()));
         if let Some(mut err) = child.stderr.take() {
