@@ -253,6 +253,7 @@ export function selectedUpdate(selection: string | null): string | null {
 
 /** An item's name on its own screen: its kind, or Accept for a gate under Ready to accept. */
 export function itemLabel(item: InboxItem): string {
+  if (item.kind === 'gate' && item.group === 'stalled') return KIND_LABEL.stalled;
   return item.group === 'accept' ? 'Accept' : KIND_LABEL[item.kind];
 }
 

@@ -15,6 +15,8 @@ pub static SETTINGS: InputsBuiltin = InputsBuiltin {
     extra: None,
 };
 
+/// The Idle tickets input's default, in minutes (PDT-510).
+pub const IDLE_MINUTES: u64 = 20;
 pub const FIRST_NUDGE: &str =
     "You stopped without an outcome. Finish with submit_outcome, or ask_user if you're blocked.";
 pub const LATER_NUDGE: &str = "You stopped again without an outcome. The step's goal:\n\n{{trigger.goal}}\n\n\
@@ -38,6 +40,10 @@ pub fn stuck_params() -> Vec<TemplateParam> {
                                            ends by its stopped port."},
         {"id": "timeoutRestarts", "title": "Fresh sessions after a time limit", "type": "number", "default": 1,
          "description": "How many times a step that timed out is restarted in a fresh session before you are asked."},
+        {"id": "idleMinutes", "title": "Idle tickets", "type": "number", "default": IDLE_MINUTES,
+         "description": "Minutes a ticket in progress may wait on nothing (its workflow unfinished, but no agent at \
+                         work or waiting, nothing in the Inbox, no CI running) before it goes to the Inbox as \
+                         stalled. 0: never."},
     ]))
 }
 
@@ -49,7 +55,9 @@ pub fn stuck_template() -> WorkflowDoc {
         "description": "What happens when an agent step stops without an outcome, reaches its loop limit or runs \
                         out of time. A stalled agent is nudged, then restarted in a fresh session, then you are \
                         asked in the Inbox; a loop limit asks you; a step that timed out is restarted once, then \
-                        you are asked. Change the nudges, the messages and the rest in Settings → Agents. Turned \
+                        you are asked. A ticket in progress that waits on nothing (its workflow unfinished, but no \
+                        agent at work or waiting, nothing in the Inbox, no CI running) for 20 minutes (Idle tickets) \
+                        goes to the Inbox as stalled. Change the nudges, the messages and the rest in Settings → Agents. Turned \
                         off, a stalled agent is nudged once, then you are asked.",
         "nodes": [
             {"id": "stalled", "kind": "agent.stalled", "version": 1, "position": {"x": 0, "y": 0},
@@ -84,6 +92,10 @@ pub fn stuck_template() -> WorkflowDoc {
             {"id": "restarts_left", "kind": "condition", "version": 1, "position": {"x": 300, "y": 600},
              "title": "Restarts left?", "config": {"conditions": [
                 {"left": "{{trigger.restarts}}", "op": "lt", "right": "{{params.timeoutRestarts}}"}]}},
+            {"id": "idle", "kind": "ticket.idle", "version": 1, "position": {"x": 0, "y": 800},
+             "title": "A ticket waits on nothing"},
+            {"id": "ask_idle", "kind": "ticket.stalled", "version": 1, "position": {"x": 300, "y": 800},
+             "title": "Ask me in the Inbox", "config": {"attempt": "{{trigger.attemptId}}"}},
             {"id": "done", "kind": "end", "version": 1, "position": {"x": 1500, "y": 0}, "config": {"quiet": true}},
         ],
         "edges": [
@@ -112,6 +124,9 @@ pub fn stuck_template() -> WorkflowDoc {
             {"from": "timed_out", "to": "restarts_left"},
             {"from": "restarts_left", "port": "true", "to": "restart"},
             {"from": "restarts_left", "port": "false", "to": "ask"},
+            {"from": "idle", "to": "ask_idle"},
+            {"from": "ask_idle", "port": "dismiss", "to": "done"},
+            {"from": "ask_idle", "port": "moved_on", "to": "done"},
         ],
     }))
 }

@@ -260,3 +260,21 @@ pub struct SlotFreed {
     /// `attempt`, `cap` or `agent`.
     pub reason: String,
 }
+
+/// `ticket.idle` (PDT-510): a ticket in progress that has waited on nothing for a while.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TicketIdle {
+    pub project_id: String,
+    pub ticket_id: String,
+    pub ticket_key: String,
+    pub attempt_id: String,
+    pub branch: String,
+    /// Its open pull request, if it has one, and that pull request's URL.
+    pub pr: Option<u32>,
+    pub url: Option<String>,
+    /// When it went idle (ms) and for how many minutes it has been.
+    pub since: i64,
+    pub idle_minutes: u64,
+}

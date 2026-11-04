@@ -37,6 +37,7 @@ pub use tickets::*;
 
 pub const CI_RUN_FAILED: &str = "ci.run_failed";
 pub const CI_RUN_PASSED: &str = "ci.run_passed";
+pub const CI_RUN_CANCELLED: &str = "ci.run_cancelled";
 pub const PR_CONFLICT: &str = "pr.conflict";
 pub const PR_QUEUE_LEFT: &str = "pr.queue_left";
 pub const PR_MERGED: &str = "pr.merged";
@@ -54,6 +55,7 @@ pub const TICKET_PARENT_CHANGED: &str = "ticket.parent_changed";
 pub const TICKET_COMMENTED: &str = "ticket.commented";
 pub const TICKET_OVERLAP_FOUND: &str = "ticket.overlap_found";
 pub const TICKET_OVERLAP_CLEARED: &str = "ticket.overlap_cleared";
+pub const TICKET_IDLE: &str = "ticket.idle";
 pub const PR_COMMENTED: &str = "pr.commented";
 pub const PR_REVIEWED: &str = "pr.reviewed";
 pub const GITHUB_ISSUE_OPENED: &str = "github.issue.opened";

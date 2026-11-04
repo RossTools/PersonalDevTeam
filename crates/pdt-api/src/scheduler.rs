@@ -3,7 +3,7 @@
 //! Board's cards).
 
 use crate::routes::AppState;
-use pdt_core::inbox::InboxKind;
+use pdt_core::inbox::{InboxGroup, InboxKind};
 use pdt_core::policy::{AutoStart, auto_start_at, settles_at};
 use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketStage, TicketSummary};
 use pdt_core::workflow::agent::AgentStepState;
@@ -273,11 +273,15 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
     for item in st.store.open_inbox_items(None).await.unwrap_or_default() {
         let Some(ticket) = item.ticket_id.clone() else { continue };
         if item.kind == InboxKind::Gate {
+            // A gate about a stalled ticket (PDT-510: CI cancelled with nothing running, or idle) shows the ticket
+            // stalled, named by what stalled (`who`: CI, the ticket).
+            let stalled = item.group == InboxGroup::Stalled;
+            let who = item.body.get("who").and_then(Value::as_str).map(String::from);
             put(
                 ticket,
                 TicketAgent {
-                    persona: None,
-                    state: TicketAgentState::Yours,
+                    persona: who.filter(|_| stalled),
+                    state: if stalled { TicketAgentState::Stalled } else { TicketAgentState::Yours },
                     session_id: None,
                     busy: false,
                     run_id: item.run_id.clone(),

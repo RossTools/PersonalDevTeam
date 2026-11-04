@@ -203,6 +203,10 @@ Use PDT's forge tools rather than a forge CLI; they act as the person's forge lo
 - `change_request_open`: opens the pull request for your pushed branch (`title`, `body`, `base?`, `draft?`).
   `change_request_view`: it, with comments and reviews. `change_request_comment`: answers on it (`replyTo` answers a
   review comment in its thread). `change_request_diff`: a pull request's diff by number.
+- Re-running CI: re-run only the newest run on the pull request's head commit (match its commit to the head), or
+  push. Re-running an older commit's jobs cancels the head's run when CI keeps one run per branch, and the pull
+  request then waits on nothing. PDT re-runs a head whose CI was cancelled once by itself, then puts the ticket in the
+  Inbox as stalled.
 - `change_request_merge`: asks for the merge again after it dropped out (the merge queue, failed CI) and you pushed
   the fix; only for a pull request that was already set to merge. The project's merge policy applies.
 - `issue_view`, `issue_comment`: read and comment on issues. `issue_create`: files one (with `ticket`, from that
