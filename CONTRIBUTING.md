@@ -57,8 +57,8 @@ The board no longer jumps back to the top when a ticket moves.
 `GH-45-<anything>.md`). `scripts/changelog.sh check` checks it.
 
 A PR that only changes docs, CI or tests needs no fragment, but the `no-changelog` label instead; labels are added by
-a maintainer, so say so in the PR. A maintainer also adds `windows` (paths, processes, the file system) or `macos` to
-run those platforms' checks on your PR.
+a maintainer, so put `[no-changelog]` in the PR's description instead. A maintainer also adds `windows` (paths,
+processes, the file system) or `macos` to run those platforms' checks on your PR.
 
 ## CI on your pull request
 

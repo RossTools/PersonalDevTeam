@@ -14,6 +14,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
 import { useTopBarActions } from '../shell/PhoneTopBar';
+import { PmWatching, useSessionWatches } from './PmWatching';
 import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, useViaLabel, type PmSelection } from './usePm';
 
 /** The start box's unsent text, kept like a conversation's (it has no session yet). */
@@ -91,6 +92,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
         <>
           {renaming && <div className="border-b border-border px-3 py-1.5">{renameField}</div>}
           {ended && <p className="border-b border-border px-4 py-1.5 text-meta text-muted-foreground">{meta}</p>}
+          <PhoneWatching sessionId={s.id} title={info.title} />
         </>
       ) : (
         <ViewHeader
@@ -100,6 +102,7 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
           meta={meta}
           actions={(
             <>
+              <PmWatching sessionId={s.id} title={info.title} />
               <Button variant="ghost" size="sm" onClick={besidePicker.pick}><FileStack aria-hidden /> Open beside…</Button>
               {!ended && <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>Rename</Button>}
               {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => reset(info)}>Reset…</Button>}
@@ -136,6 +139,12 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
       </DocumentsBesideLayout>
     </div>
   );
+}
+
+/** A phone has no header: what the conversation watches gets a strip of its own, only while it watches anything. */
+function PhoneWatching({ sessionId, title }: { sessionId: string; title: string }) {
+  if (useSessionWatches(sessionId).length === 0) return null;
+  return <div className="flex justify-end border-b border-border px-2 py-0.5"><PmWatching sessionId={sessionId} title={title} /></div>;
 }
 
 /** Marks the PM session on screen seen, as a session's tab does (it clears the rail's dot, PDT-145). */

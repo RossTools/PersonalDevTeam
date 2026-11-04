@@ -163,16 +163,17 @@ export function watchOf(input: unknown, output?: string): WatchView {
   };
 }
 
-/** "finishes, fails or needs you": what a watch tells about (default finished, failed and needs_you). */
+/**
+ * "it finishes, fails or needs you", "someone comments", "it finishes or an agent reports": what a watch tells about
+ * (default finished, failed and needs_you), as a clause with its subject, to follow "when".
+ */
 export function watchEventsText(events: string[]): string {
-  const words: Record<string, string> = {
-    finished: 'finishes',
-    failed: 'fails',
-    needs_you: 'needs you',
-    outcome: 'an agent reports',
-    comment: 'someone comments',
-  };
-  const list = (events.length ? events : ['finished', 'failed', 'needs_you']).map((e) => words[e] ?? e);
+  // What the target does reads after one "it"; what others do names who.
+  const ofIt: Record<string, string> = { finished: 'finishes', failed: 'fails', needs_you: 'needs you' };
+  const ofOthers: Record<string, string> = { outcome: 'an agent reports', comment: 'someone comments' };
+  const given = events.length ? events : ['finished', 'failed', 'needs_you'];
+  const own = given.filter((e) => !(e in ofOthers)).map((e) => ofIt[e] ?? e);
+  const list = [...own.map((w, i) => (i === 0 ? `it ${w}` : w)), ...given.filter((e) => e in ofOthers).map((e) => ofOthers[e])];
   return list.length > 1 ? `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}` : list[0];
 }
 

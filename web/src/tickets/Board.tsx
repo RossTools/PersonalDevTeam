@@ -19,6 +19,7 @@ import { PartsStepper } from '../common/PartsStepper';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
+import { TicketWatchMark } from '../common/Watch';
 import { agentLine } from '../common/ticketAgent';
 import { runAction } from '../common/useAction';
 import { canStart, moveTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
@@ -186,6 +187,7 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
             <ExternalKeys links={t.external} />
             <PriorityIcon priority={t.priority} />
             <TicketBadges ticket={t} className="flex-wrap" />
+            <TicketWatchMark ticketId={t.id} />
           </span>
           <span className={cn('line-clamp-2 text-sm', activity?.unseen && 'font-semibold')}>{t.title}</span>
           {t.labels.length > 0 && <LabelChips labels={t.labels} className="flex-wrap" />}

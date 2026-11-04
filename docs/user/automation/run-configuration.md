@@ -4,7 +4,7 @@ Tell PDT how to run and test your project, and any branch can start on its own p
 the ticket an agent just finished, next to the one on `main`, without them getting in each other's way.
 
 A project's run configuration lists its **runs** (dev servers, apps), its **tests**, its **areas** (the parts of the
-code that belong together) and, optionally, its **forge** and **CI**. To start a run, see **Runs, dev servers and
+code that belong together) and, optionally, its **forge** and **CI**. To start a run, see **Runs: dev servers and
 tests** in Workspaces and sessions.
 
 ## Let an agent write it
@@ -45,8 +45,8 @@ cloned, a branch, an agent working in a ticket's folder. So PDT runs a command o
   change comes from.
 - **Commands you write in the host overrides** count as approved when you save them.
 
-Projects you'd added before PDT asked keep their main checkout's commands approved. A project you add now starts with
-nothing approved. You approve commands in PDT's own window, and agents aren't given a way to approve one for you.
+A project you add starts with nothing approved. You approve commands in PDT's own window, and agents aren't given a way
+to approve one for you.
 
 ## Runs
 
@@ -246,8 +246,9 @@ run   = "pnpm install"
 - **`paths`**: the files the rule covers, as patterns like an area's.
 - **`run`**: the command that regenerates them, run in the ticket's worktree with your login shell's `PATH`.
 
-The rules come from the base branch's committed file (`main`'s), never from the ticket's own folder, so a branch
-can't add a rule for itself. A rule runs only once you've approved its command (see **Approving commands**).
+The rules come from the base branch's committed file (`main`'s), never from the ticket's own folder, so a branch can't
+add a rule for itself. A rule runs only once you've approved its command (see [Approving
+commands](#approving-commands)).
 
 When every conflicting file matches a rule, PDT takes the base's version of each, runs each matching rule's command,
 and commits what changed under its `paths` with the merge. If a command fails, or other files conflict too, the agent

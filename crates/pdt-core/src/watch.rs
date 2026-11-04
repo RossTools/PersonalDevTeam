@@ -110,6 +110,12 @@ pub struct WatchInfo {
     pub target_id: String,
     /// `ABC-12` for a ticket, the workflow's name for a run.
     pub target_label: String,
+    /// The ticket's title; null for a run (or a target that is gone).
+    pub target_title: Option<String>,
+    /// The ticket's stage (`in_progress`) or the run's status (`running`); null for a target that is gone.
+    pub target_state: Option<String>,
+    /// A run's workflow (its page is under it); null for a ticket.
+    pub workflow_id: Option<String>,
     /// The PM conversation told; null: the user.
     pub session_id: Option<String>,
     /// "you", or "PM “Docs and website”".

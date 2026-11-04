@@ -54,7 +54,7 @@ answer and resolve comments too.
 - **Import a document** (beside it): pick the provider at the top (when there are several), then search **Files PDT
   can open** and pick one (click it, or move with ↑ ↓ and press Enter). PDT links the file; it doesn't copy it. Each
   file shows when it was last edited, **On this ticket** when it is linked to the ticket already, **In PDT** when PDT
-  has it elsewhere, and **Open ↗** to see it at the provider. **Local** lists the `.md` and `.xlsx` files in the local
+  has it elsewhere, and **Open** to see it at the provider. **Local** lists the `.md` and `.xlsx` files in the local
   documents folders.
 - **From your computer** (in **Import a document**): drop a file anywhere on the dialog, or click **Choose file…**. A
   `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet, copied into the local documents folder. A spreadsheet's

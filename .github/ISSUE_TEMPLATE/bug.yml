@@ -30,8 +30,8 @@ body:
     id: version
     attributes:
       label: PDT version
-      description: In Host settings → Updates, or the tray menu.
-      placeholder: "0.2.0"
+      description: In Settings → This host → Updates, or the tray menu.
+      placeholder: "0.6.1"
     validations:
       required: true
   - type: input

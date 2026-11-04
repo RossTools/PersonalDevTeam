@@ -127,8 +127,10 @@ change it). A project can set its own.
 ### Bug reports
 
 **Send reports to**: where **Report a bug…** sends a report about PDT: **Automatic** (a GitHub issue on PDT's
-repository), **GitHub issue**, **Local ticket** (a draft ticket here, nothing sent anywhere) or **Off**. The report
-form shows what it includes before you send it, and its logs are cleaned of secrets, tokens and your machine's names.
+repository, which needs the [GitHub token](updates.md#the-github-token-for-updates)), **GitHub issue**, **Local ticket**
+(a draft ticket here, nothing sent anywhere) or **Off**. The report form shows what it includes before you send it. Its
+log excerpt is cleaned of secrets, tokens and your machine's names, but can still name repositories, branches and
+folders.
 
 ### Checks
 
