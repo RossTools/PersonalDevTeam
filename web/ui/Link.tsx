@@ -26,7 +26,7 @@ export function Link({ children, href, external = false, onClick, tone = 'link',
       onPress={onClick}
       {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
+        'relative touch-hit inline-flex items-center gap-0.5 rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring data-disabled:opacity-50 cursor-pointer',
         tone === 'link' ? 'text-link' : 'hover:text-link',
         className,
       )}

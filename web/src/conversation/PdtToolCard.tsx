@@ -264,7 +264,7 @@ function WorkflowRunCard({ call }: { call: PdtCall }) {
         <div className="flex items-center gap-2 py-2 text-xs">
           {r.error && <span className="min-w-0 flex-1 truncate text-failed" title={r.error}>{r.error}</span>}
           <span className="flex-1" />
-          <a href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`} className="text-link underline-offset-2 hover:underline">
+          <a href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`} className="relative touch-hit text-link underline-offset-2 hover:underline">
             Open the run
           </a>
         </div>
@@ -359,7 +359,7 @@ function IssueKey({ issue, url }: { issue: string | null; url: string | null }) 
   if (!issue && !url) return null;
   const text = issue ?? url!;
   return url ? (
-    <a href={url} target="_blank" rel="noreferrer" className="shrink-0 font-mono text-meta text-link underline-offset-2 hover:underline">{text}</a>
+    <a href={url} target="_blank" rel="noreferrer" className="relative touch-hit shrink-0 font-mono text-meta text-link underline-offset-2 hover:underline">{text}</a>
   ) : (
     <span className="shrink-0 font-mono text-meta">{text}</span>
   );
@@ -441,7 +441,7 @@ function DocumentCard({ call }: { call: PdtCall }) {
   const diff = name === 'doc_edit' && call.status === 'done' ? diffOf(call.output) : null;
   const stats = diff ? diffStats(diff) : null;
   const title = d.id && call.status === 'done'
-    ? <a href={routePath({ view: 'documents', doc: d.id })} className="font-medium text-foreground underline-offset-2 hover:underline">{d.title}</a>
+    ? <a href={routePath({ view: 'documents', doc: d.id })} className="relative touch-hit font-medium text-foreground underline-offset-2 hover:underline">{d.title}</a>
     : <span className="font-medium text-foreground">{d.title}</span>;
   const links = d.tickets.length + d.projects.length > 0;
   return (
