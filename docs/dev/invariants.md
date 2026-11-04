@@ -102,7 +102,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
   to the waiting call, and only runs the call and messages the session itself when no call waits any more).
   `answer_request` answers PDT's own requests itself, never the agent's process, and `pm::request_opened` never answers
-  them. Agents get a budget for PDT's tools so the wait outlives their own default (pdt-agents
+  them. The PM's `add_ticket_comment` on a ticket with an active attempt asks the same way whatever its agent
+  (`mcp::tools::confirm_pm_comment`; Claude's prompt never covers it): "Ticket comments to the agent" sends the PM's
+  comments to the attempt's agent, so it is a message to that agent, as `send_to_session` is. Agents get a budget for PDT's tools so the wait outlives their own default (pdt-agents
   `mcp::PDT_TOOL_TIMEOUT_SECS`): Codex as pdt-mcp's `tool_timeout_sec`, Claude as `MCP_TOOL_TIMEOUT` (every Claude
   process PDT starts, unless pdtd's environment has the user's own; Claude has no per-server setting, so it covers
   every MCP server in the session, which only matters to a call that waits). ACP agents get none: ACP's `mcpServers`

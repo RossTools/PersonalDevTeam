@@ -181,6 +181,27 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
             return Ok(());
         }
     }
+    ask_the_user(cx, tool, in_inbox).await
+}
+
+/// The PM's comment on a ticket that is being worked on (PDT-537): "Ticket comments to the agent" sends it to the
+/// attempt's agent, so it asks like `send_to_session`, unless the project lets the PM act. Whatever the agent, as
+/// `add_ticket_comment` never shows Claude's permission prompt.
+pub(crate) async fn confirm_pm_comment(cx: &Cx<'_>, tool: &str, ticket: &str) -> Result<(), String> {
+    // The workflow sends comments whose author (the session's persona) is the PM's.
+    let pm = crate::pm::is_pm_session(cx.st, cx.session).await
+        || cx.session.persona.as_ref().is_some_and(|p| p.name == "PM");
+    if cx.confirmed || !pm || cx.st.store.active_attempt(ticket).await.map_err(store)?.is_none() {
+        return Ok(());
+    }
+    if crate::pm::acts_without_asking(cx.st, cx.session, &AskTarget::Ticket(ticket.into())).await {
+        return Ok(());
+    }
+    ask_the_user(cx, tool, false).await
+}
+
+/// Asks the user about this call and waits for their answer ([`confirmable`]).
+async fn ask_the_user(cx: &Cx<'_>, tool: &str, in_inbox: bool) -> Result<(), String> {
     if !in_inbox {
         // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
         let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
