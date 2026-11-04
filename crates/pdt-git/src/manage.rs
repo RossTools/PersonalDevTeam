@@ -1,12 +1,12 @@
 //! Cloning, worktree management and reading a checkout's files. Blocking, like the rest.
 
-use crate::{GitError, git_with_env, native_separators};
+use crate::{GitError, command_failed, git_with_env, native_separators};
 use std::path::{Path, PathBuf};
 
 fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     match git_with_env(dir, args, &[])? {
         Ok(s) => Ok(s),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -27,7 +27,7 @@ pub fn clone(url: &str, dest: &Path) -> Result<(), GitError> {
         Ok(_) => Ok(()),
         Err(f) => {
             let _ = std::fs::remove_dir_all(dest);
-            Err(GitError::Command(f.stderr))
+            Err(command_failed(f.stderr))
         }
     }
 }
@@ -141,7 +141,7 @@ pub fn is_disposable(dir: &Path, rel: &str) -> Result<bool, GitError> {
     match git_with_env(dir, &["check-ignore", "-q", "--", rel], &[])? {
         Ok(_) => Ok(true),
         Err(f) if f.code == Some(1) => Ok(false),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 

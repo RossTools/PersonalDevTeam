@@ -89,7 +89,7 @@ describe('Start dialog', () => {
     const calls = stubApi({
       'GET /api/tickets/t1': ready,
       'GET /api/projects': [project],
-      'GET /api/host/checks': { claude: tool(true, false), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 },
+      'GET /api/host/checks': { claude: tool(true, false), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), gitIdentity: tool(true, true), tailscale: tool(true, true), checkedAt: 1 },
       'GET /api/host/settings': hostDefaults('devin', 'conversation'),
       'POST /api/tickets/t1/start': () => started(ready),
     });

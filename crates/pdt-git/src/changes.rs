@@ -1,12 +1,12 @@
 //! The files an attempt changed (actual overlap): everything that differs from where the branch
 //! left its base, committed or not, plus untracked files. Read-only.
 
-use crate::{GitError, git_with_env};
+use crate::{GitError, command_failed, git_with_env};
 use std::collections::BTreeSet;
 use std::path::Path;
 
 fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-    git_with_env(dir, args, &[])?.map_err(|f| GitError::Command(f.stderr))
+    git_with_env(dir, args, &[])?.map_err(|f| command_failed(f.stderr))
 }
 
 fn nul_list(out: &str) -> impl Iterator<Item = &str> {
