@@ -78,7 +78,7 @@ Each worktree has its own `target/`, so its size multiplies by the number of wor
 | The OS keychain | `PDT_SECRET_STORE=memory` |
 | Tailscale | `PDT_TAILSCALE_BIN` pointing at `fake-tailscale` (`crates/pdt-tailscale/src/bin`) or a missing file |
 | GitHub, GitLab | `PDT_GITHUB_OFFLINE=1` (takes every forge offline), `GithubApi::offline()`, recorded answers (`pdt_forge::transport::testing::Recorded`), or `FakeForge` (`crates/pdt-forge`) |
-| Real agents | `fake-agent` (`crates/pdt-api/src/bin/fake-agent`: Claude, Codex app-server and ACP); `PDT_CLAUDE_PROGRAM`, `PDT_CODEX_PROGRAM`, `PDT_DEVIN_PROGRAM` name the program |
+| Real agents | `fake-agent` (`crates/pdt-api/src/bin/fake-agent`: Claude, Codex app-server and ACP); `PDT_CLAUDE_PROGRAM`, `PDT_CODEX_PROGRAM`, `PDT_DEVIN_PROGRAM` name the program; `PDT_ACP_PROGRAM` every ACP agent's (a missing path turns them off) |
 | The machine's free disk space | `AppState::new` reads none (no disk is ever low); set `AppState::disk_space` to a fake |
 | A real pdtd under pdt-host | `fake-pdtd` (`crates/pdt-host/src/bin`) |
 
@@ -107,7 +107,8 @@ on Windows), and label the PR `windows` for any path, process or file-system cha
 - For an agent (screenshots, Playwright): build `target/debug/pdtd` and `web/dist`, then
   `scripts/scratch-daemon.sh start` (Windows: `scripts\scratch-daemon.ps1`). It prints `port=`, `dir=`, `url=`; stop
   it with `scripts/scratch-daemon.sh stop <port>`, which also deletes its folder. Set the `PDT_*_PROGRAM` variables to
-  a stand-in, or new sessions start the real agents.
+  a stand-in, or new sessions start the real agents. The script turns the ACP agents off (`PDT_ACP_PROGRAM` at a
+  missing path) unless `PDT_ACP_PROGRAM` names a stand-in.
 - Seeds (`PDT_SEED`, dev profile only, on a database with no projects; `crates/pdtd/src/seed.rs`): `demo` fills in
   sample projects, tickets, sessions and runs; `website` is the made-up Acme Shop project the website's screenshots
   are taken from (`seed/website.rs`, `scripts/site-screenshots.mjs`, site/README.md "Screenshots"). Nothing is

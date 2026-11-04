@@ -36,7 +36,8 @@ and cons. The choice the agent recommends is marked **Recommended**, says why, a
 until you press **Send answers**. Pick another choice (or press its number), or pick **Something else…** and write
 your own. **Send answers** says how many you've answered. A request for a secret (a
 token, a password) has a masked field, and the value goes straight to PDT's secret store, never the agent (see
-[Secrets](../your-machine/secrets.md)).
+[Secrets](../your-machine/secrets.md)). A question an agent asks in its conversation is listed here too, titled with
+the question: answering it here or in the conversation answers both.
 
 ### Approvals
 

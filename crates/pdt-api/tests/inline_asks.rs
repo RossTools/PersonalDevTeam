@@ -427,3 +427,59 @@ async fn the_pms_comment_to_a_working_agent_asks_first() {
     assert!(!events(&env, &id).await.iter().any(|e| e["event"]["kind"] == "request"), "no card");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-535: a Claude conversation that asks gets an ask rule for each of PDT's asking tools in its `--settings` file, so
+/// an allow rule in a settings file Claude reads can't switch its prompt off; one in Bypass, where PDT asks, gets none.
+#[tokio::test]
+async fn a_claude_conversation_asks_for_pdt_s_asking_tools_whatever_its_settings_allow() {
+    for (mode, rules) in [("ask", true), ("bypass", false)] {
+        let env = setup().await;
+        pm_on(&env, "claude", mode).await;
+        let id = start_pm(&env, "who").await;
+        wait_said(&env, &id, 1).await;
+        let file = env.state.data_dir.join("sessions").join(&id).join("claude-permissions.json");
+        if rules {
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            let ask: Vec<&str> = v["permissions"]["ask"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+            assert!(ask.contains(&"mcp__pdt__create_ticket"), "{ask:?}");
+        } else {
+            assert!(!file.exists(), "{mode}");
+        }
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}
+
+/// PDT-535: an allow rule in the folder's `.claude/settings.local.json` (`mcp__pdt`) skips Claude's prompt for a tool it
+/// has no ask rule for. A conversation launched in Bypass has none, so once it leaves Bypass PDT still asks with a card
+/// of its own; one launched asking has them, so Claude asks (and PDT trusts that).
+#[tokio::test]
+async fn an_allow_rule_in_the_folder_never_skips_the_ask_after_leaving_bypass() {
+    for launched in ["bypass", "ask"] {
+        let env = setup().await;
+        pm_on(&env, "claude", launched).await;
+        let id = start_pm(&env, "who").await;
+        wait_said(&env, &id, 1).await;
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await;
+        let claude_dir = std::path::Path::new(s["cwd"].as_str().unwrap()).join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("settings.local.json"), r#"{"permissions":{"allow":["mcp__pdt"]}}"#).unwrap();
+        if launched == "bypass" {
+            let body = json!({"permissionMode": "ask"});
+            let (st, v) = call_as_ui(&env.app, "PATCH", &format!("/api/sessions/{id}"), Some(body)).await;
+            assert!(st.is_success(), "{v}");
+        }
+        let n = agent_says(&env, &id).await.len();
+        send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Sneaky"}"#).await;
+        let req = open_card(&env, &id).await;
+        let rid = req["id"].as_str().unwrap().to_string();
+        assert_eq!(req["tool"], "mcp__pdt__create_ticket", "{launched}: {req}");
+        // PDT's own card after Bypass; Claude's prompt (its ask rule) when it launched asking.
+        assert_eq!(rid.starts_with("pdt-ask-"), launched == "bypass", "{launched}: {req}");
+        assert_eq!(req["canAlways"].as_bool(), Some(launched == "bypass"), "{launched}: {req}");
+        assert!(!ticket_titles(&env).await.contains(&"Sneaky".to_string()), "{launched}: nothing before the yes");
+        answer(&env, &id, &rid, json!({"type": "approve"})).await;
+        let said = said_after(&env, &id, n, "mcp create_ticket").await;
+        assert!(said.contains("\"created\": true"), "{launched}: asked once: {said}");
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}

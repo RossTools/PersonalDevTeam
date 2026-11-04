@@ -185,6 +185,7 @@ jobs:
       - run: scripts/nightly-tag.test.sh
       - run: scripts/google-build-values.test.sh
       - run: scripts/release-sign.test.sh
+      - run: scripts/notarize-macos.test.sh
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
       - run: scripts/check-action-pins.sh
@@ -456,6 +457,8 @@ jobs:
     needs: [changes, bundle-macos-cpu]
     if: needs.changes.outputs.bundle == 'true'
     runs-on: macos-latest
+    # Notarizing may wait up to two hours for Apple (the action's notary-timeout-minutes).
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/bundle-macos

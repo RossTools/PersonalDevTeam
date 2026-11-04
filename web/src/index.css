@@ -138,6 +138,9 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-input: var(--input);
+  /* The switch's off track and its thumb (tokens.css). */
+  --color-switch-off: var(--pdt-switch-off);
+  --color-switch-thumb: var(--pdt-switch-thumb);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);

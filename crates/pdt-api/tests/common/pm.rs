@@ -121,10 +121,21 @@ pub async fn ask(env: &Env, session: &str, text: &str) -> String {
 }
 
 pub async fn open_request(env: &Env, session: &str) -> String {
+    open_request_except(env, session, &[]).await
+}
+
+/// The open request that isn't one of `answered`: a request just answered can still read as open for a moment (a slow
+/// runner), and answering it again would miss the new one.
+pub async fn open_request_except(env: &Env, session: &str, answered: &[String]) -> String {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let all = events(env, session).await;
-        if let Some(e) = all.iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open") {
+        let fresh = |e: &&Value| {
+            e["event"]["kind"] == "request"
+                && e["event"]["state"] == "open"
+                && !answered.iter().any(|a| e["event"]["id"] == a.as_str())
+        };
+        if let Some(e) = all.iter().find(fresh) {
             return e["event"]["id"].as_str().unwrap().to_string();
         }
         assert!(Instant::now() < deadline, "no open request");

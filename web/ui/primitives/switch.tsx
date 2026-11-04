@@ -34,11 +34,11 @@ function Switch({
           <span
             data-slot="switch-track"
             aria-hidden
-            className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border border-transparent bg-input p-px transition-colors group-data-[size=sm]/switch:h-3.5 group-data-[size=sm]/switch:w-6 group-data-focus-visible/switch:ring-2 group-data-focus-visible/switch:ring-ring group-data-invalid/switch:border-destructive group-data-selected/switch:bg-primary motion-reduce:transition-none"
+            className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full border border-transparent bg-switch-off p-px transition-colors group-data-[size=sm]/switch:h-3.5 group-data-[size=sm]/switch:w-6 group-data-focus-visible/switch:ring-2 group-data-focus-visible/switch:ring-ring group-data-invalid/switch:border-destructive group-data-selected/switch:bg-primary motion-reduce:transition-none"
           >
             <span
               data-slot="switch-thumb"
-              className="block size-3 rounded-full bg-card shadow-popover transition-transform group-data-[size=sm]/switch:size-2.5 group-data-selected/switch:translate-x-3 group-data-[size=sm]/switch:group-data-selected/switch:translate-x-2.5 motion-reduce:transition-none"
+              className="block size-3 rounded-full bg-switch-thumb shadow-popover transition-transform group-data-[size=sm]/switch:size-2.5 group-data-selected/switch:translate-x-3 group-data-[size=sm]/switch:group-data-selected/switch:translate-x-2.5 motion-reduce:transition-none"
             />
           </span>
           {children}

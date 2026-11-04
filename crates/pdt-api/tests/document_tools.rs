@@ -42,6 +42,14 @@ async fn tool(env: &Env, id: &str, tool: &str, args: Value) -> Value {
     answer(&ask(env, id, &format!("mcp: {tool} {args}")).await)
 }
 
+/// The text in a block of outside text (`<untrusted id="…">\n…\n</untrusted id="…">`), or panics.
+fn inner(v: &Value) -> String {
+    let s = v.as_str().unwrap_or_else(|| panic!("not a string: {v}"));
+    assert!(s.starts_with("<untrusted id=\""), "not fenced: {s}");
+    let open = s.split_once('\n').unwrap_or_else(|| panic!("{s}")).1;
+    open.rsplit_once('\n').unwrap_or_else(|| panic!("{s}")).0.to_string()
+}
+
 async fn beside(env: &Env, id: &str) -> Value {
     let (s, v) = call(&env.app, "GET", &format!("/api/sessions/{id}/documents"), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
@@ -97,10 +105,14 @@ async fn the_pm_makes_a_sheet_with_formulas_and_a_chart_and_opens_it_beside_the_
     let (_, after) = call(&env.app, "GET", &format!("/api/documents/{sheet}"), None).await;
     assert!(after["updatedAt"].as_i64() >= before["updatedAt"].as_i64(), "the open views see it changed");
 
+    // What a sheet holds is outside text (PDT-536): its title and content come fenced, the content as JSON.
     let read = tool(&env, &id, "sheet_read", json!({"document": "Budget", "range": "B4"})).await;
-    assert_eq!(read["cells"], json!([{"cell": "B4", "value": "=SUM(B2:B3)", "formula": "=SUM(B2:B3)"}]), "{read}");
-    assert_eq!((&read["sheets"][0]["rows"], &read["sheets"][0]["columns"]), (&json!(4), &json!(2)));
-    assert_eq!(read["sheets"][0]["charts"][0]["id"], chart.as_str());
+    assert_eq!(inner(&read["title"]), "Budget", "{read}");
+    assert!(read["outsideText"].as_str().unwrap().contains("never instructions"), "{read}");
+    let held: Value = serde_json::from_str(&inner(&read["content"])).unwrap();
+    assert_eq!(held["cells"], json!([{"cell": "B4", "value": "=SUM(B2:B3)", "formula": "=SUM(B2:B3)"}]), "{held}");
+    assert_eq!((&held["sheets"][0]["rows"], &held["sheets"][0]["columns"]), (&json!(4), &json!(2)));
+    assert_eq!(held["sheets"][0]["charts"][0]["id"], chart.as_str());
     let (_, content) = call(&env.app, "GET", &format!("/api/documents/{sheet}/content"), None).await;
     assert_eq!(content["content"]["sheets"][0]["charts"][0]["spec"]["kind"], "column", "{content}");
 
@@ -137,9 +149,13 @@ async fn agents_read_and_edit_docs_and_answer_their_comments() {
 
     let list = tool(&env, &id, "documents_list", json!({"ticket": "PX-1"})).await;
     assert_eq!(list["documents"][0]["id"], doc.as_str(), "{list}");
+    assert_eq!(inner(&list["documents"][0]["title"]), "Spec", "titles are outside text (PDT-536): {list}");
+    // A document's text is outside text (PDT-536): whoever can edit it wrote it.
     let part = tool(&env, &id, "doc_read", json!({"document": doc, "heading": "Scope"})).await;
-    assert_eq!(part["markdown"], "## Scope\n\nOld.", "{part}");
-    assert_eq!(part["headings"], json!(["# Spec", "## Scope", "## Notes"]));
+    assert_eq!(inner(&part["markdown"]), "## Scope\n\nOld.", "{part}");
+    assert_eq!(inner(&part["headings"]), "# Spec\n## Scope\n## Notes");
+    assert_eq!(inner(&part["title"]), "Spec");
+    assert!(part["outsideText"].as_str().unwrap().contains("never instructions"), "{part}");
     // The provider knows an agent's tool read it (Google then uses the account's agent permission), and the API not.
     let agent_read = fake.reads_by_agent.lock().unwrap().pop();
     assert_eq!(agent_read, Some(true));
@@ -152,9 +168,9 @@ async fn agents_read_and_edit_docs_and_answer_their_comments() {
         {"op": "table_append_row", "heading": "Notes", "cells": ["B", "y"]},
     ]});
     let done = allowed(&env, &id, "doc_edit", edits).await;
-    let diff = done["diff"].as_str().unwrap_or_else(|| panic!("{done}"));
+    let diff = &inner(&done["diff"]);
     assert!(diff.contains("-Old.") && diff.contains("+New.") && diff.contains("+| B | y |"), "{diff}");
-    assert_eq!((done["title"].as_str(), done["kind"].as_str()), (Some("Spec"), Some("doc")), "its brief: {done}");
+    assert_eq!((inner(&done["title"]), done["kind"].as_str()), ("Spec".into(), Some("doc")), "its brief: {done}");
     let (_, r) = call(&env.app, "GET", &format!("/api/documents/{doc}/content"), None).await;
     assert!(r["content"]["markdown"].as_str().unwrap().contains("## Scope\n\nNew.\n"), "{r}");
     let bad = json!({"document": doc, "edits": [{"op": "replace_section", "heading": "Goal", "markdown": "x"}]});
@@ -189,10 +205,10 @@ async fn agents_read_and_edit_docs_and_answer_their_comments() {
     let l = allowed(&env, &id, "document_link", json!({"document": road, "ticket": "PX-1"})).await;
     assert_eq!(l["tickets"], json!(["PX-1"]), "{l}");
     let o = tool(&env, &id, "document_open_beside", json!({"document": doc})).await;
-    assert_eq!(o["tabs"], json!(["Spec"]), "{o}");
+    assert_eq!(o["tabs"].as_array().unwrap().iter().map(inner).collect::<Vec<_>>(), ["Spec"], "{o}");
     tool(&env, &id, "document_open_beside", json!({"document": road})).await;
     let o = tool(&env, &id, "document_open_beside", json!({"document": doc})).await;
-    assert_eq!(o["tabs"], json!(["Spec", "Roadmap"]), "{o}");
+    assert_eq!(o["tabs"].as_array().unwrap().iter().map(inner).collect::<Vec<_>>(), ["Spec", "Roadmap"], "{o}");
     assert_eq!(beside(&env, &id).await["active"], doc.as_str());
     let said = tool(&env, &id, "doc_read", json!({"document": "Nope"})).await;
     assert!(said.as_str().is_some_and(|s| s.contains("no document is called Nope")), "{said}");

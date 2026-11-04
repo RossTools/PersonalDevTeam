@@ -156,7 +156,7 @@ export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setR
         if (Math.abs(dx) > 60 && Math.abs(t.clientY - start.y) < 40) step(dx < 0 ? 1 : -1);
       }}
     >
-      {!hideName && <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? 'No workspace'}</span>}
+      {!hideName && <span className="max-w-32 shrink-0 truncate px-1 text-sm font-medium" title="Workspace">{w?.name ?? (ws.workspacesLoaded ? 'No workspace' : '')}</span>}
       <div
         ref={strip}
         role="tablist"

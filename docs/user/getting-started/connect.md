@@ -42,7 +42,8 @@ To add another, open **Settings › This host › Agents › ACP agents**, click
 the command that starts it in ACP mode, its arguments and any environment variables (`NAME=value`), one per line.
 Save, and PDT shows whether it found the command.
 
-ACP agents run as conversations only, not in a terminal, and are offered wherever you pick an agent.
+ACP agents run as conversations only, not in a terminal, and are offered wherever you pick an agent. One that PDT
+finds counts in **Get started**: it's listed under **Agents on this machine** and offered in **Pick a default agent**.
 
 To stop PDT offering an agent you don't use (and counting it as missing), turn it off in **Settings › This host ›
 Agents**.

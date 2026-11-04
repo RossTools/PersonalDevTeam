@@ -54,6 +54,7 @@ check_changelog() {
   step scripts/clean-targets.test.sh
   step scripts/google-build-values.test.sh
   step scripts/release-sign.test.sh
+  step scripts/notarize-macos.test.sh
   step scripts/check-action-pins.sh
 }
 

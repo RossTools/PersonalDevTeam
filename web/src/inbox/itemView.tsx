@@ -236,10 +236,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         const questions = requestQuestions(item.body.input);
         const why = `${item.personaName ?? nonBlank(item.body.sessionTitle) ?? 'The agent'}'s permission mode asks before this. It waits here until you decide.`;
         if (questions.length > 0) {
-          // The agent's own questions (AskUserQuestion): the card asks them and sends the answers.
+          // The agent's own questions (AskUserQuestion): the card asks them and sends the answers. A question, as in
+          // its conversation, not a permission check (PDT-576).
+          const who = item.personaName ?? nonBlank(item.body.sessionTitle) ?? 'The agent';
           return {
-            region: 'Approval', why, actions: [],
-            content: <ApprovalCard kind="question" title={approvalTitle(tool)} questions={questions} keyboard={!phone}
+            region: 'Question', why: `${who} asks you in its conversation; the answer goes back to it.`, actions: [],
+            content: <ApprovalCard kind="question" title="A question for you" questions={questions} keyboard={!phone}
               onAnswer={(a) => answerApproval(item, a, onApproved)} />,
           };
         }

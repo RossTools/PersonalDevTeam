@@ -321,9 +321,10 @@ async fn a_tickets_design_doc_is_made_linked_and_listed_by_get_ticket() {
         .unwrap_or_else(|e| panic!("{e}: {said}"));
     let docs = got["documents"].as_array().unwrap_or_else(|| panic!("{got:#}"));
     assert_eq!(docs.len(), 1);
-    assert_eq!(
-        (&docs[0]["id"], &docs[0]["title"], &docs[0]["kind"], &docs[0]["provider"]),
-        (&json!(did), &d["title"], &json!("doc"), &json!("fake"))
-    );
+    assert_eq!((&docs[0]["id"], &docs[0]["kind"], &docs[0]["provider"]), (&json!(did), &json!("doc"), &json!("fake")));
+    // Its title is outside text (whoever can edit the document wrote it, PDT-536): fenced, with the note.
+    let title = docs[0]["title"].as_str().unwrap();
+    assert!(title.starts_with("<untrusted id=") && title.contains(d["title"].as_str().unwrap()), "{got:#}");
+    assert!(got["outsideText"].as_str().unwrap().contains("documents' titles"), "{got:#}");
     assert!(got["documentsNote"].as_str().unwrap().contains("design doc"), "{got:#}");
 }

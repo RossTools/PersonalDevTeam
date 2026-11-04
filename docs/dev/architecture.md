@@ -468,7 +468,9 @@ link that a forge plugin's `is_change_request_url` accepts, named by its `change
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
 (`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
-by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is;
+by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is: a
+conversation's own question (a `Request` of kind `question`) stays kind `approval`, answered in its session, but is
+grouped, titled and notified as a question (`NotificationKind::of_inbox`; the web reads it through `shownKind`);
 the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuck, To act on, Ready to accept) and
 `inbox::sort` orders by section, then age. The web lays every kind out the same way (`web/src/inbox/itemView.tsx`
 makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the
@@ -532,8 +534,9 @@ answers `Unsupported` for one it can't do; pdt-core `document_ops.rs` applies th
 ones to plain cells, for providers that keep content in memory or as Markdown. The agent tools (`documents_list`,
 `doc_read`, `doc_edit`, `sheet_read`, `sheet_edit`, `document_create`, `document_open_beside`, comments) are actions
 of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (for a PM session, a project
-the document is linked to lets the PM act) or the project or ticket they name, and comments come fenced as outside
-input. The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
+the document is linked to lets the PM act) or the project or ticket they name, and a document's title, content and comments
+come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON
+in one block). The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's
 `DocumentsBesideLayout` (`web/src/documents/BesidePanel.tsx`) wraps the agent and PM conversation views, and
 `DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what

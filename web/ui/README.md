@@ -21,7 +21,8 @@
   - text: `text-foreground` (= `text-fg`), `text-muted-foreground` (secondary text), `text-link` (accent-coloured text and icons: links, ticks; never
     `text-primary`, which is the fill colour and too light for text),
     `text-primary-foreground` (on `bg-primary`), `text-destructive`;
-  - lines: `border-border` (dividers, cards), `border-input` (control edges: fields, checkboxes, outline buttons, the off switch), `ring-ring`;
+  - lines: `border-border` (dividers, cards), `border-input` (control edges: fields, checkboxes, outline buttons), `ring-ring`;
+  - the switch: `bg-switch-off` (its off track) and `bg-switch-thumb`, 3:1 on every surface in both themes;
   - status (state only, never decoration): `running`, `waiting`, `failed`, `idle`, and fills `running-soft`,
     `waiting-soft`, `failed-soft`; diff: `diff-add`, `diff-del`, `diff-add-strong`, `diff-del-strong`;
   - overlays: `bg-backdrop`; shadows `shadow-popover`, `shadow-dialog`, `shadow-card` (cards on the page; none in dark).

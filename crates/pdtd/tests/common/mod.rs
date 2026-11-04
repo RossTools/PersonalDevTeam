@@ -80,6 +80,7 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         .env("PDT_CLAUDE_PROGRAM", data.join("no-such-claude"))
         .env("PDT_CODEX_PROGRAM", data.join("no-such-codex"))
         .env("PDT_DEVIN_PROGRAM", data.join("no-such-devin"))
+        .env("PDT_ACP_PROGRAM", data.join("no-such-acp-agent"))
         .envs(extra_env.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())

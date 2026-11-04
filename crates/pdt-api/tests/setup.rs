@@ -38,13 +38,16 @@ fn fake_answering(dir: &Path, name: &str, logged_in: bool) -> String {
     }
 }
 
-/// A host with no agent found (their programs point nowhere) unless `codex` is given.
+/// A host with no agent found (their programs point nowhere, the ACP agents' too, whatever this machine has) unless
+/// `codex` is given.
 async fn host(tmp: &Path, codex: Option<String>) -> (axum::Router, AppState) {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     let mut st = common::app_state(store, tmp);
     st.platform.claude_program = missing(tmp, "claude");
     st.platform.codex_program = codex.unwrap_or_else(|| missing(tmp, "codex"));
     st.platform.devin_program = missing(tmp, "devin");
+    st.host_env =
+        std::sync::Arc::new(pdt_api::HostEnv { acp_program: Some(missing(tmp, "acp")), ..Default::default() });
     (router(st.clone(), None), st)
 }
 
@@ -154,5 +157,28 @@ async fn an_agent_found_but_not_logged_in_leaves_the_agents_step_to_do() {
         "{checks}"
     );
     let v = setup(&app).await;
+    assert_eq!(v["steps"]["agents"], "todo", "{v}");
+}
+
+/// Get started and the checks on a host with no built-in agent, whose ACP agents all run `acp_program`.
+async fn with_acp_program(tmp: &Path, acp_program: impl FnOnce(&Path) -> String) -> (Value, Value) {
+    let (_, mut st) = host(tmp, None).await;
+    st.host_env = std::sync::Arc::new(pdt_api::HostEnv { acp_program: Some(acp_program(tmp)), ..Default::default() });
+    let app = router(st, None);
+    let (_, checks) = call(&app, "POST", "/api/host/checks/refresh", None).await;
+    (setup(&app).await, checks)
+}
+
+#[tokio::test]
+async fn an_acp_agent_alone_finishes_the_agents_step_and_pdt_acp_program_turns_them_off() {
+    // Every ACP agent runs the stand-in: found, so the step is done with no built-in agent.
+    let tmp = tempfile::tempdir().unwrap();
+    let (v, checks) = with_acp_program(tmp.path(), |d| fake(d, "acp-agent")).await;
+    assert_eq!(checks["acp"]["acp:omp"]["found"], true, "{checks}");
+    assert_eq!(v["steps"]["agents"], "done", "{v}");
+    // A missing stand-in: no ACP agent is found, whatever this machine has installed.
+    let tmp = tempfile::tempdir().unwrap();
+    let (v, checks) = with_acp_program(tmp.path(), |d| missing(d, "acp")).await;
+    assert!(checks["acp"].as_object().unwrap().values().all(|c| c["found"] == false), "{checks}");
     assert_eq!(v["steps"]["agents"], "todo", "{v}");
 }

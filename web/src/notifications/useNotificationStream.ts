@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { createElement, useEffect, useRef } from 'react';
+import { CircleHelp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@ui/Toaster';
 import type { Notification } from '../api/gen/Notification';
@@ -79,7 +80,9 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
       if (how === 'toast') {
         const action = n.target.kind === 'none' ? undefined : { label: 'Open', onClick: click };
         const shownAs = n.severity === 'error' ? toast.error : n.severity === 'warning' ? toast.info : toast.success;
-        shownAs(n.title, { description: n.body || undefined, action });
+        // A question asks: a "?", not a success tick (PDT-576).
+        const icon = n.kind === 'inbox.question' ? createElement(CircleHelp, { className: 'size-4 text-link' }) : undefined;
+        shownAs(n.title, { description: n.body || undefined, action, icon });
       } else {
         const d = showDesktop(n.title, n.body, n.dedupeKey, click);
         if (d) desktop.set(n.dedupeKey, d);

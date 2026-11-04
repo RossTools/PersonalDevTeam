@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Button, EmptyState, RelativeTime, ViewHeader } from '@ui';
+import { Button, EmptyState, RelativeTime, Skeleton, ViewHeader } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
@@ -29,8 +29,10 @@ function foreign(e: KeyboardEvent): boolean {
  * a question's choices, `y`/`n` answer an approval; answering moves to the next item. An Update (PDT-108) shows what
  * it says and opens what it is about.
  */
-export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget, failed }: {
+export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget, loading, failed }: {
   items: InboxItem[];
+  /** The Inbox hasn't loaded yet: a placeholder, not that nothing waits. */
+  loading?: boolean;
   /** The Inbox can't be loaded (or the host reached): no item says so rather than that nothing waits. */
   failed?: boolean;
   updates?: Notification[];
@@ -57,6 +59,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
   }
   if (!item) {
     if (items.length === 0 && failed) return <EmptyState>Can't load the Inbox. It shows again once the host answers.</EmptyState>;
+    if (items.length === 0 && loading) return <Skeleton lines={6} label="Loading the Inbox" className="p-4" />;
     return <EmptyState>{items.length === 0 ? 'Nothing waits on you. Questions, approvals and gates from agents and workflows show up here.' : 'Choose an item.'}</EmptyState>;
   }
   return <ItemPane key={item.id} item={item} items={items} onSelect={onSelect} />;

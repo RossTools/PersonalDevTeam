@@ -6,9 +6,13 @@
      hover fill (surface-2) and selection (accent-soft), which are darker (PDT-272). */
   --pdt-band: rgba(255, 255, 255, 0.7);
   --pdt-border: #d5d8df;
-  /* Control edges: the off switch's track, outline buttons, checkboxes, fields. 2.38:1 on white, below WCAG's 3:1 for
+  /* Control edges: outline buttons, checkboxes, fields. 2.38:1 on white, below WCAG's 3:1 for
      controls on purpose (the user picked the softer setting, PDT-249). */
   --pdt-input: #a3a8b4;
+  /* The off switch: its track 3:1 or more on every surface (WCAG 1.4.11, unlike the softer control edges above), and
+     a thumb that stands out from the track and from the accent when on. Tested in tokens.test.ts. */
+  --pdt-switch-off: #7c8190;
+  --pdt-switch-thumb: #ffffff;
   --pdt-fg: #17181d;
   --pdt-muted: #565b6a;
   --pdt-accent: #2563eb;
@@ -108,6 +112,8 @@
   --pdt-band: rgba(255, 255, 255, 0.022);
     --pdt-border: #26282f;
     --pdt-input: #26282f;
+    --pdt-switch-off: #6b7080;
+    --pdt-switch-thumb: #e7e8ec;
     --pdt-fg: #e7e8ec;
     --pdt-muted: #8a8f9c;
     --pdt-accent: #3561b8;
@@ -180,6 +186,8 @@
   --pdt-band: rgba(255, 255, 255, 0.022);
   --pdt-border: #26282f;
   --pdt-input: #26282f;
+  --pdt-switch-off: #6b7080;
+  --pdt-switch-thumb: #e7e8ec;
   --pdt-fg: #e7e8ec;
   --pdt-muted: #8a8f9c;
   --pdt-accent: #3561b8;

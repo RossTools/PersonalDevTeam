@@ -47,8 +47,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (pdt-api `conversations/mod.rs` `tell_stopped_background`); a workflow step waiting on them gets that message at
   once, as an automatic nudge (`workflow/agent/recovery.rs` `restarted_while_waiting`). Terminals don't report
   background tasks, so their agents aren't told.
-- **Text from outside is fenced.** Issue and PR text (titles too), webhook payloads and other outside fields
-  (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
+- **Text from outside is fenced.** Issue and PR text (titles too, a linked issue's on any ticket: `get_ticket`,
+  `link_issue`), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
+  payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
   reviews are outside text whatever their role on the repository (they relay others' text). A sub-workflow's run
   inherits its `workflow.call` chain's first run (`untrusted::origin`, `StepCx::origin`): when that run's trigger
@@ -111,6 +112,16 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   than the agent's timeout: the Inbox item takes `answer_confirm`'s old way, and a conversation's card is marked
   detached, so a turn's end keeps it, and its answer runs the call and messages the session (`held::answered_late`).
   A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
+- **Claude's prompt for an asking tool can't be switched off by a settings file** (pdt-agents `mcp::claude_permissions`):
+  `confirmable` trusts Claude to have asked, so every Claude session not launched in Bypass gets an ask rule for each of
+  its asking tools (`mcp__pdt__<tool>`) in the `--settings` file PDT passes (a terminal's hook settings file, a
+  conversation's `claude-permissions.json`; Claude reads one `--settings`). Claude weighs ask rules before allow rules
+  from every scope and prompts for them in every mode, so an allow rule in the user's, the project's or the worktree's
+  `.claude/settings*.json`, or a mode switched in the terminal, doesn't skip the prompt. Leaving a tool out of
+  `--allowedTools` alone is not enough. `mcp::server_for` records each launch's rules (`AppState::claude_ask_rules`),
+  and `confirmable` trusts Claude's prompt only for a tool the running process has a rule for: a conversation's mode
+  changes without a relaunch, so one launched in Bypass and switched out of it has none, and PDT asks itself. "Always
+  allow" isn't offered on Claude's prompt for PDT's tools (an ask rule beats a session allow rule).
 - **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
   list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
   `DEFAULT_TOOLS`.
