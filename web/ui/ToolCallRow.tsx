@@ -32,9 +32,11 @@ export interface ToolCallRowProps {
   meta?: ReactNode;
   /**
    * Links after the verb and subject (ticket pills). They sit outside the row's button (a link can't be in one),
-   * which then holds the chevron and the verb.
+   * which then holds the chevron and the verb but takes clicks anywhere on the row.
    */
   tags?: ReactNode;
+  /** The button's name when the verb alone doesn't say what the row is ("Read ALP-1, ALP-2" for a row whose subject is its tags). */
+  label?: string;
   /** Shown when the row is expanded (input, output); the row is a button only when there is something to show. */
   details?: ReactNode;
   /** Nested rows (sub-agent calls), shown when expanded, indented under this one. */
@@ -47,7 +49,7 @@ export interface ToolCallRowProps {
  * One line per tool call in a conversation ("Run `cargo test`  ✓ 12 s"), expanding to its input and output. Also
  * the collapsed summary of several calls (no `status`, children are the calls).
  */
-export function ToolCallRow({ verb, subject, status, meta, details, tags, children, defaultOpen = false, className }: ToolCallRowProps) {
+export function ToolCallRow({ verb, subject, status, meta, details, tags, label, children, defaultOpen = false, className }: ToolCallRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const id = useId();
   const expandable = !!details || !!children;
@@ -78,12 +80,14 @@ export function ToolCallRow({ verb, subject, status, meta, details, tags, childr
   const toggle = expandable && (
     <button
       type="button"
+      aria-label={label}
       aria-expanded={open}
       aria-controls={id}
       onClick={() => setOpen((o) => !o)}
       className={cn(
         'outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        tags ? 'flex min-w-0 shrink-0 items-center gap-1.5 rounded-sm text-left pointer-coarse:min-h-control-touch' : cn(rowClass, 'hover:bg-accent pointer-coarse:min-h-control-touch'),
+        // With tags, an invisible ::before stretches it over the whole line; the tags (positioned pills) sit above it.
+        tags ? "flex min-w-0 shrink-0 items-center gap-1.5 rounded-sm text-left before:absolute before:inset-0 before:content-[''] pointer-coarse:min-h-control-touch" : cn(rowClass, 'hover:bg-accent pointer-coarse:min-h-control-touch'),
       )}
     >
       {head}
@@ -92,7 +96,7 @@ export function ToolCallRow({ verb, subject, status, meta, details, tags, childr
   );
   // With tags, the row is a line holding the toggle, the tags and the status; without, the toggle is the row.
   const line = tags ? (
-    <div className={cn(rowClass, expandable && 'hover:bg-accent')}>
+    <div className={cn(rowClass, 'relative', expandable && 'hover:bg-accent')}>
       {toggle || head}
       <span className="flex min-w-0 flex-wrap items-center gap-1">{tags}</span>
       <span className="flex-1" />

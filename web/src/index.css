@@ -20,6 +20,18 @@
   }
 }
 
+/* A small inline target (a ticket pill, a text link) grows its hit area 8px each way on touch screens, without moving
+   anything: an invisible ::before over it. The element needs `relative`. */
+@utility touch-hit {
+  @media (pointer: coarse) {
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -8px;
+    }
+  }
+}
+
 /* shadcn's variables are aliases of our tokens (tokens.css stays the only place colours are defined). They switch with
    light/dark because the --pdt-* values do, so there is no `.dark` block. Mapping: spec 2026-10-17-design-system-ux
    and plan phase-3c-1, Task 3. */
