@@ -294,6 +294,8 @@ jobs:
     needs: [tag, nightly, bundle-macos-cpu]
     if: ${{ !cancelled() && needs.bundle-macos-cpu.result == 'success' }}
     runs-on: macos-latest
+    # Notarizing may wait up to two hours for Apple (the action's notary-timeout-minutes).
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v7
         with:
