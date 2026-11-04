@@ -189,7 +189,7 @@ fn data(tmp: &std::path::Path) -> std::path::PathBuf {
 async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &std::path::Path) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    crate::common::init_repo(&repo);
     let (_, p) =
         call(app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     state
@@ -875,7 +875,7 @@ async fn an_update_lists_every_change_since_the_installed_release() {
     // TK-1 is a ticket here; TK-9 is not.
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    crate::common::init_repo(&repo);
     let (_, p) = call(
         &app,
         "POST",

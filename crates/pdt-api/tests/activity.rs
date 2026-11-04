@@ -13,9 +13,7 @@ use tokio_tungstenite::tungstenite::Message;
 async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(
-        std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success()
-    );
+    crate::common::init_repo(&repo);
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
     let state = common::app_state(store.clone(), tmp);
     let app = pdt_api::router(state.clone(), None);

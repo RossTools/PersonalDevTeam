@@ -110,8 +110,7 @@ PDT reads its releases from GitHub without a token: you don't need one to get up
 A token is only for a private repository or a fork, or if you check so often that GitHub's limit for checks without
 one runs out. When it does, PDT says so and checks again once the limit resets. Paste a token in
 **Settings › This host › Updates › Advanced › GitHub token** and click **Save token**. It's kept in your system's
-keychain, and is also used to file bug reports you send with **Report a bug…**. **Settings › This host › Danger
-zone** removes it.
+keychain. **Settings › This host › Danger zone** removes it.
 
 If GitHub rejects the saved token (it expired or was revoked), PDT keeps updating without it and says the token was
 ignored, so you can replace or remove it.

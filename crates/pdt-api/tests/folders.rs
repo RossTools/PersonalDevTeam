@@ -2,7 +2,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::{call, git};
+use common::call;
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
@@ -16,7 +16,7 @@ async fn setup(tmp: &Path) -> (axum::Router, AppState, PathBuf) {
         std::fs::create_dir_all(home.join(d)).unwrap();
     }
     std::fs::write(home.join("file.txt"), "x").unwrap();
-    git(&home.join("work/app"), &["init", "-q", "-b", "main"]);
+    crate::common::init_repo(&home.join("work/app"));
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp);
     state.home_dir = Some(home.clone());

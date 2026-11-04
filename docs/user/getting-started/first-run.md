@@ -4,8 +4,8 @@ The first time you open PDT it shows **Get started**: four things to do before a
 in any order; each ticks itself off when it's done, wherever you do it (here, in Settings or on another device).
 
 1. **Agents on this machine.** PDT looks for git and for Claude Code, Codex and Devin, and shows where it found each.
-   It needs git and at least one agent. See [Connect agents and GitHub](connect.md). When git has no name and email
-   to commit merges with, it shows the two commands that set them.
+   It needs git and at least one agent you're logged in to. See [Connect agents and GitHub](connect.md). When git has
+   no name and email to commit merges with, it shows the two commands that set them.
 2. **Connect GitHub** (optional), for pull requests, CI and issues. If your projects aren't on GitHub, click **Skip,
    my projects aren't on GitHub**: PDT then merges branches locally.
 3. **Add a project**: a folder with a git repository, or one to clone. See [Add a first project](first-project.md).

@@ -1,3 +1,4 @@
+use crate::common::{git, init_repo};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -25,11 +26,6 @@ async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) 
     let status = res.status();
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     (status, String::from_utf8_lossy(&bytes).into_owned())
-}
-
-fn init_repo(dir: &Path) {
-    std::fs::create_dir_all(dir).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(dir).status().unwrap().success());
 }
 
 #[tokio::test]
@@ -152,6 +148,42 @@ async fn bad_paths_and_input_are_400_with_codes() {
         assert_eq!(v["code"], code);
         assert!(!v["message"].as_str().unwrap().is_empty());
     }
+}
+
+/// A folder that isn't a repository says how to go on, and a repository with no commits is refused at add time
+/// (nothing could start from its base branch).
+#[tokio::test]
+async fn adding_a_folder_without_commits_says_what_to_do() {
+    let tmp = tempfile::tempdir().unwrap();
+    let plain = tmp.path().join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    let empty = tmp.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    git(&empty, &["init", "-q", "-b", "main"]);
+    let app = app(tmp.path(), None).await;
+
+    let (status, resp) =
+        call(&app, "POST", "/api/projects", Some(json!({"name": "x", "repoPath": plain.to_string_lossy()}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    let v: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["code"], "not_a_git_repo");
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.contains("git init") && msg.contains("Personal"), "{msg}");
+
+    let (status, resp) =
+        call(&app, "POST", "/api/projects", Some(json!({"name": "x", "repoPath": empty.to_string_lossy()}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+    let v: Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(v["code"], "no_commits");
+    assert!(v["message"].as_str().unwrap().contains("no commits yet"), "{resp}");
+    let (_, list) = call(&app, "GET", "/api/projects", None).await;
+    assert_eq!(serde_json::from_str::<Value>(&list).unwrap(), json!([]));
+
+    // Once it has a first commit it is added.
+    git(&empty, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let (status, resp) =
+        call(&app, "POST", "/api/projects", Some(json!({"name": "x", "repoPath": empty.to_string_lossy()}))).await;
+    assert_eq!(status, StatusCode::CREATED, "{resp}");
 }
 
 #[tokio::test]

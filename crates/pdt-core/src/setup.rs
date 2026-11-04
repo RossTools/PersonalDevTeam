@@ -68,6 +68,7 @@ pub struct SetupPatch {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SetupFacts {
     pub git: bool,
+    /// Each agent: found, switched on and logged in.
     pub claude: bool,
     pub codex: bool,
     pub devin: bool,
@@ -108,7 +109,7 @@ impl StepState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SetupSteps {
-    /// git and at least one agent are found.
+    /// git is found, and at least one agent is found and logged in.
     pub agents: StepState,
     /// Connected, or skipped (also while the GitHub plugin is off).
     pub github: StepState,

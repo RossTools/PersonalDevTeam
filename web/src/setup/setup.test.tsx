@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SetupView } from '../api/gen/SetupView';
 import { forgeAccount, githubLogin, renderWithQuery, stubApi } from '../test-utils';
-import { firstOpenStep, foundAgents, SetupPage, type SetupPageProps } from './SetupPage';
+import { agentsSummary, firstOpenStep, foundAgents, SetupPage, type SetupPageProps } from './SetupPage';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -88,6 +88,26 @@ describe('Get started', () => {
     const agents = await step('Agents on this machine');
     const alert = (await within(agents).findByText('git doesn’t know who you are')).closest<HTMLElement>('[role=status]')!;
     expect(within(alert).getByRole('group', { name: 'Set your git identity' })).toHaveTextContent('git config --global user.email "you@example.com"');
+  });
+
+  it('tells a found agent that is logged out from a ready one, with how to log in and the credentials setting', async () => {
+    const loggedOut = { ...checks({ codex: true }), claude: { found: true, ok: false, detail: 'not logged in: run `claude` and log in', path: '/u/.local/bin/claude' } };
+    expect(agentsSummary(loggedOut)).toBe('Found Codex, logged in. PDT needs at least one, and git.');
+    expect(agentsSummary({ ...loggedOut, codex: { ...loggedOut.codex, ok: false } })).toMatch(/^Found Claude Code and Codex, but not logged in/);
+    const p = props();
+    stub(view(), {
+      'GET /api/host/checks': loggedOut,
+      'GET /api/host/settings': { settings: { defaultAgent: 'claude', agentCredentials: 'subscription' }, projectsDir: '/u/work', programs: [] },
+    });
+    renderWithQuery(<SetupPage {...p} />);
+    const agents = await step('Agents on this machine');
+    const claude = await within(agents).findByRole('row', { name: /Claude Code/ });
+    expect(claude).toHaveTextContent('Not logged in');
+    expect(within(agents).getByRole('row', { name: /Codex/ })).toHaveTextContent('Logged in');
+    const hint = within(agents).getByText((_, el) => el?.tagName === 'P' && /^Claude Code: To log in/.test(el.textContent ?? ''));
+    expect(hint).toHaveTextContent('ANTHROPIC_API_KEY');
+    await userEvent.click(within(hint).getByRole('link', { name: 'Settings › This host › Agents' }));
+    expect(p.onHostSettings).toHaveBeenCalledWith('agents');
   });
 
   it('cuts a Windows path in the middle too, keeping the program\'s name', async () => {

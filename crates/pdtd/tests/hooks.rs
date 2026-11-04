@@ -106,7 +106,7 @@ fn hook_events_change_a_sessions_activity() {
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    init_repo(&repo);
     let port = free_port();
     let d = std::cell::RefCell::new(start_with(port, &data, &[("PDT_CLAUDE_PROGRAM", &claude.to_string_lossy())]));
     let (_, p) = http(
