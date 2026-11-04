@@ -468,7 +468,9 @@ link that a forge plugin's `is_change_request_url` accepts, named by its `change
 stored but listed while their cause lasts: approvals, sessions waiting, Connect GitHub, "PDT can't save changes"
 (`inbox::storage`, while `Store::write_failure` says writes fail), and workflow proposals
 (`inbox::proposals`: one per workflow with a proposed version, id `proposal:<workflow>:<version>`, answered
-by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is;
+by `inbox::answer` with the Versions tab's accept and discard). An item's `group` is what kind of wait it is: a
+conversation's own question (a `Request` of kind `question`) stays kind `approval`, answered in its session, but is
+grouped, titled and notified as a question (`NotificationKind::of_inbox`; the web reads it through `shownKind`);
 the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuck, To act on, Ready to accept) and
 `inbox::sort` orders by section, then age. The web lays every kind out the same way (`web/src/inbox/itemView.tsx`
 makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the

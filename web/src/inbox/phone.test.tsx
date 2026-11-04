@@ -79,7 +79,8 @@ function triage(items: InboxItem[], itemId: string, routes: Parameters<typeof st
 }
 
 // Real-shaped items, as `GET /api/inbox` returns them (PDT-209): an `ask_user` question from a workflow step, and an
-// approval wrapping Claude's AskUserQuestion request, with the session's request event in its body.
+// approval wrapping Claude's AskUserQuestion request, with the session's request event in its body: listed with the
+// questions and titled with its question (PDT-576).
 const asked = item('01a182c0-9fea-719f-b79e-2d6418ebc334', {
   kind: 'question', group: 'question', attemptId: 'a1', sessionId: 'sess', personaId: 'qa', personaName: 'QA',
   title: 'PDT-7 QA: one point needs a fork with the signing secrets. How should I treat it?',
@@ -91,7 +92,7 @@ const asked = item('01a182c0-9fea-719f-b79e-2d6418ebc334', {
 const askInput = { questions: [{ question: 'Which library?', header: 'Library', multiSelect: false,
   options: [{ label: 'zod', description: 'Schemas' }, { label: 'valibot', description: 'Smaller' }] }] };
 const asking = item('approval:sess:req-9', {
-  kind: 'approval', group: 'approval', attemptId: 'a1', sessionId: 'sess', ticketKey: null, ticketTitle: null, title: 'AskUserQuestion',
+  kind: 'approval', group: 'question', attemptId: 'a1', sessionId: 'sess', personaName: 'PM', ticketKey: null, ticketTitle: null, title: 'Which library?',
   body: { requestId: 'req-9', sessionTitle: 'Coder · PDT-7', tool: 'AskUserQuestion', description: null, input: askInput, diff: null,
     request: { type: 'request', id: 'req-9', requestKind: 'question', tool: 'AskUserQuestion', title: '', input: askInput, canAlways: false, state: 'open' } },
   choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
@@ -137,8 +138,13 @@ describe('phone inbox: opening a question (PDT-209)', () => {
   it("opens an approval wrapping the agent's AskUserQuestion from the list and answers it in its session", async () => {
     const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'POST /api/sessions/sess/requests/req-9': undefined });
     renderWithQuery(<PhoneInbox items={[asked, asking]} />);
-    await userEvent.click(screen.getByText('AskUserQuestion'));
-    expect(screen.getByText('Which library?')).toBeInTheDocument();
+    expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
+    expect(screen.getByText('PM · Question')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Which library?'));
+    // A question, as its conversation shows it, not a permission check on the tool.
+    expect(screen.getByText('A question for you')).toBeInTheDocument();
+    expect(screen.getByText("PM asks you in its conversation; the answer goes back to it.")).toBeInTheDocument();
+    expect(screen.queryByText(/permission mode|AskUserQuestion/)).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /valibot/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/req-9')?.body)

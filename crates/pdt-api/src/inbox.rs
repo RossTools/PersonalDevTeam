@@ -7,7 +7,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use pdt_core::conversation::{AgentEvent, RequestState};
+use pdt_core::conversation::{AgentEvent, RequestKind, RequestState};
 use pdt_core::inbox::{
     self, ChangeRequestLink, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus,
 };
@@ -302,8 +302,19 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
         // A persona's session works on its step's ticket.
         let step = st.store.active_agent_step(&sid).await?;
         for e in st.store.session_events_of_kind(&sid, "request").await? {
-            let AgentEvent::Request { id, tool, title, description, input, diff, rows, state, can_always, .. } =
-                &e.event
+            let AgentEvent::Request {
+                id,
+                request_kind,
+                tool,
+                title,
+                description,
+                input,
+                diff,
+                rows,
+                state,
+                can_always,
+                ..
+            } = &e.event
             else {
                 continue;
             };
@@ -321,26 +332,32 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
             if let Some(rows) = rows {
                 body["rows"] = json!(rows);
             }
-            let title = if title.is_empty() { tool } else { title };
+            // The agent's own question (AskUserQuestion; PDT-576): listed and notified with the questions, titled
+            // with what it asks, not as a permission check on its tool.
+            let question = (*request_kind == RequestKind::Question).then(|| {
+                input["questions"][0]["question"].as_str().map(str::trim).filter(|q| !q.is_empty()).map(str::to_string)
+            });
+            let group = if question.is_some() { InboxGroup::Question } else { InboxGroup::Approval };
+            let title = match question.flatten() {
+                Some(q) => q,
+                None if title.is_empty() => tool.clone(),
+                None => title.clone(),
+            };
             out.push(
-                InboxItem::new(
-                    format!("approval:{sid}:{id}"),
-                    InboxKind::Approval,
-                    InboxGroup::Approval,
-                    title,
-                    body,
-                    e.ts,
-                )
-                .project(s.project_id.clone())
-                .ticket(
-                    s.ticket.as_ref().map(|t| t.id.clone()).or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
-                )
-                .attempt(s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())))
-                .session(sid.clone())
-                .run(step.as_ref().map(|a| a.run_id.clone()))
-                .step(s.persona.as_ref().and_then(|p| p.step_id.clone()))
-                .persona(s.persona.as_ref().map(|p| p.id.clone()))
-                .choices(choices),
+                InboxItem::new(format!("approval:{sid}:{id}"), InboxKind::Approval, group, title, body, e.ts)
+                    .project(s.project_id.clone())
+                    .ticket(
+                        s.ticket
+                            .as_ref()
+                            .map(|t| t.id.clone())
+                            .or_else(|| step.as_ref().and_then(|a| a.ticket_id.clone())),
+                    )
+                    .attempt(s.attempt_id.clone().or_else(|| step.as_ref().and_then(|a| a.attempt_id.clone())))
+                    .session(sid.clone())
+                    .run(step.as_ref().map(|a| a.run_id.clone()))
+                    .step(s.persona.as_ref().and_then(|p| p.step_id.clone()))
+                    .persona(s.persona.as_ref().map(|p| p.id.clone()))
+                    .choices(choices),
             );
         }
     }

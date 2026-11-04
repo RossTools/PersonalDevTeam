@@ -181,6 +181,10 @@ async fn questions_take_answers_and_interrupt_expires_open_requests() {
     let q = all.iter().find(|e| e["event"]["kind"] == "request").unwrap();
     assert_eq!(q["event"]["requestKind"], "question");
     let req = q["event"]["id"].as_str().unwrap();
+    // The Inbox lists it with the questions, titled with the question, not the tool (PDT-576).
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    let item = v["items"].as_array().unwrap().iter().find(|i| i["sessionId"] == id.as_str()).cloned().unwrap();
+    assert_eq!((item["group"].as_str(), item["title"].as_str()), (Some("question"), Some("Which one?")), "{item}");
     let answer = json!({"answer": {"type": "question", "answers": {"Which one?": ["B"]}}});
     let (st, _) = call(&env.app, "POST", &format!("/api/sessions/{id}/requests/{req}"), Some(answer)).await;
     assert_eq!(st.as_u16(), 204);

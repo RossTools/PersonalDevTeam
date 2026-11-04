@@ -251,10 +251,16 @@ export function selectedUpdate(selection: string | null): string | null {
   return selection?.startsWith(UPDATE) ? selection.slice(UPDATE.length) : null;
 }
 
+/** The kind an item reads as: a conversation's own question (AskUserQuestion, listed with the questions) is a
+ * question, not an approval (PDT-576). */
+export function shownKind(item: InboxItem): InboxKind {
+  return item.kind === 'approval' && item.group === 'question' ? 'question' : item.kind;
+}
+
 /** An item's name on its own screen: its kind, or Accept for a gate under Ready to accept. */
 export function itemLabel(item: InboxItem): string {
   if (item.kind === 'gate' && item.group === 'stalled') return KIND_LABEL.stalled;
-  return item.group === 'accept' ? 'Accept' : KIND_LABEL[item.kind];
+  return item.group === 'accept' ? 'Accept' : KIND_LABEL[shownKind(item)];
 }
 
 /** Where `id` stands in list order: "Approval · 2 of 4" (phones, PDT-117). */
