@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -186,7 +186,7 @@ describe('FolderPicker', () => {
     render(<Harness start="/Users/me/work" onCreate={create} />);
     await userEvent.click(screen.getByRole('button', { name: 'New folder' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'New folder name' }), 'app');
-    await act(() => userEvent.click(screen.getByRole('button', { name: 'Create' })));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('already exists');
   });
 });

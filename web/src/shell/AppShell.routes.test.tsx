@@ -56,7 +56,7 @@ describe('routes (PDT-111)', () => {
     const title = await screen.findByRole('textbox', { name: 'Title' });
     await waitFor(() => expect(title).toHaveFocus());
     await userEvent.type(title, 'Idea');
-    await waitFor(() => expect(here()).toBe('/notes/c1'), { timeout: 2000 });
+    await waitFor(() => expect(here()).toBe('/notes/c1'));
     expect(window.history.length).toBe(length);
     expect(calls.filter((c) => c.method === 'POST').map((c) => c.body)).toEqual([{ title: 'Idea', body: '', kind: 'user' }]);
     expect(screen.getByRole('textbox', { name: 'Title' })).toHaveValue('Idea');

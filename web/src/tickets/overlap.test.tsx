@@ -2,7 +2,7 @@
 // and the overlap filters.
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectAreas } from '../api/gen/ProjectAreas';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketOverlap } from '../api/gen/TicketOverlap';
@@ -21,18 +21,8 @@ import { useBacklog } from './useBacklog';
 
 // jsdom has no layout: give elements a viewport so the virtualised list renders its rows.
 const sizes = [['clientWidth', 900], ['clientHeight', 600], ['offsetWidth', 900], ['offsetHeight', 600]] as const;
-const restore: (() => void)[] = [];
-beforeAll(() => {
-  // jsdom lacks pointer capture; Sonner calls it when a toast is pressed.
-  Element.prototype.setPointerCapture ??= () => {};
-  Element.prototype.releasePointerCapture ??= () => {};
-  for (const [prop, value] of sizes) {
-    const spy = vi.spyOn(HTMLElement.prototype, prop, 'get').mockImplementation(() => value);
-    restore.push(() => spy.mockRestore());
-  }
-});
-afterAll(() => restore.forEach((r) => r()));
 beforeEach(() => {
+  for (const [prop, value] of sizes) vi.spyOn(HTMLElement.prototype, prop, 'get').mockImplementation(() => value);
   localStorage.clear();
   resetClearToasts();
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });

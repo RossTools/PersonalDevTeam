@@ -189,13 +189,13 @@ describe('documents', () => {
     const box = await screen.findByRole('textbox', { name: 'Document text' });
     expect(editorText(box)).toBe('# Notes\n\n## Goal\n');
     setEditorText(box, '# Notes\n\n## Goal\n\nShip it.\n');
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1), { timeout: 3000 });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ edits: [{ op: 'replace_text', markdown: '# Notes\n\n## Goal\n\nShip it.\n' }], baseVersion: 'v1' });
     expect(await screen.findByText('Saved')).toBeInTheDocument();
 
     // Someone else saved in between: nothing is overwritten until the user says.
     setEditorText(box, 'Mine\n');
-    expect(await screen.findByText('This document changed while you were writing', {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(await screen.findByText('This document changed while you were writing', {})).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(3));
     const last = calls.filter((c) => c.method === 'POST').at(-1)!;
@@ -223,12 +223,12 @@ describe('documents', () => {
     await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
     const box = await screen.findByRole('textbox', { name: 'Document text' });
     setEditorText(box, 'AB\n');
-    await waitFor(() => expect(release).not.toBeNull(), { timeout: 3000 });
+    await waitFor(() => expect(release).not.toBeNull());
     // More typing while the first save is on its way.
     setEditorText(box, 'ABC\n');
     release!();
     expect(await screen.findByText('Unsaved changes')).toBeInTheDocument();
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2), { timeout: 3000 });
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(2));
     const posts = calls.filter((c) => c.method === 'POST');
     expect(posts[0]!.body).toEqual({ edits: [{ op: 'replace_text', markdown: 'AB\n' }], baseVersion: 'v1' });
     expect(posts[1]!.body).toEqual({ edits: [{ op: 'replace_text', markdown: 'ABC\n' }], baseVersion: 'v2' });
