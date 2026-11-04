@@ -33,3 +33,13 @@ targetRules = ["generic-api-key"]
 paths = ['''^crates/pdt-api/src/secrets\.rs$''']
 regexTarget = "line"
 regexes = ['''gh[or]_0123456789abcdef''']
+
+# The throwaway P-256 public key of the release-signature fixtures (an openssl-made signature): public, not a release
+# key.
+[[allowlists]]
+description = "the release-signature test fixture's public key"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^crates/pdt-update/src/signature\.rs$''', '''^site/src/install\.test\.ps1$''']
+regexTarget = "line"
+regexes = ['''MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZv3zoT15o6bXkEaJR39Kgk3t5Gawa5svOK89OHGRwZTgRkkH3/Y9igSbiKXQn6aeXX6m6nSzQ2Ifrvt3n/zJYg==''']
