@@ -230,7 +230,7 @@ mod tests {
     async fn env() -> Env {
         let tmp = tempfile::tempdir().unwrap();
         let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-        let st = AppState::new(store, tmp.path().join("data"));
+        let st = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
         let google = Arc::new(Recorded::new());
         let built_in = BuiltIn::from_values([Some("std"), Some("s"), Some("agent"), Some("a"), None, None]);
         let shared = Arc::new(Shared::new(google.clone(), built_in));
