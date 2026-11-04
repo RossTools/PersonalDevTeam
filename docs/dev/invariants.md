@@ -327,7 +327,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   them on the blocking pool: pdt-agents `launch::find_launch` and `launch::spawn_child`, `spawn_blocking` around
   `PtyManager::spawn`/`remove`/`kill` (`AppState::kill_pty`/`remove_pty`). `PtyManager` holds its map lock only to look
   up, reserve an id or insert, never while a PTY opens, a process starts or one is killed, so attaching, writing and
-  resizing other terminals never wait on them.
+  resizing other terminals never wait on them. The id reserved while a process starts is released on every way out
+  (a `Reservation` drop guard; a panic while starting becomes a spawn error), or that session could not start again
+  until pdtd restarts.
 - **Never edit an applied migration** (sqlx checksums them); add a new one named by its UTC creation time. Data
   backfills that run when the store opens go in `Store::open`.
 - **`.pdt/project.toml` must stay readable by the stable release.** Unknown top-level sections are skipped, but unknown

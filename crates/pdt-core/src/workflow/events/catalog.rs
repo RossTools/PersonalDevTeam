@@ -21,6 +21,15 @@ pub const EVENT_TYPES: &[EventType] = &[
         outside: &[],
     },
     EventType {
+        id: CI_RUN_CANCELLED,
+        title: "CI cancelled",
+        description: "CI on the head commit of an attempt's pull request (or its branch on a CI integration) was \
+                      cancelled, and nothing else runs, is queued or failed there (once per set of cancelled runs: a \
+                      re-run that is cancelled again is new). A cancelled run on an older commit is not news.",
+        schema: schema_of::<CiEvent>,
+        outside: &[],
+    },
+    EventType {
         id: PR_CONFLICT,
         title: "Pull request conflicts",
         description: "An attempt's pull request conflicts with its base branch (once per head commit).",
@@ -162,6 +171,16 @@ pub const EVENT_TYPES: &[EventType] = &[
         title: "Overlap cleared",
         description: "Two tickets that changed the same files no longer do (one finished, or the files were put back).",
         schema: schema_of::<TicketOverlapCleared>,
+        outside: &[],
+    },
+    EventType {
+        id: TICKET_IDLE,
+        title: "Ticket idle",
+        description: "A ticket in progress has waited for `idleMinutes` with nothing going on: a workflow run on it is \
+                      unfinished, but no agent works or waits, nothing in the Inbox is about it, and its pull request \
+                      has no CI running or queued and isn't merging. Once per idle spell; the Idle tickets input of \
+                      \"When an agent is stuck\" sets the minutes.",
+        schema: schema_of::<TicketIdle>,
         outside: &[],
     },
     EventType {

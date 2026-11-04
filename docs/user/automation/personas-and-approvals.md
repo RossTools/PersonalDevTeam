@@ -94,9 +94,15 @@ or runs out of time. By default:
 At a loop limit the Inbox asks you. A step that runs out of time is restarted once in a fresh session, then the Inbox
 asks you.
 
+It also catches a ticket that is stuck without any agent to blame: one in progress whose workflow hasn't finished, but
+where no agent works or waits, nothing in the Inbox is about it, and its pull request has no CI running and isn't
+merging. After 20 minutes like that, it goes to the Inbox as stalled, and the item goes by itself once something
+happens on the ticket again.
+
 Change it in **Settings › This host › Agents**, under **When an agent is stuck**: how many nudges, the nudge messages
 (**Reset to default text** brings one back), whether to restart in a fresh session before asking you, and what
-happens at a loop limit (**Ask me** or **Stop the step**) and at a time limit. **Customize as a workflow →** opens the
+happens at a loop limit (**Ask me** or **Stop the step**) and at a time limit, and after how long an idle ticket goes to
+the Inbox (**Idle tickets**, or **Never**). **Customize as a workflow →** opens the
 workflow for anything more; once you change it there beyond these settings, Settings names your workflow, with
 **Open** and **Reset to default**.
 

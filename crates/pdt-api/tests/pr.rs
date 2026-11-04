@@ -1176,3 +1176,240 @@ async fn a_pr_comment_that_could_not_be_logged_is_logged_on_the_next_look() {
         logged.as_array().unwrap().iter().map(|e| e["payload"]["commentId"].as_u64().unwrap()).collect();
     assert_eq!(ids, [2], "the mark stayed before it");
 }
+
+/// The runs of "When CI is cancelled" on the ticket, oldest first, with their steps.
+async fn cancel_runs(env: &Env) -> Vec<Value> {
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let mut out = vec![];
+    for r in runs.as_array().unwrap().iter().rev().filter(|r| r["workflowName"] == "When CI is cancelled") {
+        out.push(call(&env.app, "GET", &format!("/api/workflow-runs/{}", r["id"].as_str().unwrap()), None).await.1);
+    }
+    out
+}
+
+/// Run `n` of "When CI is cancelled" once its steps match `done`.
+async fn cancel_run(env: &Env, n: usize, done: &[&str]) -> Value {
+    let want: Vec<String> = done.iter().map(|s| s.to_string()).collect();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        pdt_api::run_workflows(&env.state).await;
+        let runs = cancel_runs(env).await;
+        if let Some(r) = runs.get(n - 1).filter(|r| path(r) == want) {
+            return r.clone();
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("never saw cancel run {n} at {done:?}: {:?}", runs.iter().map(path).collect::<Vec<_>>());
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+fn retried(env: &Env) -> Vec<(String, bool)> {
+    env.gh.ci.retried.lock().unwrap().clone()
+}
+
+async fn stalled_items(env: &Env) -> Vec<Value> {
+    let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+    v["items"].as_array().unwrap().iter().filter(|i| i["group"] == "stalled").cloned().collect()
+}
+
+/// PDT-510: CI on the pull request's head cancelled with nothing running is re-run once (noted on the ticket); cancelled
+/// again, the ticket goes to the Inbox as stalled, with Re-run CI. A cancelled run on an older commit is left alone.
+#[tokio::test]
+async fn a_cancelled_head_is_re_run_once_then_stalls_in_the_inbox() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    // The old commit's run was cancelled, the head's runs.
+    let mut old = run(5, CiState::Cancelled);
+    old.head_sha = "0123456789".into();
+    env.gh.set_runs(BRANCH, vec![old.clone(), run(7, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    let (_, logged) = call(&env.app, "GET", "/api/events?type=ci.run_cancelled", None).await;
+    assert!(logged.as_array().unwrap().is_empty(), "an older commit's cancel is no news: {logged}");
+
+    // The head's run is cancelled: re-run once, and noted.
+    env.gh.set_runs(BRANCH, vec![old.clone(), run(7, CiState::Cancelled)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let first =
+        cancel_run(&env, 1, &["cancelled:out", "count:out", "first:true", "rerun:rerun", "note:out", "done:-"]).await;
+    assert_eq!(first["steps"][3]["output"]["short"], "abcdef12", "{first}");
+    assert_eq!(retried(&env), [("7".to_string(), false)], "the head's run, every job");
+    let notes: Vec<String> = comments(&env).await.into_iter().filter(|c| c.contains("was cancelled")).collect();
+    assert_eq!(notes, ["CI on abcdef12 was cancelled with nothing else running; PDT re-ran it."]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::run_workflows(&env.state).await;
+    assert_eq!(cancel_runs(&env).await.len(), 1, "the same cancel is news once");
+
+    // Its re-run is cancelled too: stalled, in the Inbox, and the ticket shows it.
+    let mut again = run(7, CiState::Cancelled);
+    again.attempt = 2;
+    env.gh.set_runs(BRANCH, vec![old, again]);
+    pdt_api::refresh_prs(&env.state).await;
+    cancel_run(&env, 2, &["cancelled:out", "count:out", "first:false", "stalled:-"]).await;
+    assert_eq!(retried(&env).len(), 1, "not re-run on its own again");
+    let items = stalled_items(&env).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["title"], "CI on PR #12 was cancelled; nothing is running");
+    assert_eq!(items[0]["ticketId"], json!(env.ticket));
+    assert_eq!(items[0]["body"]["url"], "https://github.com/o/r/pull/12");
+    let choices: Vec<&str> =
+        items[0]["choices"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(choices, ["rerun", "dismiss"]);
+    let (_, list) = call(&env.app, "GET", "/api/tickets", None).await;
+    let agent = &list["items"][0]["agent"];
+    assert_eq!((agent["state"].as_str(), agent["persona"].as_str()), (Some("stalled"), Some("CI")), "{agent}");
+
+    // Re-run CI from the Inbox re-runs the head again.
+    let id = items[0]["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/inbox/{id}/answer"), Some(json!({"choice": "rerun"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    cancel_run(&env, 2, &["cancelled:out", "count:out", "first:false", "stalled:rerun", "again:rerun", "done:-"]).await;
+    assert_eq!(retried(&env).len(), 2);
+    assert!(stalled_items(&env).await.is_empty());
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-510: a cancel the pull request has moved on from (a newer push) is left alone.
+#[tokio::test]
+async fn a_cancel_on_a_head_that_moved_on_is_left_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Cancelled)]);
+    pdt_api::refresh_prs(&env.state).await;
+    // Pushed before the workflow got to it.
+    let mut moved = pr();
+    moved.head_sha = "fedcba9876".into();
+    env.gh.set_pr(BRANCH, Some(moved));
+    cancel_run(&env, 1, &["cancelled:out", "count:out", "first:true", "rerun:moved_on", "moved_on:-"]).await;
+    assert!(retried(&env).is_empty());
+    assert!(stalled_items(&env).await.is_empty());
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-510's safety net: a ticket in progress whose workflow waits while nothing goes on (no agent, nothing in the
+/// Inbox, no CI running) goes to the Inbox as stalled after the Idle tickets minutes, once per idle spell.
+#[tokio::test]
+async fn a_ticket_waiting_on_nothing_goes_to_the_inbox_as_stalled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let (s, _) = call(&env.app, "DELETE", &format!("/api/sessions/{}", env.session), None).await;
+    assert!(s.is_success(), "{s}");
+    pdt_api::run_workflows(&env.state).await;
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let idle_events = || async {
+        let (_, v) = call(&env.app, "GET", "/api/events?type=ticket.idle", None).await;
+        v.as_array().unwrap().clone()
+    };
+    let now = 1_000_000_000_000;
+    pdt_api::check_idle_at(&env.state, now).await;
+    pdt_api::check_idle_at(&env.state, now + 30 * 60_000).await;
+    assert!(idle_events().await.is_empty(), "no workflow waits on it: worked by hand");
+
+    // A workflow on the ticket waits (for a comment that never comes).
+    let doc = json!({"name": "Waits", "nodes": [
+        {"id": "start", "kind": "manual", "version": 1},
+        {"id": "w", "kind": "wait", "version": 1, "config": {"timeoutMs": 86_400_000,
+         "event": {"type": "ticket.commented"}}},
+        {"id": "end", "kind": "end", "version": 1}],
+        "edges": [{"from": "start", "to": "w"}, {"from": "w", "port": "event", "to": "end"}, {"from": "w", "port": "timeout", "to": "end"}]});
+    let (s, w) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": doc, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let (s, r) = call(
+        &env.app,
+        "POST",
+        &format!("/api/workflows/{}/run", w["id"].as_str().unwrap()),
+        Some(json!({"input": {"ticketId": env.ticket}})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{r}");
+    pdt_api::run_workflows(&env.state).await;
+
+    pdt_api::check_idle_at(&env.state, now).await;
+    pdt_api::check_idle_at(&env.state, now + 19 * 60_000).await;
+    assert!(idle_events().await.is_empty(), "not idle long enough");
+    // CI running is something going on: the spell starts again.
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_idle_at(&env.state, now + 20 * 60_000).await;
+    env.gh.set_runs(BRANCH, vec![run(8, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let again = now + 21 * 60_000;
+    pdt_api::check_idle_at(&env.state, again).await;
+    pdt_api::check_idle_at(&env.state, again + 19 * 60_000).await;
+    assert!(idle_events().await.is_empty());
+    pdt_api::check_idle_at(&env.state, again + 20 * 60_000).await;
+    pdt_api::check_idle_at(&env.state, again + 25 * 60_000).await;
+    let events = idle_events().await;
+    assert_eq!(events.len(), 1, "once per spell: {events:?}");
+    assert_eq!(events[0]["payload"]["idleMinutes"], 20);
+    assert_eq!(events[0]["payload"]["pr"], 12);
+
+    // "When an agent is stuck" puts it in the Inbox as stalled, and the ticket shows it.
+    let items = tick_until(&env, "the idle ticket in the Inbox", || async {
+        let items = stalled_items(&env).await;
+        (!items.is_empty()).then_some(items)
+    })
+    .await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert!(items[0]["title"].as_str().unwrap().ends_with("is stalled: nothing is going on"), "{}", items[0]);
+    assert!(items[0]["body"]["text"].as_str().unwrap().contains("Nothing has gone on for 20 minutes"));
+    let (_, list) = call(&env.app, "GET", "/api/tickets", None).await;
+    let agent = &list["items"][0]["agent"];
+    assert_eq!((agent["state"].as_str(), agent["persona"].as_str()), (Some("stalled"), Some("Ticket")), "{agent}");
+    // The poll goes on while the item is open: its own item is no news, so the spell goes on and isn't told again.
+    for m in [26, 40, 60] {
+        pdt_api::check_idle_at(&env.state, again + m * 60_000).await;
+    }
+    assert_eq!(idle_events().await.len(), 1, "one spell, one event, item open");
+    let id = items[0]["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/inbox/{id}/answer"), Some(json!({"choice": "dismiss"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(stalled_items(&env).await.is_empty());
+    for m in [61, 80, 120, 200] {
+        pdt_api::check_idle_at(&env.state, again + m * 60_000).await;
+    }
+    assert_eq!(idle_events().await.len(), 1, "dismissed for this spell, however long it lasts");
+
+    // Something goes on (CI runs), then a new spell is told again.
+    env.gh.set_runs(BRANCH, vec![run(9, CiState::Running)]);
+    pdt_api::refresh_prs(&env.state).await;
+    pdt_api::check_idle_at(&env.state, again + 201 * 60_000).await;
+    env.gh.set_runs(BRANCH, vec![run(9, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    let third = again + 202 * 60_000;
+    pdt_api::check_idle_at(&env.state, third).await;
+    pdt_api::check_idle_at(&env.state, third + 20 * 60_000).await;
+    assert_eq!(idle_events().await.len(), 2, "a new spell");
+    tick_until(&env, "the second idle item", || async { (stalled_items(&env).await.len() == 1).then_some(()) }).await;
+
+    // The run that was stuck is cancelled: the item's next look finds nothing unfinished but its own run, and closes it.
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/workflow-runs/{}/cancel", r["runId"].as_str().unwrap()), None).await;
+    assert!(s.is_success(), "{v}");
+    let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={}", env.ticket), None).await;
+    let stuck = runs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["workflowName"] == "When an agent is stuck" && r["status"] == "waiting")
+        .expect("the idle item's run waits")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for st in env.state.store.list_steps(&stuck).await.unwrap() {
+        if st.node_id == "ask_idle" && st.wake_at.is_some() {
+            env.state.store.put_step(&pdt_core::workflow::api::Step { wake_at: Some(0), ..st }).await.unwrap();
+        }
+    }
+    env.state.store.wake_workflow_run(&stuck, 0).await.unwrap();
+    tick_until(&env, "the idle item closing by itself", || async {
+        stalled_items(&env).await.is_empty().then_some(())
+    })
+    .await;
+    env.state.ptys.shutdown().await;
+}

@@ -3,6 +3,7 @@
 //! disabled, not deleted.
 
 mod base_moved;
+mod ci_cancelled;
 pub(crate) mod clean_up_storage;
 mod close_parents;
 mod comments_to_agent;
@@ -52,6 +53,7 @@ pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
 pub const TICKET_PROPOSALS: &str = "ticket-proposals";
 pub const CLOSE_PARENTS: &str = "close-parents";
 pub const STUCK_AGENTS: &str = "stuck-agents";
+pub const CI_CANCELLED: &str = "ci-cancelled";
 pub const NOTIFICATION_RULES: &str = "notification-rules";
 pub const INSTALL_UPDATES: &str = "install-updates";
 pub const CLEAN_UP_STORAGE: &str = "clean-up-storage";
@@ -86,6 +88,7 @@ pub const BUILTINS: &[Builtin] = &[
     },
     Builtin { id: CLOSE_PARENTS, enabled: true, category: Category::Tickets, doc: close_parents::close_parents },
     Builtin { id: STUCK_AGENTS, enabled: true, category: Category::Tickets, doc: stuck_agents::stuck_agents },
+    Builtin { id: CI_CANCELLED, enabled: true, category: Category::CiPr, doc: ci_cancelled::ci_cancelled },
     Builtin {
         id: NOTIFICATION_RULES,
         enabled: true,

@@ -228,6 +228,13 @@ pub fn ci_passed_key(source: &CiSource, ci: &CiStatus) -> String {
     format!("ci_passed:{}{}", source.key_part(), ids.join(","))
 }
 
+/// The `ci_cancelled` key part of one provider's cancelled CI (each run and its attempt): a re-run that is cancelled
+/// again has a new attempt, so it is news again (PDT-510).
+pub fn ci_cancelled_key(source: &CiSource, ci: &CiStatus) -> String {
+    let ids: Vec<String> = ci.runs.iter().filter(|r| r.state == CiState::Cancelled).map(CiRun::key).collect();
+    format!("ci_cancelled:{}{}", source.key_part(), ids.join(","))
+}
+
 /// What to tell the agent when `source`'s CI (`ci`, its runs only) failed on `head` of `branch`: on `pr`, when the
 /// branch has an open one (`local`: the local forge's change request).
 pub fn ci_failed_notice(
@@ -786,6 +793,23 @@ pub(crate) mod tests {
 
     fn actions() -> CiSource {
         CiSource { id: GITHUB_ACTIONS.into(), label: "GitHub Actions".into(), logs: true }
+    }
+
+    /// PDT-510: a head's CI is cancelled only when nothing else failed, runs or waits there; its key names the cancelled
+    /// runs' attempts, so a re-run cancelled again is news again, and an older commit's cancel is not the head's.
+    #[test]
+    fn cancelled_ci_is_keyed_by_its_cancelled_attempts() {
+        let at = "2026-11-04T00:00:00Z";
+        let mut runs = vec![run(4, "ci", "head", at, CiState::Cancelled), run(5, "lint", "head", at, CiState::Passed)];
+        let ci = CiStatus::of(&runs, "head").unwrap();
+        assert_eq!(ci.state, CiState::Cancelled);
+        assert_eq!(ci_cancelled_key(&actions(), &ci), "ci_cancelled:4.1");
+        runs[0].attempt = 2;
+        assert_eq!(ci_cancelled_key(&actions(), &CiStatus::of(&runs, "head").unwrap()), "ci_cancelled:4.2");
+        runs.push(run(6, "web", "head", at, CiState::Running));
+        assert_eq!(CiStatus::of(&runs, "head").unwrap().state, CiState::Running, "something still runs");
+        let old = [run(3, "ci", "old", at, CiState::Cancelled), run(7, "ci", "head", at, CiState::Passed)];
+        assert_eq!(CiStatus::of(&old, "head").unwrap().state, CiState::Passed, "an older commit's cancel");
     }
 
     #[test]

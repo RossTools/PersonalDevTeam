@@ -195,6 +195,7 @@ where
 pub async fn poll_pass(st: AppState) {
     part(&st, "the gone-runs sweep", |s| async move { crate::sweep_gone_runs(&s).await }).await;
     part(&st, "the PR check", |s| async move { crate::refresh_prs(&s).await }).await;
+    part(&st, "the idle-ticket check", |s| async move { crate::check_idle(&s).await }).await;
     part(&st, "the merge check", |s| async move { crate::check_merges(&s).await }).await;
     part(&st, "the issue check", |s| async move { crate::refresh_issues(&s).await }).await;
     part(&st, "the release check", |s| async move { crate::refresh_releases(&s).await }).await;

@@ -3,7 +3,7 @@ import type { CiRunRef } from "./CiRunRef";
 import type { Notice } from "./Notice";
 
 /**
- * `ci.run_failed`, `ci.run_passed`.
+ * `ci.run_failed`, `ci.run_passed`, `ci.run_cancelled`.
  */
 export type CiEvent = { 
 /**

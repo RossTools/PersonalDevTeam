@@ -279,6 +279,23 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'))[1]?.body).toEqual({ choice: 'nudge', text: 'Finish up.' }));
   });
 
+  it('shows a ticket whose cancelled CI stalled it, with Re-run CI and its pull request (PDT-510)', async () => {
+    const ci = item('ci', {
+      group: 'stalled', attemptId: 'a', title: 'CI on PR #12 was cancelled; nothing is running',
+      changeRequest: { url: 'https://github.com/o/r/pull/12', name: 'pull request' },
+      body: { question: 'CI on PR #12 was cancelled; nothing is running', text: 'CI on the head `abcdef12` was cancelled.', who: 'CI' },
+      choices: [{ id: 'rerun', title: 'Re-run CI', primary: true }, { id: 'dismiss', title: 'Dismiss', primary: false }],
+    });
+    expect(grouped([ci]).map((g) => g.title)).toEqual(['Stuck']);
+    const calls = stubApi({ 'POST /api/inbox/ci/answer': (c: Call) => c.body, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[ci]} selectedId="ci" onSelect={() => {}} />);
+    expect(screen.getByText(/Nothing is moving this ticket on/)).toBeInTheDocument();
+    expect(screen.getByText(/was cancelled\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open pull request' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Re-run CI/ }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path.endsWith('/answer'))?.body).toEqual({ choice: 'rerun' }));
+  });
+
   it('resumes a stalled step whose message never arrived with that message, Enter too', async () => {
     const undelivered = item('un', {
       kind: 'stalled', group: 'stalled', sessionId: 'sess', personaName: 'Coder', title: 'Coder stalled',

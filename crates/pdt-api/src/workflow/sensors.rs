@@ -29,6 +29,8 @@ pub(crate) struct Sensors {
     inbox: Mutex<InboxSeen>,
     /// Tells apart two turn ends of one session in the same millisecond.
     turns: AtomicU64,
+    /// Since when each idle ticket has been idle, by ticket (PDT-510: `crate::workflow::idle`).
+    pub(crate) idle: Mutex<std::collections::HashMap<String, i64>>,
 }
 
 #[derive(Default)]
