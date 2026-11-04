@@ -42,6 +42,12 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   machine. pdt-api's `common::conversation` reads and waits on a session's events and state.
 - **Agent settings:** pdt-api's tests build their state with `common::app_state`, which puts the home folder and
   the agents' config folders (`~/.claude`, `~/.codex`, Devin's config) in the test's temp folder.
+- **Agent programs:** a test state never starts the machine's `claude`, `codex` or `devin`, and runs no login shell.
+  `common::app_state` (and any test that builds its own state, with `AppState::with_platform` and
+  `pdt_api::isolated_platform(dir)`) names missing files in the test's folder as the three programs, so a host check or
+  session start finds none. A test that wants an agent opts in by setting `st.platform.claude_program` (or
+  `codex_program`, `devin_program`) to a fake: `common::fake_agent()`, or a script it writes. `AppState::new` is pdtd's
+  own: it asks the login shell for its PATH and looks the agents up by name.
 
 ## Build output
 

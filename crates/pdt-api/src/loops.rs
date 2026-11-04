@@ -230,7 +230,7 @@ mod tests {
     async fn state() -> (AppState, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-        (AppState::new(store, tmp.path().join("data")), tmp)
+        (AppState::with_platform(store, tmp.path().join("data"), crate::isolated_platform(tmp.path())), tmp)
     }
 
     #[tokio::test]

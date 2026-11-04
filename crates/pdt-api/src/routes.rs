@@ -243,7 +243,14 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// The state pdtd starts from, with the machine's [`pdt_agents::launch::detect_platform`] (which on macOS runs
+    /// the user's login shell). Tests use [`AppState::with_platform`] with
+    /// [`pdt_agents::launch::isolated_platform`].
     pub fn new(store: Store, data_dir: std::path::PathBuf) -> Self {
+        Self::with_platform(store, data_dir, pdt_agents::launch::detect_platform())
+    }
+
+    pub fn with_platform(store: Store, data_dir: std::path::PathBuf, platform: pdt_core::session::Platform) -> Self {
         let update_token_account = crate::secrets::update_token_account(&data_dir, None);
         let github_account = crate::secrets::github_login_account(&data_dir, None);
         let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
@@ -256,7 +263,7 @@ impl AppState {
         Self {
             store,
             ptys: pdt_agents::PtyManager::new(),
-            platform: pdt_agents::launch::detect_platform(),
+            platform,
             exit_tasks: Default::default(),
             session_locks: Default::default(),
             codex_spawn_spacing: std::time::Duration::from_secs(5),

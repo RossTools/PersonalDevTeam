@@ -152,7 +152,7 @@ async fn setup() -> Env {
     git(&repo, &["add", "-A"]);
     git(&repo, &["commit", "-q", "-m", "init"]);
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = AppState::new(store, tmp.path().join("data"));
+    let mut state = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     state.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_jira::Jira)]));
     state.integrations.enable(&["jira".into()]);
     let app = router(state.clone(), None);
@@ -258,7 +258,7 @@ async fn an_upgrade_without_jira_hides_its_builtins_until_it_is_on() {
     let tmp = tempfile::tempdir().unwrap();
     let db = tmp.path().join("pdt.db");
     let state = |store: Store| {
-        let mut st = AppState::new(store, tmp.path().join("data"));
+        let mut st = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
         st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(pdt_int_jira::Jira)]));
         st
     };

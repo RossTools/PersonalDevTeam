@@ -111,13 +111,13 @@ pub fn fake_agent() -> String {
 
 /// The `AppState` a test starts from: its data in `<dir>/data`, and its home folder and the agents' config folders
 /// (`~/.claude`, `~/.codex`, Devin's config file) in `<dir>/home`, so no test reads or writes the developer's own.
+/// Its platform runs no login shell and its agent programs are missing files in `dir`, so no test starts the
+/// machine's `claude`, `codex` or `devin`: a test that wants an agent sets `st.platform.claude_program` (etc.) to a
+/// fake such as [`fake_agent`].
 pub fn app_state(store: pdt_store::Store, dir: &std::path::Path) -> pdt_api::AppState {
-    let mut st = pdt_api::AppState::new(store, dir.join("data"));
+    let mut st = pdt_api::AppState::with_platform(store, dir.join("data"), pdt_api::isolated_platform(dir));
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    st.platform.claude_config_dir = Some(home.join(".claude"));
-    st.platform.codex_home = Some(home.join(".codex"));
-    st.platform.devin_config_file = Some(home.join(".config").join("devin").join("config.yaml"));
     st.home_dir = Some(home);
     st
 }
