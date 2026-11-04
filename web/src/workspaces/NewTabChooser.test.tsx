@@ -177,7 +177,7 @@ describe('NewTabChooser', () => {
   describe('agents the host has', () => {
     const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
     const checks = (devin: { found: boolean; ok: boolean; detail: string }, codex = tool(true, true)) =>
-      ({ claude: tool(true, true), codex, devin, git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
+      ({ claude: tool(true, true), codex, devin, git: tool(true, true), gitIdentity: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
     const open = () => {
       setNarrow(false);
       renderWithQuery(<NewTabChooser ws={fakeWs()} onClose={() => {}} />);

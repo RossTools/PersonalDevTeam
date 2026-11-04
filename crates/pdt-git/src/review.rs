@@ -1,7 +1,9 @@
 //! Review: what a worktree's branch changed, file by file, the two sides of a file, and
 //! merging the branch into its base locally. Everything but [`merge_local`] is read-only.
 
-use crate::{GitError, git_bytes, git_with_env, is_ancestor, is_dirty, list_worktrees, merge_base, rev_parse};
+use crate::{
+    GitError, command_failed, git_bytes, git_with_env, is_ancestor, is_dirty, list_worktrees, merge_base, rev_parse,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -44,7 +46,7 @@ fn is_binary(bytes: &[u8]) -> bool {
 /// A failed merge's error, saying so when undoing it failed too (the checkout is left mid-merge).
 fn undone(failed: String, undo: Result<String, GitError>) -> GitError {
     match undo {
-        Ok(_) => GitError::Command(failed),
+        Ok(_) => command_failed(failed),
         Err(e) => GitError::Command(format!(
             "{failed}; and the merge couldn't be undone, so the checkout needs cleaning up: {e}"
         )),
@@ -52,11 +54,11 @@ fn undone(failed: String, undo: Result<String, GitError>) -> GitError {
 }
 
 fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-    git_with_env(dir, args, &[])?.map_err(|f| GitError::Command(f.stderr))
+    git_with_env(dir, args, &[])?.map_err(|f| command_failed(f.stderr))
 }
 
 fn run_bytes(dir: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<Vec<u8>, GitError> {
-    git_bytes(dir, args, stdin)?.map_err(|f| GitError::Command(f.stderr))
+    git_bytes(dir, args, stdin)?.map_err(|f| command_failed(f.stderr))
 }
 
 /// The commit a worktree's changes are measured from: the newer of `HEAD`'s merge bases with `base` and with
@@ -259,7 +261,7 @@ pub fn file_at(worktree: &Path, rev: &str, path: &str) -> Result<Option<Vec<u8>>
     match git_bytes(worktree, &["cat-file", "blob", &spec], None)? {
         Ok(bytes) => Ok(Some(bytes)),
         Err(f) if f.code == Some(128) => Ok(None),
-        Err(f) => Err(GitError::Command(f.stderr)),
+        Err(f) => Err(command_failed(f.stderr)),
     }
 }
 
@@ -377,6 +379,10 @@ pub fn merge_local(
             }
         } else if let Err(f) = git_with_env(&dir, &["merge", "--no-ff", "--no-edit", "-m", message, &branch_ref], &[])?
         {
+            // A merge git refused before starting it (no identity) has nothing to abort: the checkout is as it was.
+            if !crate::merge_in_progress(&dir) {
+                return Err(command_failed(f.stderr));
+            }
             return Err(undone(f.stderr, run(&dir, &["merge", "--abort"])));
         }
         let commit = run(&dir, &["rev-parse", "HEAD"])?;
@@ -413,7 +419,7 @@ pub fn merge_fast_forward(repo: &Path, branch: &str, base: &str, message: &str) 
         Some(dir) if preview.base_dirty => Ok(MergeOutcome::BaseDirty { checkout: dir }),
         Some(dir) => {
             if let Err(f) = git_with_env(&dir, &["merge", "--ff-only", &branch_ref], &[])? {
-                return Err(GitError::Command(f.stderr));
+                return Err(command_failed(f.stderr));
             }
             Ok(MergeOutcome::Merged { commit: run(&dir, &["rev-parse", "HEAD"])? })
         }
@@ -804,6 +810,31 @@ mod tests {
         assert_eq!(git(&repo, &["rev-parse", "main"]), second);
         assert_eq!(git(&repo, &["rev-parse", "main^"]), commit);
         assert_eq!(git(&repo, &["rev-parse", "main^{tree}"]), git(&repo, &["rev-parse", "feature^{tree}"]));
+    }
+
+    #[test]
+    fn without_an_identity_a_merge_says_so_and_leaves_the_checkout_as_it_was() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, wt, _base) = setup(tmp.path());
+        write(&wt, "src/b.rs", b"fn b() { 2 }\n");
+        commit_all(&wt, "b");
+        write(&repo, "a.txt", b"one\ntwo\nthree\nfour\n");
+        let before = commit_all(&repo, "main moves");
+        // An empty name fails whatever the machine's global settings say (the test helpers' `-c` still commit).
+        git(&repo, &["config", "user.name", ""]);
+
+        for squash in [false, true] {
+            let e = merge_local(&repo, "feature", "main", "m", squash).unwrap_err();
+            assert!(matches!(e, GitError::NoIdentity), "squash {squash}: {e}");
+            assert!(e.to_string().contains("git config --global user.email"), "{e}");
+            assert_eq!(git(&repo, &["rev-parse", "main"]), before);
+            assert!(git(&repo, &["status", "--porcelain"]).is_empty(), "squash {squash}: the checkout is clean");
+            assert!(!crate::merge_in_progress(&repo));
+        }
+
+        // No checkout on main: `commit-tree` says the same.
+        git(&repo, &["switch", "-q", "-c", "elsewhere"]);
+        assert!(matches!(merge_local(&repo, "feature", "main", "m", false), Err(GitError::NoIdentity)));
     }
 
     #[test]
