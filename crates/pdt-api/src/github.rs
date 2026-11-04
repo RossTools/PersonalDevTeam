@@ -1,7 +1,7 @@
 //! Pull requests and CI of ticket attempts (PDT-25). pdtd reads each active attempt's PR from its project's forge
 //! (PDT-176: `crate::forge`; GitHub through its API) every 60 s
 //! (and when a ticket is opened), keeps what it saw in memory for ticket responses (`attempt.pr`), and logs what is
-//! news as events: `ci.run_failed`, `ci.run_passed`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
+//! news as events: `ci.run_failed`, `ci.run_passed`, `ci.run_cancelled`, `pr.conflict`, `pr.queue_left`, `pr.merged` and
 //! `pr.behind`, each once (its key). Workflows react to them; the built-in "PR notices" tells the agent. While an
 //! enabled workflow listens for them and the forge has reviews, it also reads an open PR's comments and reviews (Phase
 //! 7e): `pr.commented`,
@@ -882,6 +882,11 @@ pub(crate) fn ci_events(
     if ci.state == CiState::Passed {
         let k = key(&pdt_core::pr::ci_passed_key(source, ci));
         out.push(NewLogEvent::new(ev::CI_RUN_PASSED, k, "pr_poller", event(None)));
+    }
+    // Cancelled with nothing else running, queued or failed on the head (PDT-510): nothing would ever move it on.
+    if ci.state == CiState::Cancelled {
+        let k = key(&pdt_core::pr::ci_cancelled_key(source, ci));
+        out.push(NewLogEvent::new(ev::CI_RUN_CANCELLED, k, "pr_poller", event(None)));
     }
     out
 }

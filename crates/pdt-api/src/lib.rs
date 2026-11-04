@@ -128,5 +128,6 @@ pub use update::{UpdateService, run_update_loop};
 pub use watches::{follow as follow_watches, tick as tick_watches, tick_at as tick_watches_at};
 pub use workflow::{
     engine::{install_builtins, run_workflows},
+    idle::{check as check_idle, check_at as check_idle_at},
     maintain_workflows,
 };

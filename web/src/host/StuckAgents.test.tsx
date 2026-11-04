@@ -12,7 +12,7 @@ afterEach(() => {
 
 const defaults = {
   nudges: 2, firstNudge: 'You stopped without an outcome.', laterNudge: 'You stopped again.', restart: true,
-  onLoopLimit: 'ask', timeoutRestarts: 1,
+  onLoopLimit: 'ask', timeoutRestarts: 1, idleMinutes: 20,
 };
 
 const view = (over: Partial<BuiltinSettingsView> = {}, values: Record<string, unknown> = {}): BuiltinSettingsView => ({
@@ -39,6 +39,10 @@ describe('Settings → Agents → When an agent is stuck (PDT-367)', () => {
     await userEvent.click(screen.getByRole('button', { name: /At a loop limit/ }));
     await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Stop the step' }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').at(-1)?.body).toEqual({ values: { onLoopLimit: 'stop' } }));
+    // Idle tickets (PDT-510): minutes, or never.
+    await userEvent.click(screen.getByRole('button', { name: /Idle tickets/ }));
+    await userEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Never' }));
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT').at(-1)?.body).toEqual({ values: { idleMinutes: 0 } }));
     const later = screen.getByRole('textbox', { name: 'Later nudges' });
     await userEvent.clear(later);
     await userEvent.type(later, 'Please finish.');

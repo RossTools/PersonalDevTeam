@@ -32,7 +32,7 @@ fn id_text<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     }
 }
 
-/// `ci.run_failed`, `ci.run_passed`.
+/// `ci.run_failed`, `ci.run_passed`, `ci.run_cancelled`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]

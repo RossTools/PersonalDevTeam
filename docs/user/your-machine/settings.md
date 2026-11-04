@@ -41,7 +41,8 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
   so they use your subscription login; **Pass through** keeps them (for API keys, Bedrock, Vertex or a proxy). A
   project can choose differently.
 - **When an agent is stuck**: how many times a stalled agent is nudged, the nudge messages, whether it is restarted
-  in a fresh session before you are asked, and what happens at a loop limit or a time limit. See
+  in a fresh session before you are asked, what happens at a loop limit or a time limit, and after how long a ticket
+  that waits on nothing goes to the Inbox as stalled. See
   [When an agent is stuck](../automation/personas-and-approvals.md#when-an-agent-is-stuck).
 - **Default models**: the model each agent starts with, unless the session or its persona picks another.
 - **Programs**: where each agent's program is, a switch to turn the agent off, and whether PDT found it. Leave a path

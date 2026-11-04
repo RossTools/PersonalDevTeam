@@ -161,7 +161,14 @@ and leaves the workflow runs to take the merge (the Pipeline's Accept has an `ev
 **Pull requests and CI.** pdt-api `github.rs` reads each attempt's PR, and `ci.rs` each CI provider's runs (GitHub
 Actions, GitLab CI, the local forge's command, Buildkite), into memory. What changed (CI failed or passed, a conflict, a drop
 from the merge queue, a merge) is logged as events, which the built-in PR notices workflow turns into messages to the
-agent.
+agent. CI on the head rolled up as `cancelled` (nothing failed, running or queued there) is `ci.run_cancelled`, keyed by
+its cancelled runs and their attempts, so a re-run cancelled again is news again; runs on older commits never make CI
+of the head. The built-in "When CI is cancelled" (`builtins/ci_cancelled.rs`) counts cancels per attempt and head in its
+state and re-runs the first one with `ci.rerun_head` (`nodes/ci_cancelled.rs`: reads the PR again, then retries each
+cancelled run through its `CiProvider`, or takes `moved_on` when the head moved or its CI is no longer cancelled); a
+later cancel, or a re-run that fails, gets `ci.stalled`: a gate in the `stalled` group (Re-run CI, Dismiss) that looks
+at the head every minute and leaves by `moved_on` once it moved on, which closes the item. A gate in the `stalled`
+group shows its ticket as stalled (`scheduler::ticket_agents`, named by the item's `who`).
 
 **Conflicts at merge time.** A conflict is fixed once, when the ticket is next to merge. PR notices' first step on a
 conflict or a moved base, `attempt.defer_conflict` (`workflow/nodes/conflicts.rs`, the rule is pdt-core
@@ -333,6 +340,16 @@ Inbox) when the workflow is off, its run for the step ended without acting, or n
 (`templates::unfill`) and saves a version noted `inputs::SETTINGS_NOTE`, which still follows PDT's newer versions; any
 other edit makes it the user's (`InputsBuiltin::customized`). Its reset leaves the workflow on or off, since Settings
 has a switch for that.
+
+**Idle tickets** (`workflow/idle.rs`). The poll's idle check is the safety net for tickets stuck in ways nothing else
+notices: a ticket in progress (not waiting until clear) with an unfinished workflow run, but no agent step that isn't
+done or waits for a slot, no busy session on its attempt, no open Inbox item about it (the idle net's own, `reason:
+idle`, aside: open or dismissed, it neither ends the spell nor starts a new one), and a pull request (if any) that
+is open with no CI running or queued and neither on auto-merge nor queued. Each spell's start is kept in memory
+(`Sensors::idle`); after the Idle tickets input of "When an agent is stuck" (`idleMinutes`, read from its current
+document; 0 or the workflow off: no check) it logs `ticket.idle` once per spell (keyed by ticket and start). The
+built-in's `ticket.stalled` (`nodes/ticket_idle.rs`) puts a stalled gate in the Inbox and looks again every minute,
+leaving by `moved_on` (closing it) once the ticket isn't idle, its own run not counting as unfinished work.
 
 **Notification rules** (`builtins/notification_rules.rs`). Each kind's level and quiet hours live in the built-in's
 `notification.levels` nodes (`nodes/notification_levels.rs`: a trigger kind with no event type and no ports, so it
