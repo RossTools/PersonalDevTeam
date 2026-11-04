@@ -59,7 +59,7 @@ function WatchRow({ w, title }: { w: WatchInfo; title: string }) {
     <li className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0">
       <Target w={w} />
       <span className="text-meta text-muted-foreground">
-        Hears when it {watchEventsText(w.events)} · {w.once ? 'until it finishes' : 'ongoing'} · since <RelativeTime time={w.createdAt} />
+        Hears when {watchEventsText(w.events)} · {w.once ? 'until it finishes' : 'ongoing'} · since <RelativeTime time={w.createdAt} />
       </span>
       <Button variant="ghost" size="sm" className="self-start" onClick={() => void stop()}>Stop watching</Button>
     </li>

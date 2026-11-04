@@ -34,8 +34,9 @@ describe('PDT tool calls', () => {
   });
 
   it('says what a watch tells about', () => {
-    expect(watchEventsText([])).toBe('finishes, fails or needs you');
+    expect(watchEventsText([])).toBe('it finishes, fails or needs you');
     expect(watchEventsText(['comment'])).toBe('someone comments');
+    expect(watchEventsText(['outcome', 'finished', 'comment'])).toBe('it finishes, an agent reports or someone comments');
   });
 
   it('titles the approval of the tools that ask', () => {

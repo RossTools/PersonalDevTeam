@@ -185,7 +185,7 @@ describe('the PM', () => {
     expect(ticketRow).toHaveTextContent('Hears when it finishes, fails or needs you · until it finishes · since');
     expect(within(runRow).getByRole('link', { name: 'Ship' })).toHaveAttribute('href', '/workflows/wf1/runs/r1');
     expect(runRow).toHaveTextContent('Running');
-    expect(runRow).toHaveTextContent('Hears when it someone comments · ongoing');
+    expect(runRow).toHaveTextContent('Hears when someone comments · ongoing');
     expect(list).not.toHaveTextContent('A PDT bug');
     // One request for every watch, shared with the board and the PM list.
     expect(calls.filter((c) => c.path.startsWith('/api/watches')).every((c) => c.path === '/api/watches')).toBe(true);
