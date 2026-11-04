@@ -511,7 +511,7 @@ fn pty_spec(
     // Claude: `--resume`/`--session-id` take its conversation id, which `/clear` moves off the session id.
     let l = launch(s.kind, s.agent, platform, resume, s.claude_conversation_id(), s.bypass_permissions);
     let login_path = st.platform.login_path.as_deref();
-    let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()))?;
+    let launch_args = with_hook_args(st, s, l.args, instructions.map(|i| i.file.as_path()), mcp)?;
     let resolved = pdt_agents::launch::resolve_launch(&l.program, &launch_args, login_path)?;
     let (program, mut args) = (resolved.program, resolved.args);
     if let Some(i) = instructions.filter(|_| s.kind == SessionKind::AgentTui) {
@@ -606,7 +606,8 @@ fn pty_spec(
 
 /// The agent's launch arguments plus its activity hooks: Claude gets a per-session
 /// `--settings` file in PDT's data folder, Codex a `-c notify=[…]` that chains to the user's own notify, Devin a
-/// `--config` file copied from the user's own config with a `SessionStart` hook added (it names the conversation and
+/// `--config` file copied from the user's own config with a `SessionStart` hook added. Claude's file also holds the ask
+/// rules for PDT's asking tools (`pdt_agents::mcp::claude_permissions`, PDT-535) (it names the conversation and
 /// prints `instructions` back as context). The user's own agent settings are never written. Limit: with a Windows `.cmd` shim (npm installs) the arguments pass through
 /// `cmd.exe`, so a hook program path containing `&`, `|`, `^` or `%` would be mangled.
 fn with_hook_args(
@@ -614,14 +615,20 @@ fn with_hook_args(
     s: &Session,
     args: Vec<String>,
     instructions: Option<&FsPath>,
+    mcp: Option<&pdt_agents::mcp::McpServer>,
 ) -> Result<Vec<String>, PtyError> {
     if s.kind != SessionKind::AgentTui {
         return Ok(args);
     }
     match s.agent {
         Some(AgentKind::Claude) => {
-            let file = pdt_agents::hooks::write_claude_settings(&session_data_dir(st, &s.id), &st.hook_program)
-                .map_err(|e| PtyError::Spawn(format!("writing the session's hook settings: {e}")))?;
+            let rules = mcp.and_then(pdt_agents::mcp::claude_permissions);
+            let file = pdt_agents::hooks::write_claude_settings(
+                &session_data_dir(st, &s.id),
+                &st.hook_program,
+                rules.as_ref(),
+            )
+            .map_err(|e| PtyError::Spawn(format!("writing the session's hook settings: {e}")))?;
             let mut args = args;
             args.extend(["--settings".to_string(), file.to_string_lossy().into_owned()]);
             Ok(args)

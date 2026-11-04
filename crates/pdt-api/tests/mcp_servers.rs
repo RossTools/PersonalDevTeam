@@ -141,6 +141,16 @@ async fn claude_gets_the_servers_it_is_meant_to_with_secrets_filled_in_and_tools
     assert!(allowed.contains("mcp__notes__echo") && allowed.contains("mcp__pdt__get_ticket"), "{allowed}");
     assert_eq!(arg_after(&launch, "--disallowedTools"), Some("mcp__notes__hang"));
     assert!(!launch.contains(&"--strict-mcp-config".to_string()), "the user's own servers load as well");
+    // PDT's asking tools each get an ask rule in the session's `--settings` file, beside its hooks, so an allow rule in
+    // a settings file Claude reads (the worktree's `.claude/settings.local.json`) can't switch the prompt off.
+    let settings: Value = serde_json::from_str(
+        &std::fs::read_to_string(env.state.data_dir.join("sessions").join(&id).join("claude-settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(settings["hooks"]["PreToolUse"].is_array());
+    let ask: Vec<&str> = settings["permissions"]["ask"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(ask.contains(&"mcp__pdt__issue_create"), "{ask:?}");
+    assert!(ask.iter().all(|t| !allowed.split(',').any(|a| a == *t)), "{ask:?} {allowed}");
     // The agent is told that what the tools return isn't instructions.
     let instructions =
         std::fs::read_to_string(env.state.data_dir.join("sessions").join(&id).join("instructions.md")).unwrap();

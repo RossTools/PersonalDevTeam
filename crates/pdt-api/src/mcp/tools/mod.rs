@@ -143,7 +143,9 @@ pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 
 /// An asking tool from an agent that can't ask the user per call (Codex, Devin: PDT's tools run without asking
 /// there) runs where the project lets the PM act; elsewhere PDT asks the user (PDT-256). Claude asks through its
-/// permission prompt, unless it runs in Bypass, which never shows that prompt (PDT-414): then it is one that can't ask.
+/// permission prompt, unless it runs in Bypass, where PDT gives it no ask rules (PDT-414): then it is one that
+/// can't ask. Claude's prompt holds because each asking tool has an ask rule in the `--settings` PDT passes, which no
+/// allow rule in another settings file overrides (PDT-535, `pdt_agents::mcp::claude_permissions`).
 /// A public-posting tool asks outside a workflow step, which expects it (PDT-414).
 ///
 /// In a conversation PDT asks in the conversation itself, with an approval card that is also in the Inbox, and the call

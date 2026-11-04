@@ -356,3 +356,24 @@ async fn a_terminal_call_still_unanswered_at_the_budget_returns() {
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     env.state.ptys.shutdown().await;
 }
+
+/// PDT-535: a Claude conversation that asks gets an ask rule for each of PDT's asking tools in its `--settings` file, so
+/// an allow rule in a settings file Claude reads can't switch its prompt off; one in Bypass, where PDT asks, gets none.
+#[tokio::test]
+async fn a_claude_conversation_asks_for_pdt_s_asking_tools_whatever_its_settings_allow() {
+    for (mode, rules) in [("ask", true), ("bypass", false)] {
+        let env = setup().await;
+        pm_on(&env, "claude", mode).await;
+        let id = start_pm(&env, "who").await;
+        wait_said(&env, &id, 1).await;
+        let file = env.state.data_dir.join("sessions").join(&id).join("claude-permissions.json");
+        if rules {
+            let v: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            let ask: Vec<&str> = v["permissions"]["ask"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+            assert!(ask.contains(&"mcp__pdt__create_ticket"), "{ask:?}");
+        } else {
+            assert!(!file.exists(), "{mode}");
+        }
+        call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    }
+}
