@@ -7,8 +7,8 @@ Report a bug or a security issue, suggest a feature, or work on PDT itself.
 Use **Report a bug…** in PDT (in the command palette, or **Settings › This host › Bug reports**). Fill in what
 happened, what you expected and how to reproduce it. **Include diagnostics** attaches the end of PDT's log, with
 tokens and your machine's names taken out; you can read it before you send. The dialog says where the report goes:
-usually a public issue on GitHub, filed with your [GitHub token](../your-machine/updates.md#the-github-token-for-updates)
-(updates don't need one, but filing an issue does).
+usually a public issue on GitHub, filed as your GitHub login if you've connected GitHub. If you haven't, **Open on
+GitHub** opens the bug form there with your report filled in and the diagnostics copied, ready to paste and submit.
 
 You can also open an issue on [GitHub](https://github.com/RossTools/PersonalDevTeam/issues/new/choose).
 

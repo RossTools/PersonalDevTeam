@@ -189,7 +189,7 @@ fn data(tmp: &std::path::Path) -> std::path::PathBuf {
 async fn add_busy_session(app: &axum::Router, state: &pdt_api::AppState, tmp: &std::path::Path) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    crate::common::init_repo(&repo);
     let (_, p) =
         call(app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     state
@@ -535,7 +535,11 @@ async fn each_data_dir_has_its_own_token() {
     std::fs::create_dir_all(tmp.path().join("a")).unwrap();
     let (app_a, state_a, _) = setup(&tmp.path().join("a"), true).await;
     let store_b = pdt_store::Store::open(&tmp.path().join("b.db")).await.unwrap();
-    let mut state_b = pdt_api::AppState::new(store_b, tmp.path().join("b").join("data"));
+    let mut state_b = pdt_api::AppState::with_platform(
+        store_b,
+        tmp.path().join("b").join("data"),
+        pdt_api::isolated_platform(&tmp.path().join("b")),
+    );
     state_b.secrets = state_a.secrets.clone();
     let app_b = pdt_api::router(state_b.clone(), None);
     assert_ne!(state_a.update_token_account, state_b.update_token_account);
@@ -875,7 +879,7 @@ async fn an_update_lists_every_change_since_the_installed_release() {
     // TK-1 is a ticket here; TK-9 is not.
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&repo).status().unwrap().success());
+    crate::common::init_repo(&repo);
     let (_, p) = call(
         &app,
         "POST",
@@ -1149,7 +1153,7 @@ async fn a_check_that_cannot_reach_github_says_so() {
     // A port nothing listens on: bound, then closed.
     let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = pdt_api::AppState::new(store, data(tmp.path()));
+    let mut state = pdt_api::AppState::with_platform(store, data(tmp.path()), pdt_api::isolated_platform(tmp.path()));
     state.update = Arc::new(pdt_api::UpdateService::new(&format!("http://127.0.0.1:{closed}"), "o/r", true, "0.1.0"));
     let app = pdt_api::router(state.clone(), None);
     store_token(&state);

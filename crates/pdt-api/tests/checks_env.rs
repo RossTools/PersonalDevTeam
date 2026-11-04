@@ -50,7 +50,7 @@ async fn api_keys_in_pdtd_s_environment_reach_only_where_the_policy_lets_them() 
 async fn login_checks_count_keys_only_where_sessions_get_them() {
     let tmp = tempfile::tempdir().unwrap();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.path().join("data"));
+    let mut st = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     st.platform.claude_program = fake_needing(tmp.path(), "claude", "ANTHROPIC_API_KEY");
     st.platform.codex_program = fake_needing(tmp.path(), "codex", "OPENAI_API_KEY");
     st.platform.devin_program = tmp.path().join("no-such-devin").to_string_lossy().into();
@@ -103,7 +103,7 @@ async fn a_conversation_gets_no_api_key_under_the_subscription() {
     git(&repo, &["init", "-q", "-b", "main"]);
     git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.path().join("data"));
+    let mut st = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     st.platform.claude_program = env!("CARGO_BIN_EXE_fake-agent").to_string();
     st.platform.login_path = None;
     st.platform.claude_config_dir = Some(tmp.path().join("claude-config"));

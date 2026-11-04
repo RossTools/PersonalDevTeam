@@ -7,9 +7,7 @@ use serde_json::{Value, json};
 async fn setup(tmp: &std::path::Path) -> (axum::Router, String) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(
-        std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success()
-    );
+    crate::common::init_repo(&repo);
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
     let app = pdt_api::router(common::app_state(store, tmp), None);
     let (_, p) =

@@ -461,7 +461,8 @@ async fn an_upgrade_keeps_the_integrations_in_use() {
     store.close().await;
 
     let store = pdt_store::Store::open(&db).await.unwrap();
-    let mut st = pdt_api::AppState::new(store, tmp.path().join("data"));
+    let mut st =
+        pdt_api::AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     st.integrations = Arc::new(pdt_api::Integrations::new(super::built()));
     pdt_api::load_enabled_integrations(&st).await.unwrap();
     assert_eq!(st.integrations.enabled(), ["discord", "scryer"]);

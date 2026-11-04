@@ -49,7 +49,7 @@ fn built_in() -> BuiltIn {
 async fn env_with(built_in: Option<BuiltIn>) -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut st = AppState::new(store, tmp.path().join("data"));
+    let mut st = AppState::with_platform(store, tmp.path().join("data"), pdt_api::isolated_platform(tmp.path()));
     let google = Arc::new(Recorded::new());
     let plugin = pdt_int_google::Google::with_built_in(google.clone(), built_in);
     st.integrations = Arc::new(pdt_api::Integrations::new(vec![Arc::new(plugin)]));

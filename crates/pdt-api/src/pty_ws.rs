@@ -218,7 +218,14 @@ mod tests {
 
     async fn state() -> (AppState, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
-        (AppState::new(Store::open(&tmp.path().join("pdt.db")).await.unwrap(), tmp.path().join("data")), tmp)
+        (
+            AppState::with_platform(
+                Store::open(&tmp.path().join("pdt.db")).await.unwrap(),
+                tmp.path().join("data"),
+                crate::isolated_platform(tmp.path()),
+            ),
+            tmp,
+        )
     }
 
     fn spec(id: &str) -> pdt_agents::SpawnSpec {
