@@ -378,6 +378,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **IronCalc is one version on both sides**: pdt-sheet's `ironcalc` (pinned with `=`) and web's
   `@ironcalc/workbook` exchange IronCalc's bytes and diffs, so they are updated together (pdt-sheet's
   `the_web_ui_runs_the_same_ironcalc` checks).
+- **IronCalc never sees input past pdt-sheet's limits** (`limits.rs`): its formula parser and evaluator recurse
+  without a depth limit (an overflow aborts pdtd), and its importer trusts the package. Every new way a formula or a
+  file reaches IronCalc goes through `check_formula` or `check_xlsx` first, and pdtd's runtime threads keep a stack
+  (pdtd `main.rs`, `STACK`) that holds the deepest formula the limits allow. A view's diffs aren't checked (their types
+  are IronCalc's own); they rely on the stack.
 - **Guides served by pdtd link to each other by API path**, never by repository path (a test checks).
 - **The web doesn't test for an integration's id or name**: what a plugin adds to the UI comes from what it declares
   (its connection kinds, project settings schema, label, account sign-in, a document provider's picker, a forge's

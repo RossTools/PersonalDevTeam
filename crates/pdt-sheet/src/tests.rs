@@ -272,3 +272,166 @@ fn edits_near_the_last_row_land_where_asked_and_past_it_are_refused() {
     let err = wb.set_cells("Sheet1", "XFD1", &[vec!["a".into(), "b".into()]]).unwrap_err();
     assert!(err.contains("XFE"), "{err}");
 }
+
+/// `xlsx` with its parts named in `parts` replaced (or added).
+fn repack(xlsx: &[u8], parts: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut zip = zip::ZipArchive::new(Cursor::new(xlsx)).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        if parts.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+        out.start_file(name, opts).unwrap();
+        std::io::copy(&mut entry, &mut out).unwrap();
+    }
+    for (name, bytes) in parts {
+        out.start_file(*name, opts).unwrap();
+        std::io::Write::write_all(&mut out, bytes).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+/// A sheet part whose A1 holds `formula` (XML-escaped as given).
+fn sheet_with_formula(formula: &str) -> Vec<u8> {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>{formula}</f></c></row></sheetData></worksheet>"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn a_formula_past_the_limits_is_refused_not_parsed() {
+    let nested = |n: usize| format!("={}1{}", "(".repeat(n), ")".repeat(n));
+    assert!(check_formula(&nested(MAX_FORMULA_DEPTH)).is_ok());
+    assert!(check_formula(&nested(MAX_FORMULA_DEPTH + 1)).unwrap_err().contains("levels of brackets"));
+    assert!(check_formula(&format!("={}1", "-".repeat(MAX_FORMULA_OPERATORS + 1))).unwrap_err().contains("operators"));
+    assert!(check_formula(&format!("=\"{}\"", "a".repeat(MAX_FORMULA_CHARS))).unwrap_err().contains("longer"));
+    // Brackets in text, a quoted sheet name or a table's column don't count; a `)` in them doesn't undo a real `(`.
+    let text = format!("=\"{}\"", "(".repeat(100));
+    assert!(check_formula(&text).is_ok());
+    assert!(check_formula(&format!("='{}'!A1", "(".repeat(100))).is_ok());
+    assert!(check_formula(&format!("=T[{}]", "'(".repeat(100))).is_ok());
+    let hidden = format!("={}T[{}]{}1", "(".repeat(40), ")".repeat(40), "(".repeat(40));
+    assert!(check_formula(&hidden).is_err(), "a `)` in a column can't close what's outside it");
+    let escaped = format!("={}\"a\"\"{}\"\"b\"{}1", "(".repeat(40), ")".repeat(40), "(".repeat(40));
+    assert!(check_formula(&escaped).is_err(), "`\"\"` stays in the text");
+
+    // Every way in: a CSV cell, an agent's edit, a conditional format.
+    let deep = nested(700);
+    let err = Workbook::from_csv(&format!("a,{deep}\n"), "x", "Sheet1").unwrap_err();
+    assert!(err.starts_with("B1: "), "{err}");
+    let mut wb = sales();
+    let err = wb.set_cells("Sheet1", "A1", &[vec!["kept?".into(), deep.clone()]]).unwrap_err();
+    assert!(err.starts_with("B1: "), "{err}");
+    assert_eq!(wb.input("Sheet1", "A1").unwrap(), "Quarter", "nothing is written");
+    let when = CellCondition::Formula { formula: deep.clone() };
+    let bold = CellFormat { bold: Some(true), ..Default::default() };
+    assert!(wb.conditional_format("Sheet1", "A1:A2", &when, &bold).is_err());
+    // A plain value is never a formula, however many brackets it has.
+    wb.set_cells("Sheet1", "A1", &[vec!["(".repeat(700)]]).unwrap();
+}
+
+#[test]
+fn an_xlsx_with_a_formula_past_the_limits_is_refused() {
+    let xlsx = Workbook::new("x").unwrap().to_xlsx().unwrap();
+    let ok = repack(&xlsx, &[("xl/worksheets/sheet1.xml", &sheet_with_formula("SUM(1,2)*2"))]);
+    assert_eq!(Workbook::from_xlsx(&ok, "x").unwrap().input("Sheet1", "A1").unwrap(), "=SUM(1,2)*2");
+    let deep = format!("{}1{}", "(".repeat(700), ")".repeat(700));
+    let bad = repack(&xlsx, &[("xl/worksheets/sheet1.xml", &sheet_with_formula(&deep))]);
+    assert!(Workbook::from_xlsx(&bad, "x").unwrap_err().contains("levels of brackets"));
+    // Written as character references, or in a defined name, it is the same formula.
+    let deep = format!("{}1{}", "&#40;".repeat(700), "&#41;".repeat(700));
+    let bad = repack(&xlsx, &[("xl/worksheets/sheet1.xml", &sheet_with_formula(&deep))]);
+    assert!(Workbook::from_xlsx(&bad, "x").unwrap_err().contains("levels of brackets"));
+    let workbook = format!(
+        r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets><definedNames><definedName name="n">{}1{}</definedName></definedNames></workbook>"#,
+        "(".repeat(700),
+        ")".repeat(700)
+    );
+    let bad = repack(&xlsx, &[("xl/workbook.xml", workbook.as_bytes())]);
+    assert!(Workbook::from_xlsx(&bad, "x").unwrap_err().contains("levels of brackets"));
+}
+
+#[test]
+fn an_xlsx_that_unpacks_too_big_is_refused() {
+    let xlsx = Workbook::new("x").unwrap().to_xlsx().unwrap();
+    // More shared strings than a sheet holds cells: a few hundred kilobytes packed.
+    let strings = format!("<sst>{}</sst>", "<si><t>a</t></si>".repeat(MAX_CELLS + 1));
+    let bomb = repack(&xlsx, &[("xl/sharedStrings.xml", strings.as_bytes())]);
+    assert!(bomb.len() < 2 * 1024 * 1024);
+    assert!(Workbook::from_xlsx(&bomb, "x").unwrap_err().contains("at most"));
+    // XML nested past reason.
+    let nested = format!("{}{}", "<a>".repeat(10_000), "</a>".repeat(10_000));
+    let bad = repack(&xlsx, &[("xl/styles.xml", nested.as_bytes())]);
+    assert!(Workbook::from_xlsx(&bad, "x").unwrap_err().contains("nests"));
+    // A part bigger than everything may unpack to.
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    out.start_file("xl/media/big.bin", zip::write::SimpleFileOptions::default().large_file(true)).unwrap();
+    let zeros = vec![0u8; 1024 * 1024];
+    for _ in 0..=(MAX_UNPACKED / (1024 * 1024)) {
+        std::io::Write::write_all(&mut out, &zeros).unwrap();
+    }
+    let bomb = out.finish().unwrap().into_inner();
+    assert!(Workbook::from_xlsx(&bomb, "x").unwrap_err().contains("unpacks to more than"));
+    // The same, saying it unpacks to one byte.
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    out.start_file("xl/media/big.bin", zip::write::SimpleFileOptions::default()).unwrap();
+    for _ in 0..=(MAX_UNPACKED / (1024 * 1024)) {
+        std::io::Write::write_all(&mut out, &zeros).unwrap();
+    }
+    let mut lying = out.finish().unwrap().into_inner();
+    for (signature, at) in [(b"PK\x03\x04", 22), (b"PK\x01\x02", 24)] {
+        let header = lying.windows(4).position(|w| w == signature).unwrap();
+        lying[header + at..header + at + 4].copy_from_slice(&1u32.to_le_bytes());
+    }
+    assert_eq!(zip::ZipArchive::new(Cursor::new(&lying)).unwrap().by_index(0).unwrap().size(), 1);
+    // (zip notices the lie itself; the count would catch it too.)
+    let err = Workbook::from_xlsx(&lying, "x").unwrap_err();
+    assert!(err.contains("larger than its declared") || err.contains("unpacks to more than"), "{err}");
+}
+
+#[test]
+fn a_csv_with_too_many_cells_is_refused_before_it_is_read() {
+    let line = format!("{}\n", vec!["1"; 1000].join(","));
+    let csv = line.repeat(MAX_CELLS / 1000 + 1);
+    assert!(Workbook::from_csv(&csv, "x", "Sheet1").unwrap_err().contains("at most"));
+}
+
+#[test]
+fn a_worksheet_is_checked_wherever_the_workbook_puts_it() {
+    let xlsx = Workbook::new("x").unwrap().to_xlsx().unwrap();
+    let mut zip = zip::ZipArchive::new(Cursor::new(&xlsx)).unwrap();
+    let mut rels = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/_rels/workbook.xml.rels").unwrap(), &mut rels).unwrap();
+    let moved = |to: &str| rels.replace("Target=\"worksheets/sheet1.xml\"", &format!("Target=\"{to}\""));
+    let rels = moved("worksheets/sheet1.dat");
+    let at = |sheet: &[u8]| {
+        let rels: &[u8] = rels.as_bytes();
+        repack(&xlsx, &[("xl/_rels/workbook.xml.rels", rels), ("xl/worksheets/sheet1.dat", sheet)])
+    };
+    let ok = at(&sheet_with_formula("SUM(1,2)*2"));
+    let wb = Workbook::from_xlsx(&ok, "x").unwrap();
+    assert_eq!(wb.input("Sheet1", "A1").unwrap(), "=SUM(1,2)*2", "read from sheet1.dat");
+    let deep = format!("{}1{}", "(".repeat(20_000), ")".repeat(20_000));
+    let err = Workbook::from_xlsx(&at(&sheet_with_formula(&deep)), "x").unwrap_err();
+    assert!(err.contains("a formula"), "{err}");
+    let deep = format!("{}1{}", "(".repeat(2000), ")".repeat(2000));
+    assert!(Workbook::from_xlsx(&at(&sheet_with_formula(&deep)), "x").unwrap_err().contains("levels of brackets"));
+    let cells = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">{}</row></sheetData></worksheet>"#,
+        "<c/>".repeat(MAX_CELLS + 1)
+    );
+    assert!(Workbook::from_xlsx(&at(cells.as_bytes()), "x").unwrap_err().contains("at most"));
+    // A part that isn't XML (a picture) is read as far as it looks like XML, and doesn't stop the import.
+    let picture: Vec<u8> = (0..100_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+    let with_picture = repack(&ok, &[("xl/media/image1.png", &picture), ("xl/media/x.bin", b"<a><b>\xff<<\x00")]);
+    assert!(Workbook::from_xlsx(&with_picture, "x").is_ok());
+    // Outside `worksheets/` IronCalc panics on it: refused, not a crash.
+    let rels = moved("s.xml");
+    let elsewhere =
+        repack(&xlsx, &[("xl/_rels/workbook.xml.rels", rels.as_bytes()), ("xl/s.xml", &sheet_with_formula("1"))]);
+    assert!(Workbook::from_xlsx(&elsewhere, "x").is_err());
+}

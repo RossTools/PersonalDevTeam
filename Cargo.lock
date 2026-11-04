@@ -4042,6 +4042,7 @@ dependencies = [
  "csv",
  "ironcalc",
  "pdt-core",
+ "quick-xml",
  "serde_json",
  "tempfile",
  "zip",
