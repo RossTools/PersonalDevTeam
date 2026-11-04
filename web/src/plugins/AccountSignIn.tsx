@@ -1,11 +1,12 @@
 // A plugin's account sign-in in the browser (PDT-316, PDT-378), from what it declares (`SignIn`): each account signs
 // in on the service's consent page, in a window of its own, which comes back to PDT and closes. With PDT's own
 // client (`builtIn`) the window starts at the website's page (`relay`), which goes back only to the PDT that hands it
-// the consent page (PDT-410). Sign in with … adds an account, and each account lets agents in with a consent of its own; an
+// the consent page (PDT-410); when that page can't hand the answer back (a corporate proxy), it shows a code to paste
+// here instead (PDT-590). Sign in with … adds an account, and each account lets agents in with a consent of its own; an
 // account with the user's own OAuth client is under Advanced.
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, Disclosure, Section, Skeleton } from '@ui';
+import { Alert, Badge, Button, Disclosure, Input, Section, Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { SignIn } from '../api/gen/SignIn';
 import type { SignInAccount } from '../api/gen/SignInAccount';
@@ -32,28 +33,51 @@ export function useSignInAccounts(url: string | null, waiting = false) {
 /** The address the service sends the browser back to: it must be one of the OAuth client's redirect URIs. */
 export const redirectUri = (s: SignIn) => `${window.location.origin}${s.api}/callback`;
 
+/** How long the website's page has to say it is listening before the window goes to the consent page itself. */
+export const RELAY_READY_MS = 8_000;
+/** How long a sign-in through the website's page may take before PDT says what may be in the way. */
+export const SLOW_SIGN_IN_MS = 90_000;
+
 /** Each account's sign-in, on its plugin's page. */
 export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
   const qc = useQueryClient();
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ownClient, setOwnClient] = useState(false);
+  // The sign-in under way went through the website's page, so its answer may come back as a code to paste.
+  const [relayed, setRelayed] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const [pasting, setPasting] = useState(false);
+  const [code, setCode] = useState('');
+  const [done, setDone] = useState<string | null>(null);
   const url = `${s.api}/accounts`;
   const accounts = useSignInAccounts(url, waiting);
   const builtIn = s.builtIn;
   const refresh = () => void qc.invalidateQueries({ queryKey: signInAccountsKey(url) });
   // The relay page's handshake for the sign-in under way: a new one replaces it (the window is the same one).
   const handshake = useRef<((e: MessageEvent) => void) | null>(null);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const stopHandshake = () => {
     if (handshake.current) window.removeEventListener('message', handshake.current);
     handshake.current = null;
   };
-  useEffect(() => stopHandshake, []);
+  useEffect(() => () => {
+    stopHandshake();
+    clearTimeout(slowTimer.current);
+  }, []);
+  const finished = () => {
+    stopHandshake();
+    clearTimeout(slowTimer.current);
+    setWaiting(false);
+    setSlow(false);
+    setPasting(false);
+    setCode('');
+  };
   // The callback page tells this one when it is done.
   useEffect(() => {
     const done = (e: MessageEvent) => {
       if (e.origin !== window.location.origin || typeof e.data !== 'object' || e.data === null || !('pdtSignIn' in e.data)) return;
-      setWaiting(false);
+      finished();
       void qc.invalidateQueries({ queryKey: signInAccountsKey(url) });
     };
     window.addEventListener('message', done);
@@ -62,6 +86,8 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
   /** Opens the service's consent page for `start` in a window of its own. */
   const consent = async (start: () => Promise<AccountSignInStart>) => {
     setError(null);
+    setDone(null);
+    finished();
     // Opened now, in the click, so the browser doesn't block it; it goes to the service once PDT says where.
     stopHandshake();
     const w = window.open('', 'pdt-sign-in', 'popup,width=520,height=680');
@@ -79,11 +105,32 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
         handshake.current = ready;
         window.addEventListener('message', ready);
         w.location.href = relay;
+        // A page that can't reach this one (a proxy isolating it) never says it is ready: the window goes to the
+        // consent page itself, and the answer comes back as a code to paste, never sent on. Whether the window was
+        // closed can't be told (the consent page cuts it off from this one), so a slow sign-in says what may be wrong.
+        setTimeout(() => {
+          if (handshake.current !== ready) return;
+          stopHandshake();
+          w.location.href = to;
+        }, RELAY_READY_MS);
+        slowTimer.current = setTimeout(() => setSlow(true), SLOW_SIGN_IN_MS);
       } else if (w) w.location.href = to;
       else window.location.assign(to);
+      setRelayed(!!relay);
       setWaiting(true);
     } catch (e) {
       w?.close();
+      setError(actionError(e));
+    }
+  };
+  const paste = async () => {
+    setError(null);
+    try {
+      const { message } = await api.signInPaste(s.api, code.trim());
+      finished();
+      setDone(message);
+      refresh();
+    } catch (e) {
       setError(actionError(e));
     }
   };
@@ -97,6 +144,7 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
     }
   };
   const origin = window.location.origin;
+  const canPaste = relayed && s.pasteCode;
   const redirectNote = <>Add <code className="text-foreground">{redirectUri(s)}</code> to your OAuth client’s authorized redirect URIs first.</>;
   return (
     <Section
@@ -126,7 +174,27 @@ export function AccountSignIn({ signIn: s }: { signIn: SignIn }) {
                 </Button>
               </div>
             ))}
-      {waiting && <p role="status" className="text-xs text-muted-foreground">Finish signing in in the {s.service} window.</p>}
+      {waiting && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status" className="text-xs text-muted-foreground">Finish signing in in the {s.service} window.</p>
+          {canPaste && !pasting && <Button size="sm" variant="ghost" onClick={() => setPasting(true)}>Paste a code instead</Button>}
+          <Button size="sm" variant="ghost" onClick={finished}>Cancel</Button>
+        </div>
+      )}
+      {waiting && slow && (
+        <Alert tone="warning">
+          Still not signed in? A company network may be blocking or isolating the sign-in page (a proxy or browser
+          isolation), or your {s.service} Workspace admin may block apps they haven’t approved ({s.service} then says
+          “Access blocked”, and only the admin can allow PDT).{canPaste && ' If the window shows a code, paste it here.'}
+        </Alert>
+      )}
+      {waiting && pasting && (
+        <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); void paste(); }}>
+          <Input mono className="min-w-0 flex-1" aria-label="Sign-in code" placeholder="The code the sign-in window shows" value={code} onChange={(e) => setCode(e.target.value)} autoFocus />
+          <Button size="sm" variant="primary" type="submit" disabled={!code.trim()}>Finish signing in</Button>
+        </form>
+      )}
+      {done && <Alert>{done}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
       {builtIn && (
         <Disclosure title="Advanced" panelClassName="mt-2 flex flex-wrap items-center gap-2">

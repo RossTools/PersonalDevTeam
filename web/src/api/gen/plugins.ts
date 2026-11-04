@@ -877,7 +877,8 @@ export const plugins: IntegrationInfo[] = [
       "kind": "google",
       "builtIn": false,
       "description": "Sign in with Google adds an account. PDT sees only the files it makes and those you pick, and agents use an account only once you allow them.",
-      "ownClient": "Your organization blocks apps from outside it? Add an account with your own OAuth client from Google Cloud."
+      "ownClient": "Your organization blocks apps from outside it? Add an account with your own OAuth client from Google Cloud.",
+      "pasteCode": false
     },
     "status": "needs_setup",
     "error": null,

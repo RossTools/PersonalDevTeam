@@ -6,7 +6,8 @@
  * routes are under [`SignIn::api`]: `GET {api}/accounts` ([`SignInAccount`]), `POST {api}/sign-in` (adds an
  * account, with PDT's own client), `POST`/`DELETE {api}/accounts/{id}/sign-in` ([`AccountSignInInput`], [`AccountSignInStart`]),
  * `DELETE {api}/accounts/{id}/agents`; the service sends the browser back to `{api}/callback`, whose page posts
- * `{pdtSignIn: ok}` to the window that opened it.
+ * `{pdtSignIn: ok}` to the window that opened it. With [`SignIn::paste_code`], `POST {api}/sign-in/code`
+ * ([`AccountSignInCode`], [`AccountSignInDone`]) finishes one with a code the website's page showed instead.
  */
 export type SignIn = { 
 /**
@@ -33,4 +34,9 @@ description: string,
 /**
  * What Advanced says, with PDT's own client, before the redirect URI to add.
  */
-ownClient: string, };
+ownClient: string, 
+/**
+ * A sign-in through the website's page can be finished by pasting the code it shows, when it can't send the
+ * browser back to PDT (a corporate proxy, browser isolation).
+ */
+pasteCode: boolean, };

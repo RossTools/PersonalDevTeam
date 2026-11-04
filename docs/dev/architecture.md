@@ -583,7 +583,15 @@ sign-in, so the code goes back only to the PDT that started it: the sign-in answ
 sign-in window opens it, the page posts `{pdtRelay: 'ready'}` to its opener, which posts back `{pdtRelayTo: url}`;
 the page takes it only when the message's origin (which the browser sets) is the state's, keeps the state in its
 `localStorage` for 15 minutes, and later forwards only a state it kept, once. Anyone can start a flow with the built-in
-client, but a Google link they hand someone else then stops at the page. Signing in with no account (`POST /api/google/sign-in`) adds the connection,
+client, but a Google link they hand someone else then stops at the page. A state the page didn't keep (no opener or
+storage: a proxy isolating it) is never forwarded: the page shows Google's answer as a code to paste
+(`pasteCode`, base64url of `state=…&code=…`), which `POST /api/google/sign-in/code` (`builtin::pasted`, then the
+callback's own checks in `routes::finish`) takes; the UI offers it for a sign-in through the page
+(`SignIn.pasteCode`), and sends the window to the consent page itself when the page never says it is ready. From a
+loopback origin (`builtin::loopback_redirect`: `127.0.0.1`, `[::1]`, `localhost`, over http), a build with the
+Desktop app clients too (`PDT_GOOGLE_DESKTOP_*`, `builtin::Desktop`) skips the website: Google comes straight back to
+`<origin>/api/google/callback` with a plain nonce as the state, no `relay`. The sign-in it keeps says so
+(`SignIn.desktop`), since its refresh token only works with the Desktop client. Signing in with no account (`POST /api/google/sign-in`) adds the connection,
 named after the email, once Google says who it is. There are two clients, after Google's rule for apps that are
 partly an agent: the standard one for the user's own calls and the agentic one for agents' document tools.
 `pdt_api::sdk::documents::by_agent` (a task-local set around every agent tool call, `AnyAction::call`) tells the

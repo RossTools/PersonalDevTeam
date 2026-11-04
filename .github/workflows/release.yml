@@ -281,6 +281,10 @@ jobs:
           google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
           google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
           google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-desktop-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID }}
+          google-desktop-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET }}
+          google-desktop-agent-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID }}
+          google-desktop-agent-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET }}
           google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
           google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
 
@@ -322,6 +326,10 @@ jobs:
           google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
           google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
           google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-desktop-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID }}
+          google-desktop-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET }}
+          google-desktop-agent-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID }}
+          google-desktop-agent-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET }}
           google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
           google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
 
@@ -353,6 +361,10 @@ jobs:
           google-client-secret: ${{ secrets.PDT_GOOGLE_CLIENT_SECRET }}
           google-agent-client-id: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_ID }}
           google-agent-client-secret: ${{ secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET }}
+          google-desktop-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID }}
+          google-desktop-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET }}
+          google-desktop-agent-client-id: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID }}
+          google-desktop-agent-client-secret: ${{ secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET }}
           google-picker-key: ${{ secrets.PDT_GOOGLE_PICKER_KEY }}
           google-project-number: ${{ secrets.PDT_GOOGLE_PROJECT_NUMBER }}
 

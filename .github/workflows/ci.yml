@@ -438,6 +438,10 @@ jobs:
           google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
           google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
           google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-desktop-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID || '' }}
+          google-desktop-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET || '' }}
+          google-desktop-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID || '' }}
+          google-desktop-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET || '' }}
           google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
           google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}
 
@@ -472,6 +476,10 @@ jobs:
           google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
           google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
           google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-desktop-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID || '' }}
+          google-desktop-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET || '' }}
+          google-desktop-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID || '' }}
+          google-desktop-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET || '' }}
           google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
           google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}
 
@@ -500,5 +508,9 @@ jobs:
           google-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_CLIENT_SECRET || '' }}
           google-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_ID || '' }}
           google-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_AGENT_CLIENT_SECRET || '' }}
+          google-desktop-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_ID || '' }}
+          google-desktop-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_CLIENT_SECRET || '' }}
+          google-desktop-agent-client-id: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID || '' }}
+          google-desktop-agent-client-secret: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET || '' }}
           google-picker-key: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PICKER_KEY || '' }}
           google-project-number: ${{ needs.changes.outputs.release == 'true' && secrets.PDT_GOOGLE_PROJECT_NUMBER || '' }}

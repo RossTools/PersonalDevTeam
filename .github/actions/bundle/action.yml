@@ -13,8 +13,9 @@ inputs:
   version:
     description: A nightly release's version (X.Y.Z-nightly.YYYYMMDD), set in this checkout before building and not committed; empty builds the checked-in one
     default: ''
-  # PDT's own Google sign-in (its two OAuth clients, the picker key and the project number), built into pdtd; without
-  # them a build offers only the user's own OAuth client.
+  # PDT's own Google sign-in (its two Web OAuth clients, its two Desktop ones for signing in on the same machine, the
+  # picker key and the project number), built into pdtd; without them a build offers only the user's own OAuth client,
+  # and without the Desktop ones it signs in through the website from the same machine too.
   google-client-id:
     description: the standard Google OAuth client's ID
     default: ''
@@ -25,6 +26,18 @@ inputs:
     description: the agentic Google OAuth client's ID (for agents' document tools)
     default: ''
   google-agent-client-secret:
+    description: its secret
+    default: ''
+  google-desktop-client-id:
+    description: the standard Desktop app OAuth client's ID (signing in on the same machine, straight back to 127.0.0.1)
+    default: ''
+  google-desktop-client-secret:
+    description: its secret (not confidential, by Google's design for Desktop clients)
+    default: ''
+  google-desktop-agent-client-id:
+    description: the agentic Desktop app OAuth client's ID
+    default: ''
+  google-desktop-agent-client-secret:
     description: its secret
     default: ''
   google-picker-key:
@@ -94,6 +107,10 @@ runs:
         PDT_GOOGLE_CLIENT_SECRET: ${{ inputs.google-client-secret }}
         PDT_GOOGLE_AGENT_CLIENT_ID: ${{ inputs.google-agent-client-id }}
         PDT_GOOGLE_AGENT_CLIENT_SECRET: ${{ inputs.google-agent-client-secret }}
+        PDT_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google-desktop-client-id }}
+        PDT_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ inputs.google-desktop-client-secret }}
+        PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID: ${{ inputs.google-desktop-agent-client-id }}
+        PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET: ${{ inputs.google-desktop-agent-client-secret }}
         PDT_GOOGLE_PICKER_KEY: ${{ inputs.google-picker-key }}
         PDT_GOOGLE_PROJECT_NUMBER: ${{ inputs.google-project-number }}
       run: scripts/google-build-values.sh
@@ -105,6 +122,10 @@ runs:
         PDT_GOOGLE_CLIENT_SECRET: ${{ inputs.google-client-secret }}
         PDT_GOOGLE_AGENT_CLIENT_ID: ${{ inputs.google-agent-client-id }}
         PDT_GOOGLE_AGENT_CLIENT_SECRET: ${{ inputs.google-agent-client-secret }}
+        PDT_GOOGLE_DESKTOP_CLIENT_ID: ${{ inputs.google-desktop-client-id }}
+        PDT_GOOGLE_DESKTOP_CLIENT_SECRET: ${{ inputs.google-desktop-client-secret }}
+        PDT_GOOGLE_DESKTOP_AGENT_CLIENT_ID: ${{ inputs.google-desktop-agent-client-id }}
+        PDT_GOOGLE_DESKTOP_AGENT_CLIENT_SECRET: ${{ inputs.google-desktop-agent-client-secret }}
         PDT_GOOGLE_PICKER_KEY: ${{ inputs.google-picker-key }}
         PDT_GOOGLE_PROJECT_NUMBER: ${{ inputs.google-project-number }}
       run: |

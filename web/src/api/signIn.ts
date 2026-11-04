@@ -1,6 +1,7 @@
 import { enc, request } from './core';
 import type { SignInAccount } from './gen/SignInAccount';
 import type { AccountSignInStart } from './gen/AccountSignInStart';
+import type { AccountSignInDone } from './gen/AccountSignInDone';
 
 /**
  * A plugin's account sign-in (PDT-378), under the routes its declaration names (`SignIn.api`): its accounts, adding
@@ -19,6 +20,9 @@ export const signInApi = {
       { method: 'POST', body: JSON.stringify(agent ? { origin, agent } : { origin }) },
       { asUser: true },
     ),
+  /** Finishes a sign-in with the code the website's page showed, when it couldn't send the browser back. */
+  signInPaste: (base: string, code: string) =>
+    request<AccountSignInDone>(`${base}/sign-in/code`, { method: 'POST', body: JSON.stringify({ code }) }, { asUser: true }),
   signOutAccount: (base: string, connectionId: string) =>
     request<void>(`${base}/accounts/${enc(connectionId)}/sign-in`, { method: 'DELETE' }, { asUser: true }),
   /** Agents may no longer use the account. */

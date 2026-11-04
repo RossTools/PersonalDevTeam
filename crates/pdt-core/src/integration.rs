@@ -757,7 +757,8 @@ mod tests {
 /// routes are under [`SignIn::api`]: `GET {api}/accounts` ([`SignInAccount`]), `POST {api}/sign-in` (adds an
 /// account, with PDT's own client), `POST`/`DELETE {api}/accounts/{id}/sign-in` ([`AccountSignInInput`], [`AccountSignInStart`]),
 /// `DELETE {api}/accounts/{id}/agents`; the service sends the browser back to `{api}/callback`, whose page posts
-/// `{pdtSignIn: ok}` to the window that opened it.
+/// `{pdtSignIn: ok}` to the window that opened it. With [`SignIn::paste_code`], `POST {api}/sign-in/code`
+/// ([`AccountSignInCode`], [`AccountSignInDone`]) finishes one with a code the website's page showed instead.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -775,6 +776,10 @@ pub struct SignIn {
     pub description: String,
     /// What Advanced says, with PDT's own client, before the redirect URI to add.
     pub own_client: String,
+    /// A sign-in through the website's page can be finished by pasting the code it shows, when it can't send the
+    /// browser back to PDT (a corporate proxy, browser isolation).
+    #[serde(default)]
+    pub paste_code: bool,
 }
 
 /// An account (connection) a plugin signs in ([`SignIn`]), as Settings shows it.
@@ -812,6 +817,24 @@ pub struct AccountSignInInput {
     #[serde(default)]
     #[ts(optional)]
     pub agent: Option<bool>,
+}
+
+/// `POST {api}/sign-in/code` ([`SignIn::paste_code`]).
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountSignInCode {
+    /// What the website's page showed to paste (or the address it sent the browser back to).
+    pub code: String,
+}
+
+/// A sign-in finished with a pasted code.
+#[derive(Debug, Clone, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AccountSignInDone {
+    /// What happened, for the user (`PDT is signed in to Google as …`).
+    pub message: String,
 }
 
 /// Where a sign-in goes ([`SignIn`]).

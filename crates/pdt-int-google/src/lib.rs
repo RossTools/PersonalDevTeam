@@ -147,6 +147,7 @@ impl Integration for Google {
             service: "Google".into(),
             kind: KIND.into(),
             built_in: self.shared.built_in.is_some(),
+            paste_code: self.shared.built_in.is_some(),
             description: "Sign in with Google adds an account. PDT sees only the files it makes and those you pick, \
                           and agents use an account only once you allow them."
                 .into(),
@@ -166,6 +167,7 @@ impl Integration for Google {
             axum::Router::new()
                 .route("/google/accounts", get(routes::list))
                 .route("/google/sign-in", post(routes::start_new))
+                .route("/google/sign-in/code", post(routes::paste))
                 .route("/google/accounts/{id}/sign-in", post(routes::start).delete(routes::sign_out))
                 .route("/google/accounts/{id}/agents", axum::routing::delete(routes::forget_agents))
                 .route("/google/accounts/{id}/picker", get(routes::picker))
