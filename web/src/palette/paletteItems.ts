@@ -16,11 +16,15 @@ import { byDefault, choiceFor, FALLBACK_DEFAULTS, type AgentDefaults } from '../
 
 export const GO_TO = 'Go to';
 export const ACTIONS = 'Actions';
+/** Files found by name: always the last group. */
+export const FILES = 'Files';
+/** The palette looks for files once the filter has this many characters. */
+export const MIN_FILE_QUERY = 2;
 
 /** Which icon the palette draws for an item (kept as data so this module stays pure). */
 export type PaletteIcon =
   | 'workspace' | 'tab' | 'agent' | 'settings' | 'host' | 'claude' | 'codex' | 'devin' | 'acp' | 'shell' | 'run' | 'rename' | 'close'
-  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows' | 'inbox' | 'personas' | 'pm' | 'notes' | 'bug';
+  | 'move' | 'needsYou' | 'theme' | 'keys' | 'check' | 'add' | 'ticket' | 'files' | 'changes' | 'workflows' | 'inbox' | 'personas' | 'pm' | 'notes' | 'bug' | 'file';
 
 /**
  * A second step: another list (Move tab → workspaces), a text field (New workspace → its name), or a ticket search
@@ -48,6 +52,19 @@ export interface PaletteItem {
   run?: () => void;
   /** Opens a second step instead of running. */
   next?: PaletteStep;
+}
+
+/** A checkout the palette finds files in, and how its rows name it (a ticket key, a branch or the project). */
+export interface FileCheckout {
+  projectId: string;
+  worktreeId: string | null;
+  label: string;
+}
+
+/** A file found by name: its path in the checkout, `/`-separated. */
+export interface FoundFile {
+  checkout: FileCheckout;
+  path: string;
 }
 
 /** `claude`, `codex` and `devin` are conversations, the `_terminal` kinds the agents' own TUIs; an ACP agent's kind its
@@ -91,6 +108,8 @@ export interface PaletteHandlers {
   startTicket: (ticket: { id: string; projectId: string }, here: boolean) => void;
   /** Starts a parent's next part (PDT-38): the Start dialog for it, or a toast saying why there is none. */
   startNextPart: (parent: { id: string; key: string }) => void;
+  /** Shows a file in the Files view, at its checkout. */
+  openFile: (file: FoundFile) => void;
 }
 
 export interface PaletteContext {
@@ -116,6 +135,8 @@ export interface PaletteContext {
   defaults?: Pick<AgentDefaults, 'agent' | 'mode'>;
   /** The host's ACP agents: each gets a "New … here". */
   acpAgents?: Pick<AcpAgentView, 'agent' | 'label'>[];
+  /** Files found for the filter text (the API's matches, already filtered): the Files group. */
+  files?: { query: string; found: FoundFile[] };
 }
 
 const key = (k: string) => `Ctrl+] ${k}`;
@@ -126,6 +147,27 @@ function branchOf(info: ItemInfo): string | null {
   if (info.run) return info.run.branch;
   if (info.session && info.worktreeId) return info.session.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
   return null;
+}
+
+/** How a file row names a worktree: its ticket's key, else its branch. */
+function worktreeLabel(infos: ItemInfo[], worktreeId: string): string | null {
+  const here = infos.filter((i) => i.worktreeId === worktreeId);
+  const ticket = here.map((i) => i.ticket?.key ?? i.session?.ticket?.key).find(Boolean);
+  return ticket ?? here.map(branchOf).find(Boolean) ?? null;
+}
+
+/**
+ * Where the palette finds files: the checkout in context (the tab's worktree, a ticket's attempt), else the current
+ * project's main checkout; with no project in context, every project's main checkout. Plain folders have no git list.
+ */
+export function fileCheckouts({ projects, infos, place }: Pick<PaletteContext, 'projects' | 'infos' | 'place'>): FileCheckout[] {
+  const project = place ? projects.find((p) => p.id === place.projectId) : undefined;
+  if (project) {
+    if (project.kind !== 'repo') return [];
+    const label = (place?.worktreeId && worktreeLabel(infos, place.worktreeId)) || project.name;
+    return [{ projectId: project.id, worktreeId: place?.worktreeId ?? null, label }];
+  }
+  return projects.filter((p) => p.kind === 'repo').map((p) => ({ projectId: p.id, worktreeId: null, label: p.name }));
 }
 
 const needsYou = (info: ItemInfo | undefined) => info?.activity === 'needs_you';
@@ -326,5 +368,19 @@ export function paletteItems(ctx: PaletteContext): PaletteItem[] {
   actions.push({ id: 'keys', label: 'Keyboard shortcuts', group: ACTIONS, icon: 'keys', shortcut: key('?'), keywords: ['help', 'keys'], run: h.showKeys });
   actions.push({ id: 'report-bug', label: 'Report a bug', group: ACTIONS, icon: 'bug', keywords: ['help', 'issue', 'feedback', 'problem'], run: h.reportBug });
 
-  return [...goTo, ...actions];
+  // Found files come last, however well they match. The API filtered them, so the typed text keeps them all listed.
+  const files: PaletteItem[] = (ctx.files?.found ?? []).map((f) => {
+    const cut = f.path.lastIndexOf('/');
+    return {
+      id: `file:${f.checkout.projectId}:${f.checkout.worktreeId ?? ''}:${f.path}`,
+      label: f.path.slice(cut + 1),
+      detail: [f.path.slice(0, Math.max(cut, 0)), f.checkout.label].filter(Boolean).join(' · '),
+      group: FILES,
+      icon: 'file',
+      keywords: [f.path, ctx.files!.query],
+      run: () => h.openFile(f),
+    };
+  });
+
+  return [...goTo, ...actions, ...files];
 }

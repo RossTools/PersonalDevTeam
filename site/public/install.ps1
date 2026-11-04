@@ -117,6 +117,42 @@ function Install-Pdt {
         $health = Invoke-RestMethod -Uri "$local/api/health" -TimeoutSec 3 -UseBasicParsing
         $running = $health.name -eq $product
     } catch { $running = $false }
+    # Stops this install's pdt-host and pdtd (`pdt-host stop`, until the next login) and any left running from the
+    # install folder, then waits until PDT no longer answers on its port and pdtd.exe can be replaced. Returns why it
+    # could not, or nothing once it is stopped.
+    function Close-RunningPdt {
+        $daemon = Join-Path $installDir 'pdtd.exe'
+        $hostExe = Join-Path $installDir 'pdt-host.exe'
+        if (Test-Path $hostExe) {
+            Write-Host "Stopping the running $product..."
+            # Its exit code and output don't matter: the wait below checks what it did.
+            $stop = Start-Process -FilePath $hostExe -ArgumentList 'stop' -WindowStyle Hidden -PassThru
+            $null = $stop.Handle
+            $null = $stop.WaitForExit(30000)
+        }
+        # A stray the stop missed (a second pdt-host's pdtd, say) still keeps pdtd.exe open.
+        Get-Process -Name 'pdtd', 'pdt-host' -ErrorAction SilentlyContinue |
+            Where-Object { $_.Path -and $_.Path.StartsWith("$installDir\", [StringComparison]::OrdinalIgnoreCase) } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+        $deadline = (Get-Date).AddSeconds(30)
+        while ($true) {
+            $answers = $false
+            try {
+                $answers = (Invoke-RestMethod -Uri "$local/api/health" -TimeoutSec 2 -UseBasicParsing).name -eq $product
+            } catch { $answers = $false }
+            $inUse = $false
+            if (Test-Path $daemon) {
+                try { [IO.File]::Open($daemon, 'Open', 'ReadWrite', 'None').Close() } catch { $inUse = $true }
+            }
+            if (-not $answers -and -not $inUse) { return }
+            if ((Get-Date) -gt $deadline) {
+                $what = if ($inUse) { "$daemon is still in use" } else { "it still answers at $local" }
+                return "could not stop the running $product ($what). Quit it from its tray icon (Stop PDT and quit) and run this again. Nothing was installed."
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
     if (-not $Force -and ($existing -or $running)) {
         if ($existing) { Write-Host "$product is already installed in $installDir." } else { Write-Host "$product is already running at $local." }
         Write-Host 'It keeps itself up to date: Settings > This host > Updates shows its version and checks for a new one.'
@@ -196,6 +232,13 @@ function Install-Pdt {
         }
         Write-Host 'Checksum verified.'
 
+        # The silent installer reports success without replacing a pdtd.exe a running PDT keeps open, so a forced
+        # install over a running one stops it first, as an update does.
+        if ($Force -and ($existing -or $running)) {
+            $stopped = Close-RunningPdt
+            if ($stopped) { return Write-Failure $stopped }
+        }
+
         Write-Host 'Installing...'
         # Silent (NSIS /S): a per-user install that starts PDT and registers it to start at login.
         # Waits for the installer only: its hook starts pdt-host, which runs on, and `Start-Process -Wait` would wait for
@@ -206,6 +249,21 @@ function Install-Pdt {
         if ($setup.ExitCode -ne 0) { return Write-Failure "the installer failed (exit code $($setup.ExitCode))." }
     } finally {
         Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # The installer starts PDT: check that the one answering is the version just installed.
+    $wantVersion = $tag.TrimStart('v')
+    $answered = $null
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            $answered = (Invoke-RestMethod -Uri "$local/api/health" -TimeoutSec 2 -UseBasicParsing).version
+            if ($answered -eq $wantVersion) { break }
+        } catch { $answered = $null }
+        Start-Sleep -Seconds 1
+    }
+    if ($answered -and $answered -ne $wantVersion) {
+        return Write-Failure "the installer ran, but the $product answering at $local is still $answered, not $wantVersion. Quit it from its tray icon (Stop PDT and quit), then set `$env:PDT_FORCE = '1' and run this again."
     }
 
     Write-Host ''

@@ -184,6 +184,8 @@ mod tests {
             format!("$port = {STABLE_PORT}"),
             format!("'{HOST_BIN}.exe'"),
             format!("$signingKey = '{}'", RELEASE_SIGNING_KEY.unwrap_or_default()),
+            format!("'{DAEMON_BIN}.exe'"),
+            format!("-Name '{DAEMON_BIN}', '{HOST_BIN}'"),
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }

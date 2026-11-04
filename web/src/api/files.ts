@@ -19,7 +19,7 @@ export interface FileSearchQuery {
   glob: string;
 }
 
-/** A project's (or worktree's) files: browse, read, save, rename, delete, search. */
+/** A project's (or worktree's) files: browse, read, save, rename, delete, search, find by name. */
 export const filesApi = {
   listFiles: (projectId: string, worktreeId: string | null, path: string) =>
     request<FileEntry[]>(`/api/projects/${enc(projectId)}/files?${filesQuery(worktreeId, path)}`),
@@ -39,6 +39,9 @@ export const filesApi = {
     if (s.glob.trim()) params.set('glob', s.glob.trim());
     return request<SearchResult>(`/api/projects/${enc(projectId)}/files/search?${params}`, { signal });
   },
+  /** The checkout's files whose names best match `q`, best first (at most 20; none in a plain folder). */
+  findFiles: (projectId: string, worktreeId: string | null, q: string, signal?: AbortSignal) =>
+    request<string[]>(`/api/projects/${enc(projectId)}/files/find?${new URLSearchParams({ ...(worktreeId ? { worktreeId } : {}), q })}`, { signal }),
   /** Tells an agent session which files the user changed (it gets it once it is free). */
   tellFilesChanged: (projectId: string, t: TellFilesChanged) =>
     request<void>(`/api/projects/${enc(projectId)}/files/tell`, { method: 'POST', body: JSON.stringify(t) }),
