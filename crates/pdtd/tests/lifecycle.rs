@@ -13,7 +13,7 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    init_repo(&repo);
     let port = free_port();
 
     let mut d = start(port, &data);
@@ -96,7 +96,7 @@ fn run_port_base() -> u16 {
 fn project_with_web_run(port: u16, tmp: &Path) -> (String, u16) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(repo.join(".pdt")).unwrap();
-    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    init_repo(&repo);
     std::fs::write(repo.join(".pdt").join("project.toml"), RUN_CONFIG).unwrap();
     let (_, settings) = http(port, "GET", "/api/host/settings", None);
     assert_eq!(settings["settings"]["runPorts"], serde_json::json!({"start": 8500, "end": 8599}), "dev defaults");
@@ -233,7 +233,7 @@ fn a_rehearsal_serves_the_copy_and_resumes_nothing() {
     let data = tmp.path().join("data");
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    assert!(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo).status().unwrap().success());
+    init_repo(&repo);
     let port = free_port();
 
     let mut d = start(port, &data);

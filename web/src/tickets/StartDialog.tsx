@@ -11,10 +11,12 @@ import type { StartTicket } from '../api/gen/StartTicket';
 import type { TabPlacement } from '../api/gen/TabPlacement';
 import type { Ticket } from '../api/gen/Ticket';
 import { TicketKey } from '../common/TicketKey';
-import { useFormAction } from '../common/useAction';
+import { useAction, useFormAction } from '../common/useAction';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { isAcp, useAgents } from '../common/agents';
+import { LoginHint } from '../common/LoginHint';
+import { hostKeys } from '../host/queries';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { INITIAL_SIZE } from '../sessions/status';
 import { isClosed, linkRole } from './model';
@@ -91,6 +93,11 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const active = t?.attempt?.state === 'active';
   const closed = t ? isClosed(t.stage) : false;
   const startable = !!t && !active && !closed;
+  // The agent is installed but logged out (PDT-556): its session would stop at once, so say so and how to log in.
+  const loggedOut = !noSession && availability.of(agent) === 'logged_out';
+  const [checkAgain, checking] = useAction(async () => {
+    qc.setQueryData(hostKeys.checks, await api.refreshChecks());
+  });
 
   const wait = async () => {
     if (!t || !startable) return;
@@ -155,7 +162,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               )}
             </>
           ) : (
-            <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>Start</Button>
+            <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>{loggedOut ? 'Start anyway' : 'Start'}</Button>
           )}
         </>
       }
@@ -235,6 +242,15 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
                 className="w-64"
               />
             </Field>
+          )}
+          {loggedOut && !isAcp(agent) && (
+            <Alert
+              tone="warning"
+              title={`${agents.label(agent)} isn't logged in`}
+              action={<Button size="sm" variant="secondary" pending={checking} onClick={() => void checkAgain()}>Check again</Button>}
+            >
+              Its session won't work until you log in. <LoginHint agent={agent} />
+            </Alert>
           )}
           {personal ? (
             <p className="text-xs text-muted-foreground">

@@ -17,7 +17,7 @@ use tower::ServiceExt;
 async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
     let repo = tmp.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    common::git(&repo, &["init", "-q", "-b", "main"]);
+    crate::common::init_repo(&repo);
     let store = pdt_store::Store::open(&tmp.join("pdt.db")).await.unwrap();
     let state = common::app_state(store.clone(), tmp);
     let app = pdt_api::router(state.clone(), None);

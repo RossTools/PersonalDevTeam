@@ -3,7 +3,7 @@ import type { StepState } from "./StepState";
 
 export type SetupSteps = { 
 /**
- * git and at least one agent are found.
+ * git is found, and at least one agent is found and logged in.
  */
 agents: StepState, 
 /**

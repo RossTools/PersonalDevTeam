@@ -69,7 +69,10 @@ the **Network** screen.
 A program path set by an environment variable (`PDT_CLAUDE_PROGRAM` and so on) shows an **env** badge and wins over
 the setting.
 
-If the agent is found but its sessions fail at once, run it in a terminal and log in: PDT uses the agent's own login.
+If the agent shows **Not logged in**, or its sessions fail at once with a login error, log in once in a terminal (run
+`claude` and type `/login`, `codex login` or `devin auth login`): PDT uses the agent's own login. If you use an API
+key instead, set **Settings › This host › Agents › Credentials** to **Pass through**. **Start** on a ticket warns
+before it starts an agent that isn't logged in.
 
 Don't use an agent? Turn it off with its switch under **Programs**, and PDT stops counting it as missing.
 

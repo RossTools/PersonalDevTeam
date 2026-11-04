@@ -61,13 +61,32 @@ async fn add(
     key: Option<String>,
 ) -> Result<Project, ApiError> {
     // The base defaults to the repository's default branch, not whichever branch happens to be checked out.
-    let (info, default) = tokio::task::spawn_blocking(move || {
+    let (info, default, has_commits) = tokio::task::spawn_blocking(move || {
         let info = pdt_git::resolve_repo(&path)?;
         let default = pdt_git::default_branch(&info.root);
-        Ok::<_, pdt_git::GitError>((info, default))
+        let has_commits = !pdt_git::list_branches(&info.root)?.is_empty();
+        Ok::<_, pdt_git::GitError>((info, default, has_commits))
     })
     .await
-    .map_err(ApiError::internal)??;
+    .map_err(ApiError::internal)?
+    .map_err(|e| match e {
+        pdt_git::GitError::NotARepo(p) => ApiError::bad_request(
+            codes::NOT_A_GIT_REPO,
+            format!(
+                "{} is not a git repository: run `git init` there and make a first commit, or add it as a Personal \
+                 project (no repository)",
+                p.display()
+            ),
+        ),
+        other => other.into(),
+    })?;
+    // A fresh `git init` has no branch to start tickets from (PDT-558): every Start would fail on the base branch.
+    if !has_commits {
+        return Err(ApiError::bad_request(
+            codes::NO_COMMITS,
+            format!("{} has no commits yet: make or push a first commit, then add it", info.root.display()),
+        ));
+    }
     let base_branch = match base_branch {
         Some(b) => {
             let repo = info.root.clone();

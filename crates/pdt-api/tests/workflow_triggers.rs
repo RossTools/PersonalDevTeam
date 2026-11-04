@@ -182,7 +182,7 @@ async fn a_workflow_sees_its_own_inbox_items_only_with_include_own() {
 async fn agent_session(env: &Env, id: &str) -> String {
     let repo = env.tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    common::git(&repo, &["init", "-q", "-b", "main"]);
+    crate::common::init_repo(&repo);
     let (_, p) =
         call(&env.app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo.to_string_lossy()}))).await;
     let project = p["id"].as_str().unwrap_or_default().to_string();

@@ -100,8 +100,30 @@ describe('Start dialog', () => {
     await userEvent.click(agentPicker(dialog));
     expect(within(screen.getByRole('listbox')).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude · not logged in', 'Codex']);
     await userEvent.keyboard('{Escape}');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
-    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude' }));
+    // Logged out: a warning with how to log in, and Start says it starts anyway.
+    expect(within(dialog).getByRole('status')).toHaveTextContent("Claude isn't logged in");
+    expect(within(dialog).getByRole('status')).toHaveTextContent('/login');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start anyway' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude', mode: 'check' }));
+  });
+
+  it('checks a logged-out agent again from its warning, which goes once it is logged in', async () => {
+    const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
+    const checks = (claude: boolean) => ({ claude: tool(true, claude), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });
+    const calls = stubApi({
+      'GET /api/tickets/t1': ready,
+      'GET /api/projects': [project],
+      'GET /api/host/checks': checks(false),
+      'POST /api/host/checks/refresh': checks(true),
+      'GET /api/host/settings': hostDefaults('claude', 'conversation'),
+    });
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    const alert = await within(dialog).findByRole('status');
+    await userEvent.click(within(alert).getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(within(dialog).queryByRole('status')).toBeNull());
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/host/checks/refresh')).toBe(true);
+    expect(within(dialog).getByRole('button', { name: 'Start' })).toBeInTheDocument();
   });
 
   it('starts a conversation by default, or the terminal when chosen', async () => {

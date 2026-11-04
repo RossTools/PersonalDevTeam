@@ -25,6 +25,11 @@ pub struct ToolCheck {
 }
 
 impl ToolCheck {
+    /// Found and logged in, or found and its check did not finish (it may well be: not held against it).
+    pub fn usable(&self) -> bool {
+        self.found && (self.ok || self.inconclusive)
+    }
+
     fn missing(detail: String) -> Self {
         ToolCheck { found: false, ok: false, detail, path: None, inconclusive: false }
     }

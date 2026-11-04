@@ -16,13 +16,19 @@ fn missing(dir: &Path, name: &str) -> String {
 
 /// A fake agent program that answers its login check.
 fn fake(dir: &Path, name: &str) -> String {
+    fake_answering(dir, name, true)
+}
+
+/// A fake agent program whose login check says it is logged in (`logged_in`) or not.
+fn fake_answering(dir: &Path, name: &str, logged_in: bool) -> String {
+    let (said, code) = if logged_in { ("Logged in", 0) } else { ("Not logged in", 1) };
     if cfg!(windows) {
         let p = dir.join(format!("{name}.cmd"));
-        std::fs::write(&p, "@echo off\r\necho Logged in\r\nexit /b 0\r\n").unwrap();
+        std::fs::write(&p, format!("@echo off\r\necho {said}\r\nexit /b {code}\r\n")).unwrap();
         p.to_string_lossy().into()
     } else {
         let p = dir.join(name);
-        std::fs::write(&p, "#!/bin/sh\necho 'Logged in'\nexit 0\n").unwrap();
+        std::fs::write(&p, format!("#!/bin/sh\necho '{said}'\nexit {code}\n")).unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -44,7 +50,7 @@ async fn host(tmp: &Path, codex: Option<String>) -> (axum::Router, AppState) {
 
 async fn add_project(app: &axum::Router, dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
-    assert!(std::process::Command::new("git").args(["init", "-q", "-b", "main"]).arg(dir).status().unwrap().success());
+    crate::common::init_repo(dir);
     let (s, v) =
         call(app, "POST", "/api/projects", Some(json!({"name": "demo", "repoPath": dir.to_string_lossy()}))).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
@@ -121,4 +127,19 @@ async fn an_existing_install_with_a_project_and_an_agent_never_sees_it() {
     let v = setup(&app).await;
     assert_eq!(v["state"]["needed"], false, "{v}");
     assert_eq!(v["opensOnLaunch"], false);
+}
+
+#[tokio::test]
+async fn an_agent_found_but_not_logged_in_leaves_the_agents_step_to_do() {
+    let tmp = tempfile::tempdir().unwrap();
+    let codex = fake_answering(tmp.path(), "codex", false);
+    let (app, _) = host(tmp.path(), Some(codex)).await;
+    let (_, checks) = call(&app, "POST", "/api/host/checks/refresh", None).await;
+    assert_eq!(
+        (checks["codex"]["found"].as_bool(), checks["codex"]["ok"].as_bool()),
+        (Some(true), Some(false)),
+        "{checks}"
+    );
+    let v = setup(&app).await;
+    assert_eq!(v["steps"]["agents"], "todo", "{v}");
 }
