@@ -81,6 +81,9 @@ pub struct SetupFacts {
     pub claude: bool,
     pub codex: bool,
     pub devin: bool,
+    /// Some ACP agent (OhMyPi, Cursor, Grok, one the user added) is found and switched on (PDT-561). PDT can't tell
+    /// whether one is logged in, so found is enough.
+    pub acp: bool,
     pub github_connected: bool,
     /// The GitHub plugin is turned off (PDT-251): nothing to connect.
     pub github_off: bool,
@@ -89,7 +92,7 @@ pub struct SetupFacts {
 
 impl SetupFacts {
     pub fn any_agent(&self) -> bool {
-        self.claude || self.codex || self.devin
+        self.claude || self.codex || self.devin || self.acp
     }
 }
 
@@ -209,6 +212,7 @@ mod tests {
             SetupFacts { git: true, claude: true, ..facts() },
             SetupFacts { git: true, codex: true, ..facts() },
             SetupFacts { git: true, devin: true, ..facts() },
+            SetupFacts { git: true, acp: true, ..facts() },
         ] {
             assert_eq!(step(f), StepState::Done);
         }
