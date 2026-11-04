@@ -78,45 +78,56 @@ pub struct OverlapWith {
 /// are left out. Areas not in `areas` are ignored; two tickets without active attempts never overlap each other.
 pub fn compute(areas: &AreaSet, tickets: &[Participant]) -> HashMap<String, Vec<OverlapWith>> {
     let active: Vec<&Participant> = tickets.iter().filter(|t| t.active).collect();
-    let mut out: HashMap<String, Vec<OverlapWith>> = HashMap::new();
-    for t in tickets {
-        let mine: BTreeSet<&str> = t.areas.iter().map(String::as_str).filter(|a| areas.get(a).is_some()).collect();
-        let my_files: BTreeSet<&str> =
-            if t.active { t.files.iter().map(String::as_str).collect() } else { BTreeSet::new() };
-        if mine.is_empty() && my_files.is_empty() {
+    tickets
+        .iter()
+        .map(|t| (t.id.clone(), overlaps_of(areas, &active, t)))
+        .filter(|(_, list)| !list.is_empty())
+        .collect()
+}
+
+/// One ticket's overlaps, as [`compute`] gives them, without working out anyone else's: empty when `id` is not
+/// among `tickets` or overlaps nothing.
+pub fn compute_for(areas: &AreaSet, tickets: &[Participant], id: &str) -> Vec<OverlapWith> {
+    let active: Vec<&Participant> = tickets.iter().filter(|t| t.active).collect();
+    tickets.iter().find(|t| t.id == id).map(|t| overlaps_of(areas, &active, t)).unwrap_or_default()
+}
+
+fn overlaps_of(areas: &AreaSet, active: &[&Participant], t: &Participant) -> Vec<OverlapWith> {
+    let mine: BTreeSet<&str> = t.areas.iter().map(String::as_str).filter(|a| areas.get(a).is_some()).collect();
+    let my_files: BTreeSet<&str> =
+        if t.active { t.files.iter().map(String::as_str).collect() } else { BTreeSet::new() };
+    if mine.is_empty() && my_files.is_empty() {
+        return vec![];
+    }
+    let mut out = vec![];
+    for o in active.iter().filter(|o| o.id != t.id) {
+        let shared: Vec<String> = o
+            .areas
+            .iter()
+            .map(String::as_str)
+            .filter(|a| mine.contains(a))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let files: Vec<String> = o
+            .files
+            .iter()
+            .map(String::as_str)
+            .filter(|f| my_files.contains(f))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(String::from)
+            .collect();
+        if shared.is_empty() && files.is_empty() {
             continue;
         }
-        for o in active.iter().filter(|o| o.id != t.id) {
-            let shared: Vec<String> = o
-                .areas
-                .iter()
-                .map(String::as_str)
-                .filter(|a| mine.contains(a))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .map(String::from)
-                .collect();
-            let files: Vec<String> = o
-                .files
-                .iter()
-                .map(String::as_str)
-                .filter(|f| my_files.contains(f))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .map(String::from)
-                .collect();
-            if shared.is_empty() && files.is_empty() {
-                continue;
-            }
-            let conflict = shared.iter().any(|a| areas.get(a).is_some_and(|d| d.exclusive))
-                || files.iter().any(|f| areas.is_exclusive_file(f));
-            let level = if conflict { OverlapLevel::Conflict } else { OverlapLevel::Overlap };
-            out.entry(t.id.clone()).or_default().push(OverlapWith { other: o.id.clone(), level, areas: shared, files });
-        }
+        let conflict = shared.iter().any(|a| areas.get(a).is_some_and(|d| d.exclusive))
+            || files.iter().any(|f| areas.is_exclusive_file(f));
+        let level = if conflict { OverlapLevel::Conflict } else { OverlapLevel::Overlap };
+        out.push(OverlapWith { other: o.id.clone(), level, areas: shared, files });
     }
-    for list in out.values_mut() {
-        list.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.other.cmp(&b.other)));
-    }
+    out.sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.other.cmp(&b.other)));
     out
 }
 
@@ -285,6 +296,24 @@ mod tests {
                 files: vec!["web/ui/x.tsx".into()]
             }]
         );
+    }
+
+    #[test]
+    fn one_tickets_overlaps_match_the_full_computation() {
+        let s = set();
+        let t = [
+            p("a", true, &["migrations"], &["web/src/App.tsx", "crates/pdt-store/migrations/0012_a.sql"]),
+            p("b", true, &[], &["web/src/App.tsx"]),
+            p("c", true, &["migrations"], &["crates/pdt-store/migrations/0012_a.sql"]),
+            p("ready", false, &["migrations"], &[]),
+            p("other", false, &["docs"], &[]),
+        ];
+        let all = compute(&s, &t);
+        for id in ["a", "b", "c", "ready"] {
+            assert_eq!(compute_for(&s, &t, id), all[id], "{id}");
+        }
+        assert!(compute_for(&s, &t, "other").is_empty());
+        assert!(compute_for(&s, &t, "missing").is_empty());
     }
 
     fn files(f: &[&str]) -> Vec<String> {

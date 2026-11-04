@@ -194,7 +194,9 @@ notices' merge again never both go through. Merge settings are read once per rep
 
 **Areas and overlap.** `[[area]]`s in `.pdt/project.toml` name parts of the repository. Tickets in flight are
 compared by their areas and their changed files (pdt-core `overlap.rs`, refreshed every 30 s); a shared exclusive
-area is a conflict.
+area is a conflict. A single ticket's response computes only that ticket's overlaps (`compute_for`). The effective
+run configuration is cached per checkout (`runconfig::ConfigCache`) while the file's modification time and size and
+the project's overrides stay the same, so the 2 s polls don't re-read it; a file modified in the last 2 s is not cached.
 
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
