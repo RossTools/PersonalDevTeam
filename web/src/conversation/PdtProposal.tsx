@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@ui';
 import { api } from '../api/client';
 import { ChangeRow, Key, priorityLabel, stageLabel } from './PdtToolCard';
-import { createdTicket, LINK_TEXT, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
+import { createdTicket, LINK_TEXT, pdtApprovalTitle, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
 import { isRecord } from '../common/guards';
 import { sessionKeys } from '../sessions/queries';
 
@@ -43,6 +43,15 @@ function NewTicket({ input }: { input: unknown }) {
 function SessionName({ id }: { id: string | null }) {
   const s = useQuery({ queryKey: sessionKeys.one(id ?? ''), queryFn: () => api.getSession(id!), enabled: !!id, staleTime: 60_000, retry: false });
   return <span className="font-medium">{s.data?.title ?? 'a session'}</span>;
+}
+
+/**
+ * A PDT tool's approval, wherever it is asked (the conversation's card, the Inbox): its question ("Create this
+ * ticket?") and what it would create or change. Null for a tool without one.
+ */
+export function pdtApproval(tool: string, input: unknown): { title: string; preview: ReactNode } | null {
+  const title = pdtApprovalTitle(tool, input);
+  return title ? { title, preview: <PdtProposal tool={tool} input={input} /> } : null;
 }
 
 /** The approval card's preview for a PDT tool (`pdtApprovalTitle` names the tools that have one). */

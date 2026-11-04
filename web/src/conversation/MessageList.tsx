@@ -18,8 +18,8 @@ import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, typ
 import type { Streams } from './model';
 import { DecideCard } from './DecideCard';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
-import { PdtProposal } from './PdtProposal';
-import { isCardTool, lookedUp, pdtApprovalTitle } from './pdtTools';
+import { pdtApproval } from './PdtProposal';
+import { isCardTool, lookedUp } from './pdtTools';
 import { approvalTitle, clock, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
@@ -226,14 +226,14 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
     const plan = ev.requestKind === 'plan' ? planOf(ev.input) : null;
     const args = ev.requestKind === 'approval' && !ev.diff ? inputText(ev.tool, ev.input) : '';
     // PDT's own tools say what they will create or change (PDT-382).
-    const pdtTitle = ev.requestKind === 'approval' ? pdtApprovalTitle(ev.tool, ev.input) : null;
+    const pdt = ev.requestKind === 'approval' ? pdtApproval(ev.tool, ev.input) : null;
     return (
       <ApprovalCard
         id={requestAnchor(ev.id)}
         kind={ev.requestKind}
-        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : pdtTitle ?? approvalTitle(ev.tool)}
-        subject={ev.requestKind === 'approval' && !ev.diff && !pdtTitle ? ev.title || undefined : undefined}
-        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : pdtTitle ? <PdtProposal tool={ev.tool} input={ev.input} /> : undefined}
+        title={ev.requestKind === 'question' ? 'A question for you' : ev.requestKind === 'plan' ? 'Approve this plan?' : pdt?.title ?? approvalTitle(ev.tool)}
+        subject={ev.requestKind === 'approval' && !ev.diff && !pdt ? ev.title || undefined : undefined}
+        preview={ev.diff ? <DiffViewer diff={ev.diff} /> : pdt?.preview}
         planAcceptEdits={agent === 'claude'}
         description={ev.description}
         details={args && args !== '{}' && args !== ev.title ? <ToolOutput>{args}</ToolOutput> : undefined}

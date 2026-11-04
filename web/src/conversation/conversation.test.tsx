@@ -528,7 +528,9 @@ describe('ConversationView', () => {
     });
     const card = screen.getByRole('region', { name: 'Make these 3 decisions?' });
     expect(within(card).getByRole('table', { name: 'Decisions' })).toHaveTextContent('PDT-2 Proposal 2');
+    expect(within(card).getByText('3 of 3 ticked.')).toHaveAttribute('aria-live', 'polite');
     await userEvent.click(within(card).getByRole('checkbox', { name: 'Keep PDT-2' }));
+    expect(within(card).getByText('2 of 3 ticked.')).toBeInTheDocument();
     await userEvent.click(within(card).getByRole('button', { name: 'Allow 2 of 3' }));
     const answers = () => calls.filter((c) => c.path === '/api/sessions/s1/requests/pdt-ask-1').map((c) => c.body);
     await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'approve', always: false }, rows: [0, 2] }));

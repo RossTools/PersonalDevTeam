@@ -1,13 +1,14 @@
 import { useCallback, useMemo, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
-import { EmptyState, toast, type ApprovalAnswer } from '@ui';
+import { EmptyState, type ApprovalAnswer } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api, ApiError, type SessionPatch } from '../api/client';
+import { api, type SessionPatch } from '../api/client';
+import { answerRequest } from '../common/answerRequest';
 import type { Delivery } from '../api/gen/Delivery';
 import type { Session } from '../api/gen/Session';
 import type { MarkdownRefs } from '../common/markdownRefs';
-import { actionError, runAction } from '../common/useAction';
+import { runAction } from '../common/useAction';
 import { latestUsage } from './blocks';
 import { limitWarning } from './completion';
 import { ConversationComposer } from './ConversationComposer';
@@ -110,14 +111,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
     // A parked or ended session comes back to life; the list shows it sooner.
     if (session.status !== 'running') void refreshSessions();
   };
-  const answer = async (requestId: string, a: ApprovalAnswer, rows?: number[]) => {
-    try {
-      await api.answerRequest(session.id, requestId, a, rows);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'request_closed') toast.info('That request was already answered or has expired.');
-      else toast.error(actionError(err));
-    }
-  };
+  const answer = (requestId: string, a: ApprovalAnswer, rows?: number[]) => answerRequest(session.id, requestId, a, rows);
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
   const usage = latestUsage(conv.rows);
   const background = backgroundLine(state?.backgroundTasks ?? []);
