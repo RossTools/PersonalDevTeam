@@ -60,6 +60,19 @@ async fn health_reports_a_web_build_that_follows_index_html() {
     assert_ne!(build(call(&app, "GET", "/api/health", None).await.1), first);
 }
 
+#[tokio::test]
+async fn health_reports_the_web_build_the_page_was_built_with() {
+    // A built index.html names its own build in a meta tag, so the page and health agree on it.
+    let tmp = tempfile::tempdir().unwrap();
+    let web = tmp.path().join("web");
+    std::fs::create_dir_all(&web).unwrap();
+    let html =
+        "<head><meta name=\"web-build\" content=\"0123456789ab\" /><script src=\"/assets/index-aaa.js\"></script>";
+    std::fs::write(web.join("index.html"), html).unwrap();
+    let (_, body) = call(&app(tmp.path(), Some(web)).await, "GET", "/api/health", None).await;
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["webBuild"], "0123456789ab");
+}
+
 async fn health_of(tmp: &Path, instance: pdt_core::instance::InstanceInfo) -> Value {
     let store = Store::open(&tmp.join("pdt.db")).await.unwrap();
     let mut state = crate::common::app_state(store, tmp);

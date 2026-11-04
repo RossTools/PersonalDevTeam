@@ -39,7 +39,9 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   "Stop PDT and quit" asks first when `/api/host/busy` lists something, then runs `pdt-host stop`.
 - **The web UI** (`web/`, React + Vite) talks only to pdtd's `/api`: JSON over HTTP, polled every 2 s, plus
   WebSockets for terminals and conversation events and an SSE stream for notifications. It reloads itself when pdtd
-  reports a new build.
+  reports a new build: a production build names its id in index.html's `web-build` meta, health's `webBuild` reports
+  the same id, and the page asks again whenever it becomes visible (`useReloadOnNewBuild`). While a draft or a dialog
+  holds the reload back, a banner offers it.
 - **Agents** (Claude Code, Codex, Devin, ACP agents) are child processes of pdtd. They report activity through hooks
   (`pdtd hook …`, which posts to the pdtd that launched them) and call PDT through pdt-mcp.
 - **Remote access** is `tailscale serve` in front of pdtd (pdt-api `remote.rs`, `crates/pdt-tailscale`); requests from

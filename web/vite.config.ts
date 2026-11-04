@@ -3,6 +3,7 @@ import type { Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import optimizeLocales from '@react-aria/optimize-locales-plugin';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 /** The app's top-level paths (web/src/shell/route.ts). */
@@ -22,9 +23,26 @@ const appPathFallback: Plugin = {
   },
 };
 
+/**
+ * Names the build in index.html, `<meta name="web-build" content="…">` (12 hex digits of the page's hash), at build
+ * time only. pdtd's /api/health reports the same id, and the page compares that with its own (useReloadOnNewBuild),
+ * so a tab restored from a phone's background still knows which build its code came from.
+ */
+const webBuildMeta: Plugin = {
+  name: 'pdt-web-build-meta',
+  apply: 'build',
+  transformIndexHtml: {
+    order: 'post',
+    handler(html) {
+      const id = createHash('sha256').update(html).digest('hex').slice(0, 12);
+      return [{ tag: 'meta', attrs: { name: 'web-build', content: id }, injectTo: 'head-prepend' }];
+    },
+  },
+};
+
 export default defineConfig({
   // React Aria ships strings for ~30 languages; PDT's UI is English only.
-  plugins: [appPathFallback, react(), tailwindcss(), { ...optimizeLocales.vite({ locales: ['en-US'] }), enforce: 'pre' }],
+  plugins: [appPathFallback, webBuildMeta, react(), tailwindcss(), { ...optimizeLocales.vite({ locales: ['en-US'] }), enforce: 'pre' }],
   resolve: { alias: { '@ui': fileURLToPath(new URL('./ui', import.meta.url)) } },
   // Dev server talks to the *dev* daemon (PDT_PROFILE=dev → port 7421).
   server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true } } },

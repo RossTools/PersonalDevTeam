@@ -163,7 +163,9 @@ function ChangeList({ changes, onOpened }: { changes: ReleaseChanges; onOpened: 
 }
 
 /** Reloads the page once pdtd reports a different version than the one this page loaded against (an update installed
- * from here, the tray or another device), so the browser never runs an old UI against a new daemon. */
+ * from here, the tray or another device), so the browser never runs an old UI against a new daemon. Its baseline is
+ * the first answer; a tab restored after an update already answers the new version, and `useReloadOnNewBuild` catches
+ * that one (a release always changes the web build, which the page knows from its own index.html). */
 function useReloadOnNewVersion(current: string | undefined) {
   const loaded = useRef<string | undefined>(undefined);
   useEffect(() => {

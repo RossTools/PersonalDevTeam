@@ -38,7 +38,7 @@ import { looksLikeKey } from '../tickets/model';
 import { TicketsList } from '../tickets/TicketsList';
 import { useBacklog } from '../tickets/useBacklog';
 import { UpdateBanner } from '../host/UpdateBanner';
-import { useReloadOnNewBuild } from '../host/useReloadOnNewBuild';
+import { NewBuildBanner } from '../host/NewBuildBanner';
 import { KeyHelp } from '../workspaces/KeyHelp';
 import { BugReportDialog } from '../host/BugReportDialog';
 import { usePrefixKeys, type KeyAction } from '../workspaces/keys';
@@ -113,12 +113,10 @@ const go = (r: Route, opts?: { replace?: boolean }) => navigate(routePath(r), op
 /** While a list loads: one empty list, so the views it is passed to see the same props. */
 const NONE: never[] = [];
 
-/** The page title's `(n)` (the Inbox's items) and the favicon's dot (the most important thing waiting, PDT-207), and
- * reloading on a new build. */
+/** The page title's `(n)` (the Inbox's items) and the favicon's dot (the most important thing waiting, PDT-207). */
 function useAttentionTitle(attention: Attention) {
   useDevTitle(attention.count);
   useFaviconBadge(attention.level);
-  useReloadOnNewBuild();
 }
 
 /** The view-state key of the path each view showed last. */
@@ -862,6 +860,7 @@ export function AppShell() {
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0">
         <ConnectionBanner connected={connected} />
         <UpdateBanner />
+        <NewBuildBanner />
         {view === 'sessions' && !phoneList && !setupShown ? (
           <WorkspaceBar
             ws={ws}
