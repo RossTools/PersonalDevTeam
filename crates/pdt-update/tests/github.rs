@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 struct Fake {
     base: Arc<std::sync::OnceLock<String>>,
     sums: Arc<std::sync::Mutex<String>>,
+    /// SHA256SUMS.sig (asset 6).
+    sig: Arc<std::sync::Mutex<Vec<u8>>>,
     token_leaked: Arc<AtomicBool>,
     storage_hits: Arc<AtomicUsize>,
     /// The issues posted (their JSON bodies).
@@ -104,6 +106,9 @@ async fn asset(State(f): State<Fake>, Path(id): Path<u64>, h: HeaderMap) -> Resp
     }
     if id == 3 {
         return f.sums.lock().unwrap().clone().into_response();
+    }
+    if id == 6 {
+        return f.sig.lock().unwrap().clone().into_response();
     }
     if id == 4 {
         // A signed storage URL on a port nothing listens on: the hop fails with a network error.
@@ -237,6 +242,7 @@ async fn serve() -> (GitHubClient, Fake) {
     let fake = Fake {
         base: Default::default(),
         sums: Arc::new(std::sync::Mutex::new(good_sums())),
+        sig: Default::default(),
         token_leaked: Default::default(),
         storage_hits: Default::default(),
         issues: Default::default(),
@@ -411,7 +417,7 @@ async fn asset_redirect_drops_the_token() {
     let release = c.latest(Some("good")).await.unwrap().release;
     let dir = tempfile::tempdir().unwrap();
     for (os, bytes) in [(HostOs::Windows, WIN), (HostOs::Mac, MAC)] {
-        let path = fetch_verified(&c, Some("good"), &release, os, dir.path()).await.unwrap();
+        let path = fetch_verified(&c, Some("good"), &release, os, dir.path(), None).await.unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
     assert!(!fake.token_leaked.load(Ordering::SeqCst), "the storage host received the GitHub token");
@@ -423,19 +429,70 @@ async fn bad_or_missing_checksums_are_rejected() {
     let release = c.latest(Some("good")).await.unwrap().release;
     let dir = tempfile::tempdir().unwrap();
     *fake.sums.lock().unwrap() = good_sums().replace(&sha(WIN), &"0".repeat(64));
-    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap_err();
+    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap_err();
     assert!(matches!(e, UpdateError::Checksum(ref n) if n.contains("setup.exe")), "{e:?}");
     let leftovers: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name()).collect();
     assert!(!leftovers.iter().any(|n| n.to_string_lossy().ends_with("setup.exe")), "{leftovers:?}");
     *fake.sums.lock().unwrap() = String::new();
-    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap_err();
+    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap_err();
     assert!(matches!(e, UpdateError::Checksum(_)), "an unlisted asset is rejected: {e:?}");
     let mut no_sums = release.clone();
     no_sums.assets.retain(|a| a.name != "SHA256SUMS");
     assert_eq!(
-        fetch_verified(&c, Some("good"), &no_sums, HostOs::Windows, dir.path()).await.unwrap_err(),
+        fetch_verified(&c, Some("good"), &no_sums, HostOs::Windows, dir.path(), None).await.unwrap_err(),
         UpdateError::NoChecksums
     );
+}
+
+/// A signing key, its public half as `brand::RELEASE_SIGNING_KEY` holds it, and a signer for the release's message.
+fn release_key(seed: u8) -> (String, impl Fn(&str, &str) -> Vec<u8>) {
+    use base64::Engine;
+    use p256::ecdsa::signature::Signer;
+    use p256::pkcs8::EncodePublicKey;
+    let sk = p256::ecdsa::SigningKey::from_slice(&[seed; 32]).unwrap();
+    let der = sk.verifying_key().to_public_key_der().unwrap();
+    let key = base64::engine::general_purpose::STANDARD.encode(der.as_bytes());
+    let sign = move |tag: &str, sums: &str| {
+        let sig: p256::ecdsa::Signature = sk.sign(&pdt_update::signed_message(tag, sums.as_bytes()));
+        sig.to_der().as_bytes().to_vec()
+    };
+    (key, sign)
+}
+
+#[tokio::test]
+async fn with_a_key_only_a_signed_sha256sums_is_trusted() {
+    let (c, fake) = serve().await;
+    let mut release = c.latest(Some("good")).await.unwrap().release;
+    let dir = tempfile::tempdir().unwrap();
+    let (key, sign) = release_key(7);
+    let key = Some(key.as_str());
+    let win = HostOs::Windows;
+    assert_eq!(
+        fetch_verified(&c, None, &release, win, dir.path(), key).await.unwrap_err(),
+        UpdateError::NoSignature,
+        "no SHA256SUMS.sig"
+    );
+    release.assets.push(an_asset(6, "SHA256SUMS.sig", 72));
+    *fake.sig.lock().unwrap() = sign("v0.1.7", &good_sums());
+    let path = fetch_verified(&c, None, &release, win, dir.path(), key).await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), WIN);
+    std::fs::remove_file(&path).unwrap();
+
+    // SHA256SUMS and the asset swapped together, with the old signature: refused before any download.
+    let hits = fake.storage_hits.load(Ordering::SeqCst);
+    *fake.sums.lock().unwrap() = good_sums().replace(&sha(WIN), &sha(b"trojan"));
+    let e = fetch_verified(&c, None, &release, win, dir.path(), key).await.unwrap_err();
+    assert!(matches!(e, UpdateError::Signature(_)), "{e:?}");
+    assert_eq!(fake.storage_hits.load(Ordering::SeqCst), hits, "the asset was never downloaded");
+    // Another release's signed SHA256SUMS, or one signed by another key.
+    *fake.sums.lock().unwrap() = good_sums();
+    *fake.sig.lock().unwrap() = sign("v0.1.6", &good_sums());
+    assert!(matches!(fetch_verified(&c, None, &release, win, dir.path(), key).await, Err(UpdateError::Signature(_))));
+    *fake.sig.lock().unwrap() = release_key(9).1("v0.1.7", &good_sums());
+    assert!(matches!(fetch_verified(&c, None, &release, win, dir.path(), key).await, Err(UpdateError::Signature(_))));
+    assert!(!dir.path().join("Personal.Dev.Team_0.1.7_x64-setup.exe").exists());
+    // Without a key the signature isn't looked at.
+    fetch_verified(&c, None, &release, win, dir.path(), None).await.unwrap();
 }
 
 #[test]
@@ -452,7 +509,7 @@ async fn asset_names_cannot_escape_the_download_folder() {
     let mut release = c.latest(Some("good")).await.unwrap().release;
     release.assets[0].name = "../evil_x64-setup.exe".into();
     let dir = tempfile::tempdir().unwrap();
-    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, &dir.path().join("d")).await.unwrap_err();
+    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, &dir.path().join("d"), None).await.unwrap_err();
     assert!(matches!(e, UpdateError::BadRelease(_)), "{e:?}");
     assert!(!dir.path().join("evil_x64-setup.exe").exists());
 }
@@ -482,13 +539,13 @@ async fn downloads_larger_than_announced_are_aborted() {
     let mut release = c.latest(Some("good")).await.unwrap().release;
     let dir = tempfile::tempdir().unwrap();
     release.assets[0].size = 3;
-    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap_err();
+    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap_err();
     assert!(matches!(e, UpdateError::TooLarge(_)), "{e:?}");
     let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name()).collect();
     assert!(!left.iter().any(|n| n.to_string_lossy().contains("setup.exe")), "{left:?}");
     *fake.sums.lock().unwrap() = "x".repeat(70 * 1024);
     let release = c.latest(Some("good")).await.unwrap().release;
-    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap_err();
+    let e = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap_err();
     assert!(matches!(e, UpdateError::TooLarge(ref n) if n == "SHA256SUMS"), "{e:?}");
 }
 
@@ -500,7 +557,7 @@ async fn asset_names_must_be_one_plain_component() {
     for bad in ["C:evil_x64-setup.exe", "a/b_x64-setup.exe", r"a\b_x64-setup.exe", ".._x64-setup.exe"] {
         let mut r = release.clone();
         r.assets[0].name = bad.into();
-        let e = fetch_verified(&c, Some("good"), &r, HostOs::Windows, &dir.path().join("d")).await.unwrap_err();
+        let e = fetch_verified(&c, Some("good"), &r, HostOs::Windows, &dir.path().join("d"), None).await.unwrap_err();
         assert!(matches!(e, UpdateError::BadRelease(_)), "{bad}: {e:?}");
     }
 }
@@ -510,12 +567,12 @@ async fn an_already_verified_download_is_reused() {
     let (c, fake) = serve().await;
     let release = c.latest(Some("good")).await.unwrap().release;
     let dir = tempfile::tempdir().unwrap();
-    let first = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap();
+    let first = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap();
     let hits = fake.storage_hits.load(Ordering::SeqCst);
-    let again = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap();
+    let again = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap();
     assert_eq!((first, fake.storage_hits.load(Ordering::SeqCst)), (again, hits));
     std::fs::write(dir.path().join("Personal.Dev.Team_0.1.7_x64-setup.exe"), b"tampered").unwrap();
-    let p = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path()).await.unwrap();
+    let p = fetch_verified(&c, Some("good"), &release, HostOs::Windows, dir.path(), None).await.unwrap();
     assert_eq!(std::fs::read(p).unwrap(), WIN, "a file that no longer matches is downloaded again");
 }
 
@@ -554,7 +611,7 @@ async fn a_renamed_repository_is_followed_with_the_token_and_remembered() {
     assert_eq!(c.moved_to().as_deref(), Some("repositories/77"));
     // Later requests (an asset download too) go to where it moved, without asking the old name again.
     let dir = tempfile::tempdir().unwrap();
-    let path = fetch_verified(&c, Some("good"), &l.release, HostOs::Windows, dir.path()).await.unwrap();
+    let path = fetch_verified(&c, Some("good"), &l.release, HostOs::Windows, dir.path(), None).await.unwrap();
     assert_eq!(std::fs::read(path).unwrap(), WIN);
     assert!(fake.id_hits.load(Ordering::SeqCst) >= 3, "latest, SHA256SUMS and the asset by id");
     assert!(!fake.token_leaked.load(Ordering::SeqCst));
@@ -627,7 +684,7 @@ async fn releases_are_read_and_downloaded_without_a_token() {
     );
     assert_eq!(c.compare(None, "v0.1.5", "v0.1.7").await.unwrap().entries.len(), 2);
     let dir = tempfile::tempdir().unwrap();
-    let path = fetch_verified(&c, None, &l.release, HostOs::Windows, dir.path()).await.unwrap();
+    let path = fetch_verified(&c, None, &l.release, HostOs::Windows, dir.path(), None).await.unwrap();
     assert_eq!(std::fs::read(path).unwrap(), WIN);
     assert!(!fake.token_leaked.load(Ordering::SeqCst));
 }

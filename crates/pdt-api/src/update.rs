@@ -276,6 +276,9 @@ pub struct UpdateService {
     /// `run_update_loop`: how often it wakes to look at the settings again, so a shorter interval or a policy that
     /// stops being manual takes effect without waiting out the old interval.
     pub settings_poll: Duration,
+    /// The key a release's SHA256SUMS must be signed with (base64 SPKI DER; PDT-531), `brand::RELEASE_SIGNING_KEY`
+    /// unless a test sets another. None: SHA256SUMS alone is trusted.
+    pub signing_key: Option<String>,
 }
 
 impl UpdateService {
@@ -318,6 +321,7 @@ impl UpdateService {
             first_check_delay: Duration::from_secs(30),
             check_interval: None,
             settings_poll: Duration::from_secs(60),
+            signing_key: pdt_core::brand::RELEASE_SIGNING_KEY.map(str::to_string),
         }
     }
 
@@ -1007,7 +1011,16 @@ async fn download_and_hand_off(
     let version = release.version.to_string();
     let downloads = downloads_dir(&st.data_dir);
     let dir = downloads.join(&version);
-    let fetched = match fetch_verified(&svc.client, tok.as_deref(), &release, this_host(), &dir).await {
+    let fetched = match fetch_verified(
+        &svc.client,
+        tok.as_deref(),
+        &release,
+        this_host(),
+        &dir,
+        svc.signing_key.as_deref(),
+    )
+    .await
+    {
         // A rejected token is dropped and the download tried again without it (PDT-484).
         Err(UpdateError::Unauthorized) if tok.is_some() => {
             tracing::warn!("GitHub rejected the saved update token; downloading without it");
@@ -1015,7 +1028,7 @@ async fn download_and_hand_off(
                 s.token = TokenState::Expired;
                 s.notice = Some(UpdateNotice::new(UpdateNoticeKind::TokenIgnored));
             });
-            fetch_verified(&svc.client, None, &release, this_host(), &dir).await
+            fetch_verified(&svc.client, None, &release, this_host(), &dir, svc.signing_key.as_deref()).await
         }
         r => r,
     };

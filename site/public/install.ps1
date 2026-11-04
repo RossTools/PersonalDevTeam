@@ -11,20 +11,65 @@
 #
 # or, run as a script block, parameters: & ([scriptblock]::Create((irm https://pdt.dev/install.ps1))) -Channel nightly
 #
-# It downloads the installer (*_x64-setup.exe) from GitHub, checks it against the release's SHA256SUMS and runs it
+# It downloads the installer (*_x64-setup.exe) from GitHub, checks that the release's SHA256SUMS carries PDT's release
+# signature (SHA256SUMS.sig, against the key in Install-Pdt) and the installer against SHA256SUMS, and runs it
 # silently; the installer starts PDT and registers it to start at login. macOS and Linux have install.sh.
 #
 # Everything runs from Install-Pdt, called on the last line: a download cut short runs nothing. It never calls `exit`,
 # which would close the PowerShell window `iex` runs in.
 #
-# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com) and PDT_INSTALL_LOCAL (where a running PDT
-# answers, http://127.0.0.1:7420).
+# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_LOCAL (where a running PDT
+# answers, http://127.0.0.1:7420) and PDT_INSTALL_SIGNING_KEY (the release signing key).
 
 param(
     [string]$Channel = $env:PDT_CHANNEL,
     [string]$Version = $env:PDT_VERSION,
     [switch]$Force
 )
+
+# An ECDSA signature as DER (SEQUENCE of INTEGER r, INTEGER s; what openssl writes) to r and s as 32 bytes each, the
+# form .NET verifies. $null when it isn't one.
+function ConvertFrom-DerSignature([byte[]]$der) {
+    if ($der.Length -lt 8 -or $der[0] -ne 0x30 -or $der[1] -ne $der.Length - 2) { return $null }
+    $out = New-Object byte[] 64
+    $i = 2
+    foreach ($half in 0, 1) {
+        if ($i + 2 -gt $der.Length -or $der[$i] -ne 2) { return $null }
+        $len = [int]$der[$i + 1]
+        $start = $i + 2
+        $i = $start + $len
+        if ($i -gt $der.Length) { return $null }
+        while ($len -gt 0 -and $der[$start] -eq 0) { $start++; $len-- }
+        if ($len -gt 32) { return $null }
+        [Array]::Copy($der, $start, $out, $half * 32 + 32 - $len, $len)
+    }
+    if ($i -ne $der.Length) { return $null }
+    return , $out
+}
+
+# SHA256SUMS.sig is an ECDSA P-256 signature (DER) over the tag, a newline, then SHA256SUMS: it vouches for this
+# release only. $key is base64 of the public key's DER (SubjectPublicKeyInfo). Works on .NET Framework 4.7+ (Windows
+# PowerShell 5.1) and .NET.
+function Test-ReleaseSignature([string]$key, [string]$tag, [byte[]]$sums, [byte[]]$signature) {
+    try {
+        $spki = [Convert]::FromBase64String($key)
+        # A P-256 SubjectPublicKeyInfo is 91 bytes and ends with the uncompressed point: 0x04, X, Y.
+        if ($spki.Length -ne 91 -or $spki[26] -ne 4) { return $false }
+        $rs = ConvertFrom-DerSignature -der $signature
+        if (-not $rs) { return $false }
+        $point = New-Object System.Security.Cryptography.ECPoint
+        $point.X = [byte[]]$spki[27..58]
+        $point.Y = [byte[]]$spki[59..90]
+        $params = New-Object System.Security.Cryptography.ECParameters
+        $params.Curve = [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256
+        $params.Q = $point
+        $ecdsa = [System.Security.Cryptography.ECDsa]::Create($params)
+        $message = [byte[]]([Text.Encoding]::UTF8.GetBytes("$tag`n") + $sums)
+        return $ecdsa.VerifyData($message, $rs, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+    } catch {
+        return $false
+    }
+}
 
 function Install-Pdt {
     param([string]$Channel, [string]$Version, [bool]$Force)
@@ -35,6 +80,10 @@ function Install-Pdt {
     $product = 'Personal Dev Team'
     $port = 7420
     $site = 'https://pdt.dev'
+    # The release signing key (base64 of its public key's DER; the same as RELEASE_SIGNING_KEY in PDT's source). Empty
+    # until releases are signed: then SHA256SUMS alone is checked.
+    $signingKey = ''
+    if ($env:PDT_INSTALL_SIGNING_KEY) { $signingKey = $env:PDT_INSTALL_SIGNING_KEY }
     $api = if ($env:PDT_INSTALL_API) { $env:PDT_INSTALL_API } else { 'https://api.github.com' }
     $local = if ($env:PDT_INSTALL_LOCAL) { $env:PDT_INSTALL_LOCAL } else { "http://127.0.0.1:$port" }
 
@@ -141,6 +190,10 @@ function Install-Pdt {
     if (-not $asset) { return Write-Failure "release $tag has no installer for Windows." }
     $sums = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS' }) | Select-Object -First 1
     if (-not $sums) { return Write-Failure "release $tag has no SHA256SUMS, so the download can't be checked. Nothing was installed." }
+    $sig = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS.sig' }) | Select-Object -First 1
+    if ($signingKey -and -not $sig) {
+        return Write-Failure "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
+    }
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("pdt-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -149,9 +202,21 @@ function Install-Pdt {
         if ($env:GITHUB_TOKEN) { $download.Authorization = "Bearer $env:GITHUB_TOKEN" }
         $exe = Join-Path $tmp $asset.name
         $sumsFile = Join-Path $tmp 'SHA256SUMS'
+        $sigFile = Join-Path $tmp 'SHA256SUMS.sig'
         Write-Host "Downloading $product $tag ($($asset.name))..."
         try {
             Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($sums.id)" -Headers $download -OutFile $sumsFile -UseBasicParsing
+            if ($signingKey) {
+                Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($sig.id)" -Headers $download -OutFile $sigFile -UseBasicParsing
+            }
+        } catch { return Write-Failure "could not download SHA256SUMS of $($tag): $($_.Exception.Message)" }
+        if ($signingKey) {
+            if (-not (Test-ReleaseSignature -key $signingKey -tag $tag -sums ([IO.File]::ReadAllBytes($sumsFile)) -signature ([IO.File]::ReadAllBytes($sigFile)))) {
+                return Write-Failure "the signature of $tag's SHA256SUMS does not match $product's release key. Nothing was installed."
+            }
+            Write-Host 'Signature verified.'
+        }
+        try {
             Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($asset.id)" -Headers $download -OutFile $exe -UseBasicParsing
         } catch { return Write-Failure "could not download $($asset.name): $($_.Exception.Message)" }
 
