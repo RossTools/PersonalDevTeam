@@ -3,6 +3,76 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.6.2 (2026-11-04)
+
+### Added
+
+- A PM conversation shows what it is watching: an eye with a count at its top opens the list of watched tickets and runs, each with what it listens for and Stop watching. Watched tickets have a small eye on the board and in the backlog, and watching conversations one in the PM list.
+- The website publishes a `security.txt` at `/.well-known/security.txt`, so security researchers can find where to report a vulnerability.
+- The command palette finds files by name: type part of a file's name and pick it from the Files group at the bottom to open it in Files, in the checkout you're working in.
+- Search inside files from the Files view: match case, whole word, regular expressions and a filter for which files to search. Results are grouped by file, and a click opens the file at the matching line.
+- Projects can name their ticket branches their own way, such as `fix/ABC-123-login-crash`, with a template in the project's settings or in `.pdt/project.toml`, using the ticket's key, title, labels and its linked GitHub issue or Jira issue. Projects without one keep today's names.
+
+### Changed
+
+- The board and open tickets refresh with less work on the server: an unchanged run configuration is no longer re-read on every refresh, and a single ticket's overlaps are worked out on their own.
+- Agents that are already running see PDT's tools change without restarting: a plugin turned on or off, a persona saved, or an update that adds tools. Their instructions stay the ones they started with.
+- When the PM proposes decisions on your ticket proposals, it asks in its conversation with a table you can untick rows of, and the same table is in the Inbox; answering in either place answers both.
+- In a conversation, stopping work on a ticket, opening or linking issues, reporting a bug, creating, editing or linking documents (with Open beside) and saving or deleting notes now show as cards, and folded ticket lookups name the tickets they read as pills.
+- Import a document is clearer: the provider and its Browse button sit at the top, each file shows when it was edited and whether PDT already has it (On this ticket, In PDT) with a link to open it, and you can drop a file from your computer anywhere on the dialog.
+- The website's Features page shows what runs where, on your computer and outside it, and no longer says your repositories never leave your disk.
+- The website no longer says your code stays on your machine (your agents send what they read to their providers), and the landing page's host panel no longer shows an old version number.
+- On a Mac, PDT now installs an update only when the new app carries PDT's developer signature. Releases can also be signed so that updates and the one-command install refuse any download whose checksums weren't signed by PDT.
+- On a new install, tickets' agents start in Ask rather than Bypass, and Get started has a step to choose tickets' permission mode, with what each mode means. Existing installs keep the mode they had.
+- A ticket you make on the board now starts in To do, so it shows up there, and a new ticket that lands in the other view says where it went. First-run wording is plainer (the project Key, branches, areas, default agent), the folder comes before the name when adding a project, missing optional programs no longer show as errors, and the command palette has Add project….
+- The website's home page shows a diagram of what runs on your computer and the project's numbers in place of two made-up terminal boxes.
+- Cut a release now waits up to eight hours for the release to be published, so a slow build or notarization doesn't make it give up early.
+
+### Fixed
+
+- Starting a session, a conversation or the setup checks no longer holds up the rest of PDT while the process starts, and other terminals stay responsive while one starts or is stopped; most noticeable on a busy Windows machine.
+- Resetting a PM conversation now starts the fresh one on the PM persona as it is now, so it gets the PM's newest tools and instructions instead of those from when the old conversation began.
+- On phones, the website's pages have a menu button beside Download that opens How it works, Features, Plugins, Docs, Changelog and GitHub, and the pages no longer scroll sideways.
+- A ticket whose pull request's CI was cancelled no longer waits forever: PDT re-runs that commit's CI once, then puts the ticket in the Inbox as stalled with Re-run CI. A ticket that waits on nothing for 20 minutes (set it in Settings › Agents) also goes to the Inbox as stalled.
+- A terminal whose start fails unexpectedly can be started again straight away, without restarting PDT, and resuming a run that kept running while PDT was closed no longer holds up the rest of PDT.
+- Refining a ticket and making its design doc now accept a request body only when it is sent as JSON, as PDT's other actions do, so a page on another site can't send one as a plain form.
+- The selected Inbox item shows a single accent bar, and screen readers read a ticket change in a conversation card as "from … to …".
+- Get started's last step now tells you to click Start on your first ticket, and Report a bug says its log excerpt can name repositories, branches and folders. On the website, the secrets claims match what PDT does, the site has a robots.txt that points to its sitemap, and every page has a canonical link.
+- A ticket proposal from an agent without a persona now reads "the agent hears what you choose" in the Inbox, not "An agent" mid-sentence.
+- macOS releases are notarized again, so a downloaded app opens without macOS saying it can't verify it. The one-line install on macOS now checks the app's signature and installs nothing if it doesn't verify.
+- A sheet edit to a cell past a spreadsheet's last row or column (row 1,048,576, column XFD) is refused as "not a cell" instead of landing on the wrong cell or failing the request.
+- When PDT can't read its database, a key or a file, it now says so instead of acting as if the thing were missing: agents' PDT tools no longer ask them to sign in, a workflow's message to an agent is kept and sent later instead of being dropped, and files and attachments PDT can't open no longer show as "not found".
+- PDT stays responsive while it starts workflow commands, local CI, MCP servers and commands that use secrets, and it finds a Claude conversation's history quickly however many worktrees you have made.
+- A spreadsheet with deeply nested formulas, or one that unpacks to far more than its size (a zip bomb), no longer crashes PDT or uses up the machine's memory: PDT refuses it and says why.
+- Letting the PM act without asking now applies only to the PM: other agents working in that project, such as the Coder, ask before editing documents, tickets or anything else that acts for you.
+- Claude now always asks before PDT's tools that need your yes (creating issues, messaging agents, stopping tickets), even when a Claude settings file in the project or worktree allows them. Claude's own prompt for these tools no longer offers "Always allow".
+- Agents now see linked issues' titles and documents' titles and content marked as outside input, never as instructions, so text someone else wrote in an issue or a shared document can't steer them.
+- The PM now asks you before it comments on a ticket that is being worked on, as it does before it messages an agent, since its comment reaches that ticket's agent. Turning on "The PM acts without asking" for the project skips the question.
+- The PM's table of decisions takes **y** and **n** in the Inbox as it does in the conversation, and the conversation announces how many rows are ticked. An approval of one of PDT's own tools shows in the Inbox what it would create or change, as the conversation does, instead of the raw call.
+- Keyboard focus no longer drops to the top of the page when a control goes away: after answering an approval in a conversation, Show all in the Inbox, Stop watching, or closing a document provider's file picker, focus lands on what replaced it. In the import dialog, a file's Open link can be reached with Tab and opened with Enter without importing the file.
+- On a phone, ticket pills, small links in conversation cards and the PM's decision checkboxes are easier to tap, a whole "Read" row opens when tapped, and each decision's note shows under it instead of being hidden.
+- Get started no longer ticks off an agent that's installed but not logged in: it shows **Not logged in** with how to log in (and the credentials setting if you use an API key), and the Start dialog warns before starting such an agent.
+- Merging without a git name and email now says how to set them, in the Merge dialog, instead of claiming the checkout needs cleaning up. Get started and Settings › Checks show whether git has a name and email to commit with.
+- Adding a repository with no commits yet is refused with a message to make a first commit, instead of being added and then failing every ticket you start. Adding a folder that isn't a repository now says to run `git init` or add it as a Personal project.
+- Report a bug works without a GitHub token: it files the issue as your GitHub login once you've connected GitHub, and otherwise opens PDT's bug form on GitHub with your report filled in and the diagnostics copied, for you to submit.
+- Get started counts the ACP agents it finds (Grok, Cursor, OhMyPi and ones you add), so a machine with only one of them can finish setup and make it the default. Start now says when it picks another agent because your default isn't installed.
+- The one-line install no longer says PDT is installed and up to date when it is stopped: it tells you how to start it, and installs again over an install that didn't finish. On Linux without systemd (WSL with systemd off, most containers) it stops before downloading and explains what to turn on.
+- Installing again on Windows with `PDT_FORCE` while PDT is running now stops PDT before the installer runs, so the new version really replaces the old one, and the script tells you if the PDT that starts afterwards is still the old version.
+- Bug reports leave out the names of your projects, repositories, branches and worktrees: they are taken out of the diagnostics' log excerpt, and out of what an agent writes in a report it files on GitHub.
+- Bug reports sent with Report a bug by people who can't push to PDT's repository are now recognised as reports from the app when the maintainer triages them, even though GitHub drops their labels.
+- The website's privacy page now covers bug reports (they go to a public GitHub issue), the secrets file on Linux machines without a keyring, and the website's own hosting, and says when it was last updated.
+- On a slow connection the Inbox, Tickets, Sessions and PM screens show a loading placeholder until their lists arrive, instead of briefly saying nothing waits or asking you to add a project.
+- A question an agent asks in its conversation now shows in the Inbox and its toast as a question, titled with what it asks, instead of an approval named after its tool.
+- A large workflow graph, such as Cut a release, and its runs' graphs now open on the trigger instead of an empty part of the canvas.
+- Switches that are off are easy to see again, in the dark theme especially: their track and knob now stand out clearly from the card behind them.
+- Claude sessions no longer report a timeout while one of PDT's approvals waits for your answer. If an approval waits a day or more, the agent is told PDT is still waiting, and your answer later reaches it as a message.
+- Signing in to Google from PDT on the same machine now comes straight back to PDT without loading pdt.dev, so it works on
+  company networks that block or isolate the website; from another device, if pdt.dev can't send you back, it shows a code
+  you paste into PDT instead.
+- Resetting a PM conversation no longer shows the old conversation as open next to the fresh one for a moment once the fresh one has started.
+- A page left open on a phone now reloads to the new version of PDT as soon as you come back to it, instead of running the old one until you refresh. While you're typing a message, a "PDT was updated" banner offers **Reload** instead of waiting silently.
+- A document's title now reaches a workflow's agent step marked as outside input when the workflow starts from a document change or a new comment, as its comments already did.
+
 ## 0.6.1 (2026-11-03)
 
 ### Changed
