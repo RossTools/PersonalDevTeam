@@ -122,7 +122,8 @@ project's connection, so private issues work too.
 A linked issue shows beside the ticket's key, on its board card and in the backlog, with the tracker's icon, and in
 **Links** › **Issues** with its title and whether it is open or closed. Opening the ticket reads them again when they
 are a few minutes old. **⋯** › **Unlink** removes the link; nothing changes in the tracker. An issue can be linked to
-one ticket at a time.
+one ticket at a time. Agents see a linked issue's title marked as outside input, never as instructions: whoever opened
+the issue wrote it.
 
 Moving a ticket to **Done** closes the issues PDT filed from it or imported it from (Jira moves its issue to the
 project's done status). An issue you linked by hand is left as it is unless you tick **Close it when this ticket is

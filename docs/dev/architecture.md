@@ -532,8 +532,9 @@ answers `Unsupported` for one it can't do; pdt-core `document_ops.rs` applies th
 ones to plain cells, for providers that keep content in memory or as Markdown. The agent tools (`documents_list`,
 `doc_read`, `doc_edit`, `sheet_read`, `sheet_edit`, `document_create`, `document_open_beside`, comments) are actions
 of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (for a PM session, a project
-the document is linked to lets the PM act) or the project or ticket they name, and comments come fenced as outside
-input. The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
+the document is linked to lets the PM act) or the project or ticket they name, and a document's title, content and comments
+come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON
+in one block). The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's
 `DocumentsBesideLayout` (`web/src/documents/BesidePanel.tsx`) wraps the agent and PM conversation views, and
 `DocumentBody` reads a document again whenever its `updatedAt` moves (an edit through PDT touches it) and lights what

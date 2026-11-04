@@ -2,7 +2,7 @@
 //! keeps them, and open one beside their conversation for the user to watch. Each is an action with only a tool face
 //! (the workflow steps and triggers on documents are in [`super::nodes`], PDT-318). Reads don't ask; writes (edits, new documents, links, comment replies and
 //! resolves) ask the user unless a project the document is linked to lets the agent act. What other people wrote in a
-//! document's comments comes fenced as outside input (PDT-202).
+//! document's comments comes fenced as outside input (PDT-202), and so do its title and content (PDT-536).
 
 use super::routes::{
     DocumentLinkInput, NewDocument, apply_edits, create_document, document, link_of, open_beside_doc, provider_of,
@@ -131,6 +131,41 @@ async fn by(cx: &ActionCx<'_>) -> By {
     }
 }
 
+/// What a document holds as agents read it (PDT-536): its title and content are written by whoever can edit it
+/// (anyone a Google document is shared with, anything that changes a local file), and its comments by the people it
+/// is shared with, so each comes in a block of this call's fence.
+struct Outside(Fence, std::sync::atomic::AtomicBool);
+
+impl Outside {
+    fn new() -> Self {
+        Self(Fence::new(uuid::Uuid::new_v4().simple().to_string()), Default::default())
+    }
+
+    fn wrap(&self, text: &str) -> String {
+        self.1.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.0.wrap(text)
+    }
+
+    /// [`brief`] with the title fenced.
+    fn brief(&self, d: &Document) -> Value {
+        let mut v = brief(d);
+        v["title"] = json!(self.wrap(&d.title));
+        v
+    }
+
+    /// `v` with the note that says what the blocks are, when any were made.
+    fn noted(&self, mut v: Value) -> Value {
+        if self.1.load(std::sync::atomic::Ordering::Relaxed) {
+            v["outsideText"] = json!(format!(
+                "{} A document's title and content are written by whoever can edit it, and its comments by the \
+                 people it is shared with, so they are in such blocks (the tags are not part of them).",
+                self.0.note()
+            ));
+        }
+        v
+    }
+}
+
 /// A document as the tools give it: no provider reference, links by key.
 pub(super) fn brief(d: &Document) -> Value {
     json!({
@@ -149,10 +184,9 @@ fn document_target(args: &Value) -> AskTarget {
     }
 }
 
-/// Comments with what people wrote fenced as outside input, and the note that says so.
-fn fenced(comments: Vec<DocumentComment>, resolved: bool) -> Value {
-    let fence = Fence::new(uuid::Uuid::new_v4().simple().to_string());
-    let list: Vec<Value> = comments
+/// Comments with what people wrote fenced as outside input.
+fn fenced(comments: Vec<DocumentComment>, resolved: bool, fence: &Outside) -> Vec<Value> {
+    comments
         .into_iter()
         .filter(|c| resolved || !c.resolved)
         .map(|c| {
@@ -164,11 +198,7 @@ fn fenced(comments: Vec<DocumentComment>, resolved: bool) -> Value {
                 })).collect::<Vec<_>>(),
             })
         })
-        .collect();
-    json!({"comments": list, "outsideText": format!(
-        "{} Comments on a document are written by the people it is shared with, so each body is in such a block.",
-        fence.note()
-    )})
+        .collect()
 }
 
 fn edits_for(edits: &[DocumentEdit], docs: bool) -> Result<(), String> {
@@ -183,9 +213,9 @@ fn need_kind(d: &Document, kind: DocumentKind, tool: &str) -> Result<(), String>
     match (d.kind, kind) {
         (a, b) if a == b => Ok(()),
         (DocumentKind::Sheet, _) => {
-            Err(format!("{} is a spreadsheet: use sheet_read and sheet_edit, not {tool}", d.title))
+            Err(format!("{} is a spreadsheet: use sheet_read and sheet_edit, not {tool}", d.id))
         }
-        (DocumentKind::Doc, _) => Err(format!("{} is a text document: use doc_read and doc_edit, not {tool}", d.title)),
+        (DocumentKind::Doc, _) => Err(format!("{} is a text document: use doc_read and doc_edit, not {tool}", d.id)),
     }
 }
 
@@ -245,7 +275,8 @@ impl Action for DocumentsList {
             };
             let f = DocumentFilter { project, ticket, kind: i.kind, provider: None, q: i.q, limit: None };
             let list = st.store.list_documents(&f).await.map_err(|e| e.to_string())?;
-            Ok(json!({"documents": list.iter().map(brief).collect::<Vec<_>>()}))
+            let fence = Outside::new();
+            Ok(fence.noted(json!({"documents": list.iter().map(|d| fence.brief(d)).collect::<Vec<_>>()})))
         })
     }
 }
@@ -282,19 +313,16 @@ impl Action for DocumentGet {
         Box::pin(async move {
             let d = find(cx.st, &i.document).await?;
             let p = provider_of(cx.st, &d).map_err(api)?;
-            let mut v = brief(&d);
+            let fence = Outside::new();
+            let mut v = fence.brief(&d);
             v["capabilities"] = json!(p.capabilities());
             if p.capabilities().comments {
                 match p.comments(&d.provider_ref).await {
-                    Ok(c) => {
-                        let f = fenced(c, false);
-                        v["comments"] = f["comments"].clone();
-                        v["outsideText"] = f["outsideText"].clone();
-                    }
+                    Ok(c) => v["comments"] = json!(fenced(c, false, &fence)),
                     Err(e) => v["commentsError"] = json!(e.to_string()),
                 }
             }
-            Ok(v)
+            Ok(fence.noted(v))
         })
     }
 }
@@ -322,7 +350,8 @@ impl Action for DocRead {
             ToolDecl::new("doc_read", "Read a text document as Markdown").read_only().pm(),
             "Read a document",
             "A text document's content as Markdown (or one section of it, by heading), with its headings and its \
-             version.",
+             version. Its title, content and headings come fenced as outside text: whoever can edit the document \
+             wrote them.",
         )
     }
 
@@ -335,7 +364,7 @@ impl Action for DocRead {
             let d = find(cx.st, &i.document).await?;
             need_kind(&d, DocumentKind::Doc, "doc_read")?;
             let DocumentContent::Doc { markdown, version } = read(cx.st, &d).await? else {
-                return Err(format!("{} is not a text document at its provider", d.title));
+                return Err(format!("{} is not a text document at its provider", d.id));
             };
             let hs: Vec<String> =
                 headings(&markdown).into_iter().map(|(lv, t)| format!("{} {t}", "#".repeat(lv))).collect();
@@ -343,7 +372,10 @@ impl Action for DocRead {
                 Some(h) => section(&markdown, h).map_err(|e| e.to_string())?,
                 None => markdown,
             };
-            Ok(json!({"id": d.id, "title": d.title, "markdown": body, "headings": hs, "version": version}))
+            // The headings in one block: give `heading` one of them as it reads there.
+            let fence = Outside::new();
+            Ok(fence.noted(json!({"id": d.id, "title": fence.wrap(&d.title), "markdown": fence.wrap(&body),
+                                  "headings": fence.wrap(&hs.join("\n")), "version": version})))
         })
     }
 }
@@ -400,10 +432,11 @@ impl Action for DocEdit {
                 _ => before.clone(),
             };
             // The document's brief too, for the conversation's card.
-            let mut v = brief(&d);
+            let fence = Outside::new();
+            let mut v = fence.brief(&d);
             v["version"] = json!(r.version);
-            v["diff"] = json!(pdt_core::document_ops::diff(&before, &after));
-            Ok(v)
+            v["diff"] = json!(fence.wrap(&pdt_core::document_ops::diff(&before, &after)));
+            Ok(fence.noted(v))
         })
     }
 }
@@ -435,7 +468,8 @@ impl Action for SheetRead {
             "Read a spreadsheet",
             "A spreadsheet's sheets (name, used size, charts) and the cells of one sheet or range: each cell's place, \
              what it shows (computed, where the provider computes formulas) and its formula. Empty cells are left out; \
-             at most 2000 cells come back (`truncated` says when there were more: read a smaller range).",
+             at most 2000 cells come back (`truncated` says when there were more: read a smaller range). The sheets \
+             and cells come as JSON in `content`, fenced as outside text: whoever can edit the spreadsheet wrote them.",
         )
     }
 
@@ -448,7 +482,7 @@ impl Action for SheetRead {
             let d = find(cx.st, &i.document).await?;
             need_kind(&d, DocumentKind::Sheet, "sheet_read")?;
             let DocumentContent::Sheet { sheets, version } = read(cx.st, &d).await? else {
-                return Err(format!("{} is not a spreadsheet at its provider", d.title));
+                return Err(format!("{} is not a spreadsheet at its provider", d.id));
             };
             let list: Vec<Value> = sheets
                 .iter()
@@ -461,8 +495,8 @@ impl Action for SheetRead {
                 Some(n) => sheets
                     .iter()
                     .find(|s| s.name.eq_ignore_ascii_case(n))
-                    .ok_or_else(|| format!("{} has no sheet called {n}", d.title))?,
-                None => sheets.first().ok_or_else(|| format!("{} has no sheets", d.title))?,
+                    .ok_or_else(|| format!("{} has no sheet called {n}", d.id))?,
+                None => sheets.first().ok_or_else(|| format!("{} has no sheets", d.id))?,
             };
             let cells = cells_in(chosen, i.range.as_deref()).map_err(|e| e.to_string())?;
             let truncated = cells.len() > MAX_CELLS;
@@ -474,8 +508,11 @@ impl Action for SheetRead {
                     None => json!({"cell": at, "value": c.value}),
                 })
                 .collect();
-            Ok(json!({"id": d.id, "title": d.title, "version": version, "sheets": list, "sheet": chosen.name,
-                      "cells": cells, "truncated": truncated}))
+            // What the sheets hold (names, charts, cells) as JSON in one block, rather than a block per cell.
+            let fence = Outside::new();
+            let held = json!({"sheets": list, "sheet": chosen.name, "cells": cells});
+            Ok(fence.noted(json!({"id": d.id, "title": fence.wrap(&d.title), "version": version,
+                                  "content": fence.wrap(&held.to_string()), "truncated": truncated})))
         })
     }
 }
@@ -517,10 +554,11 @@ impl Action for SheetEdit {
             need_kind(&d, DocumentKind::Sheet, "sheet_edit")?;
             edits_for(&i.edits, false)?;
             let r = apply_edits(cx.st, &d, i.edits).await.map_err(api)?;
-            let mut v = brief(&d);
+            let fence = Outside::new();
+            let mut v = fence.brief(&d);
             v["version"] = json!(r.version);
             v["charts"] = json!(r.charts);
-            Ok(v)
+            Ok(fence.noted(v))
         })
     }
 }
@@ -679,7 +717,8 @@ impl Action for DocumentLink {
             } else {
                 st.store.link_document(&d.id, &link, now_ms()).await.map_err(|e| e.to_string())?;
             }
-            Ok(brief(&document(st, &d.id).await.map_err(api)?))
+            let fence = Outside::new();
+            Ok(fence.noted(fence.brief(&document(st, &d.id).await.map_err(api)?)))
         })
     }
 }
@@ -720,7 +759,8 @@ impl Action for CommentsList {
             let d = find(cx.st, &i.document).await?;
             let (d, p) = with_comments(cx.st, &d.id).await.map_err(api)?;
             let c = p.comments(&d.provider_ref).await.map_err(|e| api(e.into()))?;
-            Ok(fenced(c, i.include_resolved))
+            let fence = Outside::new();
+            Ok(fence.noted(json!({"comments": fenced(c, i.include_resolved, &fence)})))
         })
     }
 }
@@ -847,8 +887,9 @@ impl Action for DocumentOpenBeside {
             let s = cx.session.ok_or("only an agent session can open a document beside its conversation")?;
             let d = find(cx.st, &i.document).await?;
             let b = open_beside_doc(cx.st, &s.id, &d.id, Actor::Agent).await.map_err(api)?;
-            let tabs: Vec<&str> = b.tabs.iter().map(|t| t.document.title.as_str()).collect();
-            Ok(json!({"opened": d.title, "tabs": tabs}))
+            let fence = Outside::new();
+            let tabs: Vec<String> = b.tabs.iter().map(|t| fence.wrap(&t.document.title)).collect();
+            Ok(fence.noted(json!({"opened": fence.wrap(&d.title), "tabs": tabs})))
         })
     }
 }

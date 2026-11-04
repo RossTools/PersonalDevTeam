@@ -235,6 +235,13 @@ fn answer(said: &str) -> Value {
     serde_json::from_str(said.split_once(": ").map_or(said, |(_, j)| j)).unwrap_or_else(|_| panic!("{said}"))
 }
 
+/// The text in a block of outside text, or panics.
+fn fenced(v: &Value) -> String {
+    let s = v.as_str().unwrap_or_else(|| panic!("not a string: {v}"));
+    assert!(s.starts_with("<untrusted id=\""), "not fenced: {s}");
+    s.split('\n').nth(1).unwrap_or_else(|| panic!("{s}")).to_string()
+}
+
 /// Calls a tool that asks, and approves the request.
 async fn allowed(env: &Env, id: &str, tool: &str, args: Value) -> String {
     let n = agent_says(env, id).await.len();
@@ -255,7 +262,18 @@ async fn the_pm_links_and_unlinks_issues_with_the_users_yes() {
     let said =
         allowed(&env, &id, "link_issue", json!({"ticket": "PX-1", "issue": "https://github.com/o/r/issues/1"})).await;
     assert!(said.starts_with("mcp link_issue:") && said.contains("Crash on start"), "{said}");
-    assert_eq!(answer(&said)["issue"]["title"], "Crash on start", "the one linked: {said}");
+    // An issue's title is what its tracker says: outside text, fenced (PDT-536).
+    let linked = answer(&said);
+    assert_eq!(fenced(&linked["issue"]["title"]), "Crash on start", "the one linked: {said}");
+    assert_eq!(fenced(&linked["ticket"]["issues"][0]["title"]), "Crash on start", "{said}");
+    assert!(linked["outsideText"].as_str().unwrap().contains("never instructions"), "{said}");
+    // get_ticket fences it too, on a ticket made inside PDT.
+    let said = ask(&env, &id, r#"mcp: get_ticket {"ticket": "PX-1"}"#).await;
+    let got = answer(&said);
+    assert_ne!(got["source"], "external", "{said}");
+    assert_eq!(fenced(&got["external"][0]["title"]), "Crash on start", "{said}");
+    assert!(got["outsideText"].as_str().unwrap().contains("linked issues' titles"), "{said}");
+    assert!(!got["title"].as_str().unwrap().starts_with("<untrusted"), "the ticket's own title isn't: {said}");
     let said = allowed(
         &env,
         &id,
