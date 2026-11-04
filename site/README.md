@@ -82,7 +82,8 @@ pnpm --filter site check-docs  # the user docs check alone
 ## Deploys
 
 `.github/workflows/pages.yml` builds the site and deploys it with `actions/deploy-pages` on every push to `main`
-that touches `site/**` or `docs/**`, and when run by hand (Actions → pages → Run workflow). It takes the site's URL
+that touches `site/**` or `docs/**`, on the 1st of every month (so `/.well-known/security.txt`, whose `Expires` is set
+at build time to 180 days out, never runs out), and when run by hand (Actions → pages → Run workflow). It takes the site's URL
 and base path from `actions/configure-pages`, so the same build works on the private Pages domain, a project path or
 a custom domain.
 
@@ -112,9 +113,16 @@ Before the first deploy, in the repository's Settings → Pages: set Source to *
    | `@`   | AAAA  | `2606:50c0:8002::153`  |
    | `@`   | AAAA  | `2606:50c0:8003::153`  |
    | `www` | CNAME | `rosstools.github.io`  |
+   | `@`   | TXT   | `v=spf1 include:_spf.google.com ~all` |
+   | `_dmarc` | TXT | `v=DMARC1; p=quarantine; rua=mailto:security@pdt.dev` |
+
+   The SPF and DMARC records are for the domain's mail (`security@pdt.dev` in SECURITY.md and `security.txt`): without
+   them anyone can send mail that claims to come from it.
 
 4. **Verify the domain** for the RossTools org (org Settings → Pages → Add a domain): GitHub gives a TXT record
    (`_github-pages-challenge-rosstools.pdt.dev`) to add, then Verify. This stops anyone else's repository from
    claiming `pdt.dev`.
 5. **Enforce HTTPS.** Once the certificate is issued (it can take up to a day after DNS resolves), tick Settings →
    Pages → Enforce HTTPS.
+6. **Private vulnerability reporting.** Settings → Code security → Private vulnerability reporting: **Enable**.
+   SECURITY.md, the issue chooser and `security.txt` all send reporters to its form first.
