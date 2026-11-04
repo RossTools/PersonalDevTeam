@@ -531,7 +531,7 @@ its design doc. Edits are provider-neutral `DocumentEdit` operations (pdt-core `
 answers `Unsupported` for one it can't do; pdt-core `document_ops.rs` applies the text ones to Markdown and the sheet
 ones to plain cells, for providers that keep content in memory or as Markdown. The agent tools (`documents_list`,
 `doc_read`, `doc_edit`, `sheet_read`, `sheet_edit`, `document_create`, `document_open_beside`, comments) are actions
-of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (a project
+of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (for a PM session, a project
 the document is linked to lets the PM act) or the project or ticket they name, and comments come fenced as outside
 input. The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's

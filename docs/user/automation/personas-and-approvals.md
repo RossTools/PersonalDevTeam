@@ -159,7 +159,7 @@ With the Pipeline and these rules, PDT asks you, in the [Inbox](../using-pdt/the
   workflow, filing an issue…) in a session that never asks itself: Codex, Devin, or Claude in **Bypass**. In a
   conversation PDT asks with a card in the conversation (and in the Inbox); from a terminal, in the Inbox. Either way
   the agent carries on once you answer.
-  Where you let the PM act without asking, it goes ahead;
+  Where you let the PM act without asking, the PM goes ahead; other agents in that project still ask;
 - before an agent outside a workflow step posts where others can read it (comments on a pull request or issue, or
   opening a pull request). Workflow steps that do this, such as the Coder opening its pull request, don't ask;
 - before the PM changes tickets or messages agents, unless you let it act without asking (see

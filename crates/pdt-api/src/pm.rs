@@ -693,8 +693,8 @@ async fn ask_for_journal(st: &AppState, s: &Session, text: String, reopens: bool
     }
 }
 
-/// A conversation opened a permission request: when it is a PM asking tool whose target project lets the PM act,
-/// PDT answers yes for the user.
+/// A conversation opened a permission request: when a PM session asks for an asking tool whose target project lets the
+/// PM act, PDT answers yes for the user.
 pub(crate) async fn request_opened(
     st: &AppState,
     session_id: &str,
@@ -711,7 +711,7 @@ pub(crate) async fn request_opened(
         st.grants.hold(session_id, request_id, short, input);
         return;
     }
-    if !acts_without_asking(st, &target).await {
+    if !acts_without_asking(st, &s, &target).await {
         return;
     }
     tracing::info!(session = %session_id, tool, "the project lets the PM act: allowing without asking");
@@ -722,8 +722,12 @@ pub(crate) async fn request_opened(
     }
 }
 
-/// Whether the project an asking tool's call acts on lets the PM act without asking.
-pub(crate) async fn acts_without_asking(st: &AppState, target: &AskTarget) -> bool {
+/// Whether `s` is a PM session and the project an asking tool's call acts on lets the PM act without asking. The
+/// setting is the PM's: another persona working in such a project still asks (PDT-534).
+pub(crate) async fn acts_without_asking(st: &AppState, s: &Session, target: &AskTarget) -> bool {
+    if !is_pm_session(st, s).await {
+        return false;
+    }
     if let AskTarget::Connection { kind, name } = target {
         return crate::workflow::routes::connection_of_kind(st, kind, name.as_deref())
             .await
