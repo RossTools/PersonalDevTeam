@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   ArrowRightLeft, BellRing, Bot, Bug, Check, Keyboard, Layers, PanelTop, Pencil, Play, Plus, Server, Settings, SunMoon, Ticket,
-  BriefcaseBusiness, FileDiff, Files, Inbox, NotebookPen, UserCog, Workflow, X,
+  BriefcaseBusiness, File, FileDiff, Files, Inbox, NotebookPen, UserCog, Workflow, X,
 } from 'lucide-react';
 import { Button, CommandList, Dialog, Field, Input, type CommandItem } from '@ui';
 import { AgentDot } from '../common/AgentState';
@@ -38,6 +38,7 @@ const ICONS: Record<PaletteIcon, ReactNode> = {
   notes: <NotebookPen aria-hidden />,
   changes: <FileDiff aria-hidden />,
   bug: <Bug aria-hidden />,
+  file: <File aria-hidden />,
 };
 
 function toCommand(it: PaletteItem): CommandItem {
