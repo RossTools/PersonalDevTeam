@@ -10,8 +10,9 @@ pub const CLAUDE_HOOK_EVENTS: [&str; 7] =
     ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Notification", "Stop"];
 pub const CLAUDE_SETTINGS_FILE: &str = "claude-settings.json";
 
-/// Exec-form command hooks (no shell, verified in Task 1) running `<pdtd> hook claude <Event>`.
-pub fn claude_settings(pdtd: &Path) -> Value {
+/// Exec-form command hooks (no shell, verified in Task 1) running `<pdtd> hook claude <Event>`, and `permissions`
+/// when PDT has rules for the session (`crate::mcp::claude_permissions`: Claude takes one `--settings` file).
+pub fn claude_settings(pdtd: &Path, permissions: Option<&Value>) -> Value {
     let mut hooks = serde_json::Map::new();
     for ev in CLAUDE_HOOK_EVENTS {
         hooks.insert(
@@ -24,14 +25,18 @@ pub fn claude_settings(pdtd: &Path) -> Value {
             }] }]),
         );
     }
-    json!({ "hooks": hooks })
+    let mut v = json!({ "hooks": hooks });
+    if let Some(p) = permissions {
+        v["permissions"] = p.clone();
+    }
+    v
 }
 
 /// Writes `<dir>/claude-settings.json` and returns its path.
-pub fn write_claude_settings(dir: &Path, pdtd: &Path) -> std::io::Result<PathBuf> {
+pub fn write_claude_settings(dir: &Path, pdtd: &Path, permissions: Option<&Value>) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(CLAUDE_SETTINGS_FILE);
-    std::fs::write(&path, serde_json::to_vec_pretty(&claude_settings(pdtd)).expect("json"))?;
+    std::fs::write(&path, serde_json::to_vec_pretty(&claude_settings(pdtd, permissions)).expect("json"))?;
     Ok(path)
 }
 
@@ -244,7 +249,8 @@ mod tests {
         } else {
             "/Applications/P D T.app/Contents/MacOS/pdtd"
         });
-        let v = claude_settings(exe);
+        let v = claude_settings(exe, None);
+        assert!(v.get("permissions").is_none());
         for ev in ["SessionStart", "PostToolUse", "PreToolUse", "Stop"] {
             assert!(CLAUDE_HOOK_EVENTS.contains(&ev), "{ev} is subscribed");
         }
@@ -256,9 +262,14 @@ mod tests {
             assert!(v["hooks"][ev][0].get("matcher").is_none(), "no matcher: every tool and notification");
         }
         let dir = tempfile::tempdir().unwrap();
-        let p = write_claude_settings(&dir.path().join("s1"), exe).unwrap();
+        let p = write_claude_settings(&dir.path().join("s1"), exe, None).unwrap();
         let back: Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
         assert_eq!(back, v);
+        let rules = json!({"ask": ["mcp__pdt__issue_create"]});
+        let p = write_claude_settings(&dir.path().join("s2"), exe, Some(&rules)).unwrap();
+        let back: Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+        assert_eq!(back["permissions"], rules);
+        assert_eq!(back["hooks"], v["hooks"]);
     }
 
     #[test]

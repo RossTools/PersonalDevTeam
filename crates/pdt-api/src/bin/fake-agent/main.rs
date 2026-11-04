@@ -21,7 +21,8 @@
 //! - `/local` — like Claude's local commands (`/context`): answers without echoing the message first.
 //! - `mcp: <tool> <json arguments>` (its first line) — calls that pdt-mcp tool (from `--mcp-config`) and says
 //!   `mcp <tool>: <the result's text>`, or `mcp error: …`. Like Claude, it first asks to use a listed tool that
-//!   `--allowedTools` leaves out (unless bypassing permissions), and says `mcp <tool> denied` when refused.
+//!   `--allowedTools` and the folder's `.claude/settings.local.json` leave out (unless bypassing permissions), and
+//!   one an ask rule in `--settings` names in any mode, and says `mcp <tool> denied` when refused.
 //! - `mcp-list` — says the pdt-mcp tools it was given.
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
@@ -62,8 +63,20 @@ struct Agent {
     mcp: Option<(String, String)>,
     /// `--allowedTools`.
     allowed: Vec<String>,
+    /// `permissions.ask` in `--settings`: Claude asks for these whatever allows them.
+    ask: Vec<String>,
     /// `--tools` (None: all of Claude's built-in tools).
     tools: Option<String>,
+}
+
+/// A settings file's `permissions.<kind>` rules (none when it can't be read).
+fn rules(file: Option<&str>, kind: &str) -> Vec<String> {
+    let v: Value = file
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(Value::Null);
+    let list = v["permissions"][kind].as_array().cloned().unwrap_or_default();
+    list.iter().filter_map(Value::as_str).map(String::from).collect()
 }
 
 /// pdt-mcp from Claude's `--mcp-config` file.
@@ -373,7 +386,11 @@ impl Agent {
                 rpc(server, "tools/list", json!({}))
                     .is_ok_and(|r| r["tools"].as_array().is_some_and(|a| a.iter().any(|t| t["name"] == tool)))
             });
-            if listed && self.mode != "bypassPermissions" && !self.allowed.contains(&full) {
+            // As Claude: an allow rule in the folder's `.claude/settings.local.json` skips the prompt (re-read each
+            // call, as Claude watches its settings), unless an ask rule names the tool.
+            let local = rules(Some(".claude/settings.local.json"), "allow");
+            let allowed = self.allowed.contains(&full) || local.iter().any(|r| *r == full || *r == "mcp__pdt");
+            if listed && (self.ask.contains(&full) || (self.mode != "bypassPermissions" && !allowed)) {
                 let input: Value = serde_json::from_str(args.trim()).unwrap_or(json!({}));
                 let Ok((tool_id, resp)) = self.tool(&full, input) else {
                     return self.result("error_during_execution", started);
@@ -542,6 +559,7 @@ fn main() {
         log,
         mcp: mcp_server(flag("--mcp-config")),
         allowed: flag("--allowedTools").map(|t| t.split(',').map(String::from).collect()).unwrap_or_default(),
+        ask: rules(flag("--settings").as_deref(), "ask"),
         tools: flag("--tools"),
     };
     loop {

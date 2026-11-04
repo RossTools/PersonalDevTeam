@@ -23,7 +23,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 const STDERR_TAIL: usize = 4096;
 
 /// The `claude -p` arguments for a session. Never `--bare` (it would stop using the plan login), never PDT's hook
-/// settings (activity comes from the protocol).
+/// settings (activity comes from the protocol): its `--settings` file holds only the ask rules for PDT's asking tools.
 pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     let mut a: Vec<String> = [
         "-p",
@@ -56,6 +56,9 @@ pub fn claude_args(spec: &OpenSpec) -> Vec<String> {
     }
     if let Some(m) = &spec.mcp {
         a.extend(crate::mcp::claude_args(m));
+        if let Some(f) = &m.claude_settings {
+            a.extend(["--settings".to_string(), f.to_string_lossy().into_owned()]);
+        }
     }
     a
 }

@@ -436,7 +436,9 @@ impl ClaudeMapper {
                 description: r.description.clone(),
                 input: r.input.clone(),
                 tool_call_id: r.tool_use_id.clone(),
-                can_always: r.kind == RequestKind::Approval && !session_rules(&r.suggestions).is_empty(),
+                can_always: r.kind == RequestKind::Approval
+                    && !session_rules(&r.suggestions).is_empty()
+                    && !pdt_asks(&r.tool),
                 diff: self.tool_diff(&r.tool, &r.input, None).map(|d| d.render()),
                 rows: None,
                 state,
@@ -982,7 +984,7 @@ impl ClaudeMapper {
             (_, Answer::Approve { always }) => {
                 let mut resp = allow(r.input.clone());
                 let rules = session_rules(&r.suggestions);
-                if *always && !rules.is_empty() {
+                if *always && !rules.is_empty() && !pdt_asks(&r.tool) {
                     resp["updatedPermissions"] = Value::Array(rules);
                 }
                 (resp, false)
@@ -1160,6 +1162,14 @@ impl ClaudeMapper {
     }
 }
 
+/// One of PDT's own tools: Claude only asks for those PDT gives an ask rule, which wins over any allow rule, so "Always
+/// allow" would change nothing (PDT-535).
+fn pdt_asks(tool: &str) -> bool {
+    tool.strip_prefix("mcp__")
+        .and_then(|t| t.strip_prefix(crate::mcp::SERVER_NAME))
+        .is_some_and(|t| t.starts_with("__"))
+}
+
 /// Claude's permission suggestions turned into session-only rules: "Always allow" never writes settings files. For
 /// file edits Claude suggests `setMode acceptEdits`, which switches the session to Accept edits.
 fn session_rules(suggestions: &[Value]) -> Vec<Value> {
@@ -1235,6 +1245,24 @@ mod tests {
         let mut m = ClaudeMapper::new();
         let ev = events(&m.on_line(r#"{"type":"conversation_reset","trigger":"resume","new_conversation_id":"n"}"#));
         assert_eq!(ev[0].1, AgentEvent::ConversationReset { trigger: "resume".into() });
+    }
+
+    #[test]
+    fn pdt_s_asking_tools_ask_every_time() {
+        assert!(pdt_asks("mcp__pdt__issue_create"));
+        assert!(!pdt_asks("mcp__pdtx__issue_create") && !pdt_asks("mcp__slack__post") && !pdt_asks("Bash"));
+        let mut m = ClaudeMapper::new();
+        let line = r#"{"type":"control_request","request_id":"q1","request":{"subtype":"can_use_tool","tool_name":"mcp__pdt__issue_create","input":{"title":"x"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"mcp__pdt__issue_create"}],"behavior":"allow","destination":"localSettings"}]}}"#;
+        let ev = events(&m.on_line(line));
+        let Some(AgentEvent::Request { id, can_always, .. }) =
+            ev.iter().map(|(_, e)| e).find(|e| e.kind() == "request")
+        else {
+            panic!("{ev:?}")
+        };
+        assert!(!can_always, "an allow rule can't beat PDT's ask rule");
+        let (line, _) = m.answer(id, &Answer::Approve { always: true }).unwrap();
+        assert_eq!(line["response"]["response"]["behavior"], "allow");
+        assert!(line["response"]["response"].get("updatedPermissions").is_none());
     }
 
     #[test]

@@ -109,6 +109,16 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   than the agent's timeout: the Inbox item takes `answer_confirm`'s old way, and a conversation's card is marked
   detached, so a turn's end keeps it, and its answer runs the call and messages the session (`held::answered_late`).
   A `ToolDecl::public` tool (posts on the forge) asks in the Inbox outside an active agent step. A new path that runs an asking or public tool goes through `confirmable` (`AnyAction::call` does for actions).
+- **Claude's prompt for an asking tool can't be switched off by a settings file** (pdt-agents `mcp::claude_permissions`):
+  `confirmable` trusts Claude to have asked, so every Claude session not launched in Bypass gets an ask rule for each of
+  its asking tools (`mcp__pdt__<tool>`) in the `--settings` file PDT passes (a terminal's hook settings file, a
+  conversation's `claude-permissions.json`; Claude reads one `--settings`). Claude weighs ask rules before allow rules
+  from every scope and prompts for them in every mode, so an allow rule in the user's, the project's or the worktree's
+  `.claude/settings*.json`, or a mode switched in the terminal, doesn't skip the prompt. Leaving a tool out of
+  `--allowedTools` alone is not enough. `mcp::server_for` records each launch's rules (`AppState::claude_ask_rules`),
+  and `confirmable` trusts Claude's prompt only for a tool the running process has a rule for: a conversation's mode
+  changes without a relaunch, so one launched in Bypass and switched out of it has none, and PDT asks itself. "Always
+  allow" isn't offered on Claude's prompt for PDT's tools (an ask rule beats a session allow rule).
 - **Tool lists fail closed** (pdt-api `mcp::session_tools`, pdt-core `PersonaSetup::tool_set`): an empty persona tool
   list is no tools, and a persona version that can't be read gives none. Only a session with no persona gets
   `DEFAULT_TOOLS`.

@@ -1,5 +1,6 @@
 //! How pdt-mcp reaches each agent, per launch and never through the user's own config: Claude
-//! gets `--mcp-config` (a file in the session's folder) and `--allowedTools` for PDT's tools; Codex a `mcp_servers.pdt`
+//! gets `--mcp-config` (a file in the session's folder), `--allowedTools` for PDT's tools and an ask rule for each asking
+//! one in its `--settings` file; Codex a `mcp_servers.pdt`
 //! override (the app-server thread's `config`, the TUI's `-c` with the token in an environment variable); Devin's ACP
 //! session an `mcpServers` entry.
 //!
@@ -24,6 +25,10 @@ pub struct McpServer {
     /// The tools the session may call without asking (Claude's `--allowedTools`). The session's asking tools
     /// (PDT-81) are left out, so Claude asks before each call.
     pub tools: Vec<String>,
+    /// The session's asking tools Claude asks for itself: an ask rule each in the `--settings` file PDT passes
+    /// ([`claude_permissions`]), so an allow rule in the user's, the project's or the worktree's settings can't switch
+    /// Claude's prompt off (PDT-535).
+    pub asks: Vec<String>,
     /// The PM (PDT-100): it researches, so Codex also gets live web search and network access in its sandbox (Claude
     /// and Devin have both already).
     pub pm: bool,
@@ -32,6 +37,9 @@ pub struct McpServer {
     pub locked: bool,
     /// Claude's `--mcp-config` file (written by [`write_claude_config`]).
     pub claude_config: Option<PathBuf>,
+    /// A conversation's `--settings` file with [`claude_permissions`] (written by [`write_claude_settings`]). A terminal
+    /// has its hook settings file instead, with the same rules in it.
+    pub claude_settings: Option<PathBuf>,
     /// The user's MCP servers this session gets (none for a locked-down one).
     pub extra: Vec<ExtraServer>,
     /// Settings → MCP servers → "Use only PDT's MCP servers": the agents' own MCP configs are ignored where the agent
@@ -130,6 +138,29 @@ fn claude_rules(x: &ExtraServer) -> (Vec<String>, Vec<String>) {
         if uniform && x.plan.default == ToolMode::Allow { vec![whole.clone()] } else { each(ToolMode::Allow) };
     let blocked = if uniform && x.plan.default == ToolMode::Block { vec![whole] } else { each(ToolMode::Block) };
     (allowed, blocked)
+}
+
+/// Claude's `permissions` for PDT's tools: an ask rule for each asking tool, None when there are none. Claude weighs ask
+/// rules before allow rules from every settings file, and still prompts for them in every permission mode (Bypass
+/// too), so these hold whatever the user's, the project's or the worktree's `.claude` settings allow (PDT-535).
+pub fn claude_permissions(m: &McpServer) -> Option<Value> {
+    if m.asks.is_empty() {
+        return None;
+    }
+    let ask: Vec<String> = m.asks.iter().map(|t| format!("mcp__{SERVER_NAME}__{t}")).collect();
+    Some(json!({"ask": ask}))
+}
+
+/// A conversation's `--settings` file name ([`McpServer::claude_settings`]).
+pub const CLAUDE_PERMISSIONS_FILE: &str = "claude-permissions.json";
+
+/// Writes a conversation's `--settings` file with [`claude_permissions`]; None when there are none.
+pub fn write_claude_settings(dir: &Path, m: &McpServer) -> std::io::Result<Option<PathBuf>> {
+    let Some(p) = claude_permissions(m) else { return Ok(None) };
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(CLAUDE_PERMISSIONS_FILE);
+    std::fs::write(&path, serde_json::to_vec_pretty(&json!({"permissions": p})).expect("json"))?;
+    Ok(Some(path))
 }
 
 /// Writes `<dir>/mcp.json` (owner-only: it holds the token) and returns its path.
@@ -469,7 +500,9 @@ mod tests {
             url: "http://127.0.0.1:7421/api/mcp".into(),
             token: "s1.ab".into(),
             tools: vec!["get_ticket".into(), "submit_outcome".into()],
+            asks: vec![],
             claude_config: dir.map(|d| d.join(CLAUDE_CONFIG_FILE)),
+            claude_settings: None,
             pm: false,
             locked: false,
             extra: vec![],
@@ -674,6 +707,24 @@ mod tests {
         // Triage (PDT-201): Claude's read tools only, and no MCP servers but PDT's.
         let locked = McpServer { locked: true, ..server(Some(dir.path())) };
         assert_eq!(claude_args(&locked)[4..], ["--tools", "Read,Grep,Glob", "--strict-mcp-config"]);
+    }
+
+    #[test]
+    fn claude_asks_for_pdt_s_asking_tools_whatever_other_settings_allow() {
+        assert_eq!(claude_permissions(&server(None)), None, "no asking tools, no rules");
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(write_claude_settings(dir.path(), &server(None)).unwrap(), None);
+        let m = McpServer { asks: vec!["issue_create".into(), "stop_ticket".into()], ..server(None) };
+        assert_eq!(claude_permissions(&m), Some(json!({"ask": ["mcp__pdt__issue_create", "mcp__pdt__stop_ticket"]})));
+        let path = write_claude_settings(dir.path(), &m).unwrap().unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(v, json!({"permissions": {"ask": ["mcp__pdt__issue_create", "mcp__pdt__stop_ticket"]}}));
+        assert!(
+            !claude_args(&McpServer { claude_config: Some(dir.path().join("mcp.json")), ..m })
+                .iter()
+                .any(|a| a.contains("issue_create")),
+            "an asking tool is never allowed"
+        );
     }
 
     #[test]
