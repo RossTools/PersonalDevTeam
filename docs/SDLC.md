@@ -376,6 +376,23 @@ and the update token is read without a prompt once allowed. A self-signed one (`
 stopgap) has no Team ID: the keychain then trusts each build's exact code hash, so every update asks again, and
 Gatekeeper warns. Check a host with `security dump-keychain -a`: the item's partition list should show `teamid:`.
 
+**Notarizing waits for Apple**, which usually takes minutes but can take hours (the first submissions for a new team,
+app or key; a slow day). `bundle (macos-latest, app)` uploads the app, then waits up to two hours (the bundle-macos
+action's `notary-timeout-minutes`; the job's `timeout-minutes` is 150), logging every five minutes while Apple is
+still working. Stable releases, nightlies and the release PR's bundles all wait: nothing is published unnotarized.
+- **The submission is kept** as soon as Apple has the upload: its id is in the job summary and in a `macos-notary-<attempt>`
+  artifact, with a fingerprint of the build (its files before signing, and the certificate).
+- **Re-run a job that timed out** (Re-run failed jobs): it joins the same two builds, finds the earlier attempt's
+  submission for the same fingerprint, and waits on it instead of uploading again, then staples and checks as usual.
+  A submission Apple rejected is uploaded again.
+- **Rejected** (`Invalid`): the job fails with Apple's log (`notarytool log`) in its output.
+- **Check a submission by hand** with the id from the summary and the API key:
+  `xcrun notarytool info <id> --key AuthKey_<key id>.p8 --key-id <key id> --issuer <issuer id>`
+  (`notarytool log <id> …` for Apple's findings).
+
+`scripts/notarize-macos.test.sh` covers submitting, resuming, accepting and rejecting with a stand-in `notarytool`.
+Cut a release waits up to eight hours for a release run, which leaves room for a slow notarization and a re-run.
+
 ### Release signing
 
 Each release's `SHA256SUMS` is signed: the `publish` job runs `scripts/release-sign.sh`, which writes

@@ -4,7 +4,8 @@ use super::*;
 
 /// How often "Cut a release" looks, and for how long: the release PR (opened within a minute or two), its merge (it
 /// may merge itself once its checks and a merge queue pass: hours; a failed check waits for the user's fix, up to two
-/// weeks) and the published release (bundles may build for an hour or more; allowed four).
+/// weeks) and the published release (bundles build for an hour or more, and notarizing the macOS app may wait two
+/// more for Apple, plus a re-run of a failed job; allowed eight).
 const PR_POLL_MS: u64 = 30_000;
 
 const PR_POLLS: u32 = 40;
@@ -15,7 +16,7 @@ const MERGE_POLLS: u32 = 14 * 24 * 12;
 
 const RELEASE_POLL_MS: u64 = 2 * 60_000;
 
-const RELEASE_POLLS: u32 = 4 * 30;
+const RELEASE_POLLS: u32 = 8 * 30;
 
 /// Cut a release (PDT-194, PDT-214, PDT-294; a template since PDT-301): made for a project from its release workflow
 /// (`workflow`, run on `ref`), it asks Run now for the kind of release and follows what the workflow makes:
