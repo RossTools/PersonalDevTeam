@@ -11,4 +11,9 @@ projectId: string | null,
 /**
  * `owner/name`.
  */
-repo: string, number: bigint, title: string, body: string, url: string, author: string, labels: Array<string>, createdAt: string, };
+repo: string, number: bigint, title: string, body: string, url: string, author: string, 
+/**
+ * Its labels, and `from-pdt` on a report filed with Report a bug (GitHub drops the labels of someone without
+ * push access).
+ */
+labels: Array<string>, createdAt: string, };

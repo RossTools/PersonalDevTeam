@@ -26,7 +26,8 @@ impl Integration for BugReports {
                               issue on PDT's GitHub repository, or a Draft bug ticket on the instance PDT is developed on. \
                               Its body has the sections of PDT's bug form: description (what happened), expected and \
                               steps (how to reproduce), then the version and OS. includeDiagnostics adds this instance's version, OS, update state and the end of its log, \
-                              redacted. The user confirms each call.",
+                              redacted. Sent to GitHub, what you write is redacted too (the user's project, repository, branch and folder names \
+                              become [name]). The user confirms each call.",
             schema: schema::<crate::bug_reports::NewBugReport>,
         }]
     }

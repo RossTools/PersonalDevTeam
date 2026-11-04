@@ -976,7 +976,7 @@ async fn the_pm_reports_a_bug_after_a_yes() {
     let id = start_pm(&env, "who").await;
     wait_said(&env, &id, 1).await;
     let n = agent_says(&env, &id).await.len();
-    send(&env, &id, r#"mcp: report_bug {"title": "The board flickers", "description": "On every poll.", "includeDiagnostics": true}"#).await;
+    send(&env, &id, r#"mcp: report_bug {"title": "The board flickers in repo", "description": "On every poll of repo/a.txt.", "includeDiagnostics": true}"#).await;
     let req = open_request(&env, &id).await;
     assert!(env.gh.created_issues.lock().unwrap().is_empty(), "nothing before the yes");
     let url = format!("/api/sessions/{id}/requests/{req}");
@@ -985,9 +985,11 @@ async fn the_pm_reports_a_bug_after_a_yes() {
     let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
     assert!(said.starts_with("mcp report_bug:") && said.contains("\"kind\": \"issue\""), "{said}");
     let (repo, issue) = env.gh.created_issues.lock().unwrap()[0].clone();
-    assert_eq!((repo.as_str(), issue.title.as_str()), ("o/r", "The board flickers"));
+    // What the agent wrote is redacted of the project's names (its folder is `repo`), as the log is.
+    assert_eq!((repo.as_str(), issue.title.as_str()), ("o/r", "The board flickers in [name]"));
     assert_eq!(issue.labels, ["bug", "from-pdt"]);
     assert!(issue.body.contains("PDT version:"), "{}", issue.body);
+    assert!(issue.body.contains("On every poll of [name]/a.txt."), "{}", issue.body);
 }
 
 /// PDT-256, PDT-490: a PM on an agent that can't ask in its own prompt (Codex) asks in its conversation, with a card

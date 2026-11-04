@@ -110,7 +110,8 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    /// The diagnostics as text. Only `log_tail` can hold anything private: redact it before it goes in.
+    /// The diagnostics as text. Only `log_tail` (and the update error) can hold anything private: redact it before it
+    /// goes in.
     pub fn render(&self) -> String {
         let mut out = format!(
             "PDT version: {}\nProfile: {}{}\nOS: {} ({})\nSupervised by pdt-host: {}\nUpdates: {}\nUpdate token: {}\n",
@@ -163,7 +164,30 @@ pub fn body(report: &Report, diagnostics: Option<&str>, version: &str, os: Optio
             d.trim_end()
         ));
     }
-    out.push_str(&format!("_Reported with Report a bug in {} {version}._\n", crate::brand::PRODUCT_NAME));
+    out.push_str(&format!("{}{version}._\n", footer_start()));
+    out
+}
+
+/// How the last line of a report's body starts: `_Reported with Report a bug in PDT `.
+fn footer_start() -> String {
+    format!("_Reported with Report a bug in {} ", crate::brand::PRODUCT_NAME)
+}
+
+/// Whether an issue's body ends with the line [`body`] ends with: a report filed with Report a bug. GitHub drops the
+/// labels of an issue opened by someone without push access, so this, not [`ISSUE_LABELS`], marks a report from the
+/// app. Anyone can write the line: it says where a report came from, never that it can be trusted.
+pub fn is_app_report(body: &str) -> bool {
+    body.trim_end().lines().last().is_some_and(|l| l.trim().starts_with(&footer_start()) && l.trim().ends_with("._"))
+}
+
+/// An issue's labels with [`crate::github_issue::FROM_PDT`] added when its body is an app report (see
+/// [`is_app_report`]) and GitHub dropped the label.
+pub fn issue_labels(labels: &[String], body: &str) -> Vec<String> {
+    let mut out = labels.to_vec();
+    let from_pdt = crate::github_issue::FROM_PDT;
+    if is_app_report(body) && !out.iter().any(|l| l == from_pdt) {
+        out.push(from_pdt.to_string());
+    }
     out
 }
 
@@ -180,10 +204,17 @@ pub struct Redactions {
     pub home: Option<String>,
     /// This machine's names (hostname, tailnet name): written as `[host]`.
     pub hostnames: Vec<String>,
+    /// The user's own names: projects, repositories (`owner/name`), branches, worktree and repository folders. Written
+    /// as `[name]` where they stand as a whole word (case as written), so a project called `web` leaves `website` be.
+    pub names: Vec<String>,
 }
 
 pub const REDACTED: &str = "[redacted]";
 const HOST: &str = "[host]";
+pub const NAME: &str = "[name]";
+/// Names too common to take out: default branches and PDT's own.
+const KEEP_NAMES: [&str; 8] =
+    ["main", "master", "develop", "trunk", "HEAD", "origin", crate::brand::SLUG, crate::brand::DAEMON_BIN];
 /// Prefixes of well-known token formats (GitHub, OpenAI/Anthropic, Slack, AWS).
 const TOKEN_PREFIXES: [&str; 10] =
     ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk-", "xoxb-", "xoxp-", "AKIA"];
@@ -205,6 +236,17 @@ pub fn redact(text: &str, r: &Redactions) -> String {
     for host in r.hostnames.iter().map(|h| h.trim()).filter(|h| h.len() >= 2) {
         s = replace_ignore_case(&s, host, HOST);
     }
+    let mut names: Vec<&str> = r
+        .names
+        .iter()
+        .map(|n| n.trim())
+        .filter(|n| n.chars().count() >= 3 && !KEEP_NAMES.iter().any(|k| k.eq_ignore_ascii_case(n)))
+        .collect();
+    // Longest first, so `owner/repo` goes before `repo` and a branch before the ticket key in it.
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    for name in names {
+        s = replace_word(&s, name, NAME);
+    }
     s = user_folders(&s);
     s.lines().map(redact_line).collect::<Vec<_>>().join("\n") + if text.ends_with('\n') { "\n" } else { "" }
 }
@@ -217,6 +259,35 @@ fn replace_ignore_case(hay: &str, needle: &str, with: &str) -> String {
         out.push_str(&hay[at..at + i]);
         out.push_str(with);
         at += i + n.len();
+    }
+    out.push_str(&hay[at..]);
+    out
+}
+
+/// `needle` replaced where it isn't part of a longer word (letters, digits, `_` and `-` either side; `.` and `/`
+/// end a word, so `repo` goes from `repo.git` and `owner/repo`, and `-<digit>` after it does too, so a project key
+/// goes from its ticket keys).
+fn replace_word(hay: &str, needle: &str, with: &str) -> String {
+    let joined = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    let before = |s: &str| s.chars().next_back().is_some_and(joined);
+    let after = |s: &str| {
+        let mut cs = s.chars();
+        match cs.next() {
+            Some('-') => !cs.next().is_some_and(|c| c.is_ascii_digit()),
+            c => c.is_some_and(joined),
+        }
+    };
+    let mut out = String::with_capacity(hay.len());
+    let mut at = 0;
+    while let Some(i) = hay[at..].find(needle) {
+        let (start, end) = (at + i, at + i + needle.len());
+        out.push_str(&hay[at..start]);
+        if before(&hay[..start]) || after(&hay[end..]) {
+            out.push_str(needle);
+        } else {
+            out.push_str(with);
+        }
+        at = end;
     }
     out.push_str(&hay[at..]);
     out
@@ -400,6 +471,7 @@ mod tests {
             secrets: vec!["github_pat_11ABCDEF0123456789_secretvalue".into()],
             home: Some("/Users/alex".into()),
             hostnames: vec!["alexs-mac-mini".into()],
+            ..Default::default()
         };
         let text = "loaded github_pat_11ABCDEF0123456789_secretvalue from keychain\n\
                     opened /Users/alex/work/repo/file.rs\n\
@@ -443,6 +515,35 @@ mod tests {
     }
 
     #[test]
+    fn the_users_own_names_go_as_whole_words() {
+        let r = Redactions {
+            home: Some("/Users/alex".into()),
+            names: vec![
+                "Acme Billing".into(),
+                "acme-co/billing".into(),
+                "billing".into(),
+                "ACME".into(),
+                "pdt-ACME-12-fix-the-invoice-total".into(),
+                "web".into(),
+                "main".into(),
+                "pdt".into(),
+                "x".into(),
+            ],
+            ..Default::default()
+        };
+        let text = "project Acme Billing at /Users/alex/work/billing/.worktrees/pdt-ACME-12-fix-the-invoice-total\n\
+                    pushed to git@github.com:acme-co/billing.git for ACME-12 on main\n\
+                    served web/dist from website pdtd for pdt; billing-old and rebilling stay\n";
+        let out = redact(text, &r);
+        assert_eq!(
+            out,
+            "project [name] at ~/work/[name]/.worktrees/[name]\n\
+             pushed to git@github.com:[name].git for [name]-12 on main\n\
+             served [name]/dist from website pdtd for pdt; billing-old and rebilling stay\n"
+        );
+    }
+
+    #[test]
     fn windows_home_paths_are_hidden_with_either_slash() {
         let r = Redactions { home: Some("C:\\Users\\Alex".into()), ..Default::default() };
         assert_eq!(redact("C:\\Users\\Alex\\work and C:/Users/Alex/x", &r), "~\\work and ~/x");
@@ -470,6 +571,22 @@ mod tests {
             "{b}"
         );
         assert!(body(&r, None, "1", None).contains("### OS\n\n_Not shared_\n"));
+    }
+
+    #[test]
+    fn app_reports_are_known_by_their_last_line() {
+        let b = body(&Report { what_happened: "It broke.".into(), ..Default::default() }, Some("log"), "0.1.42", None);
+        assert!(is_app_report(&b), "{b}");
+        assert!(is_app_report(&format!("{}\r\n\n", b.trim_end().replace('\n', "\r\n"))), "GitHub may send CRLF");
+        assert!(!is_app_report("### What happened\n\nIt broke.\n"), "the GitHub bug form's");
+        assert!(!is_app_report(&format!("{b}\nEdited: more steps.\n")), "only the last line counts");
+        assert!(!is_app_report(""));
+
+        let none: Vec<String> = vec![];
+        assert_eq!(issue_labels(&none, &b), ["from-pdt"], "a non-collaborator's report, its labels dropped");
+        let both = vec!["bug".to_string(), "from-pdt".to_string()];
+        assert_eq!(issue_labels(&both, &b), both, "the maintainer's own, labelled");
+        assert_eq!(issue_labels(&["bug".to_string()], "Steps."), ["bug"], "not from the app");
     }
 
     /// The GitHub bug form asks for the same sections, and no issue template adds `from-pdt` (triage keys off it:

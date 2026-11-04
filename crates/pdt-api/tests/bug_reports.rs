@@ -59,7 +59,10 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
     std::fs::write(logs.join("pdtd.2026-10-24.log"), "old day\n").unwrap();
     std::fs::write(
         logs.join("pdtd.2026-10-25.log"),
-        format!("INFO started\nWARN read {home}/work/repo/x.rs with token {TOKEN}\nINFO last line\n"),
+        format!(
+            "INFO started\nWARN read {home}/work/repo/x.rs with token {TOKEN}\n\
+             INFO pushed to someone/else.git from {home}/Other\nINFO last line\n"
+        ),
     )
     .unwrap();
 
@@ -72,6 +75,9 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
     let version = format!("PDT version: {}", pdt_core::BUILD_VERSION);
     assert!(preview.contains(&version) && preview.contains("INFO last line"), "{preview}");
     assert!(!preview.contains("old day"), "only the newest log");
+    // The user's own project, repository and folder names go too.
+    assert!(preview.contains("INFO pushed to [name].git from ~/[name]\n"), "{preview}");
+    assert!(!preview.contains("someone") && !preview.contains("Other"), "{preview}");
 
     let (s, filed) = report(
         &env,
