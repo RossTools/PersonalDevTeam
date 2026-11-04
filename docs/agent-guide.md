@@ -45,8 +45,8 @@ for what they cover, and the API for the rest. Which tools a session has depends
 
 Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `link_issue`,
 `unlink_issue`, `stop_ticket`, `send_to_session`, `workflow_run`, `workflow_import`, `issue_create`, and the document writes `doc_edit`, `sheet_edit`,
-`document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except, where the
-project lets the PM act, those on its tickets, sessions and documents). In Claude that is its permission prompt. Elsewhere
+`document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except the PM's, where the
+project lets the PM act, on its tickets, sessions and documents; other personas always wait). In Claude that is its permission prompt. Elsewhere
 the call waits while PDT asks the person (in the conversation, or in the Inbox from a terminal), then runs or tells you
 they said no. Don't end your turn while it waits.
 

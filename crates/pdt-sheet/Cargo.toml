@@ -11,6 +11,7 @@ description = "PDT's local sheets on IronCalc: .xlsx and .csv in and out, cells,
 csv = "1.4.0"
 ironcalc = "=0.9.1"
 pdt-core.workspace = true
+quick-xml = "0.42.0"
 serde_json.workspace = true
 zip = { version = "9.2.0", default-features = false, features = ["deflate-flate2"] }
 
