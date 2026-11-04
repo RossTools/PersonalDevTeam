@@ -21,7 +21,9 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   (`web/ui/README.md`); `web/src/gallery/coverage.test.ts` that the gallery renders every `@ui` component. `knip`
   (configured in `web/knip.json`) fails on an export nothing else imports, an unused file or an unused dependency:
   drop the `export` from a name only its own file uses. It skips `web/ui/primitives` (shadcn's sources). Helpers: `stubApi` and `renderWithQuery` in `web/src/test-utils.tsx`; a test that touches the
-  file system needs `// @vitest-environment node`.
+  file system needs `// @vitest-environment node`. `web/src/test-setup.ts` sets how long `findBy*` and `waitFor` wait
+  (10 s on CI, 5 s locally); don't pass a shorter `timeout`. After every test it undoes `vi.stubGlobal` and `vi.spyOn`
+  and clears local and session storage, so stub and spy in `beforeEach`, not `beforeAll`.
 - **Site:** `pnpm --filter site test` (link rewriting, and the user docs' check for internal references).
 - **Desktop:** `cargo test -p pdt-desktop` needs `pnpm --dir web build` first; plain `cargo test` skips that crate.
 - **Core logic is test-first.** Rules live in pdt-core as pure functions, so most of them are unit tests there; the

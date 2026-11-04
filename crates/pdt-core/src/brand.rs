@@ -1,8 +1,8 @@
 //! The single source of product naming. A rename touches this file, desktop/src-tauri/tauri.conf.json
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
 //! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe), scripts/release-stable.* (product name, slug, port) and the
-//! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository; a test checks)
-//! only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
+//! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository; a test checks),
+//! site/src/links.mjs (port; a test checks) only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
@@ -177,6 +177,8 @@ mod tests {
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }
+        let links = include_str!("../../../site/src/links.mjs");
+        assert!(links.contains(&format!("export const STABLE_PORT = {STABLE_PORT};")), "links.mjs lacks the port");
     }
 
     #[test]

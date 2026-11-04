@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext } from './actions';
 import { event, page, params, project, summary, ticket } from './fixtures';
@@ -10,16 +10,9 @@ import { useBacklog } from './useBacklog';
 
 // jsdom has no layout: give elements a viewport so the virtualised list renders its first screen of rows.
 const sizes = [['clientWidth', 900], ['clientHeight', 600], ['offsetWidth', 900], ['offsetHeight', 600]] as const;
-const restore: (() => void)[] = [];
 let observed: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
-beforeAll(() => {
-  for (const [prop, value] of sizes) {
-    const spy = vi.spyOn(HTMLElement.prototype, prop, 'get').mockImplementation(() => value);
-    restore.push(() => spy.mockRestore());
-  }
-});
-afterAll(() => restore.forEach((r) => r()));
 beforeEach(() => {
+  for (const [prop, value] of sizes) vi.spyOn(HTMLElement.prototype, prop, 'get').mockImplementation(() => value);
   localStorage.clear();
   observed = [];
   vi.stubGlobal('IntersectionObserver', class {

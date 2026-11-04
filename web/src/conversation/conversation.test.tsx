@@ -436,7 +436,7 @@ describe('ConversationView', () => {
     expect(screen.getByText('Hi there')).toBeInTheDocument();
     // Reconnecting asks for what came after the last seq.
     act(() => server().close());
-    await waitFor(() => expect(FakeSocket.all).toHaveLength(2), { timeout: 2000 });
+    await waitFor(() => expect(FakeSocket.all).toHaveLength(2));
     expect(server().url).toMatch(/after=1$/);
   });
 

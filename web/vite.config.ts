@@ -30,5 +30,5 @@ export default defineConfig({
   server: { proxy: { '/api': { target: 'http://127.0.0.1:7421', ws: true } } },
   // CI's Windows runner is several times slower than a dev machine: tests there get more time (src/test-setup.ts
   // does the same for Testing Library's waits).
-  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false, testTimeout: process.env.CI ? 30_000 : 10_000 },
+  test: { environment: 'jsdom', setupFiles: ['./src/test-setup.ts'], css: false, unstubGlobals: true, restoreMocks: true, testTimeout: process.env.CI ? 30_000 : 10_000 },
 });
