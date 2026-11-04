@@ -80,8 +80,8 @@ A worktree with uncommitted changes is never thrown away without asking.
 ## Pull request and CI status
 
 On GitHub projects, each ticket in progress shows its pull request: a badge on its card and in the Sessions sidebar,
-and details in the ticket's **Attempt** section. The badge reads **Draft**, open with its CI result, **Auto-merge on**,
-**Merging when CI passes**, **In queue**, **CI failed**, **Conflict**, **Conflict (deferred)**, **Updating**,
+and details in the ticket's **Attempt** section. The badge reads **Draft**, open with its CI result, **Auto-merge**,
+**Merging**, **Set to merge**, **In queue**, **CI failed**, **Conflict**, **Conflict (deferred)**, **Updating**,
 **Resolving conflicts**, **Queue failed**, **Merged** or **Closed**; the
 details list each CI run and its failed jobs, with links.
 

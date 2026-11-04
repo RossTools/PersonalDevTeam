@@ -50,7 +50,7 @@ Where it's registered:
 **Stop PDT and quit** in the tray, or in a terminal:
 
 ```sh
-# macOS
+# macOS (the one-line install puts the app in ~/Applications instead)
 "/Applications/Personal Dev Team.app/Contents/MacOS/pdt-host" stop
 # Linux (the tarball; for the AppImage, the app folder in PDT's data folder)
 ~/.local/opt/pdt/pdt-host stop

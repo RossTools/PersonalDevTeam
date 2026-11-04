@@ -205,7 +205,7 @@ jobs:
           echo "::error title=No changelog fragment::Add .changes/unreleased/<TICKET>.md, or the no-changelog label (or [no-changelog] in the description) for a docs, CI or tests-only PR."
           cat <<'EOF'
           This pull request adds no changelog fragment. Add one at .changes/unreleased/<TICKET>.md (for example
-          .changes/unreleased/PDT-193.md; a second note for the same ticket is <TICKET>-<anything>.md):
+          .changes/unreleased/PDT-193.md, or GH-45.md for an outside PR with no ticket; a second note for the same ticket is <TICKET>-<anything>.md):
 
           ---
           kind: fixed

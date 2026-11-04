@@ -79,7 +79,7 @@ const shots = [
 			<div class="step"><div class="node"><div class="d"></div></div><b>PR + CI</b><span>Opens the PR and watches CI and conflicts</span></div>
 			<div class="step you"><div class="node"><div class="d"></div></div><b>You</b><span>Approve and merge, or send it back</span></div>
 		</div>
-		<div class="loop-note"><span class="dot me"></span>The white dot is you. Trust a ticket? Label it <span class="mono">agentic</span> and it merges once QA passes.</div>
+		<div class="loop-note"><span class="dot me"></span><span>The white dot is you. Trust a ticket? Label it <span class="mono">agentic</span> and it merges once QA passes.</span></div>
 	</div>
 </section>
 
@@ -182,7 +182,7 @@ const shots = [
 			<h2>Runs on your machine, not our cloud.</h2>
 			<ul class="checks">
 				<li><span><b>A daemon, not a cloud.</b> Everything runs on 127.0.0.1, and there's no PDT server in between: your repositories, tickets and history stay on your disk.</span></li>
-				<li><span><b>Secrets in the keychain.</b> Agents use your tokens without ever seeing them.</span></li>
+				<li><span><b>Secrets in the keychain.</b> Agents use your tokens by name, and the values stay out of chats and logs.</span></li>
 				<li><span><b>Updates that roll back.</b> New releases install while you're idle, are health-checked, and revert if they fail.</span></li>
 			</ul>
 		</div>

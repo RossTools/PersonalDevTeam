@@ -142,7 +142,7 @@ export function BugReportDialog({ onClose, onOpenSettings }: BugReportDialogProp
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            PDT's version, OS, update state and the end of its log, with tokens, home folders and this machine's names taken out. No tickets or project content.
+            PDT's version, OS, update state and the end of its log, with tokens, home folders and this machine's names taken out. No tickets, but the log can name repositories, branches and folders.
           </p>
           {p && diagnostics && showDiagnostics && (
             <pre aria-label="Diagnostics" className="max-h-64 overflow-auto rounded-md border border-border bg-muted p-2 text-xs whitespace-pre-wrap">{p.diagnostics}</pre>

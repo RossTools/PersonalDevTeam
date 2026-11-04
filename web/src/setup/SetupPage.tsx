@@ -95,7 +95,7 @@ export function SetupPage(props: SetupPageProps) {
       <Progress done={v.done} />
       {v.done === 4 && (
         <div role="status" className="flex flex-col gap-3 rounded-lg border border-running bg-running-soft p-4">
-          <p><b>You’re set up.</b> Create a ticket and move it to Todo, or open the PM and ask it to plan something.</p>
+          <p><b>You’re set up.</b> Create a ticket and click Start on it, or open the PM and ask it to plan something.</p>
           <div className="flex flex-wrap gap-2">
             <Button variant="primary" onClick={props.onBoard}>Go to the board</Button>
             <Button onClick={props.onPm}>Open the PM</Button>
@@ -195,7 +195,7 @@ function AgentsStep({ v, checks, loading, ...step }: StepProps & { v: SetupView;
   const found = foundAgents(checks, off);
   const summary = loading ? 'Looking for git and the agents…'
     : found.length > 0
-      ? `Found ${found.map((a) => agentName(a)).join(' and ')}. PDT needs at least one, and git.`
+      ? `Found ${new Intl.ListFormat('en-GB', { type: 'conjunction' }).format(found.map((a) => agentName(a)))}. PDT needs at least one, and git.`
       : 'No agent found yet. PDT needs at least one (Claude Code, Codex or Devin), and git.';
   // An agent switched off in Settings → Agents isn't one PDT needs (PDT-270).
   const rows: { id: 'git' | BuiltinAgent; name: string; install: string }[] = [{ id: 'git', name: 'git', install: GIT_INSTALL }, ...AGENTS.filter((a) => !off.includes(a.id))];
