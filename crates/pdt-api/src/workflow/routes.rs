@@ -466,6 +466,8 @@ pub(crate) struct RunsQuery {
     workflow: Option<String>,
     ticket: Option<String>,
     status: Option<String>,
+    /// `false` leaves out the runs that ended with nothing to do.
+    quiet: Option<bool>,
     limit: Option<i64>,
 }
 
@@ -477,7 +479,13 @@ pub(crate) async fn list_runs(
         Some(s) => Some(RunStatus::parse(s).ok_or_else(|| ApiError::invalid(format!("no run status is called {s}")))?),
         None => None,
     };
-    let f = pdt_store::RunFilter { workflow_id: q.workflow, ticket_id: q.ticket, status, limit: q.limit.unwrap_or(50) };
+    let f = pdt_store::RunFilter {
+        workflow_id: q.workflow,
+        ticket_id: q.ticket,
+        status,
+        skip_quiet: q.quiet == Some(false),
+        limit: q.limit.unwrap_or(50),
+    };
     Ok(Json(st.store.list_workflow_runs(&f).await?))
 }
 

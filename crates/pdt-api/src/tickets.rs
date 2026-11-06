@@ -312,8 +312,13 @@ pub(crate) async fn refine(
     }
     if t.pipeline_stage == Some(PipelineStage::Refine) {
         for status in [RunStatus::Running, RunStatus::Waiting] {
-            let f =
-                pdt_store::RunFilter { workflow_id: None, ticket_id: Some(id.clone()), status: Some(status), limit: 1 };
+            let f = pdt_store::RunFilter {
+                workflow_id: None,
+                ticket_id: Some(id.clone()),
+                status: Some(status),
+                skip_quiet: false,
+                limit: 1,
+            };
             if !st.store.list_workflow_runs(&f).await?.is_empty() {
                 return Err(ApiError::conflict(codes::REFINE_RUNNING, format!("{} is being refined already", t.key)));
             }

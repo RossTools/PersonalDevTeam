@@ -174,6 +174,17 @@ async fn pick_up_tickets_runs_when_a_ticket_can_start_is_unblocked_or_room_frees
     let statuses: Vec<&str> = runs.as_array().unwrap().iter().map(|r| r["status"].as_str().unwrap()).collect();
     assert_eq!(statuses.iter().filter(|s| **s == "succeeded").count(), 4, "{statuses:?}");
     assert!(statuses.iter().all(|s| ["succeeded", "quiet"].contains(s)), "{statuses:?}");
+    assert!(statuses.contains(&"quiet"), "{statuses:?}");
+    // `quiet=false` leaves the quiet ones out.
+    let (_, busy) = call(
+        &env.app,
+        "GET",
+        &format!("/api/workflow-runs?workflow={}&quiet=false&limit=100", pick["id"].as_str().unwrap()),
+        None,
+    )
+    .await;
+    let busy: Vec<&str> = busy.as_array().unwrap().iter().map(|r| r["status"].as_str().unwrap()).collect();
+    assert_eq!(busy, ["succeeded"; 4], "{busy:?}");
 }
 
 /// The built-in's steps as a Run now workflow, so two runs can go at once.

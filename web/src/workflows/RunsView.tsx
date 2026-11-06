@@ -1,10 +1,11 @@
 // The runs view: every run of the workflow with its trigger and status; a run shows its path on the
 // graph of the version it ran, its steps, and Retry, Resume (an agent step that timed out or stopped), Cancel and a
-// waiting gate's choices. View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each
+// waiting gate's choices. Runs that ended with nothing to do (a frequent schedule's) stay out of the list until
+// "Show Nothing to do runs" is on (PDT-582). View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each
 // opening to its input and output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, EmptyState, List, ListRow, RelativeTime, Skeleton, formatDuration } from '@ui';
+import { Alert, Badge, Button, EmptyState, List, ListRow, RelativeTime, Skeleton, Switch, formatDuration } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { WatchButton, Watchers } from '../common/Watch';
@@ -144,15 +145,25 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   /** Phones: the list, or the run picked (no graph, nothing to act on). */
   viewOnly?: boolean;
 }) {
-  const runs = useQuery({ queryKey: workflowKeys.runs(workflowId), queryFn: () => api.listWorkflowRuns({ workflow: workflowId, limit: 100 }), refetchInterval: POLL.live });
+  const [showQuiet, setShowQuiet] = useState(false);
+  const runs = useQuery({
+    queryKey: [...workflowKeys.runs(workflowId), { quiet: showQuiet }],
+    queryFn: () => api.listWorkflowRuns({ workflow: workflowId, quiet: showQuiet ? undefined : false, limit: 100 }),
+    refetchInterval: POLL.live,
+  });
   const list = runs.data ?? [];
   const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;
   if (viewOnly && current) return <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly />;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <nav aria-label="Runs" className={cn('shrink-0 overflow-auto border-b border-border md:max-h-none md:w-72 md:border-r md:border-b-0', viewOnly ? 'min-h-0 flex-1' : 'max-h-56')}>
+        <div className="px-3 pt-2">
+          <Switch size="sm" checked={showQuiet} onChange={setShowQuiet} className="text-xs">Show “Nothing to do” runs</Switch>
+        </div>
         <LoadError what="Runs" error={runs.error} className="m-2" />
-        {runs.isSuccess && list.length === 0 && <EmptyState>No runs yet. Dry run it, or enable it and wait for its trigger.</EmptyState>}
+        {runs.isSuccess && list.length === 0 && (
+          <EmptyState>{showQuiet ? 'No runs yet. Dry run it, or enable it and wait for its trigger.' : 'No runs that did something.'}</EmptyState>
+        )}
         <List aria-label="Runs" onAction={onRunChange} className="p-1">
           {list.map((r) => {
             const s = RUN_STATUS[r.status];
