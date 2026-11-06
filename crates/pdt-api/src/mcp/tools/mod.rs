@@ -1,6 +1,7 @@
 //! pdt-mcp's tools. Inputs are the API's request types where one exists (their JSON Schema from
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
+mod asking;
 mod inbox;
 mod issue_links;
 mod notes;
@@ -13,13 +14,14 @@ mod update_ticket;
 mod watches;
 mod workflows;
 
+pub(crate) use asking::{Answered, said, tool_title};
 pub(crate) use step::{SubmitOutcome, add_review_comment};
 
 use crate::error::ApiError;
 use crate::integrations::Tool;
 use crate::routes::{AppState, now_ms};
-use crate::workflow::agent::Confirmed;
 use crate::workflow::catalog::Category;
+use asking::{Ask, ask_for_call};
 use axum::Json;
 use axum::extract::State;
 use pdt_core::inbox::Question;
@@ -207,53 +209,19 @@ pub(crate) async fn confirm_pm_comment(cx: &Cx<'_>, tool: &str, ticket: &str) ->
     ask_the_user(cx, tool, &target, false).await
 }
 
-/// Asks the user about this call and waits for their answer ([`confirmable`]). Their yes is kept as a grant for the
-/// call only when it lets an external ticket in, the one call that checks for it (`edit_ticket`, PDT-539).
+/// Asks the user about this call and waits for their answer ([`confirmable`]).
 async fn ask_the_user(cx: &Cx<'_>, tool: &str, target: &AskTarget, in_inbox: bool) -> Result<(), String> {
-    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
+    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always". Their yes is
+    // kept for the call only then, the one call that checks for it (`edit_ticket`, PDT-539).
     let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
-    let grant = |id: &str| {
-        if each_time {
-            crate::workflow::agent::grant(cx.st, &cx.session.id, id, tool, cx.input);
-        }
-    };
-    if !in_inbox {
-        // "Always allow in this session" covers the tool for what it acts on, not for other projects (PDT-539).
-        let scope = crate::pm::ask_scope(cx.st, target).await;
-        if !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool, &scope) {
-            return Ok(());
-        }
-        let always = (!each_time).then_some(scope.as_str());
-        use crate::conversations::Asked;
-        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, always, None).await {
-            Some(Asked::Allowed(_)) => {
-                grant(&format!("pdt-ask-{}", uuid::Uuid::now_v7()));
-                return Ok(());
-            }
-            Some(Asked::Denied(why)) => {
-                let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
-                return Err(format!("The user denied this {tool} call, so PDT didn't make it.{why}"));
-            }
-            Some(Asked::Ended) => {
-                return Err(format!("{tool} was not run: the turn ended before the user answered."));
-            }
-            Some(Asked::Waiting) => return Err(crate::workflow::agent::still_waiting(tool)),
-            None => {}
-        }
+    // "Always allow in this session" covers the tool for what it acts on, not for other projects (PDT-539).
+    let scope = crate::pm::ask_scope(cx.st, target).await;
+    if !in_inbox && !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool, &scope) {
+        return Ok(());
     }
-    let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
-    crate::notifications::kick(cx.st);
-    let waited = crate::workflow::agent::wait_confirm(cx.st, &item).await;
-    crate::notifications::kick(cx.st);
-    match waited {
-        Confirmed::Allowed(_) => {
-            grant(&item.id);
-            Ok(())
-        }
-        Confirmed::Denied => Err(format!("The user denied this {tool} call in the Inbox, so PDT didn't make it.")),
-        Confirmed::Ended => Err(format!("{tool} was not run: its Inbox item closed before the user answered.")),
-        Confirmed::Waiting => Err(crate::workflow::agent::still_waiting(tool)),
-    }
+    let always = (!each_time).then_some(scope.as_str());
+    let ask = Ask { inline: !in_inbox, always, grant: each_time, rows: None, unchanged: "PDT didn't make it" };
+    ask_for_call(cx, tool, ask).await.map(|_| ())
 }
 
 /// A ticket's id from its id or key (`ABC-12`; a bare number is in `project`).

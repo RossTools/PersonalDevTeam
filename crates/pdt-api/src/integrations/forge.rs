@@ -55,7 +55,8 @@ struct Here {
 async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
     let s = cx.session.ok_or("only an agent session can use this tool")?;
     let st = cx.st;
-    let project = st.store.get_project(&s.project_id).await.map_err(|e| e.to_string())?.ok_or("the project is gone")?;
+    let project =
+        st.store.get_project(&s.project_id).await.map_err(crate::workflow::err)?.ok_or("the project is gone")?;
     let forge = crate::forge::project_forge(st, &project.id, &project.repo_path)
         .await
         .ok_or("this project has no forge: its .pdt/project.toml says `forge = \"none\"`, or its origin is on no forge PDT knows")?;
@@ -98,7 +99,7 @@ impl Here {
         let (api, repo) = (self.forge.api.clone(), self.forge.repo.clone());
         tokio::task::spawn_blocking(move || f(api.as_ref(), &repo))
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(crate::workflow::err)?
             .map_err(|e| e.to_string())
     }
 
@@ -633,7 +634,7 @@ impl Action for ChangeRequestMerge {
                 .store
                 .get_attempt(&info.attempt.id)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::workflow::err)?
                 .ok_or("the attempt is gone")?;
             if !crate::github::merge_requested(&info, &pr) {
                 return Err(format!(
@@ -770,7 +771,7 @@ impl Action for CiRuns {
                 providers.iter().map(|p| (p.label().to_string(), runs_of(p.as_ref(), &repo, &b))).collect::<Vec<_>>()
             })
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::workflow::err)?;
             let (mut runs, mut errors) = (vec![], vec![]);
             for (label, got) in read {
                 match got {

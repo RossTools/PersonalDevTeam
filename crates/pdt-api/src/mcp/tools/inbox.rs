@@ -7,8 +7,6 @@
 //! result in a message.
 
 use super::*;
-use crate::conversations::Asked;
-use crate::workflow::agent::Confirmed;
 use pdt_core::inbox::{InboxItem, InboxKind, InboxStatus};
 use pdt_core::inbox_decide::{self as decide, DecideRow, InboxDecide, ItemDecision};
 
@@ -66,39 +64,16 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     }
     let rows: Vec<DecideRow> = found(st, &a).await.into_iter().map(|f| f.map(|(r, _)| r)).collect::<Result<_, _>>()?;
     decide::check_unique(&rows)?;
-    // The call waits on the table: the user's Allow applies the rows they kept, in this same call.
-    let kept = match crate::conversations::ask_inline(st, cx.session, NAME, cx.input, None, Some(rows.clone())).await {
-        Some(Asked::Allowed(kept)) => decide::kept(rows.len(), kept.as_deref())?,
-        Some(Asked::Denied(why)) => {
-            let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
-            return Err(format!("The user denied this {NAME} call, so nothing changed.{why}"));
-        }
-        Some(Asked::Ended) => return Err(format!("{NAME} was not run: the turn ended before the user answered.")),
-        Some(Asked::Waiting) => return Err(crate::workflow::agent::still_waiting(NAME)),
-        None => in_inbox(cx, &rows).await?,
-    };
+    // The call waits on the table (in the conversation, else in the Inbox): the user's Allow applies the rows they
+    // kept, in this same call.
+    let ask = Ask { inline: true, always: None, grant: false, rows: Some(rows.clone()), unchanged: "nothing changed" };
+    let kept = ask_for_call(cx, NAME, ask).await?.unwrap_or_default();
     let unticked: Vec<&str> =
         rows.iter().enumerate().filter(|(n, _)| !kept.contains(n)).map(|(_, r)| r.ticket_key.as_str()).collect();
     a.items = a.items.into_iter().enumerate().filter(|(n, _)| kept.contains(n)).map(|(_, d)| d).collect();
     let mut out = apply(cx, &a).await?;
     out["unticked"] = json!(unticked);
     Ok(out)
-}
-
-/// A session with no conversation to show the card in (a terminal) asks with an Inbox item and waits on it (PDT-492):
-/// the rows the user kept.
-async fn in_inbox(cx: &Cx<'_>, rows: &[DecideRow]) -> Result<Vec<usize>, String> {
-    let st = cx.st;
-    let item = crate::workflow::agent::ask_confirm_rows(st, cx.session, NAME, cx.input, json!(rows)).await?;
-    crate::notifications::kick(st);
-    let waited = crate::workflow::agent::wait_confirm(st, &item).await;
-    crate::notifications::kick(st);
-    match waited {
-        Confirmed::Allowed(kept) => decide::kept(rows.len(), kept.as_deref()),
-        Confirmed::Denied => Err(format!("The user denied this {NAME} call in the Inbox, so nothing changed.")),
-        Confirmed::Ended => Err(format!("{NAME} was not run: its Inbox item closed before the user answered.")),
-        Confirmed::Waiting => Err(crate::workflow::agent::still_waiting(NAME)),
-    }
 }
 
 /// Each decision's row and open item, or why it has none.

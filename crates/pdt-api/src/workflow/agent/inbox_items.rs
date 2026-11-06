@@ -1,7 +1,8 @@
 //! The Inbox side of agent steps: the questions and asking-tool calls a session puts to the user, and the answers to
 //! those, stalled, loop-limit, manual and timed-out items.
 
-use super::{Confirmed, R, USER, err, finish_with, prompt_key, queue_message, session_run, waiting_step};
+use super::{R, USER, err, finish_with, prompt_key, queue_message, session_run, waiting_step};
+use crate::mcp::tools::Answered;
 use crate::routes::{AppState, now_ms};
 use pdt_core::conversation::SessionMode;
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus, Question};
@@ -20,22 +21,11 @@ pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question
 }
 
 /// An asking tool's call from an agent that can't ask in its own prompt (PDT-256): an Inbox item with Allow and Deny,
-/// which [`answer_confirm`] answers.
-pub(crate) async fn ask_confirm(st: &AppState, s: &Session, tool: &str, input: &Value) -> R<InboxItem> {
-    ask_confirm_rows(st, s, tool, input, Value::Null).await
-}
-
-/// [`ask_confirm`] for a batch call (the PM's `inbox_decide`, PDT-475): `rows` (an array, one per entry of the
-/// input's `items`) is the table the user unticks rows of; their Allow runs the call with the rows they kept.
-pub(crate) async fn ask_confirm_rows(
-    st: &AppState,
-    s: &Session,
-    tool: &str,
-    input: &Value,
-    rows: Value,
-) -> R<InboxItem> {
-    let info = st.registry().tool_infos().into_iter().find(|t| t.name == tool);
-    let title = info.map(|t| t.title).filter(|t| !t.is_empty()).unwrap_or_else(|| tool.to_string());
+/// which [`answer_confirm`] answers. For a batch call (the PM's `inbox_decide`, PDT-475) `rows` (an array, one per
+/// entry of the input's `items`; null otherwise) is the table the user unticks rows of; their Allow runs the call with
+/// the rows they kept.
+pub(crate) async fn ask_confirm(st: &AppState, s: &Session, tool: &str, input: &Value, rows: Value) -> R<InboxItem> {
+    let title = crate::mcp::tools::tool_title(st, tool);
     let agent = s.agent.map(|a| a.label());
     let shown = st.store.redactor().json(input);
     // The item shows a secret's value by its name, and says so (PDT-539): only the waiting call has the value.
@@ -115,15 +105,21 @@ pub(crate) async fn run_allowed(
     }
 }
 
-/// What a session is told of the user's Deny of a call that no longer waited.
-pub(crate) fn denied_text(tool: &str, title: &str) -> String {
-    format!("[PDT] The user denied your {tool} call ({title}): don't make it.")
+/// What a session is told of the user's Deny of a call that no longer waited, with their reason if they gave one.
+pub(crate) fn denied_text(tool: &str, title: &str, why: Option<String>) -> String {
+    format!("[PDT] The user denied your {tool} call ({title}): don't make it.{}", crate::mcp::tools::said(why))
 }
 
 /// The user's Allow or Deny of an asking tool's call (PDT-256): Allow runs it as the session's call with the user's
 /// yes; the session hears the result either way.
-/// `kept`: the rows a batch call's Allow keeps ([`ask_confirm_rows`]).
-pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str, kept: Option<&[u32]>) -> R<Value> {
+/// `kept`: the rows a batch call's Allow keeps ([`ask_confirm`]); `why`: the user's reason for a Deny.
+pub(crate) async fn answer_confirm(
+    st: &AppState,
+    item: &InboxItem,
+    choice: &str,
+    kept: Option<&[u32]>,
+    why: Option<&str>,
+) -> R<Value> {
     let s = asker(st, item).await?;
     let tool = item.body.get("tool").and_then(Value::as_str).ok_or("the item names no tool")?;
     let title = item.body.get("toolTitle").and_then(Value::as_str).unwrap_or(tool);
@@ -149,7 +145,8 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         }
         return Err(e);
     }
-    let waited = if allowed { Confirmed::Allowed(kept.map(<[u32]>::to_vec)) } else { Confirmed::Denied };
+    let why = why.map(String::from);
+    let waited = if allowed { Answered::Allowed(kept.map(<[u32]>::to_vec)) } else { Answered::Denied(why.clone()) };
     if waiter.is_some_and(|w| w.answer(waited)) {
         let _locked = crate::workflow::engine::lock_run(st, item.run_id.as_deref()).await;
         working_again(st, item).await?;
@@ -168,7 +165,7 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
     } else if allowed {
         run_allowed(st, &s, tool, title, input, &dropped).await
     } else {
-        (denied_text(tool, title), json!({"allowed": false}))
+        (denied_text(tool, title, why), json!({"allowed": false}))
     };
     let _locked = crate::workflow::engine::lock_run(st, item.run_id.as_deref()).await;
     tell(st, item, &s, &text).await?;

@@ -45,7 +45,7 @@ An agent wants to run a command or edit a file, shown as it would run: **Allow o
 (with an optional reason). Answering here or in the agent's conversation answers both. A call to one of PDT's own tools
 from an agent that can't ask in its own prompt shows here too, with what it would create or change: in a conversation it is also a card in
 the conversation. From a terminal session it is only here. Either way the agent waits for your answer and carries on
-once you give it. If you take a day or more, the agent stops waiting and the approval stays open: your answer then
+once you give it, with your reason if you deny it. If you take a day or more, the agent stops waiting and the approval stays open: your answer then
 reaches the agent as a message, with the result of the call you allowed. If the call holds a secret's value, the
 approval shows the secret's name in its place and says so; allowed only after the agent stopped waiting from a terminal
 session, it runs nothing and the agent is asked to make the call again. When the PM proposes decisions on

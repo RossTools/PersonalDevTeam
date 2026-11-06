@@ -208,14 +208,14 @@ pub trait Integration: Send + Sync {
     }
 
     /// The issue `given` (an address or a key) names in its tracker, read through project `project_id`'s connection
-    /// (PDT-481: linking an issue that is already there): None when `given` isn't one of its issues, Err (for the
-    /// user) when it is but can't be read. Each tracker recognizes only its own addresses and keys.
+    /// (PDT-481: linking an issue that is already there): None when `given` isn't one of its issues, Err when it is
+    /// but can't be read (the tracker's failure, for the user, or PDT's own, [`crate::issue_links::FindError`]). Each tracker recognizes only its own addresses and keys.
     fn find_issue<'a>(
         &'a self,
         _st: &'a AppState,
         _project_id: &'a str,
         _given: &'a str,
-    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, String>>> {
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, crate::issue_links::FindError>>> {
         Box::pin(async { None })
     }
 

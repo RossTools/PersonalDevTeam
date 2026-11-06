@@ -7,6 +7,7 @@
 use super::Conv;
 use super::live::append;
 use crate::error::{ApiError, codes};
+use crate::mcp::tools::Answered;
 use crate::routes::AppState;
 use pdt_agents::adapter::AdapterError;
 use pdt_core::conversation::{AgentEvent, Answer, RequestKind, RequestState, SessionMode};
@@ -21,9 +22,8 @@ use tokio::sync::oneshot;
 /// The ids of PDT's own requests start with it: the agent never sees them, and PDT never answers them for the user.
 const PREFIX: &str = "pdt-ask-";
 
-/// The answer, whether the user gave it (PDT's web client, or their own account elsewhere), and the rows an Allow
-/// kept (a card with rows; every row when None).
-type Reply = (Answer, bool, Option<Vec<u32>>);
+/// The answer, and the rows an Allow kept (a card with rows; every row when None).
+type Reply = (Answer, Option<Vec<u32>>);
 
 /// Counts the requests PDT opened, so a turn's end can tell the ones opened before it from the next turn's ([`mark`]).
 static OPENED: AtomicU64 = AtomicU64::new(0);
@@ -71,20 +71,6 @@ pub(crate) fn mark() -> u64 {
     OPENED.load(Ordering::SeqCst)
 }
 
-/// How the user answered one of PDT's requests.
-#[derive(Debug, PartialEq)]
-pub(crate) enum Asked {
-    /// With the rows the user kept, for a card with rows (0-based; every row when None).
-    Allowed(Option<Vec<u32>>),
-    /// With the user's reason, if they gave one.
-    Denied(Option<String>),
-    /// The turn or the agent ended before the user answered.
-    Ended,
-    /// The user hasn't answered within `AppState::ask_wait` (PDT-589): the card stays open, and once they answer PDT
-    /// runs the call (or not) and messages the session.
-    Waiting,
-}
-
 /// What a card or an Inbox item says of a call whose input holds a secret's value (PDT-539).
 pub(crate) const SECRET_NOTE: &str =
     "The call holds a secret's value, shown here by the secret's name; it runs with the value.";
@@ -101,9 +87,9 @@ pub(crate) fn allowed_always(st: &AppState, session_id: &str, tool: &str, scope:
 }
 
 /// Asks the user about an asking tool's call (`tool`, PDT's own name for it) in the session's conversation and waits
-/// for the answer. None when the session isn't a conversation loaded in this pdtd (a terminal): it can't ask there.
-/// `always`: what "Always allow in this session" would cover (`pm::ask_scope`), when it is offered. `rows`: a batch
-/// call's rows the user can untick.
+/// for the answer ([`crate::mcp::tools::Answered`]; `Ended` when the turn or the agent ended first). None when the
+/// session isn't a conversation loaded in this pdtd (a terminal): it can't ask there. `always`: what "Always allow in
+/// this session" would cover (`pm::ask_scope`), when it is offered. `rows`: a batch call's rows the user can untick.
 pub(crate) async fn ask(
     st: &AppState,
     s: &Session,
@@ -111,7 +97,7 @@ pub(crate) async fn ask(
     input: &Value,
     always: Option<&str>,
     rows: Option<Vec<DecideRow>>,
-) -> Option<Asked> {
+) -> Option<Answered> {
     if s.mode != SessionMode::Conversation {
         return None;
     }
@@ -127,14 +113,7 @@ pub(crate) async fn ask(
         .unwrap_or_else(|e| e.into_inner())
         .insert((s.id.clone(), id.clone()), Waiting { n, rows: count, tx, detached: false });
     let keys: Vec<String> = rows.iter().flatten().map(|r| r.ticket_key.clone()).collect();
-    let title = st
-        .registry()
-        .tool_infos()
-        .into_iter()
-        .find(|t| t.name == tool)
-        .map(|t| t.title)
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| tool.to_string());
+    let title = crate::mcp::tools::tool_title(st, tool);
     // In the turn that made the call, so the card shows with its tools.
     let turn =
         st.store.session_events_of_kind(&s.id, "turn").await.ok().and_then(|t| {
@@ -178,17 +157,17 @@ pub(crate) async fn ask(
             let always = always.map(str::to_string);
             tokio::spawn(async move {
                 let reply = rx.await;
-                let asked = settle(&st, &s, &mut open, reply, &tool, always.as_deref()).await;
-                answered_late(&st, &s, &tool, &title, input, &keys, asked).await;
+                let answered = settle(&st, &s, &mut open, reply, &tool, always.as_deref()).await;
+                answered_late(&st, &s, &tool, &title, input, &keys, answered).await;
             });
-            return Some(Asked::Waiting);
+            return Some(Answered::Waiting);
         }
         Err(_) => rx.await,
     };
     Some(settle(st, s, &mut open, reply, tool, always).await)
 }
 
-/// Shows the card answered (or expired) and reads the answer.
+/// Shows the card answered (or expired) and reads the answer. Only the user's own click allows ([`answer`]).
 async fn settle(
     st: &AppState,
     s: &Session,
@@ -196,10 +175,10 @@ async fn settle(
     reply: Result<Reply, oneshot::error::RecvError>,
     tool: &str,
     scope: Option<&str>,
-) -> Asked {
+) -> Answered {
     open.done = true;
-    let asked = match reply {
-        Ok((answer, _, kept)) => {
+    let answered = match reply {
+        Ok((answer, kept)) => {
             open.show(RequestState::Answered, Some(answer.clone())).await;
             match answer {
                 Answer::Approve { always } => {
@@ -207,19 +186,19 @@ async fn settle(
                         let mut a = st.conversations.held.always.lock().unwrap_or_else(|e| e.into_inner());
                         a.entry(s.id.clone()).or_default().insert((tool.to_string(), scope.to_string()));
                     }
-                    Asked::Allowed(kept)
+                    Answered::Allowed(kept)
                 }
-                Answer::Deny { message } => Asked::Denied(message),
-                _ => Asked::Denied(None),
+                Answer::Deny { message } => Answered::Denied(message),
+                _ => Answered::Denied(None),
             }
         }
         Err(_) => {
             open.show(RequestState::Expired, None).await;
-            Asked::Ended
+            Answered::Ended
         }
     };
     crate::notifications::kick(st);
-    asked
+    answered
 }
 
 /// The user's answer to a card whose call stopped waiting (PDT-589): an Allow runs the call with the rows they kept
@@ -231,11 +210,11 @@ async fn answered_late(
     title: &str,
     input: Value,
     keys: &[String],
-    asked: Asked,
+    answered: Answered,
 ) {
     use crate::workflow::agent as steps;
-    let text = match asked {
-        Asked::Allowed(kept) => {
+    let text = match answered {
+        Answered::Allowed(kept) => {
             let narrowed =
                 if keys.is_empty() { Ok((input, vec![])) } else { steps::keep_rows(input, keys, kept.as_deref()) };
             match narrowed {
@@ -243,12 +222,9 @@ async fn answered_late(
                 Err(e) => format!("[PDT] The user allowed your {tool} call ({title}), but it failed: {e}"),
             }
         }
-        Asked::Denied(why) => {
-            let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
-            format!("{}{why}", steps::denied_text(tool, title))
-        }
+        Answered::Denied(why) => steps::denied_text(tool, title, why),
         // The agent ended: nothing to run, and no one to tell.
-        Asked::Ended | Asked::Waiting => return,
+        Answered::Ended | Answered::Waiting => return,
     };
     let ticket = crate::mcp::tools::session_ticket(st, s).await;
     if let Err(e) = steps::queue_message(st, s, &text, None, ticket, steps::USER).await {
@@ -287,7 +263,7 @@ pub(crate) fn answer(
     };
     let tx = waiting.remove(&key).ok_or_else(|| super::adapter_error(AdapterError::RequestClosed))?.tx;
     drop(waiting);
-    tx.send((answer.clone(), by_user, kept)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
+    tx.send((answer.clone(), kept)).map_err(|_| super::adapter_error(AdapterError::RequestClosed))
 }
 
 /// A session's agent ended: its open requests of PDT's expire, and their calls go on without running.

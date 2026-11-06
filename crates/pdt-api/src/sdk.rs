@@ -16,6 +16,7 @@ pub use crate::workflow::builtins::Builtin;
 pub use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, ports, schema_of, spec,
 };
+pub use crate::workflow::err;
 
 /// Workflow templates an integration ships.
 pub mod templates {
@@ -47,7 +48,7 @@ pub mod ci {
 /// Linking tickets to issues already in a tracker (PDT-481, [`crate::Integration::find_issue`]); a forge plugin's
 /// issues are found and read through its forge.
 pub mod issues {
-    pub use crate::issue_links::{FoundIssue, IssueNow, IssuePage, find_forge_issue, read_forge_link};
+    pub use crate::issue_links::{FindError, FoundIssue, IssueNow, IssuePage, find_forge_issue, read_forge_link};
     pub use pdt_core::issue_link::IssueState;
     pub use pdt_store::StoredExternalLink;
 }

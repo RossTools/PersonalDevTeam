@@ -487,7 +487,8 @@ the workflow never put in the Inbox (turned off, its conditions edited, its run 
 (a `relates` link, Won't do) or Reject (Won't do), then tells the proposing session while it runs, else comments on
 the ticket it came from.
 The PM's `inbox_decide` (pdt-api `mcp/tools/inbox.rs`, rules in pdt-core `inbox_decide.rs`) proposes decisions on
-many of them at once. In the PM's conversation it asks with one of PDT's own cards (`conversations::held::ask` with
+many of them at once, asking through `mcp::tools::asking::ask_for_call` as every asking tool does. In the PM's
+conversation it asks with one of PDT's own cards (`conversations::held::ask` with
 `rows`: the `Request` event carries them, and the Inbox's approval item has them as `body.rows`); the web shows them as a
 table (`web/src/common/DecideRows.tsx`, in `conversation/DecideCard.tsx` and the Inbox), and the Allow sends the ticked
 rows (`AnswerRequest.rows`) to the waiting call, answered from either place. From a terminal it puts one `confirm` item

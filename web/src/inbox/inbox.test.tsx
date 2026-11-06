@@ -489,7 +489,7 @@ describe('inbox', () => {
     expect(region).toHaveTextContent('Why the agent proposed it');
   });
 
-  it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it (PDT-256)', async () => {
+  it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it with the reason given (PDT-256)', async () => {
     const call = item('c', {
       kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',
       body: { tool: 'report_bug', toolTitle: 'Report a bug in PDT', agent: 'Codex', sessionTitle: 'PM', input: { title: 'The board flickers' } },
@@ -503,8 +503,9 @@ describe('inbox', () => {
     expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"title": "The board flickers"');
     fireEvent.keyDown(window, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/inbox/c/answer')?.body).toEqual({ choice: 'allow' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Reason (optional)' }), 'Not now');
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
-    await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/c/answer').map((c) => c.body)).toContainEqual({ choice: 'deny' }));
+    await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/c/answer').map((c) => c.body)).toContainEqual({ choice: 'deny', text: 'Not now' }));
   });
 
   it('says when a call holds a secret’s value, which its arguments show by name (PDT-539)', () => {

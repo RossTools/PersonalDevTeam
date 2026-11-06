@@ -769,3 +769,42 @@ async fn the_gallery_lists_jiras_built_ins_whether_it_is_on_or_off() {
     assert_eq!(entry(&list, "jira-import")["category"], "issues");
     assert_eq!(list.as_array().unwrap().iter().filter(|t| t["id"] == "builtin:jira-done").count(), 1, "once");
 }
+
+/// Runs `sql` on its own connection to the store at `db`, as something outside PDT would.
+async fn exec(db: &std::path::Path, sql: &str) {
+    use sqlx::Connection;
+    let opts = sqlx::sqlite::SqliteConnectOptions::new().filename(db);
+    let mut c = sqlx::SqliteConnection::connect_with(&opts).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_string())).execute(&mut c).await.unwrap();
+    c.close().await.unwrap();
+}
+
+/// PDT-523: PDT's own failure (its database) importing or linking a Jira issue is PDT's, as the API says it, not a
+/// failure of Jira's, and the database's text stays in the log.
+#[tokio::test]
+async fn a_failure_of_pdts_own_is_not_blamed_on_jira() {
+    let env = setup().await;
+    link(&env).await;
+    env.jira.lock().unwrap().issues.push(issue("ABC-1", "One", None, T0));
+    let db = env._tmp.path().join("pdt.db");
+    let pdts = |s: StatusCode, r: &Value| {
+        assert_eq!((s, r["code"].clone()), (StatusCode::INTERNAL_SERVER_ERROR, json!("internal")), "{r}");
+        assert!(!r["message"].as_str().unwrap().contains("test_hidden"), "{r}");
+    };
+
+    exec(&db, "ALTER TABLE ticket_links_external RENAME TO test_hidden_links").await;
+    let path = format!("/api/projects/{}/import/jira", env.project);
+    let (s, r) = call(&env.app, "POST", &path, Some(json!({"key": "ABC-1"}))).await;
+    pdts(s, &r);
+    exec(&db, "ALTER TABLE test_hidden_links RENAME TO ticket_links_external").await;
+
+    let (_, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "x"}))).await;
+    let links = format!("/api/tickets/{}/issues", t["id"].as_str().unwrap());
+    exec(&db, "ALTER TABLE connections RENAME TO test_hidden_connections").await;
+    let (s, r) = call(&env.app, "POST", &links, Some(json!({"issue": "ABC-1"}))).await;
+    pdts(s, &r);
+    exec(&db, "ALTER TABLE test_hidden_connections RENAME TO connections").await;
+    let (s, r) = call(&env.app, "POST", &links, Some(json!({"issue": "ABC-1"}))).await;
+    assert!(s.is_success(), "{r}");
+}

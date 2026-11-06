@@ -424,7 +424,7 @@ pub(crate) async fn answer(
                     "only the user can allow this call, from PDT's Inbox",
                 ));
             }
-            crate::workflow::agent::answer_confirm(&st, &item, c, a.rows.as_deref())
+            crate::workflow::agent::answer_confirm(&st, &item, c, a.rows.as_deref(), a.text.as_deref())
                 .await
                 .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?
         }
