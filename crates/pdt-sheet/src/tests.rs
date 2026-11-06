@@ -100,6 +100,39 @@ fn csv_comes_in_typed_and_goes_out_as_shown() {
     assert_eq!(quoted.to_csv("Sheet1").unwrap(), "a,b\n\"x, y\",\"say \"\"hi\"\"\"\n");
 }
 
+#[test]
+fn csv_out_never_carries_a_live_formula() {
+    let mut wb = Workbook::new("x").unwrap();
+    let rows: Vec<Vec<String>> = ["'=HYPERLINK(\"http://x\")", "-3", "'+cmd", "'@SUM(1)", "'-x", "=1-4"]
+        .iter()
+        .map(|v| vec![v.to_string()])
+        .collect();
+    wb.set_cells("Sheet1", "A1", &rows).unwrap();
+    assert_eq!(wb.to_csv("Sheet1").unwrap(), "\"'=HYPERLINK(\"\"http://x\"\")\"\n-3\n'+cmd\n'@SUM(1)\n'-x\n-3\n");
+}
+
+#[test]
+fn a_csv_cell_that_looks_like_a_formula_is_neutralised() {
+    for (v, number, out) in [
+        ("=1+1", false, "'=1+1"),
+        ("+1", false, "'+1"),
+        ("-x", false, "'-x"),
+        ("@x", false, "'@x"),
+        ("\tx", false, "'\tx"),
+        ("\rx", false, "'\rx"),
+        ("-3", true, "-3"),
+        ("plain", false, "plain"),
+        ("", false, ""),
+    ] {
+        assert_eq!(csv_cell(v, number), out, "{v:?}");
+    }
+    let csv = write_csv([vec!["a\rb".to_string(), "=x".to_string()], vec!["-2.5".into(), "c,d".into()]], |v| {
+        v.parse::<f64>().is_ok()
+    })
+    .unwrap();
+    assert_eq!(csv, "\"a\rb\",'=x\n-2.5,\"c,d\"\n");
+}
+
 fn key(column: &str, descending: bool) -> SortKey {
     SortKey { column: column.into(), descending }
 }

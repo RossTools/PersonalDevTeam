@@ -23,6 +23,28 @@ use std::path::Path;
 mod limits;
 pub use limits::{MAX_CELLS, MAX_FORMULA_CHARS, MAX_FORMULA_DEPTH, MAX_FORMULA_OPERATORS, MAX_UNPACKED, check_formula};
 
+/// A cell's text for a CSV file: text starting with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`,
+/// so a spreadsheet opening the file shows it rather than running it as a formula (PDT-542). A `number` (`-3`) stays.
+pub fn csv_cell(value: &str, number: bool) -> std::borrow::Cow<'_, str> {
+    if !number && value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}").into()
+    } else {
+        value.into()
+    }
+}
+
+/// Rows of shown text as CSV, quoted where needed and each cell through [`csv_cell`]; `number` says whether a cell's
+/// text is a number (a provider that only gives text decides by parsing it).
+pub fn write_csv<R: IntoIterator<Item = Vec<String>>>(rows: R, number: impl Fn(&str) -> bool) -> Result<String> {
+    let mut w = csv::WriterBuilder::new().flexible(true).from_writer(Vec::new());
+    for row in rows {
+        let line: Vec<_> = row.iter().map(|v| csv_cell(v, number(v))).collect();
+        w.write_record(line.iter().map(|v| v.as_bytes())).map_err(|e| e.to_string())?;
+    }
+    let bytes = w.into_inner().map_err(|e| e.to_string())?;
+    String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
 /// The IronCalc version in pdtd; the web UI's `@ironcalc/workbook` must be the same (a test checks).
 pub const IRONCALC_VERSION: &str = "0.9.1";
 
@@ -620,7 +642,8 @@ impl Workbook {
         self.model.get_model().is_row_hidden(i, row)
     }
 
-    /// One sheet as CSV: what each cell shows, from A1 to the last used cell.
+    /// One sheet as CSV: what each cell shows, from A1 to the last used cell; text that looks like a formula is
+    /// neutralised ([`csv_cell`]).
     pub fn to_csv(&self, sheet: &str) -> Result<String> {
         let i = self.sheet_index(sheet)?;
         let (rows, cols) = self.used(i)?;
@@ -628,7 +651,9 @@ impl Workbook {
         for r in 1..=rows {
             let mut line = Vec::with_capacity(cols as usize);
             for c in 1..=cols {
-                line.push(self.model.get_formatted_cell_value(i, r, c)?);
+                let shown = self.model.get_formatted_cell_value(i, r, c)?;
+                let number = matches!(self.typed(i, r, c)?, Value::Number(_));
+                line.push(csv_cell(&shown, number).into_owned());
             }
             w.write_record(&line).map_err(|e| e.to_string())?;
         }

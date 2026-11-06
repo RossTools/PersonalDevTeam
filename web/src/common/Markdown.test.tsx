@@ -93,6 +93,13 @@ describe('Markdown', () => {
     expect(img).toHaveAttribute('alt', 'chart');
   });
 
+  it('treats a protocol-relative image as from another site', () => {
+    const { container } = render(<Markdown>{'![a](//tracker.example/p.png) ![c](/api/x.png)'}</Markdown>);
+    expect(container.querySelectorAll('img')).toHaveLength(1);
+    expect(container.querySelector('img[src="/api/x.png"]')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Load image “a” from tracker.example' })).toBeInTheDocument();
+  });
+
   it('never renders raw HTML or javascript: links', () => {
     const { container } = render(
       <Markdown>{'<script>alert(1)</script>\n\n<img src=x onerror="alert(1)">\n\n[x](javascript:alert(1))'}</Markdown>,

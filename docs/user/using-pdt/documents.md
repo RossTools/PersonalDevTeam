@@ -62,7 +62,9 @@ answer and resolve comments too.
   one that unpacks to more than 200 MB, or a formula longer than 8,192 characters, nested more than 64 brackets deep or
   with more than 1,024 operators, and says why.
 - The **⋯** menu exports a doc as **Export as Markdown (.md)**, and a sheet as **Export as Excel (.xlsx)** (every
-  sheet, with formulas and formats) or as CSV (the sheet you're on). Charts aren't in the exported file.
+  sheet, with formulas and formats) or as CSV (the sheet you're on, as shown). Charts aren't in the exported file. In
+  a CSV, text that starts with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet opening it shows the text
+  instead of running it as a formula.
 
 ## Link documents to projects and tickets
 
