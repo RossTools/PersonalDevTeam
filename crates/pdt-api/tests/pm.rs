@@ -1113,6 +1113,9 @@ async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_
     assert!(said.contains("\"stopped\": true") && said.contains("\"sessionsStopped\": 1"), "{said}");
     let t = stage("PX-1").await;
     assert_eq!((&t["stage"], &t["attempt"]["state"]), (&json!("todo"), &json!("abandoned")), "{t}");
+    let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{}/events", t["id"].as_str().unwrap()), None).await;
+    let notes: Vec<&str> = ev["items"].as_array().unwrap().iter().filter_map(|e| e["body"].as_str()).collect();
+    assert!(notes.contains(&"Work stopped by the PM."), "{ev}");
     let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
     assert_ne!(s["status"], "running");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
