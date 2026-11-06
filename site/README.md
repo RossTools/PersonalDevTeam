@@ -12,13 +12,15 @@ org can open it).
   claim only what ships, and change it when they change.
 - `src/pages/docs/index.astro` is the docs home: a card per section of the user docs. The docs pages themselves are
   the repository's Markdown, read in place from `../docs`: the user docs in `user/` (the main docs, at
-  `/docs/<section>/<page>/`; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
+  `/docs/<section>/<page>/`, or `/docs/<section>/` for a page named after its section; their sections and pages, in sidebar order, are `USER_SECTIONS` in `src/docs-pages.mjs`,
   and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` (under Guides), and the
   developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `prompts/`,
   `run-config.md` (the agents' part of the run-config guide) and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
   deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
   pages on the site, and links to anything else in the repository at the file on GitHub
-  (`src/remark-docs-links.mjs`).
+  (`src/remark-docs-links.mjs`). Its meta description (search results, link previews) is its first paragraph
+  (`src/doc-description.mjs`), so that paragraph should say what the page is for. A page that moves gets a redirect
+  from its old address (`MOVED` in `src/docs-pages.mjs`).
 - The user docs are for people who use PDT, so `src/user-docs-check.mjs` fails on internal references in them
   (ticket keys, code paths and source files, crate names, API routes, specs, plan phases), with an allowlist for
   legitimate exceptions, and on any file under `docs/` in a `superpowers`, `specs` or `plans` folder. The site's tests run it, so the `site` CI job does; `pnpm --filter site check-docs` runs it
@@ -32,6 +34,12 @@ org can open it).
   `src/data/plugins.json`, which pdtd's integrations tests write from the same code the app lists its plugins from
   (`cargo test -p pdtd`): never edit it by hand. CI's check that generated files are committed fails when it is
   stale. "Request a plugin" opens the `plugin.yml` issue template.
+- Every page, docs or landing frame, shares the head tags in `src/head.mjs`: `favicon.ico`, `apple-touch-icon.png` and
+  the link preview image `og.png` (1200×630), all in `public/` and made by `node scripts/site-icons.mjs` (the preview
+  is the landing hero drawn with the site's Inter; run it again when the logo or the hero's wording changes). Titles
+  read "Page · PDT (Personal Dev Team)" everywhere (`pageTitle` in `src/brand.mjs`, Starlight's `titleDelimiter`).
+- `src/pages/404.astro` is the page not found, in the landing frame and left out of search engines (`noindex`, no
+  canonical address); Starlight's own 404 is off.
 - `src/pages/privacy.astro` is the privacy page (`/privacy/`, linked from the footer and Google's consent screen).
   `public/oauth/google.html` (`/oauth/google`) is where Google's sign-in comes back to with PDT's own OAuth clients:
   `public/oauth/google.js` reads the PDT to return to from OAuth's `state`, forwards only to an address that looks

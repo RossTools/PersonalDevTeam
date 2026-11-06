@@ -3,9 +3,10 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 import { remarkDocsLinks } from './src/remark-docs-links.mjs';
-import { docId, USER_SECTIONS } from './src/docs-pages.mjs';
+import { docId, MOVED, USER_SECTIONS } from './src/docs-pages.mjs';
+import { sharedHead } from './src/head.mjs';
 import { siteUrl } from './src/site-url.mjs';
-import { SHORT_NAME, SITE_NAME, TAGLINE } from './src/brand.mjs';
+import { SITE_NAME, TAGLINE } from './src/brand.mjs';
 
 // Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
 // sections are listed in docs-pages.mjs, each page labelled with its title. Contributing also lists the developer
@@ -24,13 +25,20 @@ export default defineConfig({
   site,
   base,
   trailingSlash: 'ignore',
+  // Pages that moved keep their old addresses working (Astro puts a redirect's source under the base, not its target).
+  redirects: Object.fromEntries(Object.entries(MOVED).map(([from, to]) => [from, `${base.replace(/\/$/, '')}${to}`])),
   markdown: {
     processor: unified({ remarkPlugins: [remarkDocsLinks] }),
   },
   integrations: [
     starlight({
-      title: SHORT_NAME,
+      // Titles read "Page · PDT (Personal Dev Team)", as on the landing frame's pages (brand.mjs `pageTitle`).
+      title: SITE_NAME,
+      titleDelimiter: '·',
       description: `${SITE_NAME}: ${TAGLINE}.`,
+      head: sharedHead(site, base),
+      // The 404 page is src/pages/404.astro, in the landing frame.
+      disable404Route: true,
       logo: {
         dark: './src/assets/pdt-mark-on-dark.svg',
         light: './src/assets/pdt-mark-on-light.svg',

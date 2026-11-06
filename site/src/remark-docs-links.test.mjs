@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rewriteLink } from './remark-docs-links.mjs';
-import { docId, isPublished } from './docs-pages.mjs';
+import { MOVED, docId, isPublished } from './docs-pages.mjs';
 
 const REPO = 'https://github.com/RossTools/PersonalDevTeam/blob/main';
 
@@ -45,4 +45,6 @@ test('which docs are published', () => {
   assert.ok(!isPublished('user/README.md'));
   assert.equal(docId('SDLC.md'), 'docs/sdlc');
   assert.equal(docId('user/getting-started/install.md'), 'docs/getting-started/install');
+  assert.equal(docId('user/troubleshooting/troubleshooting.md'), 'docs/troubleshooting');
+  assert.equal(MOVED['/docs/contributing/contributing/'], '/docs/contributing/');
 });
