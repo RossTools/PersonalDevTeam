@@ -12,10 +12,17 @@ use std::time::{Duration, Instant};
 
 /// Makes the PM run on `agent` in `mode`.
 async fn pm_on(env: &Env, agent: &str, mode: &str) {
+    pm_without(env, agent, mode, &[]).await;
+}
+
+/// Makes the PM run on `agent` in `mode`, without the tools `dropped`.
+async fn pm_without(env: &Env, agent: &str, mode: &str, dropped: &[&str]) {
     let (_, personas) = call(&env.app, "GET", "/api/personas", None).await;
     let pm = personas.as_array().unwrap().iter().find(|p| p["builtin"] == "pm").unwrap().clone();
+    let tools: Vec<&Value> =
+        pm["tools"].as_array().unwrap().iter().filter(|t| !dropped.iter().any(|d| t == d)).collect();
     let setup = json!({"note": "", "agent": agent, "model": null, "instructions": pm["instructions"],
-                       "permissionMode": mode, "tools": pm["tools"]});
+                       "permissionMode": mode, "tools": tools});
     let (s, v) = call(&env.app, "PUT", &format!("/api/personas/{}", pm["id"].as_str().unwrap()), Some(setup)).await;
     assert_eq!(s, StatusCode::OK, "{v}");
 }
@@ -490,6 +497,140 @@ async fn an_allow_rule_in_the_folder_never_skips_the_ask_after_leaving_bypass() 
         assert!(said.contains("\"created\": true"), "{launched}: asked once: {said}");
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
+}
+
+/// PDT-539: a Codex PM where the project lets the PM act still lets an external ticket in, with the user's Allow to
+/// that very call: PDT asks for it (no "Always"), and the yes reaches the store.
+#[tokio::test]
+async fn a_codex_pm_that_may_act_lets_an_external_ticket_in_after_the_users_allow() {
+    let env = setup().await;
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/projects/{}/settings", env.project), Some(json!({"pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let t = pdt_core::ticket::NewTicket { title: "From an issue".into(), ..Default::default() }.validate().unwrap();
+    let t = pdt_core::ticket::ValidNewTicket { source: pdt_core::ticket::TicketSource::External, ..t };
+    let made = env.state.store.create_ticket("ext", &env.project, &t, 1).await.unwrap();
+    pm_on(&env, "codex", "ask").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &format!(r#"mcp: edit_ticket {{"ticket": "{}", "stage": "todo"}}"#, made.summary.key)).await;
+    let req = open_card(&env, &id).await;
+    assert_eq!(req["canAlways"], false, "{req}");
+    answer(&env, &id, req["id"].as_str().unwrap(), json!({"type": "approve"})).await;
+    let said = said_after(&env, &id, n, "mcp edit_ticket").await;
+    assert!(said.contains("\"updated\": true"), "{said}");
+    let (_, v) = call(&env.app, "GET", "/api/tickets/ext", None).await;
+    assert_eq!((v["stage"].as_str(), v["admitted"].as_bool()), (Some("todo"), Some(true)), "{v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-539: "Always allow in this session" covers the tool in the project it was given for, not in another.
+#[tokio::test]
+async fn always_allow_covers_the_tool_in_one_project() {
+    let env = setup().await;
+    let repo = env._tmp.path().join("other");
+    std::fs::create_dir_all(&repo).unwrap();
+    common::git(&repo, &["init", "-q", "-b", "main"]);
+    common::git(&repo, &["commit", "--allow-empty", "-m", "init", "-q"]);
+    let body = json!({"name": "Other", "key": "PY", "repoPath": repo.to_string_lossy()});
+    let (s, v) = call(&env.app, "POST", "/api/projects", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    pm_on(&env, "codex", "ask").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Always here"}"#).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    answer(&env, &id, &rid, json!({"type": "approve", "always": true})).await;
+    said_after(&env, &id, n, "mcp create_ticket").await;
+    let said = ask(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Here again"}"#).await;
+    assert!(said.contains("\"created\": true"), "asked nothing: {said}");
+
+    // Another project asks.
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PY", "title": "Elsewhere"}"#).await;
+    let req = open_card(&env, &id).await;
+    assert_eq!(req["input"]["project"], "PY", "{req}");
+    answer(&env, &id, req["id"].as_str().unwrap(), json!({"type": "deny"})).await;
+    let said = said_after(&env, &id, n, "mcp create_ticket").await;
+    assert!(said.contains("denied"), "{said}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-539: a late Allow runs the call only while the tool is still one of the session's: a persona that lost it
+/// since gets it refused.
+#[tokio::test]
+async fn a_late_allow_runs_nothing_once_the_persona_lost_the_tool() {
+    let env = setup_with(|st| st.ask_wait = Duration::from_millis(300)).await;
+    pm_on(&env, "claude", "bypass").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, r#"mcp: create_ticket {"project": "PX", "title": "Gone tool"}"#).await;
+    said_after(&env, &id, n, "mcp create_ticket failed: Still waiting").await;
+    turn_over(&env, &id).await;
+    let rid = open_card(&env, &id).await["id"].as_str().unwrap().to_string();
+    pm_without(&env, "claude", "bypass", &["create_ticket"]).await;
+    let n = agent_says(&env, &id).await.len();
+    answer(&env, &id, &rid, json!({"type": "approve"})).await;
+    let told = told_after(&env, &id, n, "echo: [PDT] The user allowed your create_ticket").await;
+    assert!(told.contains("no longer one of this session's tools"), "{told}");
+    assert!(!ticket_titles(&env).await.contains(&"Gone tool".to_string()));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+const VALUE: &str = "pdt-539-not-for-cards";
+
+/// PDT-539: a card whose call holds a secret's value shows it by the secret's name, and says so.
+#[tokio::test]
+async fn a_card_says_its_call_holds_a_secrets_value() {
+    let env = setup().await;
+    let body = json!({"name": "TOKEN", "value": VALUE, "projects": [env.project]});
+    let (s, v) = call(&env.app, "POST", "/api/secrets", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    pm_on(&env, "codex", "ask").await;
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &format!(r#"mcp: create_ticket {{"project": "PX", "title": "Key {VALUE}"}}"#)).await;
+    let req = open_card(&env, &id).await;
+    assert!(!req.to_string().contains(VALUE), "{req}");
+    assert!(req["description"].as_str().is_some_and(|d| d.contains("secret's value")), "{req}");
+    answer(&env, &id, req["id"].as_str().unwrap(), json!({"type": "deny"})).await;
+    said_after(&env, &id, n, "mcp create_ticket").await;
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-539: an Inbox item keeps a call's input with a secret's name in place of its value, so once the call stopped
+/// waiting, an Allow runs nothing (it would send the name) and the agent makes the call again.
+#[tokio::test]
+async fn a_late_inbox_allow_of_a_call_with_a_secrets_value_runs_nothing() {
+    let env = setup_with(|st| st.ask_wait = Duration::from_millis(300)).await;
+    let body = json!({"name": "TOKEN", "value": VALUE, "projects": [env.project]});
+    let (s, v) = call(&env.app, "POST", "/api/secrets", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "codex", "mode": "terminal",
+                      "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    let bearer = format!("Bearer {}", pdt_api::mcp_token(&env.state, &id).unwrap());
+    let rpc = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "run_with_secrets",
+                     "arguments": {"command": format!("echo {VALUE}"), "env": {"KEY": "secret:TOKEN"}}}});
+    let (s, v) = common::call_with(&env.app, "POST", "/api/mcp", Some(rpc), &[("authorization", &bearer)]).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["result"]["content"][0]["text"].as_str().is_some_and(|t| t.contains("Still waiting")), "{v}");
+    let item = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm" && i["sessionId"] == id.as_str());
+    let item = item.expect("the item stays open");
+    assert!(!item.to_string().contains(VALUE), "{item}");
+    assert!(item["body"]["secretNote"].is_string(), "{item}");
+    let url = format!("/api/inbox/{}/answer", item["id"].as_str().unwrap());
+    let (s, v) = call_as_ui(&env.app, "POST", &url, Some(json!({"choice": "allow"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(v["error"].as_str().is_some_and(|e| e.contains("secret's value")), "{v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    env.state.ptys.shutdown().await;
 }
 
 /// PDT-526: every core tool marked `asks` asks before it runs. A Codex PM, which can't ask in its own prompt, calls each

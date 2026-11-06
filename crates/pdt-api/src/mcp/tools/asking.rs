@@ -26,8 +26,11 @@ pub(crate) enum Answered {
 pub(crate) struct Ask<'a> {
     /// Ask with a card in the session's conversation when it is one; false: always with an Inbox item.
     pub(crate) inline: bool,
-    /// The card offers "Always allow in this session".
-    pub(crate) can_always: bool,
+    /// The card offers "Always allow in this session", for what it would cover (`pm::ask_scope`, PDT-539).
+    pub(crate) always: Option<&'a str>,
+    /// The user's yes is kept for this very call: only when it lets an external ticket in, the one call that checks
+    /// for it (`edit_ticket`, PDT-201, PDT-539).
+    pub(crate) grant: bool,
     /// A batch call's rows, which the user can untick (the PM's `inbox_decide`, PDT-502).
     pub(crate) rows: Option<Vec<DecideRow>>,
     /// What a Deny leaves, for the agent: "PDT didn't make it", "nothing changed".
@@ -40,7 +43,7 @@ pub(crate) async fn ask_for_call(cx: &Cx<'_>, tool: &str, ask: Ask<'_>) -> Resul
     let (st, s) = (cx.st, cx.session);
     let count = ask.rows.as_ref().map(Vec::len);
     let inline = match ask.inline {
-        true => crate::conversations::ask_inline(st, s, tool, cx.input, ask.can_always, ask.rows.clone()).await,
+        true => crate::conversations::ask_inline(st, s, tool, cx.input, ask.always, ask.rows.clone()).await,
         false => None,
     };
     let (answered, ended) = match inline {
@@ -57,7 +60,9 @@ pub(crate) async fn ask_for_call(cx: &Cx<'_>, tool: &str, ask: Ask<'_>) -> Resul
     match answered {
         Answered::Allowed(kept) => {
             // The user's own yes is good for this very call (PDT-201), as for an agent's prompt.
-            st.grants.allow(&s.id, tool, cx.input);
+            if ask.grant {
+                st.grants.allow(&s.id, tool, cx.input);
+            }
             count.map(|n| pdt_core::inbox_decide::kept(n, kept.as_deref())).transpose()
         }
         Answered::Denied(why) => Err(format!("The user denied this {tool} call, so {}.{}", ask.unchanged, said(why))),

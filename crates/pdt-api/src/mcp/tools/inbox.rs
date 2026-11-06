@@ -66,7 +66,7 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     decide::check_unique(&rows)?;
     // The call waits on the table (in the conversation, else in the Inbox): the user's Allow applies the rows they
     // kept, in this same call.
-    let ask = Ask { inline: true, can_always: false, rows: Some(rows.clone()), unchanged: "nothing changed" };
+    let ask = Ask { inline: true, always: None, grant: false, rows: Some(rows.clone()), unchanged: "nothing changed" };
     let kept = ask_for_call(cx, NAME, ask).await?.unwrap_or_default();
     let unticked: Vec<&str> =
         rows.iter().enumerate().filter(|(n, _)| !kept.contains(n)).map(|(_, r)| r.ticket_key.as_str()).collect();
