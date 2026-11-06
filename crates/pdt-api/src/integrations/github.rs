@@ -60,7 +60,7 @@ impl Integration for Github {
         st: &'a crate::AppState,
         project_id: &'a str,
         given: &'a str,
-    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, String>>> {
+    ) -> BoxFut<'a, Option<Result<crate::issue_links::FoundIssue, crate::issue_links::FindError>>> {
         let kind = pdt_core::forge::ForgeKind::GITHUB;
         Box::pin(async move {
             crate::issue_links::find_forge_issue(st, &kind, project_id, given, pdt_core::github_issue::issue_url).await

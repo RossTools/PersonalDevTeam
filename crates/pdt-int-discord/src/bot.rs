@@ -371,7 +371,7 @@ pub(crate) async fn get(st: &AppState, a: DiscordGet) -> Result<Value, String> {
     let server = bot.server_name().await?;
     let channels = bot.channels().await?;
     let hooks = bot.webhooks().await?;
-    let saved = st.store.list_connections().await.map_err(|e| e.to_string())?;
+    let saved = st.store.list_connections().await.map_err(pdt_api::sdk::err)?;
     let name_of =
         |id: &Option<String>| id.as_ref().and_then(|id| channels.iter().find(|c| &c.id == id)).map(|c| c.name.clone());
     let categories: Vec<Value> = channels
@@ -431,7 +431,7 @@ pub(crate) async fn webhook_tool(st: &AppState, a: DiscordWebhookArgs) -> Result
     if name.is_empty() {
         return Err("name the connection workflows will use (`name`)".into());
     }
-    if st.store.connection_by_name(&name).await.map_err(|e| e.to_string())?.is_some() {
+    if st.store.connection_by_name(&name).await.map_err(pdt_api::sdk::err)?.is_some() {
         return Err(format!("a connection is already called {name}: pick another name"));
     }
     let mut channels = bot.channels().await?;

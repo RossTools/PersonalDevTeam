@@ -244,7 +244,7 @@ fn summary_of(c: &JiraClient, sp: &Special, v: &Value, ticket: Option<String>) -
 }
 
 async fn ticket_of(cx: &ActionCx<'_>, c: &JiraClient, key: &str) -> Result<Option<String>, String> {
-    cx.st.store.ticket_for_external(JIRA, &c.conn.id, key).await.map_err(|e| e.to_string())
+    cx.st.store.ticket_for_external(JIRA, &c.conn.id, key).await.map_err(pdt_api::sdk::err)
 }
 
 async fn summaries(

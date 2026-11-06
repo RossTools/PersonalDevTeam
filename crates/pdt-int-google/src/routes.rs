@@ -206,16 +206,18 @@ fn page(ok: bool, message: &str) -> (StatusCode, Html<String>) {
 
 /// The connection a new account's sign-in goes to: the one with PDT's own clients already signed in as `email`, else
 /// a new one named after it.
-async fn added(st: &AppState, shared: &Shared, email: Option<&str>) -> Result<Connection, String> {
-    let email = email.ok_or("Google didn't say which account signed in, so PDT can't add it. Try again.")?;
-    let all = accounts::connections(st).await.map_err(|e| e.to_string())?;
+async fn added(st: &AppState, shared: &Shared, email: Option<&str>) -> Result<Connection, ApiError> {
+    let email = email.ok_or_else(|| {
+        ApiError::invalid("Google didn't say which account signed in, so PDT can't add it. Try again.")
+    })?;
+    let all = accounts::connections(st).await?;
     for c in &all {
-        let mine = accounts::sign_in(st, &c.id).await.map_err(|e| e.to_string())?.and_then(|s| s.email);
+        let mine = accounts::sign_in(st, &c.id).await?.and_then(|s| s.email);
         if shared.uses_built_in(c) && mine.is_some_and(|m| m.eq_ignore_ascii_case(email)) {
             return Ok(c.clone());
         }
     }
-    let taken = st.store.list_connections().await.map_err(|e| e.to_string())?;
+    let taken = st.store.list_connections().await?;
     let name = (1..)
         .map(|n| if n == 1 { email.to_string() } else { format!("{email} ({n})") })
         .find(|n| !taken.iter().any(|c| c.name.eq_ignore_ascii_case(n)))
@@ -227,7 +229,7 @@ async fn added(st: &AppState, shared: &Shared, email: Option<&str>) -> Result<Co
         config: Some(serde_json::json!({})),
     };
     let made = pdt_api::sdk::connections::create_connection(State(st.clone()), Ok(Json(input))).await;
-    made.map(|(_, Json(c))| c).map_err(|e| e.message().to_string())
+    made.map(|(_, Json(c))| c)
 }
 
 /// `GET /api/google/callback`: Google sends the browser back here (through the website's page, with PDT's own Web
@@ -240,7 +242,7 @@ pub async fn callback(
 ) -> (StatusCode, Html<String>) {
     match finish(&st, &shared, q).await {
         Ok(m) => page(true, &m),
-        Err(m) => page(false, &m),
+        Err(e) => page(false, e.message()),
     }
 }
 
@@ -257,24 +259,30 @@ pub async fn paste(
         return Err(ApiError::invalid("That isn't a sign-in code from PDT's Google page. Copy it again, whole."));
     };
     let q = CallbackQuery { code: Some(code), state: Some(state), error: None };
-    finish(&st, &shared, q).await.map(|message| Json(AccountSignInDone { message })).map_err(ApiError::invalid)
+    finish(&st, &shared, q).await.map(|message| Json(AccountSignInDone { message }))
 }
 
 /// Trades Google's answer for the sign-in: only a `state` PDT issued, still under way, is taken (once), and the code
-/// is traded with its PKCE verifier. What to tell the user, done or not.
-async fn finish(st: &AppState, shared: &Shared, q: CallbackQuery) -> Result<String, String> {
+/// is traded with its PKCE verifier. What to tell the user, done or not: Google's answer or the user's step is
+/// `invalid_input`, PDT's own failure (its database, the keychain) is said as the API says it, its full text logged.
+async fn finish(st: &AppState, shared: &Shared, q: CallbackQuery) -> Result<String, ApiError> {
     let pending = q.state.and_then(|s| shared.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&s));
     if let Some(e) = q.error {
-        return Err(format!("Google said: {e}. Try again from Settings → Plugins → Google."));
+        return Err(ApiError::invalid(format!("Google said: {e}. Try again from Settings → Plugins → Google.")));
     }
     let Some(p) = pending.filter(|p| now_ms() - p.started_ms < accounts::PENDING_MS) else {
-        return Err("This sign-in is unknown or too old. Start it again from Settings → Plugins → Google.".into());
+        return Err(ApiError::invalid(
+            "This sign-in is unknown or too old. Start it again from Settings → Plugins → Google.",
+        ));
     };
-    let Some(code) = q.code else { return Err("Google sent no code back.".into()) };
+    let Some(code) = q.code else { return Err(ApiError::invalid("Google sent no code back.")) };
     let existing = match &p.connection_id {
         Some(id) => match connection(st, id).await {
             Ok(c) => Some(c),
-            Err(_) => return Err("The Google connection was deleted while signing in.".into()),
+            Err(e) if e.code() == codes::NOT_FOUND => {
+                return Err(ApiError::invalid("The Google connection was deleted while signing in."));
+            }
+            Err(e) => return Err(e),
         },
         None => None,
     };
@@ -288,38 +296,42 @@ async fn finish(st: &AppState, shared: &Shared, q: CallbackQuery) -> Result<Stri
     .await;
     let (token, email) = match traded {
         Ok(Ok(x)) => x,
-        Ok(Err(e)) => return Err(format!("PDT couldn't finish signing in: {e}")),
-        Err(e) => return Err(e.to_string()),
+        Ok(Err(e)) => return Err(ApiError::invalid(format!("PDT couldn't finish signing in: {e}"))),
+        Err(e) => return Err(e.into()),
     };
     let c = match existing {
         Some(c) => c,
-        None => added(st, shared, email.as_deref())
-            .await
-            .map_err(|e| format!("PDT couldn't add the Google account: {e}"))?,
+        None => added(st, shared, email.as_deref()).await.map_err(|e| {
+            let says = format!("PDT couldn't add the Google account: {}", e.message());
+            ApiError::new(e.status(), e.code(), says)
+        })?,
     };
     let who = email.clone().unwrap_or_else(|| "your Google account".to_string());
     let had = if p.agent {
-        // Agents act as the account the user signed in, never another one.
-        let mine = accounts::sign_in(st, &c.id).await.ok().flatten().and_then(|s| s.email);
+        // Agents act as the account the user signed in, never another one: a sign-in PDT can't read is no answer.
+        let mine = accounts::sign_in(st, &c.id).await?.and_then(|s| s.email);
         if let Some(m) = mine.filter(|m| !email.as_deref().is_some_and(|e| e.eq_ignore_ascii_case(m))) {
-            return Err(format!("You allowed agents as {who}, but {} is {m}. Try again and pick {m}.", c.name));
+            return Err(ApiError::invalid(format!(
+                "You allowed agents as {who}, but {} is {m}. Try again and pick {m}.",
+                c.name
+            )));
         }
-        accounts::agent_sign_in(st, &c.id).await
+        accounts::agent_sign_in(st, &c.id).await?
     } else {
-        accounts::sign_in(st, &c.id).await
+        accounts::sign_in(st, &c.id).await?
     };
     // Google gives a refresh token with consent; a sign-in again without one keeps the one PDT has, made with the same
     // client (a refresh token works only with its own).
-    let kept = had.ok().flatten().filter(|s| s.desktop == p.desktop).map(|s| s.refresh_token);
+    let kept = had.filter(|s| s.desktop == p.desktop).map(|s| s.refresh_token);
     let Some(refresh) = token.refresh_token.or(kept) else {
-        return Err(
-            "Google gave PDT no refresh token. Remove PDT's access in your Google account and sign in again.".into()
-        );
+        return Err(ApiError::invalid(
+            "Google gave PDT no refresh token. Remove PDT's access in your Google account and sign in again.",
+        ));
     };
     let key = if p.agent { accounts::agent_key(&c.id) } else { accounts::sign_in_key(&c.id) };
     let signed = SignIn { refresh_token: refresh, email: email.clone(), desktop: p.desktop };
     if let Err(e) = accounts::store_sign_in(st, key, &signed).await {
-        return Err(format!("PDT couldn't keep the sign-in: {e}"));
+        return Err(ApiError::new(e.status(), e.code(), format!("PDT couldn't keep the sign-in: {}", e.message())));
     }
     shared.tokens.forget(&crate::api::token_key(&c.id, p.agent));
     if p.agent {
@@ -340,7 +352,7 @@ pub async fn forget_agents(
 ) -> Result<StatusCode, ApiError> {
     ui_only(&st, &headers)?;
     connection(&st, &id).await?;
-    accounts::forget_agents(&st, &shared, &id).await.map_err(ApiError::from_text)?;
+    accounts::forget_agents(&st, &shared, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -353,7 +365,7 @@ pub async fn sign_out(
 ) -> Result<StatusCode, ApiError> {
     ui_only(&st, &headers)?;
     connection(&st, &id).await?;
-    accounts::sign_out(&st, &shared, &id).await.map_err(ApiError::from_text)?;
+    accounts::sign_out(&st, &shared, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

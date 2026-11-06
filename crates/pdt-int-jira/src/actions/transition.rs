@@ -75,7 +75,7 @@ async fn transition_target(
 ) -> Result<Result<(String, String, String), JiraTransitionOutput>, String> {
     Ok(Ok(match nonblank(&c.ticket) {
         Some(ticket) => {
-            let links = cx.st.store.external_links(ticket, JIRA).await.map_err(|e| e.to_string())?;
+            let links = cx.st.store.external_links(ticket, JIRA).await.map_err(pdt_api::sdk::err)?;
             let Some(link) = links.into_iter().next() else {
                 return Ok(Err(JiraTransitionOutput {
                     reason: Some("the ticket is not linked to a Jira issue".into()),
@@ -89,14 +89,14 @@ async fn transition_target(
                 .store
                 .get_connection(&link.connection_id)
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(pdt_api::sdk::err)?
                 .ok_or("the Jira connection the ticket was linked with is gone")?;
             let to = match nonblank(&c.to) {
                 Some(t) => t.to_string(),
                 None => {
-                    let summary = cx.st.store.get_ticket_summary(ticket).await.map_err(|e| e.to_string())?;
+                    let summary = cx.st.store.get_ticket_summary(ticket).await.map_err(pdt_api::sdk::err)?;
                     let project = summary.map(|t| t.project_id).unwrap_or_default();
-                    let s = cx.st.store.get_project_settings(&project).await.map_err(|e| e.to_string())?;
+                    let s = cx.st.store.get_project_settings(&project).await.map_err(pdt_api::sdk::err)?;
                     s.integration::<JiraSettings>(JIRA).map(|j| j.done).unwrap_or_else(|| DEFAULT_DONE.into())
                 }
             };

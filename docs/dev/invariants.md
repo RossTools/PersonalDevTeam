@@ -100,7 +100,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
   whose id starts `pdt-ask-`, which the Inbox lists as its approval item) and the tool call waits on it; a terminal gets
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
-  to the waiting call, and only runs the call and messages the session itself when no call waits any more).
+  to the waiting call, and only runs the call and messages the session itself when no call waits any more). Both
+  waiters give the same `Answered` (with a Deny's reason), and only `mcp::tools::asking::ask_for_call` turns it into
+  the call's result: the notifications around the wait, the user's yes recorded for that very call (`Grants::allow`)
+  and the words the agent reads. A new asking call uses it rather than a waiter directly. A test calls every core tool
+  marked `asks` from a Codex PM and expects a card (`every_core_asking_tool_asks`): a new one goes in its list.
   `answer_request` answers PDT's own requests itself, never the agent's process, and `pm::request_opened` never answers
   them. The PM's `add_ticket_comment` on a ticket with an active attempt asks the same way whatever its agent
   (`mcp::tools::confirm_pm_comment`; Claude's prompt never covers it): "Ticket comments to the agent" sends the PM's
@@ -345,8 +349,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   Inbox item): the web shows it as it is, in screenshots and bug reports. A database, git, spawn, keychain or file
   error goes through its `From` into `ApiError` (or `ApiError::io(doing, e)`), which logs the full text and says what
   failed: git's failing line and a keychain's first line by `error::short_text` (absolute paths cut to their last
-  part), a database error `DB_UNREADABLE`, the rest `internal`. Workflow nodes use `workflow::err`, which does the
-  same (`workflow_errors_go_through_err` checks). Text that is the user's own input (a path they typed, a workflow's
+  part), a database error `DB_UNREADABLE`, the rest `internal`. Workflow nodes, agent tools and plugins use
+  `workflow::err` (`sdk::err`), which does the same (`workflow_errors_go_through_err` checks the workflow). A plugin's
+  own failure keeps its code and status, never a 502 that blames the service: `ProviderError::local`,
+  `issue_links::FindError::Local`. Every code is in `error::codes`, the plugins' too (`codes_come_from_the_one_list`
+  scans every `pdt-int-*`). Text that is the user's own input (a path they typed, a workflow's
   bad input) and a forge's or agent's answer meant for them stay as they are.
 - **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
   `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a

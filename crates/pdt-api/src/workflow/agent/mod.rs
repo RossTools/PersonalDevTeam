@@ -23,10 +23,9 @@ mod confirm_wait;
 mod inbox_items;
 mod recovery;
 
-pub(crate) use confirm_wait::{ASK_WAIT, ConfirmWaits, Confirmed, grant, still_waiting, wait as wait_confirm};
+pub(crate) use confirm_wait::{ASK_WAIT, ConfirmWaits, wait as wait_confirm};
 pub(crate) use inbox_items::{
-    answer_confirm, answer_item, ask, ask_confirm, ask_confirm_rows, ask_user, asker, denied_text, keep_rows, reply,
-    run_allowed,
+    answer_confirm, answer_item, ask, ask_confirm, ask_user, asker, denied_text, keep_rows, reply, run_allowed,
 };
 use recovery::late_outcome;
 pub(crate) use recovery::sweep;

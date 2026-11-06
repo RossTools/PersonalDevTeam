@@ -40,6 +40,18 @@ pub enum ProviderError {
     /// Anything else (the service is down, a sign-in expired).
     #[error("{0}")]
     Failed(String),
+    /// PDT's own failure (its database, the keychain), not the provider's: already logged, said as the API says it
+    /// ([`ProviderError::local`]).
+    #[error("{message}")]
+    Local { status: u16, code: &'static str, message: String },
+}
+
+impl ProviderError {
+    /// PDT's own failure `e` (a database's, a keychain's), as the API says it, its full text logged.
+    pub fn local(e: impl Into<crate::error::ApiError>) -> Self {
+        let e = e.into();
+        ProviderError::Local { status: e.status().as_u16(), code: e.code(), message: e.message().to_string() }
+    }
 }
 
 pub type ProviderResult<T> = Result<T, ProviderError>;
