@@ -13,7 +13,7 @@ pub use api::GitlabApi;
 pub use ci::GitlabCi;
 pub use plugin::{GITLAB, GitlabPlugin};
 
-use pdt_api::sdk::issues::{FoundIssue, IssueNow, StoredExternalLink, find_forge_issue, read_forge_link};
+use pdt_api::sdk::issues::{FindError, FoundIssue, IssueNow, StoredExternalLink, find_forge_issue, read_forge_link};
 use pdt_api::sdk::{AppState, BoxFut, Integration};
 
 /// The GitLab plugin: while it is on, projects whose `origin` is on gitlab.com (or a GitLab PDT has a login for) use
@@ -35,7 +35,7 @@ impl Integration for Gitlab {
         st: &'a AppState,
         project_id: &'a str,
         given: &'a str,
-    ) -> BoxFut<'a, Option<Result<FoundIssue, String>>> {
+    ) -> BoxFut<'a, Option<Result<FoundIssue, FindError>>> {
         Box::pin(async move { find_forge_issue(st, &GITLAB, project_id, given, issue_url).await })
     }
 

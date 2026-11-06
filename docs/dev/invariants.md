@@ -345,8 +345,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   Inbox item): the web shows it as it is, in screenshots and bug reports. A database, git, spawn, keychain or file
   error goes through its `From` into `ApiError` (or `ApiError::io(doing, e)`), which logs the full text and says what
   failed: git's failing line and a keychain's first line by `error::short_text` (absolute paths cut to their last
-  part), a database error `DB_UNREADABLE`, the rest `internal`. Workflow nodes use `workflow::err`, which does the
-  same (`workflow_errors_go_through_err` checks). Text that is the user's own input (a path they typed, a workflow's
+  part), a database error `DB_UNREADABLE`, the rest `internal`. Workflow nodes, agent tools and plugins use
+  `workflow::err` (`sdk::err`), which does the same (`workflow_errors_go_through_err` checks the workflow). A plugin's
+  own failure keeps its code and status, never a 502 that blames the service: `ProviderError::local`,
+  `issue_links::FindError::Local`. Every code is in `error::codes`, the plugins' too (`codes_come_from_the_one_list`
+  scans every `pdt-int-*`). Text that is the user's own input (a path they typed, a workflow's
   bad input) and a forge's or agent's answer meant for them stay as they are.
 - **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
   `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a

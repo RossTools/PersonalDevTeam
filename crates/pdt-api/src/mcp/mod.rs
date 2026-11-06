@@ -260,7 +260,9 @@ fn unauthorized() -> Response {
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Bearer")],
-        axum::Json(json!({"code": "unauthorized", "message": "a valid pdt-mcp session token is required"})),
+        axum::Json(
+            json!({"code": crate::error::codes::UNAUTHORIZED, "message": "a valid pdt-mcp session token is required"}),
+        ),
     )
         .into_response()
 }

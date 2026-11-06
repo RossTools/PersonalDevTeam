@@ -832,3 +832,65 @@ async fn a_pasted_code_finishes_a_sign_in_through_the_website() {
     assert_eq!(s, 400, "{v}");
     assert!(v["message"].as_str().unwrap().contains("Google turned it down"), "{v}");
 }
+
+/// A keychain whose reads of Google sign-ins fail while `fail` is set.
+#[derive(Default)]
+struct Flaky {
+    inner: pdt_api::secrets::MemorySecretStore,
+    fail: std::sync::atomic::AtomicBool,
+}
+
+impl pdt_api::secrets::SecretStore for Flaky {
+    fn get(&self, name: &str) -> Result<Option<String>, pdt_api::secrets::SecretError> {
+        if self.fail.load(std::sync::atomic::Ordering::SeqCst) && name.ends_with(":google") {
+            return Err(pdt_api::secrets::SecretError("test-locked keychain".into()));
+        }
+        self.inner.get(name)
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.inner.set(name, value)
+    }
+    fn delete(&self, name: &str) -> Result<(), pdt_api::secrets::SecretError> {
+        self.inner.delete(name)
+    }
+}
+
+/// PDT-523: a sign-in PDT can't read from the keychain is a failure of the keychain's, not "Google gave no refresh
+/// token" (which sends the user to revoke PDT's access); the sign-in PDT has is kept.
+#[tokio::test]
+async fn a_keychain_that_cant_be_read_is_not_a_missing_refresh_token() {
+    let mut env = env().await;
+    let keychain = Arc::new(Flaky::default());
+    env.st.secrets = keychain.clone();
+    env.app = router(env.st.clone(), None);
+    let id = account(&env).await;
+    sign_in(&env, &id).await;
+
+    let (s, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "http://127.0.0.1:7421"})),
+    )
+    .await;
+    assert_eq!(s, 200, "{v}");
+    let state = state_of(v["url"].as_str().unwrap());
+    // Signing in again: Google gives no new refresh token, and the one PDT has can't be read.
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"at2","expires_in":3600}"#).ok(
+        "GET",
+        USERINFO_URL,
+        r#"{"email":"me@example.com"}"#,
+    );
+    keychain.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    let req = axum::http::Request::get(format!("/api/google/callback?code=c2&state={state}"))
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let res = tower::ServiceExt::oneshot(env.app.clone(), req).await.unwrap();
+    assert_eq!(res.status(), 400);
+    let page = http_body_util::BodyExt::collect(res.into_body()).await.unwrap().to_bytes();
+    let page = String::from_utf8_lossy(&page);
+    assert!(!page.contains("refresh token") && page.contains("keychain"), "{page}");
+    keychain.fail.store(false, std::sync::atomic::Ordering::SeqCst);
+    let kept = env.st.secrets.get(&pdt_int_google::accounts::sign_in_key(&id)).unwrap().unwrap();
+    assert!(kept.contains("rt1"), "{kept}");
+}

@@ -90,6 +90,9 @@ pub mod codes {
     pub const INVALID_TITLE: &str = "invalid_title";
     pub const INVALID_TOKEN: &str = "invalid_token";
     pub const IN_USE: &str = "in_use";
+    pub const JIRA_FAILED: &str = "jira_failed";
+    pub const JIRA_ISSUE_NOT_FOUND: &str = "jira_issue_not_found";
+    pub const JIRA_NOT_LINKED: &str = "jira_not_linked";
     pub const KEYCHAIN_UNAVAILABLE: &str = "keychain_unavailable";
     pub const KEY_TAKEN: &str = "key_taken";
     pub const LINK_CYCLE: &str = "link_cycle";
@@ -179,6 +182,7 @@ pub mod codes {
     pub const TOO_MANY_RUNS: &str = "too_many_runs";
     pub const TRACKER_ERROR: &str = "tracker_error";
     pub const TURN_RUNNING: &str = "turn_running";
+    pub const UNAUTHORIZED: &str = "unauthorized";
     pub const UNKNOWN_AGENT: &str = "unknown_agent";
     pub const UNKNOWN_ATTACHMENT: &str = "unknown_attachment";
     pub const UNKNOWN_BRANCH: &str = "unknown_branch";
@@ -707,13 +711,27 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = vec![];
         sources(&root.join("src"), &mut files);
-        sources(&root.join("../pdt-int-google/src"), &mut files);
+        // Every plugin crate's too: their codes are the API's.
+        let plugins = std::fs::read_dir(root.join(".."))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("pdt-int-")))
+            .collect::<Vec<_>>();
+        assert!(plugins.len() > 5, "{}", plugins.len());
+        for p in plugins {
+            sources(&p.join("src"), &mut files);
+        }
         // Without their `(`, so this list doesn't match itself.
         let calls =
             ["ApiError::new", "Self::new", "::conflict", "::bad_request", "::forbidden", "::upstream", "::unavailable"];
         let (mut spelled, mut seen_calls) = (vec![], 0);
         for f in files {
             let text = std::fs::read_to_string(&f).unwrap();
+            // A body written by hand, not through an `ApiError`.
+            if text.contains(concat!("\"code\": ", "\"")) {
+                spelled.push(format!("{}: a hand-written \"code\"", f.display()));
+            }
             for call in calls.map(|c| format!("{c}(")) {
                 for (at, _) in text.match_indices(&call) {
                     seen_calls += 1;

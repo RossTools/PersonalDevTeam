@@ -184,13 +184,19 @@ pub(crate) enum Import {
     Exists(String),
 }
 
-/// Why an import failed: the issue isn't there, or something else.
-#[derive(Debug, Clone, PartialEq)]
+/// Why an import failed: the issue isn't there, Jira failed, or PDT did (its database: logged, said as the API says it).
+#[derive(Debug)]
 pub(crate) enum ImportError {
     NotLinked,
     BadKey(String),
     NoIssue(String),
     Failed(String),
+    Local(ApiError),
+}
+
+/// PDT's own failure (its database's), as the API says it.
+fn pdt_failed(e: impl Into<ApiError>) -> ImportError {
+    ImportError::Local(e.into())
 }
 
 impl ImportError {
@@ -200,6 +206,7 @@ impl ImportError {
             ImportError::BadKey(k) => format!("{k:?} is not an issue key like ABC-123"),
             ImportError::NoIssue(k) => format!("Jira has no issue {k} (or the account can't see it)"),
             ImportError::Failed(m) => m.clone(),
+            ImportError::Local(e) => e.message().to_string(),
         }
     }
 }
@@ -217,12 +224,12 @@ pub(crate) async fn import_issue(
     let name = match connection.map(str::trim).filter(|c| !c.is_empty()) {
         Some(c) => c.to_string(),
         None => {
-            let s = st.store.get_project_settings(project_id).await.map_err(|e| failed(e.to_string()))?;
+            let s = st.store.get_project_settings(project_id).await.map_err(pdt_failed)?;
             s.integration::<crate::core::JiraSettings>(JIRA).map(|j| j.connection).ok_or(ImportError::NotLinked)?
         }
     };
     let c = JiraClient::named(st, &name).await.map_err(failed)?;
-    if let Some(t) = st.store.ticket_for_external(JIRA, &c.conn.id, &key).await.map_err(|e| failed(e.to_string()))? {
+    if let Some(t) = st.store.ticket_for_external(JIRA, &c.conn.id, &key).await.map_err(pdt_failed)? {
         return Ok(Import::Exists(t));
     }
     let issue = c.issue(&key).await.map_err(failed)?.ok_or_else(|| ImportError::NoIssue(key.clone()))?;
@@ -231,28 +238,24 @@ pub(crate) async fn import_issue(
         s => s.chars().take(pdt_core::ticket::MAX_TITLE).collect(),
     };
     let description: String = issue.description.chars().take(pdt_core::ticket::MAX_DESCRIPTION).collect();
-    let t = NewTicket { title, description: Some(description), ..Default::default() }
-        .validate()
-        .map_err(|e| failed(e.to_string()))?;
+    let t = NewTicket { title, description: Some(description), ..Default::default() }.validate().map_err(pdt_failed)?;
     let link = StoredExternalLink::new("", JIRA, &c.conn.id, &issue.key, &issue.url, LinkOrigin::Imported);
     let id = uuid::Uuid::now_v7().to_string();
     match st.store.create_linked_ticket(&id, project_id, &t, &link, pdt_core::ticket::Actor::System, now_ms()).await {
         Ok(Ok(t)) => Ok(Import::Imported(t.summary.id)),
         Ok(Err(other)) => Ok(Import::Exists(other)),
-        Err(e) => Err(failed(e.to_string())),
+        Err(e) => Err(pdt_failed(e)),
     }
 }
 
 /// `POST /api/projects/{id}/import/jira {key}`: any issue, assigned or not ([`pdt_api::sdk::Integration::import_by_key`]).
 pub(crate) async fn import_by_key(st: &AppState, project_id: &str, key: &str) -> Result<Imported, ApiError> {
-    let r = import_issue(st, project_id, key, None).await.map_err(|e| {
-        let (status, code) = match &e {
-            ImportError::NotLinked => (StatusCode::CONFLICT, "jira_not_linked"),
-            ImportError::BadKey(_) => (StatusCode::BAD_REQUEST, codes::INVALID_INPUT),
-            ImportError::NoIssue(_) => (StatusCode::NOT_FOUND, "jira_issue_not_found"),
-            ImportError::Failed(_) => (StatusCode::BAD_GATEWAY, "jira_failed"),
-        };
-        ApiError::new(status, code, e.message())
+    let r = import_issue(st, project_id, key, None).await.map_err(|e| match e {
+        ImportError::NotLinked => ApiError::conflict(codes::JIRA_NOT_LINKED, e.message()),
+        ImportError::BadKey(_) => ApiError::invalid(e.message()),
+        ImportError::NoIssue(_) => ApiError::new(StatusCode::NOT_FOUND, codes::JIRA_ISSUE_NOT_FOUND, e.message()),
+        ImportError::Failed(_) => ApiError::upstream(codes::JIRA_FAILED, e.message()),
+        ImportError::Local(e) => e,
     })?;
     Ok(match r {
         Import::Imported(ticket_id) => Imported { ticket_id, existed: false },

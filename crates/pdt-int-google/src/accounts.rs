@@ -8,8 +8,8 @@
 
 use crate::api::{Account, Tokens, token_key};
 use crate::builtin::{BuiltIn, Client};
-use pdt_api::sdk::AppState;
 use pdt_api::sdk::documents::ProviderError;
+use pdt_api::sdk::{ApiError, AppState};
 use pdt_core::workflow::api::Connection;
 use pdt_forge::transport::Transport;
 use serde::{Deserialize, Serialize};
@@ -92,8 +92,8 @@ async fn secret(st: &AppState, key: String) -> Result<Option<String>, ProviderEr
     let secrets = st.secrets.clone();
     tokio::task::spawn_blocking(move || secrets.get(&key))
         .await
-        .map_err(|e| ProviderError::Failed(e.to_string()))?
-        .map_err(|e| ProviderError::Failed(format!("PDT couldn't read a Google sign-in from the keychain: {e}")))
+        .map_err(ProviderError::local)?
+        .map_err(ProviderError::local)
 }
 
 /// The account's sign-in, if it has one.
@@ -111,20 +111,14 @@ async fn sign_in_at(st: &AppState, key: String) -> Result<Option<SignIn>, Provid
 }
 
 /// Keeps a sign-in under `key` ([`sign_in_key`] or [`agent_key`]).
-pub async fn store_sign_in(st: &AppState, key: String, s: &SignIn) -> Result<(), String> {
+pub async fn store_sign_in(st: &AppState, key: String, s: &SignIn) -> Result<(), ApiError> {
     let (secrets, value) = (st.secrets.clone(), serde_json::to_string(s).unwrap());
-    tokio::task::spawn_blocking(move || secrets.set(&key, &value))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    Ok(tokio::task::spawn_blocking(move || secrets.set(&key, &value)).await??)
 }
 
-async fn forget(st: &AppState, key: String) -> Result<(), String> {
+async fn forget(st: &AppState, key: String) -> Result<(), ApiError> {
     let secrets = st.secrets.clone();
-    tokio::task::spawn_blocking(move || secrets.delete(&key))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    Ok(tokio::task::spawn_blocking(move || secrets.delete(&key)).await??)
 }
 
 /// The Google connections, by name.
@@ -133,7 +127,7 @@ pub async fn connections(st: &AppState) -> Result<Vec<Connection>, ProviderError
         .store
         .list_connections()
         .await
-        .map_err(|e| ProviderError::Failed(e.to_string()))?
+        .map_err(ProviderError::local)?
         .into_iter()
         .filter(|c| c.kind == KIND)
         .collect();
@@ -221,19 +215,15 @@ pub async fn account_by_id(
     id: &str,
     agent: bool,
 ) -> Result<(Connection, Account), ProviderError> {
-    let c = st
-        .store
-        .get_connection(id)
-        .await
-        .map_err(|e| ProviderError::Failed(e.to_string()))?
-        .filter(|c| c.kind == KIND)
-        .ok_or_else(|| {
+    let c = st.store.get_connection(id).await.map_err(ProviderError::local)?.filter(|c| c.kind == KIND).ok_or_else(
+        || {
             ProviderError::Failed(
                 "the Google account that holds this document is gone from PDT: add it again in Settings → Plugins → \
                  Google"
                     .into(),
             )
-        })?;
+        },
+    )?;
     let a = account(st, shared, &c, agent).await?;
     Ok((c, a))
 }
@@ -258,7 +248,7 @@ pub async fn signed_in(
 
 /// Takes the agents' permission away: PDT forgets the agent sign-in. Google isn't asked to revoke it, which would
 /// revoke every client of PDT's project and so sign the user out too.
-pub async fn forget_agents(st: &AppState, shared: &Shared, connection_id: &str) -> Result<(), String> {
+pub async fn forget_agents(st: &AppState, shared: &Shared, connection_id: &str) -> Result<(), ApiError> {
     forget(st, agent_key(connection_id)).await?;
     shared.tokens.forget(&token_key(connection_id, true));
     Ok(())
@@ -266,8 +256,8 @@ pub async fn forget_agents(st: &AppState, shared: &Shared, connection_id: &str) 
 
 /// Signs an account out: Google takes PDT's access back (when it can be reached; a failure is only logged), and PDT
 /// forgets the sign-in, the agents' and their tokens.
-pub async fn sign_out(st: &AppState, shared: &Shared, connection_id: &str) -> Result<(), String> {
-    if let Some(s) = sign_in(st, connection_id).await.map_err(|e| e.to_string())? {
+pub async fn sign_out(st: &AppState, shared: &Shared, connection_id: &str) -> Result<(), ApiError> {
+    if let Some(s) = sign_in(st, connection_id).await? {
         let transport = shared.transport.clone();
         let revoked =
             tokio::task::spawn_blocking(move || crate::oauth::revoke(transport.as_ref(), &s.refresh_token)).await;
