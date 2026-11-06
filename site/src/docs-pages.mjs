@@ -57,10 +57,22 @@ export const USER_SECTIONS = [
 /**
  * The collection id (and URL path) of a file under docs/: `dev/architecture.md` -> `docs/dev/architecture`. The user
  * docs are the site's main docs, so they drop `user/`: `user/getting-started/install.md` -> `docs/getting-started/install`.
+ * A page named after its section is the section's own: `user/troubleshooting/troubleshooting.md` -> `docs/troubleshooting`.
  */
 export function docId(entry) {
-  return `docs/${entry.replace(/^user\//, '').replace(/\.md$/, '').toLowerCase()}`;
+  const path = entry
+    .replace(/^user\//, '')
+    .replace(/\.md$/, '')
+    .replace(/^([^/]+)\/\1$/, '$1');
+  return `docs/${path.toLowerCase()}`;
 }
+
+/** The old addresses of pages named after their section (`/docs/troubleshooting/troubleshooting/`), now the section's. */
+export const MOVED = Object.fromEntries(
+  USER_SECTIONS.flatMap((s) =>
+    s.pages.includes(s.dir) ? [[`/docs/${s.dir}/${s.dir}/`, `/${docId(`user/${s.dir}/${s.dir}.md`)}/`]] : [],
+  ),
+);
 
 /** Whether a path relative to docs/ (`dev/architecture.md`) is one the site publishes. */
 export function isPublished(path) {

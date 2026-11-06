@@ -5,14 +5,19 @@ import '../styles/landing.css';
 import markOnDark from '../assets/pdt-mark-on-dark.svg?url';
 import { siteLinks } from '../links.mjs';
 import { NAME, SITE_NAME, pageTitle } from '../brand.mjs';
+import { sharedHead } from '../head.mjs';
 
 interface Props {
 	/** The page's name ("Features"), put before the site name; the landing page leaves it out. */
 	title?: string;
 	description: string;
+	/** False for a page search engines should leave out (the 404 page): no canonical address, `noindex`. */
+	indexed?: boolean;
 }
 
-const { title: page, description } = Astro.props;
+const { title: page, description, indexed = true } = Astro.props;
+const url = new URL(Astro.url.pathname, Astro.site).href;
+const head = sharedHead(Astro.site, import.meta.env.BASE_URL);
 const title = pageTitle(page);
 const links = siteLinks(import.meta.env.BASE_URL);
 
@@ -39,13 +44,14 @@ const menu = [
 		<link rel="icon" href={`${links.home}pdt-favicon-16.svg`} type="image/svg+xml" />
 		<title>{title}</title>
 		<meta name="description" content={description} />
-		<link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />
+		{indexed ? <link rel="canonical" href={url} /> : <meta name="robots" content="noindex" />}
+		{head.map(({ tag: Tag, attrs }) => <Tag {...attrs} />)}
 		<meta property="og:type" content="website" />
 		<meta property="og:site_name" content={SITE_NAME} />
 		<meta property="og:title" content={title} />
 		<meta property="og:description" content={description} />
-		<meta property="og:url" content={new URL(Astro.url.pathname, Astro.site).href} />
-		<meta name="twitter:card" content="summary" />
+		{indexed && <meta property="og:url" content={url} />}
+		<meta name="twitter:card" content="summary_large_image" />
 		<meta name="twitter:title" content={title} />
 		<meta name="twitter:description" content={description} />
 	</head>
