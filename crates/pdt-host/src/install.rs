@@ -333,14 +333,30 @@ fn bundle_requirement(team_id: &str) -> String {
     )
 }
 
-impl BundleInstaller {
-    fn staging(&self) -> Result<PathBuf, String> {
-        Ok(self.bundle.parent().ok_or("the bundle has no parent folder")?.join(".pdt-update-staging"))
-    }
+/// A fresh staging folder beside `target` (same file system, so the swap is a rename), removed when dropped. Its name
+/// is random and only its owner can enter it (0700 on Unix): where the parent folder is writable by another user, that
+/// user can't swap or edit the extracted files before they are moved into place (PDT-543).
+pub(crate) fn staging_beside(target: &Path) -> Result<tempfile::TempDir, String> {
+    let parent = target.parent().ok_or_else(|| format!("{} has no parent folder", target.display()))?;
+    let mut b = tempfile::Builder::new();
+    b.prefix(".pdt-update-staging-");
+    #[cfg(unix)]
+    b.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700));
+    b.tempdir_in(parent).map_err(|e| format!("making a staging folder in {}: {e}", parent.display()))
+}
 
+/// Whether a staging folder is left in `parent`.
+#[cfg(test)]
+pub(crate) fn staging_left(parent: &Path) -> bool {
+    std::fs::read_dir(parent)
+        .unwrap()
+        .flatten()
+        .any(|e| e.file_name().to_string_lossy().starts_with(".pdt-update-staging"))
+}
+
+impl BundleInstaller {
     /// Extracts the archive into `staging` and returns the `.app` in it.
     fn extract(&self, asset: &Path, staging: &Path) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(staging).map_err(|e| e.to_string())?;
         let mut tar = Command::new("tar");
         tar.arg("-xzf").arg(asset).arg("-C").arg(staging).stdout(Stdio::null()).stderr(Stdio::null());
         let ok = run_with_timeout(&mut tar, self.timeout)?;
@@ -385,32 +401,18 @@ impl Installer for BundleInstaller {
         Ok(())
     }
     fn install(&self, asset: &Path) -> Result<(), String> {
-        let staging = self.staging()?;
-        let _ = std::fs::remove_dir_all(&staging);
-        let new = match self.extract(asset, &staging) {
-            Ok(new) => new,
-            Err(e) => {
-                let _ = std::fs::remove_dir_all(&staging);
-                return Err(e);
-            }
-        };
-        if let Err(e) = self.verify_signature(&new) {
-            let _ = std::fs::remove_dir_all(&staging);
-            return Err(e);
-        }
+        let staging = staging_beside(&self.bundle)?;
+        let new = self.extract(asset, staging.path())?;
+        self.verify_signature(&new)?;
         let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(&new).status();
         let _tray = TrayPause::stop(&self.bundle);
         let prev = previous_bundle(&self.bundle);
-        let swapped = std::fs::rename(&self.bundle, &prev)
-            .map_err(|e| format!("moving the old bundle aside: {e}"))
-            .and_then(|()| {
-                std::fs::rename(&new, &self.bundle).map_err(|e| {
-                    let _ = std::fs::rename(&prev, &self.bundle);
-                    format!("moving the new bundle into place: {e}")
-                })
-            });
-        let _ = std::fs::remove_dir_all(&staging);
-        swapped
+        std::fs::rename(&self.bundle, &prev).map_err(|e| format!("moving the old bundle aside: {e}")).and_then(|()| {
+            std::fs::rename(&new, &self.bundle).map_err(|e| {
+                let _ = std::fs::rename(&prev, &self.bundle);
+                format!("moving the new bundle into place: {e}")
+            })
+        })
     }
     fn rollback(&self) -> Result<(), String> {
         let prev = previous_bundle(&self.bundle);
@@ -621,6 +623,22 @@ mod tests {
     }
 
     #[test]
+    fn each_update_stages_in_its_own_private_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("P.app");
+        let (a, b) = (staging_beside(&target).unwrap(), staging_beside(&target).unwrap());
+        assert_ne!(a.path(), b.path(), "a fixed name could be prepared by another user");
+        assert_eq!(a.path().parent(), Some(tmp.path()), "beside the target, so the swap is a rename");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(a.path()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        drop((a, b));
+        assert!(!staging_left(tmp.path()));
+    }
+
+    #[test]
     fn copy_installer_backs_up_and_restores() {
         let tmp = tempfile::tempdir().unwrap();
         let (target, backup, asset) = (tmp.path().join("t"), tmp.path().join("b"), tmp.path().join("a"));
@@ -773,7 +791,7 @@ mod tests {
         let err = i.install(&archive).unwrap_err();
         assert!(err.contains("not signed"), "{err}");
         assert_eq!(std::fs::read_to_string(bundle.join("v")).unwrap(), "old");
-        assert!(!previous_bundle(&bundle).exists() && !tmp.path().join(".pdt-update-staging").exists());
+        assert!(!previous_bundle(&bundle).exists() && !staging_left(tmp.path()));
         // Without a team the same bundle goes in (what the other tests rely on).
         let i = BundleInstaller { team_id: None, ..i };
         i.install(&archive).unwrap();
@@ -791,6 +809,6 @@ mod tests {
         i.backup().unwrap();
         assert!(i.install(&junk).is_err());
         assert!(bundle.is_dir());
-        assert!(!tmp.path().join(".pdt-update-staging").exists());
+        assert!(!staging_left(tmp.path()));
     }
 }

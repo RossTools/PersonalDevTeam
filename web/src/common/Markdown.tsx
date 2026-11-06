@@ -219,10 +219,11 @@ export const MarkdownImageContext = createContext<((src: string) => string) | nu
 
 const isRelative = (src: string) => !/^([a-z][a-z0-9+.-]*:|\/|#)/i.test(src);
 
+// Resolved against the page, so a protocol-relative `//host/x.png` counts as remote too (PDT-542).
 const remoteHost = (src: string) => {
-  if (!/^https?:\/\//i.test(src)) return null;
   try {
-    return new URL(src).host;
+    const url = new URL(src, location.href);
+    return /^https?:$/.test(url.protocol) && url.origin !== location.origin ? url.host : null;
   } catch {
     return null;
   }

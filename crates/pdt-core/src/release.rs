@@ -68,7 +68,11 @@ impl std::fmt::Display for Version {
 pub fn parse_version(s: &str) -> Option<Version> {
     let s = s.trim();
     let s = s.strip_prefix('v').unwrap_or(s);
-    let s = s.split('+').next()?;
+    let (s, build) = s.split_once('+').map_or((s, None), |(s, b)| (s, Some(b)));
+    // It goes into URLs as part of the tag (a comparison, the release's page): SemVer's characters only.
+    if build.is_some_and(|b| b.is_empty() || !b.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-')) {
+        return None;
+    }
     // SemVer's numeric identifiers: digits, no leading zero.
     let number = |p: &str| {
         (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && (p == "0" || !p.starts_with('0')))
@@ -533,7 +537,10 @@ mod tests {
         assert_eq!(v("v0.1.42"), Version { major: 0, minor: 1, patch: 42, local: false, pre: None });
         assert_eq!(v("0.1.0-local"), Version { major: 0, minor: 1, patch: 0, local: true, pre: None });
         assert_eq!(v("0.1.3+abc"), Version { major: 0, minor: 1, patch: 3, local: false, pre: None });
-        for bad in ["", "v", "1.2", "1.2.3.4", "0.1.0-rc.1", "latest", "0.x.1"] {
+        assert_eq!(v("0.1.3+g1a2b3c4.dirty-2").to_string(), "0.1.3");
+        // A tag goes into URLs as it is: its build suffix may only hold SemVer's characters.
+        let odd_builds = ["0.1.3+", "0.1.3+a/../b", "0.1.3+a?b", "0.1.3+a#b", "0.1.3+a+b", "0.1.3+a b", "0.1.3+é"];
+        for bad in ["", "v", "1.2", "1.2.3.4", "0.1.0-rc.1", "latest", "0.x.1"].into_iter().chain(odd_builds) {
             assert_eq!(parse_version(bad), None, "{bad}");
         }
         assert!(v("0.1.10").is_newer_than(&v("0.1.9")));

@@ -560,10 +560,7 @@ impl Files {
             return Err(ProviderError::NotFound);
         };
         let dir = assets_dir(&path);
-        if dir.file_name().map(|n| n.to_string_lossy() != folder).unwrap_or(true)
-            || file.contains("..")
-            || file.contains('\\')
-        {
+        if dir.file_name().map(|n| n.to_string_lossy() != folder).unwrap_or(true) || !plain_file_name(file) {
             return Err(ProviderError::NotFound);
         }
         let bytes = std::fs::read(dir.join(file)).map_err(io_failed)?;
@@ -1166,9 +1163,39 @@ impl DocumentProvider for LocalProvider {
     }
 }
 
+/// Whether a name is one file name and nothing else: no `..`, no separator, no root and no Windows drive prefix
+/// (`D:secret.txt` would replace the folder it is joined to, PDT-542).
+fn plain_file_name(name: &str) -> bool {
+    let mut parts = Path::new(name).components();
+    matches!((parts.next(), parts.next()), (Some(std::path::Component::Normal(n)), None) if n == name)
+        && !name.contains(['\\', '/', ':'])
+        && !name.contains("..")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_asset_name_is_one_plain_file_name() {
+        assert!(plain_file_name("shot.png"));
+        assert!(plain_file_name("my shot-2.png"));
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../x.png",
+            "a/b.png",
+            "a\\b.png",
+            "/x.png",
+            "D:secret.txt",
+            "C:\\x.png",
+            "\\\\h\\s\\x.png",
+            "x..png",
+        ] {
+            assert!(!plain_file_name(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn file_names_come_from_titles() {

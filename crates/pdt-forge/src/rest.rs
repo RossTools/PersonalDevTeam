@@ -581,7 +581,7 @@ impl<F: Flavor> RestClient<F> {
         if res.body.trim().is_empty() { Ok(Value::Null) } else { json(&res.body) }
     }
 
-    /// Every item of a list, following its `Link: next` pages (at most [`MAX_PAGES`]).
+    /// Every item of a list, following its `Link: next` pages (at most [`MAX_PAGES`]) on the API's own host.
     pub fn get_pages(&self, path: &str) -> Result<Vec<Value>, RestError<F>> {
         let mut out = vec![];
         let mut next = Some(path.to_string());
@@ -593,6 +593,13 @@ impl<F: Flavor> RestClient<F> {
                 _ => return Err(RestError::BadAnswer("a list is not an array".into())),
             }
             next = res.header("link").and_then(next_link);
+            // `call` sends the token to any whole URL it is given: a next page off the API's host is refused (PDT-543).
+            if let Some(n) = &next
+                && (n.starts_with("https://") || n.starts_with("http://"))
+                && !self.account().is_some_and(|a| same_host(n, &F::api_url(&a.api_url)))
+            {
+                return Err(RestError::BadAnswer(format!("the next page is on another host: {}", bare_url(n))));
+            }
         }
         Ok(out)
     }
@@ -754,6 +761,28 @@ mod tests {
         assert_eq!(c.get("a").unwrap(), Value::from(1));
         assert_eq!(c.get("a").unwrap(), Value::from(2));
         assert!(!t.sent()[1].headers.iter().any(|(k, _)| *k == "If-None-Match"));
+    }
+
+    #[test]
+    fn pages_are_followed_only_on_the_apis_host() {
+        let (c, t) = client();
+        let link = |to: &str| format!("<{to}>; rel=\"next\"");
+        t.on(
+            "GET",
+            "https://f.example/api/a",
+            Response::new(200, "[1]").with_header("Link", &link("https://f.example/api/a?page=2")),
+        )
+        .ok("GET", "https://f.example/api/a?page=2", "[2]");
+        assert_eq!(c.get_pages("a").unwrap(), [Value::from(1), Value::from(2)]);
+
+        for elsewhere in
+            ["https://evil.example/api/a?page=2", "http://f.example/api/a?page=2", "https://f.example:8443/api/a"]
+        {
+            let (c, t) = client();
+            t.on("GET", "https://f.example/api/a", Response::new(200, "[1]").with_header("Link", &link(elsewhere)));
+            assert!(matches!(c.get_pages("a"), Err(RestError::BadAnswer(_))), "{elsewhere}");
+            assert_eq!(t.sent().len(), 1, "{elsewhere} never received the token");
+        }
     }
 
     #[test]

@@ -25,7 +25,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   release's tag and `SHA256SUMS`, and the asset only once it matches. On macOS pdt-host also runs `codesign --verify`
   against `brand::MACOS_TEAM_ID` on the extracted `.app` before it removes quarantine and swaps it in. The install
   scripts pin the same key (a test checks) and check the same signature. Pinning a key or changing it:
-  [SDLC.md](../SDLC.md) "Release signing".
+  [SDLC.md](../SDLC.md) "Release signing". Downloads follow redirects only to https, and pdt-host extracts an update
+  into a fresh owner-only folder (`install::staging_beside`), never one with a fixed name another user could prepare.
 - **CI and the release build run third-party actions only by commit SHA.** A tag can be moved to other code, which
   would build or upload a different release whose checksums still match. `scripts/check-action-pins.sh` enforces it;
   [SDLC.md](../SDLC.md) "Dependabot" says how to pin one.
@@ -300,7 +301,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The secret tools are no way round the agent's sandbox.** `run_with_secrets` and `write_secret_file` run in pdtd, so
   they ask (unless the session asks before nothing), must name a secret, and stay in the session's folder, out of
   `.git` and off symlinks (pdt-api `vault.rs` `session_path`). Don't mark them non-asking or let the PM act for them.
-- **Tokens are never returned by the API or logged**, and follow a redirect only to the same host.
+- **Tokens are never returned by the API or logged**, and follow a redirect only to the same host. The forges'
+  `get_pages` follows a `Link: next` page only on the API's own host, since `call` sends the token to any whole URL.
 - **An MCP server's sign-in addresses are https (or loopback http) before PDT uses them**: its authorization
   server and every endpoint in that server's metadata pass `pdt_core::mcp_servers::endpoint_ok`, and the metadata's
   `issuer` matches (`AuthServer::check`, in pdt-api `mcp_oauth.rs` `discover`), because the browser opens the sign-in

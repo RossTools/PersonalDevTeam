@@ -116,6 +116,10 @@ async fn asset(State(f): State<Fake>, Path(id): Path<u64>, h: HeaderMap) -> Resp
         let to = format!("http://127.0.0.1:{port}/storage/4?X-Amz-Signature=sekrit");
         return (StatusCode::FOUND, [(header::LOCATION, to)]).into_response();
     }
+    if id == 7 {
+        // Off https: a file on this machine.
+        return (StatusCode::FOUND, [(header::LOCATION, "file:///etc/passwd")]).into_response();
+    }
     let to = format!("{}/storage/{id}", f.base.get().unwrap());
     (StatusCode::FOUND, [(header::LOCATION, to)]).into_response()
 }
@@ -615,6 +619,17 @@ async fn a_renamed_repository_is_followed_with_the_token_and_remembered() {
     assert_eq!(std::fs::read(path).unwrap(), WIN);
     assert!(fake.id_hits.load(Ordering::SeqCst) >= 3, "latest, SHA256SUMS and the asset by id");
     assert!(!fake.token_leaked.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn an_asset_redirect_off_https_is_refused() {
+    let (c, _) = serve().await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("x");
+    let asset = pdt_update::Asset { id: 7, name: "x".into(), size: 100 };
+    let e = c.download(Some("good"), &asset, &dest).await.unwrap_err();
+    assert_eq!(e, UpdateError::BadRelease("a download redirected to a file address".into()));
+    assert!(!dest.exists());
 }
 
 #[tokio::test]
