@@ -55,7 +55,7 @@ answer and resolve comments too.
   can open** and pick one (click it, or move with ↑ ↓ and press Enter). PDT links the file; it doesn't copy it. Each
   file shows when it was last edited, **On this ticket** when it is linked to the ticket already, **In PDT** when PDT
   has it elsewhere, and **Open** to see it at the provider. **Local** lists the `.md` and `.xlsx` files in the local
-  documents folders.
+  documents folders and their subfolders (not hidden ones); to bring in a `.csv`, drop it below.
 - **From your computer** (in **Import a document**): drop a file anywhere on the dialog, or click **Choose file…**. A
   `.md` file becomes a doc, a `.xlsx` or `.csv` file a sheet, copied into the local documents folder. A spreadsheet's
   charts, pictures and pivot tables aren't kept; PDT says so. PDT refuses a spreadsheet with more than a million cells,
