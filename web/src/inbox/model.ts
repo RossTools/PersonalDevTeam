@@ -182,13 +182,15 @@ export function triageOf(item: InboxItem): { summary: string | null; issue: stri
 }
 
 /** An asking tool call's tool, agent, session and arguments (pretty JSON) (PDT-256). */
-export function confirmOf(item: InboxItem): { tool: string; agent: string | null; session: string | null; input: string } {
+export function confirmOf(item: InboxItem): { tool: string; agent: string | null; session: string | null; input: string; secretNote: string | null } {
   const b = item.body;
   return {
     tool: typeof b.tool === 'string' ? b.tool : item.title,
     agent: typeof b.agent === 'string' ? b.agent : null,
     session: typeof b.sessionTitle === 'string' && b.sessionTitle ? b.sessionTitle : null,
     input: JSON.stringify(b.input ?? {}, null, 2),
+    // The call holds a secret's value, which the input shows by the secret's name.
+    secretNote: typeof b.secretNote === 'string' ? b.secretNote : null,
   };
 }
 

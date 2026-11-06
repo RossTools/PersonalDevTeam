@@ -508,6 +508,18 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/inbox/c/answer').map((c) => c.body)).toContainEqual({ choice: 'deny', text: 'Not now' }));
   });
 
+  it('says when a call holds a secret’s value, which its arguments show by name (PDT-539)', () => {
+    const note = "The call holds a secret's value, shown here by the secret's name; it runs with the value.";
+    const call = item('c', {
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',
+      body: { tool: 'report_bug', agent: 'Codex', sessionTitle: 'PM', input: { title: '[secret:TOKEN]' }, secretNote: note },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[call]} selectedId="c" onSelect={() => {}} />);
+    expect(screen.getByRole('region', { name: 'Agent call' })).toHaveTextContent(note);
+  });
+
   it('shows the PM’s batch of decisions as rows: unticked rows stay out of Allow, and none ticked can’t be allowed (PDT-475)', async () => {
     const row = (n: number, decision: string, extra: object = {}) => ({
       itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision, agentic: false, ...extra,
