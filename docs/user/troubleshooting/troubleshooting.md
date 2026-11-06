@@ -142,8 +142,9 @@ you're on or a new one:
   Click **Replace the token** and paste a new one, or remove it under **Danger zone**.
 - **could not reach GitHub: …** (after **Check for updates**: **Couldn't check: could not reach GitHub: …**): check
   your network or proxy. PDT tries again at the next check.
-- **Couldn't check: …** with another reason (GitHub answered with an error, no release was found): it says what
-  GitHub answered. Check **Release repository** if you set one; otherwise try again later.
+- Another error, such as **no release was found, or the token cannot see the release repository** or **GitHub
+  answered …** (after **Check for updates**, the same after **Couldn't check:**): it says what GitHub answered. Check
+  **Release repository** if you set one; otherwise try again later.
 - **Updates are off: …**, with no **Check for updates** button: this copy of PDT can't update itself, and the rest
   of the line says why. A development copy never updates; the installed app can't update from a disk image or your
   Downloads folder (move it to **Applications** and open it from there).
