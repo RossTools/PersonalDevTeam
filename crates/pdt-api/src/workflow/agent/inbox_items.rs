@@ -37,8 +37,13 @@ pub(crate) async fn ask_confirm_rows(
     let info = st.registry().tool_infos().into_iter().find(|t| t.name == tool);
     let title = info.map(|t| t.title).filter(|t| !t.is_empty()).unwrap_or_else(|| tool.to_string());
     let agent = s.agent.map(|a| a.label());
-    let mut body = json!({"tool": tool, "toolTitle": title, "input": st.store.redactor().json(input), "agent": agent,
-                          "sessionTitle": s.title});
+    let shown = st.store.redactor().json(input);
+    // The item shows a secret's value by its name, and says so (PDT-539): only the waiting call has the value.
+    let secret = shown != *input;
+    let mut body = json!({"tool": tool, "toolTitle": title, "input": shown, "agent": agent, "sessionTitle": s.title});
+    if secret {
+        body["secretNote"] = json!(crate::conversations::SECRET_NOTE);
+    }
     if rows.is_array() {
         body["rows"] = rows;
     }
@@ -82,6 +87,14 @@ pub(crate) async fn run_allowed(
     } else {
         format!(" The user unticked {}, so PDT left them as they were.", dropped.join(", "))
     };
+    // The persona may have lost the tool since it asked (PDT-501, PDT-539).
+    if !crate::mcp::session_tools(st, s).await.iter().any(|t| t == tool) {
+        let e = format!("{tool} is no longer one of this session's tools");
+        return (
+            format!("[PDT] The user allowed your {tool} call ({title}), but PDT didn't run it: {e}."),
+            json!({"allowed": true, "error": e}),
+        );
+    }
     let cx = crate::mcp::tools::Cx { st, session: s, input: &input, confirmed: true };
     let r = st.store.redactor();
     match st.registry().call_tool(&cx, tool, input.clone()).await {
@@ -142,7 +155,17 @@ pub(crate) async fn answer_confirm(st: &AppState, item: &InboxItem, choice: &str
         working_again(st, item).await?;
         return Ok(json!({"allowed": allowed, "waited": true}));
     }
-    let (text, out) = if allowed {
+    let (text, out) = if allowed && item.body.get("secretNote").is_some() {
+        // The item keeps the call's input with the secret's name in place of its value (PDT-539): running that would
+        // send the name, so the agent makes the call again.
+        let e = "it held a secret's value, which PDT keeps only while the call waits";
+        (
+            format!(
+                "[PDT] The user allowed your {tool} call ({title}), but PDT didn't run it: {e}. Make the call again."
+            ),
+            json!({"allowed": true, "error": e}),
+        )
+    } else if allowed {
         run_allowed(st, &s, tool, title, input, &dropped).await
     } else {
         (denied_text(tool, title), json!({"allowed": false}))

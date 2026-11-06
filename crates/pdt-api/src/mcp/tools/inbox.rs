@@ -67,7 +67,7 @@ async fn run(cx: &Cx<'_>, mut a: InboxDecide) -> Result<Value, String> {
     let rows: Vec<DecideRow> = found(st, &a).await.into_iter().map(|f| f.map(|(r, _)| r)).collect::<Result<_, _>>()?;
     decide::check_unique(&rows)?;
     // The call waits on the table: the user's Allow applies the rows they kept, in this same call.
-    let kept = match crate::conversations::ask_inline(st, cx.session, NAME, cx.input, false, Some(rows.clone())).await {
+    let kept = match crate::conversations::ask_inline(st, cx.session, NAME, cx.input, None, Some(rows.clone())).await {
         Some(Asked::Allowed(kept)) => decide::kept(rows.len(), kept.as_deref())?,
         Some(Asked::Denied(why)) => {
             let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();

@@ -177,11 +177,17 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         let claude_prompts = cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
             && !cx.session.asks_nothing()
             && has_ask_rule(cx.st, &cx.session.id, tool);
-        if claude_prompts || crate::pm::acts_without_asking(cx.st, cx.session, target).await {
+        if claude_prompts {
+            return Ok(());
+        }
+        // Letting an external ticket in takes the user's yes even where the project lets the PM act (PDT-201, PDT-539).
+        if !crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await
+            && crate::pm::acts_without_asking(cx.st, cx.session, target).await
+        {
             return Ok(());
         }
     }
-    ask_the_user(cx, tool, in_inbox).await
+    ask_the_user(cx, tool, target, in_inbox).await
 }
 
 /// The PM's comment on a ticket that is being worked on (PDT-537): "Ticket comments to the agent" sends it to the
@@ -194,23 +200,36 @@ pub(crate) async fn confirm_pm_comment(cx: &Cx<'_>, tool: &str, ticket: &str) ->
     if cx.confirmed || !pm || cx.st.store.active_attempt(ticket).await.map_err(store)?.is_none() {
         return Ok(());
     }
-    if crate::pm::acts_without_asking(cx.st, cx.session, &AskTarget::Ticket(ticket.into())).await {
+    let target = AskTarget::Ticket(ticket.into());
+    if crate::pm::acts_without_asking(cx.st, cx.session, &target).await {
         return Ok(());
     }
-    ask_the_user(cx, tool, false).await
+    ask_the_user(cx, tool, &target, false).await
 }
 
-/// Asks the user about this call and waits for their answer ([`confirmable`]).
-async fn ask_the_user(cx: &Cx<'_>, tool: &str, in_inbox: bool) -> Result<(), String> {
+/// Asks the user about this call and waits for their answer ([`confirmable`]). Their yes is kept as a grant for the
+/// call only when it lets an external ticket in, the one call that checks for it (`edit_ticket`, PDT-539).
+async fn ask_the_user(cx: &Cx<'_>, tool: &str, target: &AskTarget, in_inbox: bool) -> Result<(), String> {
+    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
+    let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
+    let grant = |id: &str| {
+        if each_time {
+            crate::workflow::agent::grant(cx.st, &cx.session.id, id, tool, cx.input);
+        }
+    };
     if !in_inbox {
-        // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
-        let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
-        if !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool) {
+        // "Always allow in this session" covers the tool for what it acts on, not for other projects (PDT-539).
+        let scope = crate::pm::ask_scope(cx.st, target).await;
+        if !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool, &scope) {
             return Ok(());
         }
+        let always = (!each_time).then_some(scope.as_str());
         use crate::conversations::Asked;
-        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, !each_time, None).await {
-            Some(Asked::Allowed(_)) => return Ok(()),
+        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, always, None).await {
+            Some(Asked::Allowed(_)) => {
+                grant(&format!("pdt-ask-{}", uuid::Uuid::now_v7()));
+                return Ok(());
+            }
             Some(Asked::Denied(why)) => {
                 let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
                 return Err(format!("The user denied this {tool} call, so PDT didn't make it.{why}"));
@@ -228,7 +247,7 @@ async fn ask_the_user(cx: &Cx<'_>, tool: &str, in_inbox: bool) -> Result<(), Str
     crate::notifications::kick(cx.st);
     match waited {
         Confirmed::Allowed(_) => {
-            crate::workflow::agent::grant(cx.st, &cx.session.id, &item.id, tool, cx.input);
+            grant(&item.id);
             Ok(())
         }
         Confirmed::Denied => Err(format!("The user denied this {tool} call in the Inbox, so PDT didn't make it.")),

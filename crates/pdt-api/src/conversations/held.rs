@@ -40,11 +40,12 @@ struct Waiting {
     detached: bool,
 }
 
-/// PDT's requests waiting for an answer, by `(session, request)`, and the tools the user always allowed in a session.
+/// PDT's requests waiting for an answer, by `(session, request)`, and the tools the user always allowed in a session,
+/// each with what it acts on (`pm::ask_scope`).
 #[derive(Default)]
 pub(crate) struct Held {
     waiting: Mutex<HashMap<(String, String), Waiting>>,
-    always: Mutex<HashMap<String, HashSet<String>>>,
+    always: Mutex<HashMap<String, HashSet<(String, String)>>>,
 }
 
 impl Held {
@@ -84,26 +85,31 @@ pub(crate) enum Asked {
     Waiting,
 }
 
+/// What a card or an Inbox item says of a call whose input holds a secret's value (PDT-539).
+pub(crate) const SECRET_NOTE: &str =
+    "The call holds a secret's value, shown here by the secret's name; it runs with the value.";
+
 /// Whether a request is one of PDT's own (not the agent's).
 pub(crate) fn is_held(request_id: &str) -> bool {
     request_id.starts_with(PREFIX)
 }
 
-/// Whether the user chose "Always allow in this session" for `tool` in this session.
-pub(crate) fn allowed_always(st: &AppState, session_id: &str, tool: &str) -> bool {
+/// Whether the user chose "Always allow in this session" for `tool` acting on `scope` (`pm::ask_scope`) in this session.
+pub(crate) fn allowed_always(st: &AppState, session_id: &str, tool: &str, scope: &str) -> bool {
     let always = st.conversations.held.always.lock().unwrap_or_else(|e| e.into_inner());
-    always.get(session_id).is_some_and(|t| t.contains(tool))
+    always.get(session_id).is_some_and(|t| t.contains(&(tool.to_string(), scope.to_string())))
 }
 
 /// Asks the user about an asking tool's call (`tool`, PDT's own name for it) in the session's conversation and waits
 /// for the answer. None when the session isn't a conversation loaded in this pdtd (a terminal): it can't ask there.
-/// `can_always`: whether "Always allow in this session" is offered. `rows`: a batch call's rows the user can untick.
+/// `always`: what "Always allow in this session" would cover (`pm::ask_scope`), when it is offered. `rows`: a batch
+/// call's rows the user can untick.
 pub(crate) async fn ask(
     st: &AppState,
     s: &Session,
     tool: &str,
     input: &Value,
-    can_always: bool,
+    always: Option<&str>,
     rows: Option<Vec<DecideRow>>,
 ) -> Option<Asked> {
     if s.mode != SessionMode::Conversation {
@@ -134,6 +140,9 @@ pub(crate) async fn ask(
         st.store.session_events_of_kind(&s.id, "turn").await.ok().and_then(|t| {
             t.last().filter(|e| matches!(e.event, AgentEvent::Turn { .. })).and_then(|e| e.turn_id.clone())
         });
+    // The card shows a secret's value by its name, and says so (PDT-539); the call runs with the value.
+    let shown = st.store.redactor().json(input);
+    let description = (shown != *input).then(|| SECRET_NOTE.to_string());
     let open = Card {
         st: st.clone(),
         c,
@@ -145,10 +154,10 @@ pub(crate) async fn ask(
             request_kind: RequestKind::Approval,
             tool: format!("mcp__{}__{tool}", pdt_core::mcp::SERVER_NAME),
             title: title.clone(),
-            description: None,
-            input: st.store.redactor().json(input),
+            description,
+            input: shown,
             tool_call_id: None,
-            can_always: can_always && rows.is_none(),
+            can_always: always.is_some() && rows.is_none(),
             diff: None,
             rows,
             state: RequestState::Open,
@@ -166,16 +175,17 @@ pub(crate) async fn ask(
         Err(_) if st.conversations.held.detach(&s.id, &id) => {
             // Back to the agent before its own timeout; the card stays for the user (PDT-589).
             let (st, s, tool, input) = (st.clone(), s.clone(), tool.to_string(), input.clone());
+            let always = always.map(str::to_string);
             tokio::spawn(async move {
                 let reply = rx.await;
-                let asked = settle(&st, &s, &mut open, reply, &tool, &input, can_always).await;
+                let asked = settle(&st, &s, &mut open, reply, &tool, always.as_deref()).await;
                 answered_late(&st, &s, &tool, &title, input, &keys, asked).await;
             });
             return Some(Asked::Waiting);
         }
         Err(_) => rx.await,
     };
-    Some(settle(st, s, &mut open, reply, tool, input, can_always).await)
+    Some(settle(st, s, &mut open, reply, tool, always).await)
 }
 
 /// Shows the card answered (or expired) and reads the answer.
@@ -185,24 +195,17 @@ async fn settle(
     open: &mut Card,
     reply: Result<Reply, oneshot::error::RecvError>,
     tool: &str,
-    input: &Value,
-    can_always: bool,
+    scope: Option<&str>,
 ) -> Asked {
     open.done = true;
-    let id = open.id.clone();
     let asked = match reply {
-        Ok((answer, by_user, kept)) => {
+        Ok((answer, _, kept)) => {
             open.show(RequestState::Answered, Some(answer.clone())).await;
             match answer {
                 Answer::Approve { always } => {
-                    if always && can_always {
+                    if let Some(scope) = scope.filter(|_| always) {
                         let mut a = st.conversations.held.always.lock().unwrap_or_else(|e| e.into_inner());
-                        a.entry(s.id.clone()).or_default().insert(tool.to_string());
-                    }
-                    // The user's own yes is good for this very call (PDT-201), as for an agent's prompt.
-                    if by_user {
-                        st.grants.hold(&s.id, &id, tool, input);
-                        st.grants.answered(&s.id, &id, true);
+                        a.entry(s.id.clone()).or_default().insert((tool.to_string(), scope.to_string()));
                     }
                     Asked::Allowed(kept)
                 }

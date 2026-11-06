@@ -31,7 +31,7 @@ mod routes;
 mod state;
 mod terminal;
 
-pub(crate) use held::{Asked, allowed_always, ask as ask_inline};
+pub(crate) use held::{Asked, SECRET_NOTE, allowed_always, ask as ask_inline};
 use live::{Unstored, conv, ensure_live, flush_unstored, park, refresh_activity};
 pub(crate) use routes::{answer_request, router};
 pub(crate) use state::{

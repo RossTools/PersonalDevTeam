@@ -495,7 +495,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'confirm': {
-        const { tool, agent, session, input } = confirmOf(item);
+        const { tool, agent, session, input, secretNote } = confirmOf(item);
         // Only PDT's own tools ask here, by their bare names.
         const pdt = pdtApproval(pdtTool(tool) ? tool : `mcp__pdt__${tool}`, item.body.input);
         if (rows) {
@@ -504,7 +504,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         }
         return {
           region: 'Agent call',
-          why: `${session ?? 'An agent session'}${agent ? ` (${agent})` : ''} wants to call ${tool}. ${agent ?? 'Its agent'} can't ask in its own prompt, so PDT asks here; either way the agent hears what happened.`,
+          why: `${session ?? 'An agent session'}${agent ? ` (${agent})` : ''} wants to call ${tool}. ${agent ?? 'Its agent'} can't ask in its own prompt, so PDT asks here; either way the agent hears what happened.${secretNote ? ` ${secretNote}` : ''}`,
           content: pdt
             ? <CodeCard aria-label={pdt.title} title={pdt.title} aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')}><div className="p-2.5">{pdt.preview}</div></CodeCard>
             : <CodeCard aria-label="The call's arguments" title={<span className="font-mono">{tool}</span>}
