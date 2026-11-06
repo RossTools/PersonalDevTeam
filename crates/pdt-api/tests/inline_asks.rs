@@ -192,7 +192,7 @@ async fn a_pm_that_may_act_asks_nothing() {
 }
 
 /// PDT-492: a terminal session has no conversation to show a card in, so its call waits on its Inbox item instead:
-/// the agent never ends its turn to wait. Deny and Allow both come back to the same call.
+/// the agent never ends its turn to wait. Deny (with the user's reason) and Allow both come back to the same call.
 #[tokio::test]
 async fn a_terminal_call_waits_on_its_inbox_item() {
     let env = setup().await;
@@ -229,11 +229,19 @@ async fn a_terminal_call_waits_on_its_inbox_item() {
     let item = waiting_item().await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!call_.is_finished(), "the call waits for the answer");
-    let (s, v) =
-        call_as_ui(&env.app, "POST", &format!("/api/inbox/{item}/answer"), Some(json!({"choice": "deny"}))).await;
+    let (s, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{item}/answer"),
+        Some(json!({"choice": "deny", "text": "Not now"})),
+    )
+    .await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let said = call_.await.unwrap();
-    assert!(said.contains("denied") && !said.contains("End your turn"), "{said}");
+    assert!(
+        said.contains("denied") && said.contains("They said: Not now") && !said.contains("End your turn"),
+        "{said}"
+    );
 
     // Allow: the same call goes on and runs (here it finds no such secret).
     let call_ = run(2);
@@ -482,4 +490,110 @@ async fn an_allow_rule_in_the_folder_never_skips_the_ask_after_leaving_bypass() 
         assert!(said.contains("\"created\": true"), "{launched}: asked once: {said}");
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }
+}
+
+/// PDT-526: every core tool marked `asks` asks before it runs. A Codex PM, which can't ask in its own prompt, calls each
+/// with arguments that get past its own checks, and each opens a card; the Deny comes back to the call. A new asking
+/// tool goes in `calls`, so this fails until it is shown to ask.
+#[tokio::test]
+async fn every_core_asking_tool_asks() {
+    let env = setup().await;
+    // "Ticket proposals" puts an agent's ticket in the Inbox, for `inbox_decide`.
+    pdt_api::install_builtins(&env.state).await;
+    pm_on(&env, "codex", "ask").await;
+    let reg = env.state.registry();
+    let core = reg.integrations().iter().find(|i| i.id() == "core").unwrap();
+    let mut asking: Vec<&str> = core.tools().iter().filter(|t| t.decl.asks).map(|t| t.decl.name).collect();
+    asking.sort();
+
+    // What the calls name: a second ticket, a web link, a running session, an enabled workflow, a ticket proposal.
+    let url = format!("/api/projects/{}/tickets", env.project);
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"title": "Second", "stage": "todo"}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let (s, v) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let first = v["items"].as_array().unwrap().iter().find(|t| t["title"] == "Fix the login").unwrap().clone();
+    let web = format!("/api/tickets/{}/web-links", first["id"].as_str().unwrap());
+    let (s, v) = call_as_ui(&env.app, "POST", &web, Some(json!({"url": "https://example.com/linked"}))).await;
+    assert!(s.is_success(), "{v}");
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "codex", "mode": "terminal",
+                      "cols": 80, "rows": 24});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let other = v["id"].as_str().unwrap().to_string();
+    let wf = json!({"name": "Asked run", "nodes": [{"id": "go", "kind": "manual", "version": 1}], "edges": []});
+    let (s, v) = call(&env.app, "POST", "/api/workflows", Some(json!({"doc": wf, "enabled": true}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let (s, v) = common::call_with(
+        &env.app,
+        "POST",
+        &url,
+        Some(json!({"title": "Proposed", "stage": "todo", "reason": "Found it."})),
+        &[("x-agent-session", &other)],
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let proposed = v["key"].as_str().unwrap().to_string();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !inbox(&env).await.iter().any(|i| i["kind"] == "ticket_proposal") {
+        assert!(Instant::now() < deadline, "no ticket proposal");
+        pdt_api::run_workflows(&env.state).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let calls: Vec<(&str, Value)> = vec![
+        ("create_ticket", json!({"project": "PX", "title": "Asked"})),
+        ("edit_ticket", json!({"ticket": "PX-1", "title": "Edited"})),
+        ("link_tickets", json!({"ticket": "PX-1", "other": "PX-2", "kind": "relates"})),
+        ("unlink_tickets", json!({"ticket": "PX-1", "other": "PX-2", "kind": "relates"})),
+        ("stop_ticket", json!({"ticket": "PX-1"})),
+        ("link_issue", json!({"ticket": "PX-1", "issue": "https://example.com/new"})),
+        ("unlink_issue", json!({"ticket": "PX-1", "issue": "https://example.com/linked"})),
+        ("send_to_session", json!({"session": other, "text": "hello"})),
+        ("run_with_secrets", json!({"command": "echo hi", "env": {"KEY": "secret:pdt-526-none"}})),
+        ("write_secret_file", json!({"path": "asked.env", "template": "KEY={{secret.pdt-526-none}}"})),
+        ("workflow_run", json!({"name": "Asked run", "project": "PX"})),
+        ("workflow_import", json!({"text": "not a workflow"})),
+        ("inbox_decide", json!({"items": [{"item": proposed, "decision": "reject", "note": "No."}]})),
+    ];
+    let mut named: Vec<&str> = calls.iter().map(|(t, _)| *t).collect();
+    named.sort();
+    assert_eq!(named, asking, "every core asking tool, and only those, is called here");
+
+    let id = start_pm(&env, "who").await;
+    wait_said(&env, &id, 1).await;
+    let mut answered: Vec<String> = vec![];
+    for (tool, args) in calls {
+        let n = agent_says(&env, &id).await.len();
+        send(&env, &id, &format!("mcp: {tool} {args}")).await;
+        // Its card, unless the call came back without asking.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let req = loop {
+            let all = events(&env, &id).await;
+            let open = all.iter().find(|e| {
+                e["event"]["kind"] == "request"
+                    && e["event"]["state"] == "open"
+                    && !answered.iter().any(|a| e["event"]["id"] == a.as_str())
+            });
+            if let Some(e) = open {
+                break e["event"].clone();
+            }
+            let said = agent_says(&env, &id).await;
+            let back = said[n..].iter().find(|m| m.starts_with(&format!("mcp {tool}")));
+            assert!(back.is_none(), "{tool} came back without asking: {back:?}");
+            assert!(Instant::now() < deadline, "{tool} opened no card");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        let rid = req["id"].as_str().unwrap().to_string();
+        assert_eq!(req["tool"], format!("mcp__pdt__{tool}"), "{tool} asked: {req}");
+        answer(&env, &id, &rid, json!({"type": "deny", "message": "Not this one"})).await;
+        let said = said_after(&env, &id, n, &format!("mcp {tool}")).await;
+        assert!(said.contains("denied") && said.contains("Not this one"), "{tool}: {said}");
+        answered.push(rid);
+    }
+    let titles = ticket_titles(&env).await;
+    assert!(!titles.contains(&"Asked".to_string()) && !titles.contains(&"Edited".to_string()), "{titles:?}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    call(&env.app, "POST", &format!("/api/sessions/{other}/kill"), None).await;
+    env.state.ptys.shutdown().await;
 }

@@ -45,6 +45,13 @@ impl Grants {
         }
     }
 
+    /// The user's yes to a call PDT asked them about itself (an inline card, an Inbox item): good for that very call.
+    pub(crate) fn allow(&self, session_id: &str, tool: &str, input: &Value) {
+        let mut g = self.granted.lock().unwrap_or_else(|e| e.into_inner());
+        g.retain(|x| x.3.elapsed() < GRANT_TTL);
+        g.push((session_id.into(), tool.into(), input.clone(), Instant::now()));
+    }
+
     /// Takes the user's yes to this call, if they gave one.
     pub(crate) fn take(&self, session_id: &str, tool: &str, input: &Value) -> bool {
         let mut g = self.granted.lock().unwrap_or_else(|e| e.into_inner());

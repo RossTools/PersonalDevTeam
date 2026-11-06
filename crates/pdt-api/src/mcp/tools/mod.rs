@@ -1,6 +1,7 @@
 //! pdt-mcp's tools. Inputs are the API's request types where one exists (their JSON Schema from
 //! schemars), and each tool runs the function the matching route runs, so the API and the tools can't drift.
 
+mod asking;
 mod inbox;
 mod issue_links;
 mod notes;
@@ -13,13 +14,14 @@ mod update_ticket;
 mod watches;
 mod workflows;
 
+pub(crate) use asking::{Answered, said, tool_title};
 pub(crate) use step::{SubmitOutcome, add_review_comment};
 
 use crate::error::ApiError;
 use crate::integrations::Tool;
 use crate::routes::{AppState, now_ms};
-use crate::workflow::agent::Confirmed;
 use crate::workflow::catalog::Category;
+use asking::{Ask, ask_for_call};
 use axum::Json;
 use axum::extract::State;
 use pdt_core::inbox::Question;
@@ -202,39 +204,13 @@ pub(crate) async fn confirm_pm_comment(cx: &Cx<'_>, tool: &str, ticket: &str) ->
 
 /// Asks the user about this call and waits for their answer ([`confirmable`]).
 async fn ask_the_user(cx: &Cx<'_>, tool: &str, in_inbox: bool) -> Result<(), String> {
-    if !in_inbox {
-        // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
-        let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
-        if !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool) {
-            return Ok(());
-        }
-        use crate::conversations::Asked;
-        match crate::conversations::ask_inline(cx.st, cx.session, tool, cx.input, !each_time, None).await {
-            Some(Asked::Allowed(_)) => return Ok(()),
-            Some(Asked::Denied(why)) => {
-                let why = why.map(|w| format!(" They said: {w}")).unwrap_or_default();
-                return Err(format!("The user denied this {tool} call, so PDT didn't make it.{why}"));
-            }
-            Some(Asked::Ended) => {
-                return Err(format!("{tool} was not run: the turn ended before the user answered."));
-            }
-            Some(Asked::Waiting) => return Err(crate::workflow::agent::still_waiting(tool)),
-            None => {}
-        }
+    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
+    let each_time = !in_inbox && crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
+    if !in_inbox && !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool) {
+        return Ok(());
     }
-    let item = crate::workflow::agent::ask_confirm(cx.st, cx.session, tool, cx.input).await?;
-    crate::notifications::kick(cx.st);
-    let waited = crate::workflow::agent::wait_confirm(cx.st, &item).await;
-    crate::notifications::kick(cx.st);
-    match waited {
-        Confirmed::Allowed(_) => {
-            crate::workflow::agent::grant(cx.st, &cx.session.id, &item.id, tool, cx.input);
-            Ok(())
-        }
-        Confirmed::Denied => Err(format!("The user denied this {tool} call in the Inbox, so PDT didn't make it.")),
-        Confirmed::Ended => Err(format!("{tool} was not run: its Inbox item closed before the user answered.")),
-        Confirmed::Waiting => Err(crate::workflow::agent::still_waiting(tool)),
-    }
+    let ask = Ask { inline: !in_inbox, can_always: !each_time, rows: None, unchanged: "PDT didn't make it" };
+    ask_for_call(cx, tool, ask).await.map(|_| ())
 }
 
 /// A ticket's id from its id or key (`ABC-12`; a bare number is in `project`).
