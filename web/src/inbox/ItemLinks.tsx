@@ -66,7 +66,8 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
   const worktreeId = item.ticketId ? attempt?.worktreeId ?? null : null;
   const projectId = item.projectId ?? '';
   const size = useChangeSize(worktreeId);
-  const { choices } = useRunChoices(projectId, worktreeId);
+  // Only a ticket's worktree has a Run menu; other items (the PM's, whose project has no repository) ask nothing.
+  const { choices } = useRunChoices(projectId, worktreeId, !!worktreeId);
   const start = useStartRun(projectId, (id) => tabs.openRun({ id, projectId }));
   const pr = item.changeRequest ? null : item.ticketId ? attempt?.pr ?? null : null;
   const run = (choice: string) => {

@@ -203,6 +203,16 @@ describe('inbox', () => {
     expect(screen.getByText('Item g55')).toBeInTheDocument();
   });
 
+  it('never asks for the run configuration of an item without a worktree, such as the PM\'s', async () => {
+    const pm = item('pm', { kind: 'question', group: 'question', projectId: 'pm-project', ticketId: null, ticketKey: null, ticketTitle: null,
+      sessionId: 'pm-sess', personaName: 'PM', title: 'Which first?', body: { questions: [{ question: 'Which first?', choices: [] }] } });
+    const calls = stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[pm]} selectedId="pm" onSelect={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls.filter((c) => c.path.includes('/run-config'))).toEqual([]);
+  });
+
   it('answers a gate with Enter and moves on', async () => {
     const calls = stubApi({ 'POST /api/inbox/g/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();
