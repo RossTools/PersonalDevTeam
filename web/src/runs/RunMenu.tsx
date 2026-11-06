@@ -5,11 +5,15 @@ import type { NewRun } from '../api/gen/NewRun';
 import type { RunKind } from '../api/gen/RunKind';
 import { runKeys } from './queries';
 
-/** The runs and tests the effective configuration of one place offers, and any error in that configuration. */
-export function useRunChoices(projectId: string, worktreeId: string | null) {
+/**
+ * The runs and tests the effective configuration of one place offers, and any error in that configuration. Off
+ * (`enabled` false) where no Run menu shows, so a project without a repository (the PM's) is never asked.
+ */
+export function useRunChoices(projectId: string, worktreeId: string | null, enabled = true) {
   const config = useQuery({
     queryKey: runKeys.config(projectId, worktreeId),
     queryFn: () => api.runConfig(projectId, worktreeId),
+    enabled: enabled && !!projectId,
   });
   const eff = config.data?.effective;
   const choices = eff ? [...eff.runs.map((d) => `run:${d.name}`), ...eff.tests.map((d) => `test:${d.name}`)] : [];
