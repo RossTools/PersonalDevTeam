@@ -322,6 +322,17 @@ async fn finish(st: &AppState, shared: &Shared, q: CallbackQuery) -> Result<Stri
         return Err(format!("PDT couldn't keep the sign-in: {e}"));
     }
     shared.tokens.forget(&crate::api::token_key(&c.id, p.agent));
+    if !p.agent {
+        // Signed in as another account (or one PDT can't tell is the same): agents may no longer act as the old one.
+        let agents = accounts::agent_sign_in(st, &c.id).await.ok().flatten();
+        let same =
+            |a: &SignIn| a.email.as_deref().zip(email.as_deref()).is_some_and(|(a, e)| a.eq_ignore_ascii_case(e));
+        if agents.is_some_and(|a| !same(&a))
+            && let Err(e) = accounts::forget_agents(st, shared, &c.id).await
+        {
+            return Err(format!("PDT couldn't forget the agents' sign-in for the old account: {e}"));
+        }
+    }
     if p.agent {
         return Ok(format!("Agents may now use {who}'s Google docs through PDT ({}).", c.name));
     }

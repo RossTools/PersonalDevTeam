@@ -55,6 +55,19 @@ export function loopback(origin) {
   return host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\./.test(host);
 }
 
+/**
+ * Whether what the user typed names `origin`'s host (`mac.tail1.ts.net`, with or without its scheme, port or a
+ * trailing slash). Going back anywhere but this computer takes typing it, not a click: a `ts.net` name can be a public
+ * site (Tailscale Funnel) and a network address someone else's machine, and a sign-in started there gets a code for
+ * the Docs and Sheets any PDT made or opened for the account.
+ */
+export function typedHost(typed, origin) {
+  if (typeof typed !== 'string') return false;
+  const u = new URL(origin);
+  const t = typed.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return t !== '' && (t === u.hostname || t === u.host);
+}
+
 function fromBase64Url(s) {
   if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
   try {
@@ -218,8 +231,16 @@ function main() {
   }
   $('paste-instead').hidden = !paste;
   $('where').textContent = to.origin;
-  $('remote').hidden = loopback(to.origin);
-  $('go').addEventListener('click', () => window.location.replace(to.url));
+  const here = loopback(to.origin);
+  $('remote').hidden = here;
+  $('go').disabled = !here;
+  if (!here) {
+    $('host').textContent = new URL(to.origin).hostname;
+    $('typed').addEventListener('input', (e) => { $('go').disabled = !typedHost(e.target.value, to.origin); });
+  }
+  $('go').addEventListener('click', () => {
+    if (here || typedHost($('typed').value, to.origin)) window.location.replace(to.url);
+  });
   $('ask').hidden = false;
 }
 
