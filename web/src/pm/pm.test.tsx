@@ -296,6 +296,23 @@ describe('the PM', () => {
     expect(onSelect).not.toHaveBeenCalledWith('c3');
   });
 
+  it('shows a reset conversation with no messages yet as the PM, never the data folder', async () => {
+    // The socket replays nothing and says ready: the fresh conversation is empty.
+    vi.stubGlobal('WebSocket', class {
+      readyState = 0; onopen: (() => void) | null = null; onmessage: ((ev: { data: string }) => void) | null = null; onclose = null;
+      constructor() { setTimeout(() => { this.readyState = 1; this.onopen?.(); this.onmessage?.({ data: JSON.stringify({ type: 'ready' }) }); }); }
+      close() {}
+    });
+    const fresh = info(live('c1', 'CB cutover'), { resetFrom: 'c0' });
+    const old = info({ ...session('c0', 1), title: 'CB cutover' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Before.' });
+    stubApi({ ...conversationRoutes, 'GET /api/pm': { current: fresh.session, sessions: [fresh, old] } satisfies PmState });
+    renderWithQuery(<PmView selection="c1" onSelect={() => {}} onNew={() => {}} />);
+    expect(await screen.findByText(/Ask about any project/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Ask the PM…')).toBeInTheDocument();
+    expect(screen.queryByText(/It works in/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\/data\/pm/)).not.toBeInTheDocument();
+  });
+
   it('links a reset conversation to the one before it, which opens read-only', async () => {
     const at = Date.UTC(2026, 9, 30, 9);
     const old = info({ ...session('c0', 1), title: 'CB cutover' }, { open: false, rotation: 'done', reason: 'reset', journal: 'Before.', lastActivity: at });

@@ -125,6 +125,8 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
         <ConversationView
           session={s}
           className="min-h-0 flex-1"
+          empty={<PmIntro />}
+          placeholder={PM_PLACEHOLDER}
           banner={resetting(info) ? (
             <p role="status" className="px-4 pb-1 text-center text-meta text-muted-foreground">
               Resetting: this conversation is writing its journal, then a fresh one starts from it here.
@@ -208,6 +210,22 @@ function EarlierSessions({ onSelect, phone }: { onSelect: (s: PmSelection) => vo
 }
 
 /**
+ * What the PM is for: shown over the start box and in any conversation with no messages yet (a reset one, PDT-581),
+ * never the generic "Ask Claude something" with the PM's data folder.
+ */
+function PmIntro() {
+  return (
+    <EmptyState icon={<BriefcaseBusiness />} className="mt-16 border-0">
+      Ask about any project: what's in flight, why something is stuck, or have it draft a ticket or a workflow. It
+      starts from a briefing of PDT's state, its notes and your other open conversations, and asks before it changes
+      anything. Keep one conversation per topic: the others stay open.
+    </EmptyState>
+  );
+}
+
+const PM_PLACEHOLDER = 'Ask the PM…';
+
+/**
  * A new conversation, beside the open ones (PDT-149): the first message starts it and names it (its briefing is made then). Unsent text is kept. A phone doesn't
  * focus the box (the keyboard would cover the text) and follows the composer's Enter rule.
  */
@@ -224,16 +242,12 @@ function PmStart({ onStarted, phone }: { onStarted: (s: Session) => void; phone:
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {!phone && <ViewHeader title="New conversation" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
-      <EmptyState icon={<BriefcaseBusiness />} className="mt-16 border-0">
-        Ask about any project: what's in flight, why something is stuck, or have it draft a ticket or a workflow. It
-        starts from a briefing of PDT's state, its notes and your other open conversations, and asks before it changes
-        anything. Keep one conversation per topic: the others stay open.
-      </EmptyState>
+      <PmIntro />
       <div className="mt-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <PromptBox
           layout={phone ? 'phone' : 'default'}
           label="Ask the PM"
-          placeholder="Ask the PM…"
+          placeholder={PM_PLACEHOLDER}
           value={text}
           onChange={setText}
           pending={starting}
