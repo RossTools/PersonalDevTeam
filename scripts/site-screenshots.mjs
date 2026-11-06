@@ -238,14 +238,26 @@ try {
   await shoot(page, 'pm-chat', { x: log.x, y: log.y, width: log.width, height: lastCard.y + lastCard.height + 20 - log.y });
   await page.setViewportSize({ width: VIEWPORT.width, height: 600 });
 
+  // The list and the open item in a narrower window (the site shows it beside the phone's), so the question's choices
+  // fill it.
+  await page.setViewportSize({ width: 1100, height: 600 });
   await page.goto(`${base}/inbox`);
   await page.getByText('attach a PDF invoice').first().waitFor();
-  // The list and the open item, without the empty right of the window (the site shows it beside the phone's).
-  await shoot(page, 'inbox', { x: 0, y: 0, width: 1100, height: 600 });
+  await shoot(page, 'inbox');
+  await page.setViewportSize({ width: VIEWPORT.width, height: 600 });
 
+  // The Secrets page alone, cropped to its heading and list, so it still reads at a phone's width.
   await page.goto(`${base}/settings/secrets`);
   await page.getByText('STRIPE_TEST_KEY').first().waitFor();
-  await shoot(page, 'secrets');
+  const heading = await page.getByRole('heading', { name: 'Secrets', exact: true }).first().boundingBox();
+  const last = await page.getByText('The payment provider', { exact: false }).first().boundingBox();
+  const right = await page.getByRole('button', { name: 'Add secret' }).boundingBox();
+  await shoot(page, 'secrets', {
+    x: heading.x - 24,
+    y: heading.y - 24,
+    width: right.x + right.width + 48 - heading.x,
+    height: last.y + last.height + 48 - heading.y,
+  });
 
   await page.setViewportSize(VIEWPORT);
 
