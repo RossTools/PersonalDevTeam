@@ -562,7 +562,7 @@ impl GitHubClient {
     }
 
     /// Streams an asset to `dest`, refusing more than its announced size. The API answers 200 or a redirect (fact 6);
-    /// redirects off the API host are followed without the token. On failure `dest` is removed.
+    /// redirects off the API host are followed without the token, and only to https. On failure `dest` is removed.
     pub async fn download(&self, token: Option<&str>, asset: &Asset, dest: &Path) -> Result<(), UpdateError> {
         self.download_capped(token, asset, dest, asset.size).await
     }
@@ -581,6 +581,12 @@ impl GitHubClient {
         result
     }
 
+    /// Whether a download may follow a redirect to `next`: https only (PDT-543), so no hop can be read or replaced on
+    /// the way. An API on plain http (a local fake in tests) may also send it to http.
+    fn download_hop_allowed(&self, next: &reqwest::Url) -> bool {
+        next.scheme() == "https" || (next.scheme() == "http" && self.api.starts_with("http://"))
+    }
+
     async fn stream_to(&self, token: Option<&str>, asset: &Asset, dest: &Path, max: u64) -> Result<(), UpdateError> {
         let tail = format!("releases/assets/{}", asset.id);
         let mut res =
@@ -595,6 +601,10 @@ impl GitHubClient {
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| UpdateError::BadRelease("a redirect without a Location".into()))?;
             let next = res.url().join(loc).map_err(|e| UpdateError::BadRelease(e.to_string()))?;
+            if !self.download_hop_allowed(&next) {
+                // Not the URL: it is a signed storage link.
+                return Err(UpdateError::BadRelease(format!("a download redirected to a {} address", next.scheme())));
+            }
             res = self.http.get(next).header(ACCEPT, "application/octet-stream").send().await.map_err(net)?;
         }
         let res = check(res).await?;
@@ -701,4 +711,18 @@ pub async fn fetch_verified(
     }
     tokio::fs::rename(&part, &fin).await.map_err(|e| UpdateError::Io(e.to_string()))?;
     Ok(fin)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn downloads_from_github_follow_only_https() {
+        let c = GitHubClient::new(GITHUB_API, "o/r");
+        let hop = |u: &str| c.download_hop_allowed(&reqwest::Url::parse(u).unwrap());
+        assert!(hop("https://objects.githubusercontent.com/a?sig=1"));
+        assert!(!hop("http://objects.githubusercontent.com/a"), "a downgrade to plain http");
+        assert!(!hop("ftp://example.com/a") && !hop("file:///etc/passwd"));
+    }
 }
