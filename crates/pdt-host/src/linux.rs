@@ -7,7 +7,7 @@
 //! An update swaps the whole folder, as macOS swaps the `.app`: the old one is moved aside to `<dir>.previous` and
 //! the new one moved into place; for the AppImage the AppImage file is swapped the same way (`<file>.previous`).
 
-use crate::install::{Installer, copy_dir, run_with_timeout};
+use crate::install::{Installer, copy_dir, run_with_timeout, staging_beside};
 use pdt_core::brand::{DAEMON_BIN, HOST_BIN};
 use pdt_core::release::APPIMAGE_MARKER;
 use std::path::{Path, PathBuf};
@@ -149,10 +149,6 @@ pub struct LinuxInstaller {
 }
 
 impl LinuxInstaller {
-    fn staging(&self) -> Result<PathBuf, String> {
-        Ok(self.dir.parent().ok_or("the install folder has no parent folder")?.join(".pdt-update-staging"))
-    }
-
     /// The tarball's folder: the one top-level folder in it that holds pdtd.
     fn unpack_tarball(&self, asset: &Path, staging: &Path) -> Result<PathBuf, String> {
         let mut tar = Command::new("tar");
@@ -207,12 +203,11 @@ impl Installer for LinuxInstaller {
     }
 
     fn install(&self, asset: &Path) -> Result<(), String> {
-        let staging = self.staging()?;
-        let _ = std::fs::remove_dir_all(&staging);
-        let staged = std::fs::create_dir_all(&staging).map_err(|e| e.to_string()).and_then(|()| match &self.appimage {
-            None => self.unpack_tarball(asset, &staging).map(|dir| (dir, None)),
-            Some(a) => self.unpack_appimage(asset, &staging, a).map(|(dir, image)| (dir, Some(image))),
-        });
+        let staging = staging_beside(&self.dir)?;
+        let staged = match &self.appimage {
+            None => self.unpack_tarball(asset, staging.path()).map(|dir| (dir, None)),
+            Some(a) => self.unpack_appimage(asset, staging.path(), a).map(|(dir, image)| (dir, Some(image))),
+        };
         let result = staged.and_then(|(new, image)| {
             swap(&self.dir, &new, &previous(&self.dir))?;
             if let (Some(a), Some(image)) = (&self.appimage, image) {
@@ -220,7 +215,7 @@ impl Installer for LinuxInstaller {
             }
             Ok(())
         });
-        let _ = std::fs::remove_dir_all(&staging);
+        drop(staging);
         result
     }
 
@@ -332,7 +327,7 @@ mod tests {
         assert_eq!(read(&dir.join(DAEMON_BIN)), "pdtd 2");
         assert_eq!(read(&dir.join("web").join("index.html")), "2");
         assert_eq!(read(&previous(&dir).join(DAEMON_BIN)), "pdtd 1");
-        assert!(!tmp.path().join("opt").join(".pdt-update-staging").exists());
+        assert!(!crate::install::staging_left(&tmp.path().join("opt")));
         assert_eq!(i.backup_path(), Some(previous(&dir)));
 
         i.rollback().unwrap();
@@ -355,7 +350,7 @@ mod tests {
         i.backup().unwrap();
         assert!(i.install(&junk).is_err());
         assert_eq!(read(&dir.join(DAEMON_BIN)), "pdtd 1");
-        assert!(!previous(&dir).exists() && !tmp.path().join(".pdt-update-staging").exists());
+        assert!(!previous(&dir).exists() && !crate::install::staging_left(tmp.path()));
         i.rollback().unwrap();
         assert_eq!(read(&dir.join(DAEMON_BIN)), "pdtd 1");
     }
