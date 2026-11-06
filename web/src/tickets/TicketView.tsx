@@ -26,8 +26,9 @@ import { CreateIssueDialog } from './CreateIssueDialog';
 import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';
 import { ExternalKeys } from './ExternalKeys';
+import { LabelChips } from '../common/LabelChips';
 import {
-  LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle, TicketWatchers,
+  TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle, TicketWatchers,
 } from './TicketParts';
 
 export type HubTab = 'overview' | 'conversation' | 'changes';

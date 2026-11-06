@@ -1,12 +1,10 @@
 // What worktrees take on disk (PDT-324), shared by Settings › Storage and a project's Worktrees list: sizes as last
 // measured, Clean build output, and Remove with a warning for work that only this checkout holds.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Button, toast, useConfirm, type BadgeTone } from '@ui';
+import { Badge, Button, toast, useConfirm } from '@ui';
 import { Eraser, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import type { DiskLevel } from '../api/gen/DiskLevel';
-import type { TicketStage } from '../api/gen/TicketStage';
-import { STAGE_LABEL } from '../common/StageStepper';
 import type { WorktreeSize } from '../api/gen/WorktreeSize';
 import { useAction } from '../common/useAction';
 import { invalidateWorktrees } from '../common/worktrees';
@@ -29,11 +27,6 @@ export function atRisk(size: WorktreeSize | null): string | null {
     size.neverPushed ? 'a branch that was never pushed' : null,
   ].filter(Boolean);
   return parts.length ? `It has ${parts.join(' and ')}.` : null;
-}
-
-export function StageBadge({ stage }: { stage: TicketStage }) {
-  const tone: BadgeTone = stage === 'in_progress' ? 'running' : 'neutral';
-  return <Badge tone={tone}>{STAGE_LABEL[stage]}</Badge>;
 }
 
 export function DiskBadge({ level }: { level: DiskLevel }) {

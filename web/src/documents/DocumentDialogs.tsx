@@ -14,6 +14,7 @@ import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
 import type { ProviderPicker } from '../api/gen/ProviderPicker';
 import type { SignInAccount } from '../api/gen/SignInAccount';
+import { TicketPill } from '../common/TicketPill';
 import { actionError, useFormAction } from '../common/useAction';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnections } from '../connections/queries';
@@ -282,7 +283,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     );
   const account = pickers.length === 1 ? (pickers[0].email ?? pickers[0].name) : pickers.length > 1 ? `${pickers.length} accounts` : undefined;
   const description = ticket
-    ? <>Into <Badge className="font-mono">{ticket.key}</Badge>{projectName && ` · ${projectName}`}</>
+    ? <>Into <TicketPill ticketKey={ticket.key} />{projectName && ` · ${projectName}`}</>
     : projectName && `Into ${projectName}`;
   const empty = files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : (
     <EmptyState size="inline" className="justify-center py-2 text-center" action={browse('secondary', 'sm', `${picker?.label ?? ''} for it`)}>

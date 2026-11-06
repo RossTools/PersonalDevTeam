@@ -6,16 +6,16 @@ import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
 } from 'lucide-react';
-import { Badge, Button, Disclosure, DiffStat, diffStats, Spinner } from '@ui';
+import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, Spinner } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
-import type { Priority } from '../api/gen/Priority';
-import type { TicketStage } from '../api/gen/TicketStage';
 import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { plural } from '../common/text';
-import { PRIORITY_LABEL } from '../common/PriorityIcon';
-import { STAGE_LABEL } from '../common/StageStepper';
+import { LabelChips } from '../common/LabelChips';
+import { priorityLabel } from '../common/PriorityIcon';
+import { StageBadge } from '../common/StageBadge';
+import { stageLabel } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { actionError, useAction } from '../common/useAction';
 import { MarkdownRefsContext } from '../common/markdownRefs';
@@ -43,6 +43,7 @@ import {
   type CreatedTicket,
   type FieldChange,
 } from './pdtTools';
+import { isTicketKey } from '../tickets/model';
 import { workflowKeys } from '../workflows/queries';
 import { POLL } from '../common/poll';
 
@@ -54,13 +55,10 @@ export interface PdtCall {
   output?: string;
 }
 
-export const stageLabel = (s: string) => STAGE_LABEL[s as TicketStage] ?? s;
-export const priorityLabel = (p: string) => PRIORITY_LABEL[p as Priority] ?? p;
-
 /** A key as a pill when it looks like one (`PDT-12`), else as written (an id). */
 export function Key({ value }: { value: string | null }) {
   if (!value) return <span className="text-muted-foreground">a ticket</span>;
-  return /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(value) ? <TicketPill ticketKey={value.toUpperCase()} /> : <span className="font-mono text-meta">{value}</span>;
+  return isTicketKey(value) ? <TicketPill ticketKey={value.toUpperCase()} /> : <Chip>{value}</Chip>;
 }
 
 /** The most ticket pills a folded row shows; the rest are counted. */
@@ -125,9 +123,9 @@ function TicketRow({ t }: { t: CreatedTicket }) {
       {t.key && <Key value={t.key} />}
       <span className="min-w-0 flex-1 font-medium">{t.title}</span>
       <span className="flex flex-wrap items-center gap-1">
-        <Badge>{stageLabel(t.stage)}</Badge>
+        <StageBadge stage={t.stage} />
         {t.priority && t.priority !== 'none' && <Badge>{priorityLabel(t.priority)}</Badge>}
-        {t.labels.map((l) => <Badge key={l} tone="accent">{l}</Badge>)}
+        <LabelChips labels={t.labels} className="flex-wrap" />
       </span>
     </div>
   );
@@ -357,7 +355,7 @@ function StopTicketCard({ call }: { call: PdtCall }) {
       icon={<CircleStop />}
       label={`${verb} ${t.key}`}
       heading={<>{verb} <Key value={t.key} /></>}
-      aside={state?.aside ?? (t.stage && <Badge>{stageLabel(t.stage)}</Badge>)}
+      aside={state?.aside ?? (t.stage && <StageBadge stage={t.stage} />)}
     >
       {done && (stopped.length > 0 || t.branchNote) && (
         <div className="flex flex-col gap-0.5 py-2 text-xs text-muted-foreground">
@@ -374,11 +372,7 @@ function StopTicketCard({ call }: { call: PdtCall }) {
 function IssueKey({ issue, url }: { issue: string | null; url: string | null }) {
   if (!issue && !url) return null;
   const text = issue ?? url!;
-  return url ? (
-    <a href={url} target="_blank" rel="noreferrer" className="relative touch-hit shrink-0 font-mono text-meta text-link underline-offset-2 hover:underline">{text}</a>
-  ) : (
-    <span className="shrink-0 font-mono text-meta">{text}</span>
-  );
+  return url ? <Chip href={url} external className="relative touch-hit">{text}</Chip> : <Chip>{text}</Chip>;
 }
 
 /** `issue_create` / `report_bug`: the issue filed (its title, key and link), and the ticket that links it. */

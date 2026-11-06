@@ -4,7 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Chip, Dialog, Disclosure, EmptyState, IconButton, Link, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
+  Alert, Badge, Button, Dialog, Disclosure, EmptyState, IconButton, Link, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -624,15 +624,5 @@ export function CommentComposer({ ticketId, rows = 2, autoFocus = false, classNa
         onSent?.();
       }}
     />
-  );
-}
-
-/** Label chips, for headers and rows. */
-export function LabelChips({ labels, className }: { labels: string[]; className?: string }) {
-  if (labels.length === 0) return null;
-  return (
-    <span className={cn('flex min-w-0 items-center gap-1', className)}>
-      {labels.map((l) => <Chip key={l}>{l}</Chip>)}
-    </span>
   );
 }
