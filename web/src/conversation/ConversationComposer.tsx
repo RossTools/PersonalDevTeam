@@ -105,6 +105,8 @@ export interface ConversationComposerProps {
   /** The agent stopped unexpectedly (state.stopped). */
   stopped?: string | null;
   agentName?: string;
+  /** The placeholder while the agent is idle (default "Message <agent>…"). */
+  placeholder?: string;
   models: AgentModel[];
   /** null: the agent's default. */
   model: string | null;
@@ -139,6 +141,7 @@ export function ConversationComposer({
   onInterrupt,
   stopped,
   agentName = 'Claude',
+  placeholder,
   models,
   model,
   defaultModel = null,
@@ -402,7 +405,7 @@ export function ConversationComposer({
         sendLabel={turnRunning ? 'Queue' : 'Send'}
         pending={pending}
         autoFocus={autoFocus}
-        placeholder={turnRunning ? `${agentName} is working. Queue a message…` : `Message ${agentName}…`}
+        placeholder={turnRunning ? `${agentName} is working. Queue a message…` : placeholder ?? `Message ${agentName}…`}
         className="mx-auto w-full max-w-3xl"
         layout={phone ? 'phone' : 'default'}
         toolbar={
