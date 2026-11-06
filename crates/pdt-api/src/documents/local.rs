@@ -20,7 +20,7 @@ use pdt_sheet::{Value, Workbook};
 use pdt_store::{NewDocumentComment, Store};
 use serde::Serialize;
 use sha2::Digest;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -169,6 +169,11 @@ fn sheet_name(path: &Path) -> String {
 fn version_of(bytes: &[u8]) -> String {
     hex::encode(&sha2::Sha256::digest(bytes)[..8])
 }
+
+/// How many folders down the import search looks.
+const SEARCH_DEPTH: usize = 4;
+/// How many files and folders the import search looks at, at most.
+const SEARCH_ENTRIES: usize = 20_000;
 
 fn kind_of(path: &Path) -> Option<DocumentKind> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
@@ -704,13 +709,31 @@ impl Files {
         Ok(())
     }
 
-    /// The docs and sheets in `folders` whose names have every word of `q` (lowercase), newest first.
+    /// The docs and sheets in `folders` and their subfolders whose names have every word of `q` (lowercase), newest
+    /// first. Hidden folders (`.git`) and docs' image folders (`.assets`) are skipped, and the walk stops at
+    /// [`SEARCH_DEPTH`] folders down and [`SEARCH_ENTRIES`] entries, so a folder holding a large tree stays quick.
     fn search(folders: &[PathBuf], q: &str, kind: Option<DocumentKind>) -> Vec<ProviderFile> {
         let mut found: Vec<(SystemTime, ProviderFile)> = Vec::new();
-        for folder in folders {
-            let Ok(entries) = std::fs::read_dir(folder) else { continue };
+        let mut seen = HashSet::new();
+        let mut entries_left = SEARCH_ENTRIES;
+        let mut stack: Vec<(PathBuf, usize)> = folders.iter().rev().map(|f| (f.clone(), 0)).collect();
+        while let Some((folder, depth)) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&folder) else { continue };
             for e in entries.flatten() {
+                if entries_left == 0 {
+                    break;
+                }
+                entries_left -= 1;
                 let p = e.path();
+                let Ok(ft) = e.file_type() else { continue };
+                if ft.is_dir() {
+                    let name = e.file_name();
+                    let name = name.to_string_lossy();
+                    if depth < SEARCH_DEPTH && !name.starts_with('.') && !name.ends_with(".assets") {
+                        stack.push((p, depth + 1));
+                    }
+                    continue;
+                }
                 let Some(k) = kind_of(&p) else { continue };
                 let title = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 if kind.is_some_and(|w| w != k)
@@ -719,8 +742,11 @@ impl Files {
                 {
                     continue;
                 }
-                let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
                 let reference = p.to_string_lossy().into_owned();
+                if !seen.insert(reference.clone()) {
+                    continue;
+                }
+                let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
                 let modified = ms_of(when);
                 found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None, modified }));
             }
@@ -1209,6 +1235,31 @@ mod tests {
         drop(files.doc_lock("/a.md"));
         let _held = files.doc_lock("/b.md");
         assert_eq!(lock(&files.doc_locks).keys().collect::<Vec<_>>(), vec!["/b.md"]);
+    }
+
+    #[test]
+    fn search_looks_in_subfolders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("plans/2026")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("Roadmap.assets")).unwrap();
+        for f in ["Roadmap.md", "plans/Plan A.md", "plans/2026/Plan B.md", ".git/Plan C.md", "Roadmap.assets/Plan D.md"]
+        {
+            std::fs::write(root.join(f), "").unwrap();
+        }
+        sheet_file(&root.join("plans"), "Plan sheet.xlsx");
+        let titles = |q: &str, kind| {
+            let mut t: Vec<_> = Files::search(&[root.to_path_buf()], q, kind).into_iter().map(|f| f.title).collect();
+            t.sort();
+            t
+        };
+        assert_eq!(titles("plan", None), ["Plan A", "Plan B", "Plan sheet"], "hidden and image folders skipped");
+        assert_eq!(titles("plan", Some(DocumentKind::Sheet)), ["Plan sheet"]);
+        assert_eq!(titles("", None).len(), 4);
+        // A folder inside another one searched lists its files once.
+        let both = Files::search(&[root.to_path_buf(), root.join("plans")], "plan b", None);
+        assert_eq!(both.len(), 1);
     }
 
     #[test]

@@ -217,7 +217,9 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const accounts = useSignInAccounts(picker?.accounts ?? null);
   const pickers = (accounts.data ?? []).filter((a) => a.signedIn && a.picker);
   // What its search can't find (Google's drive.file: only files PDT made or opened), and where those are.
-  const searchNote = picker?.searchNote ?? null;
+  // The local folder's: what it lists, and that a .csv is dropped below (importing converts it to a sheet).
+  const searchNote = picker?.searchNote
+    ?? (source?.id === 'local' ? 'Docs (.md) and sheets (.xlsx) in the folder and its subfolders. Drop a .csv below to make it a sheet.' : null);
   const browseNote = picker && pickers.length > 0 ? `${picker.label} for the rest.` : null;
   // A provider's picker covers the page: the dialog steps aside while it is open.
   const [picking, setPicking] = useState(false);

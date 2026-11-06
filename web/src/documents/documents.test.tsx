@@ -534,6 +534,16 @@ describe('documents', () => {
     expect(upload).toHaveBeenCalledWith(file, { projectId: 'p1' });
   });
 
+  it('the local folder says what it lists, and that a .csv is dropped', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'local', label: 'Local', capabilities: all, picker: null }], default: 'local' },
+      'GET /api/documents/providers/local/files': [],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText(/in the folder and its subfolders\. Drop a \.csv below/)).toBeInTheDocument();
+    expect(screen.getByText('No files PDT can open yet')).toBeInTheDocument();
+  });
+
   it('without the local provider there is no drop zone', async () => {
     stubApi({ 'GET /api/documents/providers': providers, 'GET /api/documents/providers/fake/files': [] });
     renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
