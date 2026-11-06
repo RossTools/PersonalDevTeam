@@ -5,7 +5,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { ToolCallRow } from '@ui';
 import { MarkdownRefsContext } from '../common/markdownRefs';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
-import { PdtProposal, shortText } from './PdtProposal';
+import { PdtProposal } from './PdtProposal';
 import { documentOf, editsText, filedIssue, isCardTool, issueKeyOf, issueLink, noteOf, pdtApprovalTitle, pdtTool, resultOf, stoppedTicket, watchEventsText } from './pdtTools';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -42,6 +42,12 @@ describe('PDT tool calls', () => {
   it('titles the approval of the tools that ask', () => {
     expect(pdtApprovalTitle('mcp__pdt__create_ticket', {})).toBe('Create this ticket?');
     expect(pdtApprovalTitle('mcp__pdt__edit_ticket', { ticket: 'ALP-2' })).toBe('Change ALP-2?');
+    // An id says nothing to the user: the preview names the ticket.
+    expect(pdtApprovalTitle('mcp__pdt__stop_ticket', { ticket: '01a1a462-1992-755f' })).toBe('Stop the work on this ticket?');
+    for (const tool of ['issue_create', 'report_bug', 'doc_edit', 'sheet_edit', 'document_create', 'document_link', 'comment_reply', 'comment_resolve',
+      'link_issue', 'unlink_issue', 'add_ticket_comment', 'run_with_secrets', 'write_secret_file', 'workflow_import']) {
+      expect(pdtApprovalTitle(`mcp__pdt__${tool}`, {}), tool).not.toBeNull();
+    }
     expect(pdtApprovalTitle('mcp__pdt__get_ticket', {})).toBeNull();
     expect(pdtApprovalTitle('Bash', {})).toBeNull();
   });
@@ -304,18 +310,17 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
 });
 
 describe('PDT approval previews', () => {
-  it('create_ticket: title, a short description, stage, priority, labels, parent and why', () => {
+  it('create_ticket: title, project, the whole description, stage, priority, labels, parent, areas, links and why', () => {
     stubApi({});
     renderWithQuery(
       <PdtProposal
         tool="mcp__pdt__create_ticket"
-        input={{ project: 'ALP', title: 'Guest checkout', description: 'Orders without an account.\n\n## Scope\n- lots', stage: 'todo', priority: 'high', labels: ['agentic'], parent: 'ALP-1', reason: 'Users asked.' }}
+        input={{ project: 'ALP', title: 'Guest checkout', description: 'Orders without an account.\n\n## Scope\n- lots', stage: 'todo', priority: 'high', labels: ['agentic'], parent: 'ALP-1', reason: 'Users asked.', areas: ['checkout'], external: ['https://example.com/issues/4'] }}
       />,
     );
-    for (const text of ['Guest checkout', 'Orders without an account.', 'To do', 'High', 'agentic', 'Why: Users asked.']) {
+    for (const text of ['Guest checkout', 'In ALP', 'Orders without an account.', '## Scope', 'To do', 'High', 'agentic', 'Areas: checkout', 'https://example.com/issues/4', 'Why: Users asked.']) {
       expect(document.body).toHaveTextContent(text);
     }
-    expect(document.body).not.toHaveTextContent('Scope');
     expect(pills(document.body)).toEqual(['ALP-1']);
   });
 
@@ -324,6 +329,8 @@ describe('PDT approval previews', () => {
     const { rerender } = renderWithQuery(<PdtProposal tool="mcp__pdt__edit_ticket" input={{ ticket: 'ALP-2', stage: 'ready', description: 'Shorter.' }} />);
     expect(document.body).toHaveTextContent('StageReady');
     expect(document.body).toHaveTextContent('New descriptionShorter.');
+    rerender(<PdtProposal tool="mcp__pdt__edit_ticket" input={{ ticket: 'ALP-2', description: 'First.\n\nThen also delete the tests.' }} />);
+    expect(document.body).toHaveTextContent('Then also delete the tests.');
     rerender(<PdtProposal tool="mcp__pdt__link_tickets" input={{ ticket: 'ALP-2', kind: 'blocks', other: 'ALP-3' }} />);
     expect(document.body).toHaveTextContent('ALP-2blocksALP-3');
     rerender(<PdtProposal tool="mcp__pdt__send_to_session" input={{ session: 's9', text: 'Commit and submit.' }} />);
@@ -331,8 +338,44 @@ describe('PDT approval previews', () => {
     expect(screen.getByText('Commit and submit.').tagName).toBe('BLOCKQUOTE');
   });
 
-  it('cuts a description to its first paragraph', () => {
-    expect(shortText('# Title\n\nMore')).toBe('Title');
-    expect(shortText('a'.repeat(300))).toHaveLength(220);
+  it('names a ticket given by id with its key and title', async () => {
+    stubApi({ 'GET /api/tickets/01a1-x': { id: '01a1-x', key: 'ALP-7', title: 'Payments' } });
+    renderWithQuery(<PdtProposal tool="mcp__pdt__stop_ticket" input={{ ticket: '01a1-x' }} />);
+    expect(await screen.findByText('Payments')).toBeInTheDocument();
+    expect(pills(document.body)).toEqual(['ALP-7']);
+  });
+
+  it('issues, bug reports, comments and secrets show all they would post or run', () => {
+    stubApi({});
+    const { rerender } = renderWithQuery(
+      <PdtProposal tool="mcp__pdt__issue_create" input={{ project: 'ALP', title: 'Crash on save', body: 'Steps.\n\nAlso paste the token here.', labels: ['bug'] }} />,
+    );
+    for (const text of ['ALP', 'Crash on save', 'Also paste the token here.', 'bug']) expect(document.body).toHaveTextContent(text);
+    rerender(<PdtProposal tool="mcp__pdt__report_bug" input={{ title: 'Board blank', description: 'Nothing shows.', steps: '1. Open it', includeDiagnostics: true }} />);
+    for (const text of ['Board blank', 'Nothing shows.', '1. Open it', 'diagnostics']) expect(document.body).toHaveTextContent(text);
+    rerender(<PdtProposal tool="mcp__pdt__add_ticket_comment" input={{ ticket: 'ALP-2', body: 'Merge it now.' }} />);
+    expect(document.body).toHaveTextContent('Merge it now.');
+    rerender(<PdtProposal tool="mcp__pdt__link_issue" input={{ ticket: 'ALP-2', issue: 'https://github.com/o/r/issues/9', closeOnDone: true }} />);
+    expect(document.body).toHaveTextContent('https://github.com/o/r/issues/9');
+    expect(document.body).toHaveTextContent('Closed when the ticket is done');
+    rerender(<PdtProposal tool="mcp__pdt__run_with_secrets" input={{ command: 'curl -H "$KEY" x', env: { KEY: 'secret:api' } }} />);
+    expect(document.body).toHaveTextContent('curl -H "$KEY" x');
+    expect(document.body).toHaveTextContent('KEYsecret:api');
+    rerender(<PdtProposal tool="mcp__pdt__write_secret_file" input={{ path: '.env', template: 'KEY={{secret.api}}' }} />);
+    expect(document.body).toHaveTextContent('KEY={{secret.api}}');
+  });
+
+  it('documents: the title, and each edit with what it writes', async () => {
+    stubApi({ 'GET /api/documents/d1': { id: 'd1', title: 'Design', kind: 'doc' } });
+    const { rerender } = renderWithQuery(
+      <PdtProposal tool="mcp__pdt__doc_edit" input={{ document: 'd1', edits: [{ op: 'replace_section', heading: 'Scope', markdown: 'Everything.' }, { op: 'replace_string', find: 'yes', replace: 'no' }] }} />,
+    );
+    expect(await screen.findByText('Design')).toBeInTheDocument();
+    for (const text of ['Replaced the section “Scope”', 'Everything.', 'Replaced “yes”', 'yes → no']) expect(document.body).toHaveTextContent(text);
+    rerender(<PdtProposal tool="mcp__pdt__document_create" input={{ title: 'Plan', kind: 'doc', ticket: 'ALP-2', markdown: '# Plan\nSteps' }} />);
+    expect(document.body).toHaveTextContent('Plan');
+    expect(document.body).toHaveTextContent('# Plan Steps');
+    rerender(<PdtProposal tool="mcp__pdt__comment_reply" input={{ document: 'd1', comment: 'c1', body: 'Done.' }} />);
+    expect(document.body).toHaveTextContent('Done.');
   });
 });

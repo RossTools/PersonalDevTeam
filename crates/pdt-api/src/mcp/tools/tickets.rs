@@ -239,10 +239,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                     not_linked.push(e);
                 }
             }
-            let by = match pm {
-                true => "the PM".to_string(),
-                false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
-            };
+            let by = actor_name(cx, pm);
             // `created` lets the session edit it later as its own (PDT-162).
             let note = match reason {
                 Some(r) => format!("Created by {by}. Why: {r}"),
@@ -383,6 +380,20 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "stop_ticket" => {
             let a: StopTicket = args(a)?;
             let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+            let pm = crate::pm::is_pm_session(st, cx.session).await;
+            // Anyone but the PM stops its own ticket, or another only by its exact key, as `edit_ticket` (PDT-540).
+            if !pm {
+                let current =
+                    st.store.get_ticket_summary(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+                pdt_core::ticket::agent_may_edit(&pdt_core::ticket::AgentEdit {
+                    given: &a.ticket,
+                    key: &current.key,
+                    stage: current.stage,
+                    own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
+                    created: false,
+                    rewrites: false,
+                })?;
+            }
             confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
             let req = crate::stop::StopRequest {
                 stage: a.stage,
@@ -395,7 +406,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 async move { crate::stop::stop_ticket(&st, &id, &req, by).await }
             });
             let r = task.await.map_err(|e| e.to_string())?.map_err(api)?;
-            record_agent_change(cx, &id, "The PM stopped its work.").await;
+            record_agent_change(cx, &id, &format!("Work stopped by {}.", actor_name(cx, pm))).await;
             Ok(json!({"stopped": true, "key": r.key, "stage": r.stage, "abandonedAttempt": r.abandoned,
                       "runsCancelled": r.runs_cancelled, "sessionsStopped": r.sessions_stopped,
                       "worktreeRemoved": r.worktree_removed, "branchNote": r.branch_note}))
@@ -424,6 +435,14 @@ fn changes(before: &pdt_core::ticket::Ticket, after: &pdt_core::ticket::Ticket) 
         out.push(json!({"field": "description"}));
     }
     out
+}
+
+/// Who did it, for a timeline note: "the PM", "the Builder" (its persona) or "an agent".
+fn actor_name(cx: &Cx<'_>, pm: bool) -> String {
+    match pm {
+        true => "the PM".to_string(),
+        false => cx.session.persona.as_ref().map_or("an agent".into(), |p| format!("the {}", p.name)),
+    }
 }
 
 /// Notes on the ticket's timeline that an agent changed it through PDT's tools (principle 5: changes are on record).

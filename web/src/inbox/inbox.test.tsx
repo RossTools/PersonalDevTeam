@@ -491,16 +491,16 @@ describe('inbox', () => {
 
   it('shows a Codex PM\'s call with its arguments: Enter allows it, Deny denies it with the reason given (PDT-256)', async () => {
     const call = item('c', {
-      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Report a bug in PDT',
-      body: { tool: 'report_bug', toolTitle: 'Report a bug in PDT', agent: 'Codex', sessionTitle: 'PM', input: { title: 'The board flickers' } },
+      kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Comment on Jira issues',
+      body: { tool: 'jira_comment', toolTitle: 'Comment on Jira issues', agent: 'Codex', sessionTitle: 'PM', input: { body: 'The board flickers' } },
       choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
     });
     expect(dismissable(call)).toBe(false);
     const calls = stubApi({ 'POST /api/inbox/c/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[call]} selectedId="c" onSelect={() => {}} />);
     const region = screen.getByRole('region', { name: 'Agent call' });
-    expect(region).toHaveTextContent('PM (Codex) wants to call report_bug');
-    expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"title": "The board flickers"');
+    expect(region).toHaveTextContent('PM (Codex) wants to call jira_comment');
+    expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"body": "The board flickers"');
     fireEvent.keyDown(window, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/inbox/c/answer')?.body).toEqual({ choice: 'allow' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Reason (optional)' }), 'Not now');
@@ -632,6 +632,17 @@ describe('inbox', () => {
       expect(card).not.toHaveTextContent('"title"');
       unmount();
     }
+  });
+
+  it("shows an approval's arguments when its tool has no preview", () => {
+    const approval = item('approval:sess:r2', {
+      kind: 'approval', group: 'approval', sessionId: 'sess', runId: null, stepId: null, title: 'Comment on Jira issues',
+      body: { requestId: 'r2', sessionTitle: 'PM', tool: 'mcp__pdt__jira_comment', input: { issue: 'ABC-1', body: 'Ship it' } },
+      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[approval]} selectedId={approval.id} onSelect={() => {}} />);
+    expect(screen.getByLabelText('All arguments')).toHaveTextContent('"body": "Ship it"');
   });
 
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {

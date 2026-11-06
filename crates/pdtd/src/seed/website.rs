@@ -235,6 +235,18 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         kind: Default::default(),
     };
     store.insert_project(&project).await?;
+    // The user has approved the sample's run configuration, so its dev server starts without asking.
+    let config = pdt_core::runconfig::merge(
+        Some(
+            pdt_core::runconfig::parse(CONFIG, pdt_core::runconfig::Source::File)
+                .context("sample run configuration")?,
+        ),
+        None,
+    )
+    .context("sample run configuration")?;
+    let approved: Vec<String> =
+        pdt_core::command_trust::of_config(&config).into_iter().map(|c| c.fingerprint).collect();
+    store.trust_commands(&project.id, &approved, now - 30 * DAY).await?;
 
     // The tickets. Each new ticket goes to the top of its stage, so create bottom-up to keep the list's order; parts
     // need their parent first.
@@ -538,7 +550,16 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
                 InboxKind::Question,
                 InboxGroup::Question,
                 ask,
-                json!({"questions": [{"question": ask, "choices": ["Attach a PDF", "Text is enough"]}]}),
+                json!({"questions": [{
+                    "question": ask,
+                    "context": "The email already lists the items, the totals and the delivery address.",
+                    "choices": [
+                        {"label": "Text is enough", "description": "Ships today. Customers can print the email."},
+                        {"label": "Attach a PDF", "description": "A proper invoice for business buyers; needs a PDF library and a template."},
+                    ],
+                    "recommended": "Text is enough",
+                    "why": "It covers what customers asked for; a PDF can follow as its own ticket.",
+                }]}),
                 now - 10 * MINUTE,
             )
             .project(project.id.clone())
