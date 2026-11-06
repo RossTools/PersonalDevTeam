@@ -22,7 +22,15 @@ export async function requestText(path: string): Promise<string> {
 }
 
 export async function send(path: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
+  } catch (e) {
+    // fetch rejects with a TypeError ("Failed to fetch", "Load failed") when pdtd doesn't answer: word it for the user
+    // (PDT-583). An abort is a DOMException and goes through as is, so cancelled queries stay cancelled.
+    if (e instanceof TypeError) throw new ApiError(0, 'network_error', "Can't reach PDT: it isn't answering.");
+    throw e;
+  }
   if (!res.ok) throw await errorOf(res);
   return res;
 }

@@ -25,6 +25,19 @@ describe('api client', () => {
     });
   });
 
+  it('words a network failure instead of passing on the browser\'s text', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const err = await api.health().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 0, code: 'network_error', message: "Can't reach PDT: it isn't answering." });
+  });
+
+  it('lets an abort through as is', async () => {
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abort));
+    await expect(api.health()).rejects.toBe(abort);
+  });
+
   it('handles non-JSON error bodies', async () => {
     stubFetch(502, 'Bad Gateway');
     const err = await api.health().catch((e) => e);
