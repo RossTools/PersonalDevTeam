@@ -23,8 +23,8 @@ export const USER_SECTIONS = [
   {
     dir: 'using-pdt',
     label: 'Using PDT',
-    summary: 'Tickets and the board, workspaces and sessions, reviewing and merging, the Inbox, and documents.',
-    pages: ['tickets-and-the-board', 'workspaces-and-sessions', 'review-and-merge', 'the-inbox', 'documents'],
+    summary: 'Tickets and the board, workspaces and sessions, reviewing and merging, the Inbox, documents and your todos.',
+    pages: ['tickets-and-the-board', 'workspaces-and-sessions', 'review-and-merge', 'the-inbox', 'documents', 'todos'],
   },
   {
     dir: 'automation',

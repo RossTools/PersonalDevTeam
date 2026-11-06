@@ -1,10 +1,12 @@
 // The PM's batch of Inbox decisions (PDT-475): one row per item with its ticket, the decision and why; the user
 // unticks the rows they don't want before Allow, in the Inbox or on the PM conversation's card (PDT-502).
-import { useState } from 'react';
-import { Checkbox } from '@ui';
+import { Fragment, useState, type ReactNode } from 'react';
+import { Checkbox, Chip } from '@ui';
 import type { DecideChoice } from '../api/gen/DecideChoice';
 import type { DecideRow } from '../api/gen/DecideRow';
 import { PRIORITY_LABEL } from './PriorityIcon';
+import { TicketPill } from './TicketPill';
+import { isTicketKey } from '../tickets/model';
 
 const DECISION_LABEL: Record<DecideChoice, string> = {
   accept_todo: 'Accept to Todo',
@@ -14,14 +16,14 @@ const DECISION_LABEL: Record<DecideChoice, string> = {
 };
 
 /** What a row's decision does beyond its choice: the edits, `agentic` and the ticket it repeats. */
-function details(r: DecideRow): string {
-  const out: string[] = [];
-  if (r.duplicateOf) out.push(`of ${r.duplicateOf}`);
+function details(r: DecideRow): ReactNode[] {
+  const out: ReactNode[] = [];
+  if (r.duplicateOf) out.push(<>of {isTicketKey(r.duplicateOf) ? <TicketPill ticketKey={r.duplicateOf.toUpperCase()} /> : <Chip>{r.duplicateOf}</Chip>}</>);
   if (r.agentic) out.push('agentic');
   if (r.title) out.push(`title “${r.title}”`);
   if (r.priority) out.push(`${PRIORITY_LABEL[r.priority]} priority`);
   if (r.labels) out.push(r.labels.length ? `labels ${r.labels.join(', ')}` : 'no labels');
-  return out.join(' · ');
+  return out.map((d, n) => <Fragment key={n}>{n > 0 && ' · '}{d}</Fragment>);
 }
 
 export function DecideRows({ rows, kept, onToggle, disabled }: {
@@ -49,11 +51,11 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
                 <Checkbox aria-label={`Keep ${r.ticketKey}`} className="justify-center pointer-coarse:min-w-control-touch" checked={kept(n)} disabled={disabled} onChange={(on) => onToggle(n, on)} />
               </td>
               <td className="px-3 py-2 align-top">
-                <span className="font-mono text-xs">{r.ticketKey}</span> {r.ticketTitle}
+                <TicketPill ticketKey={r.ticketKey} /> {r.ticketTitle}
               </td>
               <td className="px-3 py-2 align-top">
                 {DECISION_LABEL[r.decision]}
-                {details(r) && <div className="text-xs text-muted-foreground">{details(r)}</div>}
+                {details(r).length > 0 && <div className="text-xs text-muted-foreground">{details(r)}</div>}
                 {r.note && <div className="mt-1 text-xs sm:hidden">{r.note}</div>}
               </td>
               <td className="px-3 py-2 align-top max-sm:hidden">{r.note ?? ''}</td>

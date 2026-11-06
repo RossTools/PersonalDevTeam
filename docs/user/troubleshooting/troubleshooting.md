@@ -133,15 +133,21 @@ it was. The banner gives the reason; `pdt-host.log` has the details.
 
 ## Updates say they can't check
 
-**Settings › This host › Updates** says **Couldn't check: …**:
+The **Version** row in **Settings › This host › Updates** says what the last check found. When it isn't the version
+you're on or a new one:
 
-- **GitHub's limit is used up**: PDT checks again once it resets, at the time shown. To check more often, save a
-  GitHub token under **Advanced › GitHub token**.
-- **The saved token was rejected and ignored**: updates go on without it. Paste a new one under **Advanced › GitHub
-  token**, or remove it under **Danger zone**.
-- **Network**: PDT couldn't reach GitHub. It tries again at the next check.
-- **Updates are off**: the app runs from a place it can't update itself in (see above), or this is a development copy
-  of PDT, which never updates.
+- **GitHub's limit on checks is used up for now; PDT checks again once it resets (after …)**: nothing is wrong, and
+  PDT checks again by itself at that time. To check more often, save a GitHub token under **Advanced › GitHub token**.
+- **The saved GitHub token was rejected and ignored: replace or remove it**: the check went on without the token.
+  Click **Replace the token** and paste a new one, or remove it under **Danger zone**.
+- **could not reach GitHub: …** (after **Check for updates**: **Couldn't check: could not reach GitHub: …**): check
+  your network or proxy. PDT tries again at the next check.
+- Another error, such as **no release was found, or the token cannot see the release repository** or **GitHub
+  answered …** (after **Check for updates**, the same after **Couldn't check:**): it says what GitHub answered. Check
+  **Release repository** if you set one; otherwise try again later.
+- **Updates are off: …**, with no **Check for updates** button: this copy of PDT can't update itself, and the rest
+  of the line says why. A development copy never updates; the installed app can't update from a disk image or your
+  Downloads folder (move it to **Applications** and open it from there).
 
 ## macOS keeps asking about the keychain
 

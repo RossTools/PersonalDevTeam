@@ -5,7 +5,7 @@ import { Info } from 'lucide-react';
 import { ActionBar, Avatar, Button, Kbd, RelativeTime, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { InboxItem } from '../api/gen/InboxItem';
-import { TicketKey } from '../common/TicketKey';
+import { TicketPill } from '../common/TicketPill';
 import { ItemLinks } from './ItemLinks';
 import type { ItemAction, ItemSpec } from './itemView';
 import { KindChip } from './kinds';
@@ -16,7 +16,7 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
   const parts: ReactNode[] = [
     item.ticketKey ? (
       <span key="t" className="flex min-w-0 items-center gap-1.5">
-        <TicketKey ticketKey={item.ticketKey} />
+        <TicketPill ticketKey={item.ticketKey} />
         {item.ticketTitle && <span className="truncate">{item.ticketTitle}</span>}
       </span>
     ) : null,

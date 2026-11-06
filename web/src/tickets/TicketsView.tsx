@@ -41,7 +41,8 @@ import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
 import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
-import { LabelChips, TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
+import { LabelChips } from '../common/LabelChips';
+import { TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
 import { TicketAttachments } from './attachments';
 import { TicketDocuments } from './TicketDocuments';

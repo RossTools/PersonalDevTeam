@@ -12,8 +12,9 @@ import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
 import { BuiltinSettingsSection, type PutInputs } from '../common/BuiltinSettings';
 import { BranchChip } from '../common/BranchChip';
 import { useAction } from '../common/useAction';
+import { StageBadge } from '../common/StageBadge';
 import { TicketKey } from '../common/TicketKey';
-import { CleanButton, DiskBadge, RemoveButton, sizeText, StageBadge, useCleanFinished, useStorage } from '../projects/worktreeStorage';
+import { CleanButton, DiskBadge, RemoveButton, sizeText, useCleanFinished, useStorage } from '../projects/worktreeStorage';
 import { formatBytes, plural } from '../common/text';
 import { LoadError } from '../common/QueryStatus';
 

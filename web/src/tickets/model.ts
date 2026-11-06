@@ -10,7 +10,7 @@ import type { TicketSort } from '../api/gen/TicketSort';
 import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
-import { STAGE_LABEL } from '../common/StageStepper';
+import { STAGE_LABEL, stageLabel } from '../common/StageStepper';
 import { plural } from '../common/text';
 
 export const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done', 'wont_do'];
@@ -140,8 +140,18 @@ export function groupTickets(items: TicketSummary[], by: Exclude<GroupBy, 'none'
 // ---------------------------------------------------------------------------------------------------------------
 // Keys
 
+/** A ticket key's pattern (`PDT-12`, any case), unanchored, to build other patterns from. */
+export const TICKET_KEY = '[A-Za-z][A-Za-z0-9]*-\\d+';
+
+const KEY_RE = new RegExp(`^${TICKET_KEY}$`);
+
+/** A ticket key (`PDT-12`, any case), not an id. */
+export const isTicketKey = (s: string) => KEY_RE.test(s);
+
+const GO_TO_RE = new RegExp(`^(${TICKET_KEY}|#?\\d+)$`);
+
 /** `PDT-12`, `pdt-12`, `#12` or `12`: worth asking the API for (the palette's Go to). */
-export const looksLikeKey = (q: string) => /^([A-Za-z][A-Za-z0-9]*-\d+|#?\d+)$/.test(q.trim());
+export const looksLikeKey = (q: string) => GO_TO_RE.test(q.trim());
 
 // ---------------------------------------------------------------------------------------------------------------
 // Saved filters (per browser)
@@ -212,7 +222,7 @@ interface EditedData { fields?: string[] }
 interface WaitingData { waiting?: boolean }
 interface OverlapData { files?: string[]; level?: string; cleared?: boolean }
 
-const stageName = (s: string | undefined) => (s && s in STAGE_LABEL ? STAGE_LABEL[s as TicketStage] : s ?? '?');
+const stageName = (s: string | undefined) => (s ? stageLabel(s) : '?');
 
 /** One line for a timeline entry ("Moved from Draft to Ready", "Linked: blocked by PDT-12"). */
 /** What a `pr` event records (crates/pdt-api/src/workflow/nodes/session_send.rs and outbox.rs). */

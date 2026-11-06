@@ -8,6 +8,7 @@ import type { TicketQuery } from '../api/gen/TicketQuery';
 import { useProjects } from '../projects/queries';
 import { sessionsQuery } from '../sessions/queries';
 import { POLL, pagedPoll } from '../common/poll';
+import { isTicketKey } from './model';
 
 export const ticketKeys = {
   /** Every list of tickets (backlog pages, counts, pickers). */
@@ -48,9 +49,6 @@ export function useTicketPages(q: TicketQuery, enabled = true) {
     placeholderData: keepPreviousData,
   });
 }
-
-/** A ticket key (`PDT-12`), as a path names a ticket by (an id otherwise). */
-const isTicketKey = (ref: string) => /^[A-Za-z][A-Za-z0-9]*-\d+$/.test(ref);
 
 /** The ticket a key names (`PDT-12`, any case), or null when no ticket has it. */
 export async function ticketByKey(key: string): Promise<Ticket | null> {

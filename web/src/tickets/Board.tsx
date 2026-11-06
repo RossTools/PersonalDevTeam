@@ -29,7 +29,7 @@ import { useClearToStartToasts } from './clearToStart';
 import { CiBadge, PrBadge } from './PullRequest';
 import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
-import { LabelChips } from './TicketParts';
+import { LabelChips } from '../common/LabelChips';
 import { DAY_MS, DEFAULT_DONE_DAYS, doneWindowLabel, useDoneWindow } from './BoardViewMenu';
 
 export { agentLine };

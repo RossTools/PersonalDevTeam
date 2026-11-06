@@ -30,8 +30,10 @@ When all five are done, PDT says **You're set up.** with **Go to the board** and
 
 - The **rail** on the left switches between **Project manager** (the PM), **Sessions** (your projects and the agents
   working in them), **Inbox** (what's waiting for you), **Tickets** (the backlog and the board), **Notes**,
-  **Documents**, **Workflows**, **Personas**, **Files** and **Settings**.
+  **Documents**, **Workflows**, **Personas**, **Files** (a checkout's files; see
+  [Files](../using-pdt/workspaces-and-sessions.md#files)) and **Settings**.
 - Each project has a **workspace**: a strip of tabs for its sessions, runs and tickets.
+- Your own [todos](../using-pdt/todos.md) sit in a panel on the right: **Ctrl+]** then **t** (**⌘.** on a Mac).
 - Keyboard shortcuts are **Ctrl+]** then a key: **b** opens the board, **l** the tickets.
 
 ## Next

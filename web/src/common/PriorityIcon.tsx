@@ -12,6 +12,9 @@ export const PRIORITY_LABEL: Record<Priority, string> = {
   urgent: 'Urgent',
 };
 
+/** A priority's label, or the value as given when it isn't one (a tool call's input). */
+export const priorityLabel = (p: string) => PRIORITY_LABEL[p as Priority] ?? p;
+
 /** Highest first, for sorting and menus. */
 export const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
