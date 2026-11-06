@@ -72,7 +72,7 @@ function LinkedDocuments({ link, projectId, ticket, empty, wrap }: {
   });
   const unlink = (d: Document) => void runAction(async () => {
     await api.unlinkDocument(d.id, link);
-    invalidateDocuments(qc);
+    invalidateDocuments(qc, [d.id]);
   });
   const done = () => setDialog(null);
   const beside = useBesideTargets(ticket ? [ticket.id] : []);
@@ -118,7 +118,7 @@ function LinkedDocuments({ link, projectId, ticket, empty, wrap }: {
           onClose={done}
           onPick={async (d) => {
             await api.linkDocument(d.id, link);
-            invalidateDocuments(qc);
+            invalidateDocuments(qc, [d.id]);
             done();
           }}
         />

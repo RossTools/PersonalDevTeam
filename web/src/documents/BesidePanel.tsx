@@ -16,7 +16,7 @@ import { navigate } from '../shell/router';
 import { useOpenSession } from '../common/open';
 import { LinkDocumentDialog } from './DocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
-import { openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
+import { documentKeys, openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
 import { POLL } from '../common/poll';
 
 // The document's editors and the Markdown libraries load when a document is first shown beside a conversation.
@@ -26,7 +26,7 @@ const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
 const STEP = 16;
 const DRAG_KIND = 'beside';
 
-export const besideKey = (sessionId: string) => ['documents', 'beside', sessionId] as const;
+export const besideKey = (sessionId: string) => [...documentKeys.besides, sessionId] as const;
 
 /**
  * The documents open beside a conversation, polled (an agent may open one at any time). Off (`enabled` false) for a

@@ -23,7 +23,7 @@ import { pickFiles } from './picker';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { useProjects } from '../projects/queries';
 import { KindIcon } from './LinkedDocuments';
-import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
+import { KIND_LABEL, documentKeys, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
 
 const KINDS: { value: DocumentKind; label: string }[] = [
   { value: 'doc', label: 'Doc' },
@@ -184,9 +184,12 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const [query, setQuery] = useState('');
   const q = useDebounced(query.trim());
   const files = useQuery({
-    queryKey: ['documents', 'provider-files', chosen, q],
+    queryKey: documentKeys.providerFiles(chosen, q),
     queryFn: () => api.providerFiles(chosen!, q),
     enabled: chosen !== null,
+    // A search asks the provider (Drive's API, rate-limited): once, and not again on every refocus.
+    retry: false,
+    staleTime: 30_000,
   });
   // Uploading, importing a found file and the provider's picker share one error line.
   const act = useFormAction((work: () => Promise<void>) => work());
