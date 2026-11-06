@@ -15,7 +15,7 @@ import { useAction } from '../common/useAction';
 import { PluginIcon } from '../plugins/parts';
 import type { Plugin } from '../plugins/model';
 import { issueTitle, shortKey, usePluginList } from './ExternalKeys';
-import { invalidateTickets } from './queries';
+import { invalidateTickets, ticketKeys } from './queries';
 
 /** Reads the ticket's linked issues again when it is opened (the server reads only those a few minutes old). */
 export function useRefreshIssues(ticket: Ticket) {
@@ -24,8 +24,9 @@ export function useRefreshIssues(ticket: Ticket) {
   useEffect(() => {
     if (!has) return;
     let live = true;
+    // Only this ticket's issues change: it takes the answer, and no list is read again.
     api.refreshIssues(ticket.id).then(
-      () => { if (live) invalidateTickets(qc, [ticket.id]); },
+      (fresh) => { if (live) qc.setQueryData(ticketKeys.one(fresh.id), fresh); },
       () => { /* The chips keep what they had; the next open tries again. */ },
     );
     return () => { live = false; };

@@ -46,6 +46,7 @@ html.menu-open, html.menu-open body { overflow: hidden; }
 
 /* Hero */
 .hero { position: relative; padding: 96px 0 56px; text-align: center; overflow: hidden; }
+.hero.not-found { padding: 128px 0 144px; }
 .hero .grid-dots { position: absolute; inset: 0; background-image: radial-gradient(circle, rgba(53,97,184,.18) 1.5px, transparent 1.6px); background-size: 28px 28px; mask-image: radial-gradient(ellipse at 50% 30%, #000 0%, transparent 65%); pointer-events: none; }
 .eyebrow { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); border: 1px solid var(--border); border-radius: 99px; padding: 4px 12px 4px 6px; margin-bottom: 28px; background: var(--surface); }
 .eyebrow b { background: var(--accent-soft); color: var(--accent-hi); border-radius: 99px; padding: 1px 8px; font-weight: 500; }
