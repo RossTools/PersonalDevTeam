@@ -105,6 +105,14 @@ async fn builtin(env: &Env) -> Value {
     list.as_array().unwrap().iter().find(|w| w["builtin"] == "pick-up-tickets").expect("Pick up tickets").clone()
 }
 
+/// Turns the built-in "Pick up tickets" off, for a test of its own pickup workflow: the built-in's every-minute sweep
+/// fires whenever two engine ticks straddle a minute, and would start tickets the test's workflow leaves alone.
+async fn builtin_off(env: &Env) {
+    let id = builtin(env).await["id"].as_str().unwrap().to_string();
+    let (s, v) = call(&env.app, "PATCH", &format!("/api/workflows/{id}"), Some(json!({"enabled": false}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
 #[tokio::test]
 async fn pick_up_tickets_runs_when_a_ticket_can_start_is_unblocked_or_room_frees_up() {
     let env = setup().await;
@@ -244,6 +252,7 @@ async fn two_pickup_runs_at_once_never_start_a_ticket_twice_nor_go_over_the_cap(
 #[tokio::test]
 async fn pick_up_steps_can_narrow_to_a_label_and_their_own_cap() {
     let env = setup().await;
+    builtin_off(&env).await;
     settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
     let mut doc = pickup_by_hand();
     doc["nodes"][1]["config"] = json!({"labels": ["agentic"]});
@@ -353,6 +362,7 @@ async fn a_steps_cap_above_the_projects_running_cap_holds() {
 #[tokio::test]
 async fn a_stale_pick_is_checked_again_and_skipped_when_a_cap_filled_since() {
     let env = setup().await;
+    builtin_off(&env).await;
     settings(&env, json!({"autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
     let (_, t) = call_as_ui(
         &env.app,
