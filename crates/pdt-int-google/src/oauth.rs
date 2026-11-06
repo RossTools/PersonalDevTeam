@@ -64,7 +64,6 @@ pub fn auth_url(client_id: &str, redirect_uri: &str, state: &str, verifier: &str
         ("scope", SCOPES),
         ("access_type", "offline"),
         ("prompt", "consent"),
-        ("include_granted_scopes", "true"),
         ("state", state),
         ("code_challenge_method", "S256"),
     ];
@@ -181,6 +180,8 @@ mod tests {
             assert!(u.contains(part), "{part} in {u}");
         }
         assert!(u.contains(&format!("code_challenge={}", challenge("v"))));
+        // Never the account's other grants folded in: the picker's token carries only these scopes.
+        assert!(!u.contains("include_granted_scopes"), "{u}");
     }
 
     #[test]

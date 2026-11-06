@@ -18,6 +18,9 @@
       p { margin: 0 0 1rem; color: #b4b6bf; }
       code { color: #e7e8ec; font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
       button { font: inherit; padding: 0.5rem 1rem; border: 0; border-radius: 8px; background: #3561b8; color: #fff; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      input { box-sizing: border-box; width: 100%; font: 15px/1.4 ui-monospace, Menlo, monospace; background: #0e0f12;
+        color: #e7e8ec; border: 1px solid #2c2e36; border-radius: 8px; padding: 0.5rem; }
       a { color: #8fb0f0; }
       .warn { color: #f0c36a; }
       .paste { display: flex; gap: 0.5rem; align-items: flex-start; margin: 0 0 1rem; }
@@ -38,9 +41,14 @@
         <h1>Return to PDT at <code id="where"></code>?</h1>
         <p>Google signed you in. Continue only if this is the PDT you started from: on this computer, your network or
           Tailscale.</p>
-        <p id="remote" class="warn" hidden><strong>This address isn’t on this computer.</strong> Whoever runs it gets access to the
-          Google Docs and Sheets you use with PDT. Continue only if it is your own machine and you just clicked Sign in
-          there.</p>
+        <div id="remote" hidden>
+          <p class="warn"><strong>This address isn’t on this computer.</strong> A <code>ts.net</code> name can be anyone’s
+            public site (Tailscale Funnel), and a network address someone else’s machine. Whoever runs it gets the
+            Google Docs and Sheets that any PDT has made or opened for this Google account. Continue only if it is your
+            own machine and you just clicked Sign in there.</p>
+          <p><label for="typed">To continue, type its name, <code id="host"></code>:</label></p>
+          <p><input id="typed" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" /></p>
+        </div>
         <button id="go" type="button">Return to PDT</button>
         <details id="paste-instead" hidden>
           <summary>PDT didn’t open? Paste a code instead</summary>
