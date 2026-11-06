@@ -912,21 +912,9 @@ pub(crate) async fn export(
                     None => sheets.first(),
                 }
                 .ok_or_else(|| ApiError::invalid("there is no such sheet"))?;
-                let mut csv = String::new();
-                for row in &s.rows {
-                    let line: Vec<String> = row
-                        .iter()
-                        .map(|c| {
-                            if c.value.contains([',', '"', '\n']) {
-                                format!("\"{}\"", c.value.replace('"', "\"\""))
-                            } else {
-                                c.value.clone()
-                            }
-                        })
-                        .collect();
-                    csv.push_str(&line.join(","));
-                    csv.push('\n');
-                }
+                let rows = s.rows.iter().map(|row| row.iter().map(|c| c.value.clone()).collect());
+                let csv =
+                    pdt_sheet::write_csv(rows, |v| v.trim().parse::<f64>().is_ok()).map_err(ApiError::internal)?;
                 local::Export {
                     bytes: csv.into_bytes(),
                     file_name: format!("{stem}.csv"),
