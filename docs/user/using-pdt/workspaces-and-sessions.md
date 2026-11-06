@@ -102,7 +102,9 @@ to accept**) are coloured. What an agent does through PDT shows as a card rather
 created, what it changed on a ticket (from → to), links, messages to other sessions, comments, workflow runs it
 started, watches (with **Stop watching**), work it stopped on a ticket, issues it opened or linked, bugs it reported,
 documents it created, edited or linked (with **Open beside**), and notes it saved or deleted. When one of these waits
-for your yes, its card shows what would be created or changed. Calls that only read tickets stay folded, and their line
+for your yes, its card shows what would be created or changed, with all the text it would post or write: an issue's
+title and body, a comment, a document's edits, a new description in full. A call whose tool has no such preview shows
+its arguments open. Calls that only read tickets stay folded, and their line
 names the tickets they read as pills.
 
 ### Make a ticket from a chat

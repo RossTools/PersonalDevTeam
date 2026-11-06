@@ -35,6 +35,8 @@ export interface ApprovalCardProps {
   details?: ReactNode;
   /** Names the ▾ (default "All arguments"). */
   detailsLabel?: string;
+  /** Show `details` from the start (a request with nothing else to say what it does). */
+  detailsOpen?: boolean;
   /** Offer "Always allow in this session". */
   canAlways?: boolean;
   /** `question` cards: what is asked. */
@@ -77,6 +79,7 @@ export function ApprovalCard({
   description,
   details,
   detailsLabel = 'All arguments',
+  detailsOpen = false,
   canAlways = false,
   questions = [],
   plan,
@@ -91,7 +94,7 @@ export function ApprovalCard({
 }: ApprovalCardProps) {
   const [pending, setPending] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
+  const [showDetails, setShowDetails] = useState(detailsOpen);
   const [reason, setReason] = useState('');
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   // Questions answered in the user's own words ("Other…"): question → text (present while the field is open).

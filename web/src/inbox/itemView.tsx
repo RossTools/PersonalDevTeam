@@ -13,7 +13,7 @@ import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { LabelsEditor } from '../tickets/LabelsEditor';
 import { LabelChips } from '../common/LabelChips';
 import { TicketPicker } from '../tickets/TicketPicker';
-import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
+import { approvalTitle, inputText, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';
 import { useOpenSession, useOpenTicket } from '../common/open';
 import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
@@ -259,6 +259,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         const where = [tool, nonBlank(item.body.sessionTitle)].filter(Boolean).join(' · ');
         // PDT's own tools say what they will create or change, as on the conversation's card (PDT-382).
         const pdt = diff ? null : pdtApproval(tool, item.body.input);
+        const shown = diff || pdt ? '' : inputText(tool, item.body.input);
+        const args = shown && shown !== '{}' && shown !== item.title ? shown : '';
         return {
           region: 'Approval', why, enter: false,
           content: pdt ? (
@@ -266,6 +268,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           ) : (
             <CodeCard aria-label={approvalTitle(tool)} title={where} aside={description} code={diff ? undefined : item.title}>
               {diff && <DiffViewer diff={diff} />}
+              {/* Without a preview the arguments are all that says what the call does (PDT-541). */}
+              {args && (
+                <pre aria-label="All arguments" className="max-h-80 overflow-auto border-t border-border px-3.5 py-3 font-mono text-xs whitespace-pre-wrap break-words">{args}</pre>
+              )}
             </CodeCard>
           ),
           note: { label: 'Reason (optional)', placeholder: 'Why not (optional): the agent gets it with Deny' },
