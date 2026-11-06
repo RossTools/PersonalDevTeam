@@ -148,8 +148,9 @@ which asks **Return to PDT at …?** on the way back: check it's the address you
 PDT**.
 
 pdt.dev sends you back only to the PDT that started the sign-in in the same browser, within 15 minutes. A Google
-sign-in link from anywhere else stops there. For an address that isn't on this computer, it also warns you that whoever
-runs that address gets access to your files, so continue only when it's your own machine. If your browser blocks the
+sign-in link from anywhere else stops there. For an address that isn't on this computer, it warns you that whoever
+runs that address gets access to your files, and asks you to type the address's name before it sends you back:
+continue only when it's your own machine. If your browser blocks the
 window, allow pop-ups for PDT and click **Sign in with Google** again.
 
 Sign in once for each Google account. **Sign out** takes PDT's access back; you can also remove it in your Google
@@ -179,7 +180,8 @@ folder's address; blank: My Drive).
 
 Agents use a Google account only once you allow them: click **Allow agents** beside it and agree on Google's page (a
 second consent, for PDT's agents). Until then, agents' document tools say they may not use that account's Docs and
-Sheets, and never act with your own sign-in. **Stop agents** takes the permission away again; your own sign-in stays.
+Sheets, and never act with your own sign-in. **Stop agents** takes the permission away again; your own sign-in stays. Signing the account in again as a different
+Google account takes the agents' permission away too: allow agents again for the new one.
 
 ### Use your own OAuth client
 

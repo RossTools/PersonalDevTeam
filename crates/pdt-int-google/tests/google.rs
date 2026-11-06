@@ -612,6 +612,42 @@ async fn sign_in_with_pdts_own_clients_and_a_separate_permission_for_agents() {
     assert_eq!(conns.as_array().unwrap().len(), 1);
 }
 
+/// Signs a built-in account in through Google's callback as `email`: as the user, or allowing agents. Google's answer.
+async fn sign_in_as(env: &Env, id: Option<&str>, email: &str, agent: bool) -> (axum::http::StatusCode, Value) {
+    let path = id.map_or("/api/google/sign-in".to_string(), |id| format!("/api/google/accounts/{id}/sign-in"));
+    let (s, v) =
+        call_as_ui(&env.app, "POST", &path, Some(json!({"origin": "http://localhost:7421", "agent": agent}))).await;
+    assert_eq!(s, 200, "{v}");
+    env.google.ok("POST", TOKEN_URL, r#"{"access_token":"x","expires_in":3600,"refresh_token":"rt"}"#).ok(
+        "GET",
+        USERINFO_URL,
+        &json!({ "email": email }).to_string(),
+    );
+    let state = state_of(v["url"].as_str().unwrap());
+    call(&env.app, "GET", &format!("/api/google/callback?code=c&state={state}"), None).await
+}
+
+/// Agents act as the account the user signed in, never another: signing the account in again as someone else
+/// forgets the agents' sign-in; as the same account keeps it.
+#[tokio::test]
+async fn signing_in_as_another_account_takes_the_agents_permission_away() {
+    let env = env_with(Some(built_in())).await;
+    assert_eq!(sign_in_as(&env, None, "alice@example.com", false).await.0, 200);
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    let id = v[0]["connectionId"].as_str().unwrap().to_string();
+    assert_eq!(sign_in_as(&env, Some(&id), "alice@example.com", true).await.0, 200);
+    let agents = |env: &Env| env.st.secrets.get(&pdt_int_google::accounts::agent_key(&id)).unwrap();
+    assert!(agents(&env).is_some());
+
+    assert_eq!(sign_in_as(&env, Some(&id), "Alice@example.com", false).await.0, 200);
+    assert!(agents(&env).is_some(), "the same account keeps the agents' permission");
+
+    assert_eq!(sign_in_as(&env, Some(&id), "bob@example.com", false).await.0, 200);
+    assert_eq!(agents(&env), None);
+    let (_, v) = call(&env.app, "GET", "/api/google/accounts", None).await;
+    assert_eq!((&v[0]["signedIn"], &v[0]["agents"]), (&json!(true), &json!(false)), "{v}");
+}
+
 /// With its own OAuth client an account keeps signing in as before, through PDT's own callback, and agents use its
 /// sign-in; it can't ask for the agents' permission.
 #[tokio::test]

@@ -3,7 +3,7 @@
 // as pdtd's (crates/pdt-int-google/src/builtin.rs).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { STARTED_MS, loopback, pasteCode, pasteFor, pdtOrigin, remember, returnTo, startState, started, stateOrigin, take } from '../public/oauth/google.js';
+import { STARTED_MS, loopback, pasteCode, pasteFor, pdtOrigin, remember, returnTo, startState, started, stateOrigin, take, typedHost } from '../public/oauth/google.js';
 
 const b64 = (s) => Buffer.from(s).toString('base64url');
 const NONCE = 'abcdefghijklmnopqrstuvwxyz012-_A';
@@ -89,6 +89,16 @@ test('a code goes back only for a sign-in started here, once and in time', () =>
 test('only this computer’s own addresses go back without a warning', () => {
   for (const o of ['http://127.0.0.1:7420', 'http://localhost:7421', 'http://pdt.localhost', 'http://[::1]:7420']) assert.ok(loopback(o), o);
   for (const o of ['https://mac.tail1.ts.net', 'http://192.168.1.20:7420', 'http://100.101.102.103:7420']) assert.ok(!loopback(o), o);
+});
+
+test('going back anywhere but this computer takes typing its name', () => {
+  for (const t of ['mac.tail1.ts.net', ' Mac.Tail1.TS.net ', 'https://mac.tail1.ts.net/', 'mac.tail1.ts.net:8443']) {
+    assert.ok(typedHost(t, 'https://mac.tail1.ts.net:8443'), t);
+  }
+  assert.ok(typedHost('192.168.1.20', 'http://192.168.1.20:7420'));
+  for (const t of ['', 'mac', 'tail1.ts.net', 'mac.tail1.ts.ne', 'evil.tail1.ts.net', null]) {
+    assert.ok(!typedHost(t, 'https://mac.tail1.ts.net:8443'), String(t));
+  }
 });
 
 test('an answer it can’t send back is shown as a code to paste into PDT', () => {
