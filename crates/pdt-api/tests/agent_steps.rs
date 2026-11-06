@@ -1802,7 +1802,7 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
         "/api/personas",
         Some(json!({"name": "Builder", "role": "coder", "agent": "claude", "instructions": "Build it.",
                     "permissionMode": "bypass",
-                    "tools": ["get_ticket", "submit_outcome", "create_ticket", "edit_ticket"]})),
+                    "tools": ["get_ticket", "submit_outcome", "create_ticket", "edit_ticket", "stop_ticket"]})),
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{p}");
@@ -1950,6 +1950,20 @@ async fn a_coder_edits_only_its_own_tickets_unless_it_names_another_by_key() {
     // Fields other than the text are fine by key.
     let said = ask(format!(r#"mcp: edit_ticket {{"ticket": "{busy_key}", "priority": "high"}}"#)).await;
     assert!(said.contains("\"updated\": true"), "{said}");
+
+    // PDT-540: `stop_ticket` keeps the same rule: another ticket only by its exact key, and the timeline names the
+    // persona that stopped it, not the PM.
+    let said = ask(format!(r#"mcp: stop_ticket {{"ticket": "{busy}"}}"#)).await;
+    assert!(said.contains("exact key") && !said.contains("\"stopped\""), "{said}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{busy}"), None).await;
+    assert_eq!(t["stage"], "in_progress", "{t}");
+    let said = ask(format!(r#"mcp: stop_ticket {{"ticket": "{busy_key}"}}"#)).await;
+    assert!(said.contains("\"stopped\": true"), "{said}");
+    let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{busy}"), None).await;
+    assert_eq!(t["stage"], "todo", "{t}");
+    let (_, ev) = call(&env.app, "GET", &format!("/api/tickets/{busy}/events"), None).await;
+    let notes: Vec<&str> = ev["items"].as_array().unwrap().iter().filter_map(|e| e["body"].as_str()).collect();
+    assert!(notes.contains(&"Work stopped by the Builder."), "{ev}");
 }
 
 async fn builtin_workflow(env: &Env, id: &str) -> Value {

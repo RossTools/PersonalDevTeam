@@ -1,4 +1,5 @@
 import { isRecord, nonBlank } from '../common/guards';
+import { isTicketKey } from '../tickets/model';
 // PDT's own tools in a conversation (PDT-382): which calls show as cards instead of folding into "Used N tools", and
 // what each card reads from the call's input and result.
 
@@ -276,7 +277,7 @@ export interface DocumentView {
 const quoted = (v: unknown) => `\u201c${nonBlank(v) ?? '?'}\u201d`;
 
 /** One edit (`DocumentEdit`) as a phrase: "replaced the section “Scope”". */
-function editText(e: unknown): string {
+export function editText(e: unknown): string {
   const x = isRecord(e) ? e : {};
   const table = nonBlank(x.heading) ? ` under ${quoted(x.heading)}` : '';
   switch (x.op) {
@@ -405,6 +406,12 @@ export function lookedUp(calls: { tool: string; input: unknown; output?: string 
   return keys.length ? keys : null;
 }
 
+/** A ticket a call names, for a question: its key as given, else "this ticket" (an id says nothing to the user). */
+const ticketWord = (v: unknown) => {
+  const t = nonBlank(v);
+  return t && isTicketKey(t) ? t.toUpperCase() : 'this ticket';
+};
+
 /**
  * The approval card's question for a PDT tool that waits for the user's yes ("Create this ticket?"), or null for any
  * other tool.
@@ -415,7 +422,7 @@ export function pdtApprovalTitle(tool: string, input: unknown): string | null {
     case 'create_ticket':
       return 'Create this ticket?';
     case 'edit_ticket':
-      return `Change ${nonBlank(a.ticket) ?? 'this ticket'}?`;
+      return `Change ${ticketWord(a.ticket)}?`;
     case 'link_tickets':
       return 'Link these tickets?';
     case 'unlink_tickets':
@@ -424,8 +431,36 @@ export function pdtApprovalTitle(tool: string, input: unknown): string | null {
       return 'Send this message?';
     case 'workflow_run':
       return 'Run this workflow?';
+    case 'workflow_import':
+      return 'Import these workflows?';
     case 'stop_ticket':
-      return `Stop the work on ${nonBlank(a.ticket) ?? 'this ticket'}?`;
+      return `Stop the work on ${ticketWord(a.ticket)}?`;
+    case 'add_ticket_comment':
+      return `Comment on ${ticketWord(a.ticket)}?`;
+    case 'issue_create':
+      return 'Open this issue?';
+    case 'report_bug':
+      return 'Report this bug in PDT?';
+    case 'link_issue':
+      return `Link this issue to ${ticketWord(a.ticket)}?`;
+    case 'unlink_issue':
+      return `Unlink this issue from ${ticketWord(a.ticket)}?`;
+    case 'document_create':
+      return a.kind === 'sheet' ? 'Create this spreadsheet?' : 'Create this document?';
+    case 'doc_edit':
+      return 'Change this document?';
+    case 'sheet_edit':
+      return 'Change this spreadsheet?';
+    case 'document_link':
+      return a.unlink === true ? 'Unlink this document?' : 'Link this document?';
+    case 'comment_reply':
+      return 'Reply to this comment?';
+    case 'comment_resolve':
+      return 'Resolve this comment?';
+    case 'run_with_secrets':
+      return 'Run this command with secrets?';
+    case 'write_secret_file':
+      return 'Write this file with secrets?';
     default:
       return null;
   }

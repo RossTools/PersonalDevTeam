@@ -237,6 +237,8 @@ function RequestRow({ ev, keyboard, onAnswer }: { ev: Ev<'request'>; keyboard: b
         planAcceptEdits={agent === 'claude'}
         description={ev.description}
         details={args && args !== '{}' && args !== ev.title ? <ToolOutput>{args}</ToolOutput> : undefined}
+        // Without a preview the arguments are all that says what the call does (PDT-541).
+        detailsOpen={!pdt}
         canAlways={ev.canAlways}
         questions={ev.requestKind === 'question' ? questionsOf(ev.input) : undefined}
         plan={plan ? <Markdown>{plan}</Markdown> : undefined}

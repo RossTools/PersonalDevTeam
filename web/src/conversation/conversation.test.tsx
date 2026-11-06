@@ -570,6 +570,23 @@ describe('ConversationView', () => {
     expect(screen.queryByRole('region', { name: 'Open request' })).not.toBeInTheDocument();
   });
 
+  it("shows a call's arguments at once when its tool has no preview", async () => {
+    stubApi({ 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, {
+        kind: 'request', id: 'r1', requestKind: 'approval', tool: 'mcp__pdt__jira_comment', title: 'Comment on Jira issues',
+        input: { issue: 'ABC-1', body: 'Ship it' }, canAlways: false, state: 'open',
+      }, { itemId: 'req' }) });
+      server().send({ type: 'state', state: { ...idle, turnRunning: true } });
+      server().send({ type: 'ready' });
+    });
+    const card = screen.getByRole('region', { name: 'Use pdt: jira_comment?' });
+    expect(within(card).getByRole('button', { name: 'All arguments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(card).getByText(/"body": "Ship it"/)).toBeInTheDocument();
+  });
+
   it('interrupts and changes the permission mode', async () => {
     const calls = stubApi({
       'GET /api/agents/claude/capabilities': caps,
