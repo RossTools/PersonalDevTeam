@@ -32,6 +32,9 @@ impl From<ProviderError> for ApiError {
             ),
             ProviderError::Busy(m) => ApiError::new(StatusCode::TOO_MANY_REQUESTS, codes::PROVIDER_BUSY, m),
             ProviderError::Failed(m) => ApiError::upstream(codes::PROVIDER_FAILED, m),
+            ProviderError::Local { status, code, message } => {
+                ApiError::new(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), code, message)
+            }
         }
     }
 }

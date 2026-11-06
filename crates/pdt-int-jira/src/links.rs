@@ -5,40 +5,40 @@
 use crate::client::JiraClient;
 use crate::core::{JIRA, JiraSettings, issue_key, issue_state, key_in_url};
 use pdt_api::sdk::AppState;
-use pdt_api::sdk::issues::{FoundIssue, IssueNow, StoredExternalLink};
+use pdt_api::sdk::issues::{FindError, FoundIssue, IssueNow, StoredExternalLink};
 use pdt_core::workflow::api::Connection;
 
 /// The Jira connections.
-async fn sites(st: &AppState) -> Result<Vec<Connection>, String> {
-    Ok(st.store.list_connections().await.map_err(|e| e.to_string())?.into_iter().filter(|c| c.kind == JIRA).collect())
+async fn sites(st: &AppState) -> Result<Vec<Connection>, FindError> {
+    Ok(st.store.list_connections().await?.into_iter().filter(|c| c.kind == JIRA).collect())
 }
 
 /// The issue `given` names: None when it is neither an address on a Jira site PDT knows nor an issue key (or PDT has
 /// no Jira site).
-pub(crate) async fn find(st: &AppState, project_id: &str, given: &str) -> Option<Result<FoundIssue, String>> {
+pub(crate) async fn find(st: &AppState, project_id: &str, given: &str) -> Option<Result<FoundIssue, FindError>> {
     let all = match sites(st).await {
         Ok(all) if all.is_empty() => return None,
         Ok(all) => all,
         Err(e) => return Some(Err(e)),
     };
     if let Some((conn, key)) = all.iter().find_map(|c| key_in_url(&c.url, given).map(|k| (c, k))) {
-        return Some(read(st, &conn.name, &key).await);
+        return Some(read(st, &conn.name, &key).await.map_err(FindError::Tracker));
     }
     let key = issue_key(given)?;
     let linked = match st.store.get_project_settings(project_id).await {
         Ok(s) => s.integration::<JiraSettings>(JIRA).map(|j| j.connection),
-        Err(e) => return Some(Err(e.to_string())),
+        Err(e) => return Some(Err(e.into())),
     };
     let name = match (linked, <[Connection; 1]>::try_from(all)) {
         (Some(n), _) => n,
         (None, Ok([one])) => one.name,
         (None, Err(_)) => {
-            return Some(Err(format!(
+            return Some(Err(FindError::Tracker(format!(
                 "PDT has several Jira sites: give {key}'s address, or link the project to one in its settings"
-            )));
+            ))));
         }
     };
-    Some(read(st, &name, &key).await)
+    Some(read(st, &name, &key).await.map_err(FindError::Tracker))
 }
 
 async fn read(st: &AppState, connection: &str, key: &str) -> Result<FoundIssue, String> {
@@ -68,7 +68,7 @@ pub(crate) async fn read_link(st: &AppState, link: &StoredExternalLink) -> Resul
         .store
         .get_connection(&link.connection_id)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(pdt_api::sdk::err)?
         .ok_or("the Jira connection the issue was linked with is gone")?;
     let c = JiraClient::named(st, &conn.name).await?;
     now(&c, &link.key).await

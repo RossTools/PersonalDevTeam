@@ -24,7 +24,7 @@ use crate::routes::{AppState, now_ms};
 
 /// A step's or a run's error text for `e` (it shows in the run view and stuck Inbox items): what its [`ApiError`]
 /// says, as the API would, the full text (a database's, git's) logged.
-pub(crate) fn err(e: impl Into<ApiError>) -> String {
+pub fn err(e: impl Into<ApiError>) -> String {
     e.into().message().to_string()
 }
 
