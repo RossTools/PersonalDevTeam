@@ -100,7 +100,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
   whose id starts `pdt-ask-`, which the Inbox lists as its approval item) and the tool call waits on it; a terminal gets
   an Inbox `confirm` item and the call waits on that (`workflow::agent::confirm_wait`: `answer_confirm` hands the answer
-  to the waiting call, and only runs the call and messages the session itself when no call waits any more).
+  to the waiting call, and only runs the call and messages the session itself when no call waits any more). Both
+  waiters give the same `Answered` (with a Deny's reason), and only `mcp::tools::asking::ask_for_call` turns it into
+  the call's result: the notifications around the wait, the user's yes recorded for that very call (`Grants::allow`)
+  and the words the agent reads. A new asking call uses it rather than a waiter directly. A test calls every core tool
+  marked `asks` from a Codex PM and expects a card (`every_core_asking_tool_asks`): a new one goes in its list.
   `answer_request` answers PDT's own requests itself, never the agent's process, and `pm::request_opened` never answers
   them. The PM's `add_ticket_comment` on a ticket with an active attempt asks the same way whatever its agent
   (`mcp::tools::confirm_pm_comment`; Claude's prompt never covers it): "Ticket comments to the agent" sends the PM's

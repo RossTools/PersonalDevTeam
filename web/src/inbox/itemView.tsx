@@ -509,7 +509,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
             ? <CodeCard aria-label={pdt.title} title={pdt.title} aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')}><div className="p-2.5">{pdt.preview}</div></CodeCard>
             : <CodeCard aria-label="The call's arguments" title={<span className="font-mono">{tool}</span>}
               aside={[session ?? 'An agent session', agent].filter(Boolean).join(' · ')} code={input} />,
-          actions: choiceActions(item, plain, busy),
+          note: { label: 'Reason (optional)', placeholder: 'Why not (optional): the agent gets it with Deny' },
+          actions: choiceActions(item, (c) => (c === 'deny' ? withNote(c) : plain(c)), busy),
         };
       }
       case 'gate': {
