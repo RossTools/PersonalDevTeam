@@ -742,7 +742,13 @@ pub(crate) async fn acts_without_asking(st: &AppState, s: &Session, target: &Ask
         }
         return false;
     }
-    let project = match target {
+    let Some(project) = target_project(st, target).await else { return false };
+    st.store.get_project_settings(&project).await.is_ok_and(|s| s.policy.pm_acts)
+}
+
+/// The project an asking tool's call acts on, for a target in one (a project, a ticket, a session).
+async fn target_project(st: &AppState, target: &AskTarget) -> Option<String> {
+    match target {
         AskTarget::Project(p) => project_id(st, p).await.ok(),
         AskTarget::Ticket(t) => match crate::mcp::tools::resolve_ticket(st, t, None).await {
             Ok(id) => st.store.get_ticket(&id).await.ok().flatten().map(|t| t.summary.project_id),
@@ -750,9 +756,22 @@ pub(crate) async fn acts_without_asking(st: &AppState, s: &Session, target: &Ask
         },
         AskTarget::Session(s) => st.store.get_session(s).await.ok().flatten().map(|s| s.project_id),
         AskTarget::Connection { .. } | AskTarget::Document(_) | AskTarget::Always => None,
-    };
-    let Some(project) = project else { return false };
-    st.store.get_project_settings(&project).await.is_ok_and(|s| s.policy.pm_acts)
+    }
+}
+
+/// What "Always allow in this session" covers a tool for, given what its call acts on (PDT-539): the project, else
+/// the document or connection, so a yes in one project's call doesn't let the tool act in another's unasked.
+pub(crate) async fn ask_scope(st: &AppState, target: &AskTarget) -> String {
+    if let Some(p) = target_project(st, target).await {
+        return format!("project:{p}");
+    }
+    match target {
+        AskTarget::Document(d) => format!("document:{d}"),
+        AskTarget::Connection { kind, name } => format!("connection:{kind}:{}", name.as_deref().unwrap_or("")),
+        AskTarget::Always => "always".into(),
+        // One PDT can't find: its call fails on its own, and a yes to it covers only the same name.
+        other => format!("{other:?}"),
+    }
 }
 
 /// A project's id from its id or key (not the host project).

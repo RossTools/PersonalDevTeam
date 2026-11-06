@@ -179,11 +179,17 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         let claude_prompts = cx.session.agent.unwrap_or(AgentKind::Claude) == AgentKind::Claude
             && !cx.session.asks_nothing()
             && has_ask_rule(cx.st, &cx.session.id, tool);
-        if claude_prompts || crate::pm::acts_without_asking(cx.st, cx.session, target).await {
+        if claude_prompts {
+            return Ok(());
+        }
+        // Letting an external ticket in takes the user's yes even where the project lets the PM act (PDT-201, PDT-539).
+        if !crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await
+            && crate::pm::acts_without_asking(cx.st, cx.session, target).await
+        {
             return Ok(());
         }
     }
-    ask_the_user(cx, tool, in_inbox).await
+    ask_the_user(cx, tool, target, in_inbox).await
 }
 
 /// The PM's comment on a ticket that is being worked on (PDT-537): "Ticket comments to the agent" sends it to the
@@ -196,20 +202,25 @@ pub(crate) async fn confirm_pm_comment(cx: &Cx<'_>, tool: &str, ticket: &str) ->
     if cx.confirmed || !pm || cx.st.store.active_attempt(ticket).await.map_err(store)?.is_none() {
         return Ok(());
     }
-    if crate::pm::acts_without_asking(cx.st, cx.session, &AskTarget::Ticket(ticket.into())).await {
+    let target = AskTarget::Ticket(ticket.into());
+    if crate::pm::acts_without_asking(cx.st, cx.session, &target).await {
         return Ok(());
     }
-    ask_the_user(cx, tool, false).await
+    ask_the_user(cx, tool, &target, false).await
 }
 
 /// Asks the user about this call and waits for their answer ([`confirmable`]).
-async fn ask_the_user(cx: &Cx<'_>, tool: &str, in_inbox: bool) -> Result<(), String> {
-    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always".
-    let each_time = !in_inbox && crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
-    if !in_inbox && !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool) {
+async fn ask_the_user(cx: &Cx<'_>, tool: &str, target: &AskTarget, in_inbox: bool) -> Result<(), String> {
+    // Letting an external ticket in takes the user's yes to this very call (PDT-201): never "always". Their yes is
+    // kept for the call only then, the one call that checks for it (`edit_ticket`, PDT-539).
+    let each_time = crate::untrusted::needs_the_user(cx.st, cx.session, tool, cx.input).await;
+    // "Always allow in this session" covers the tool for what it acts on, not for other projects (PDT-539).
+    let scope = crate::pm::ask_scope(cx.st, target).await;
+    if !in_inbox && !each_time && crate::conversations::allowed_always(cx.st, &cx.session.id, tool, &scope) {
         return Ok(());
     }
-    let ask = Ask { inline: !in_inbox, can_always: !each_time, rows: None, unchanged: "PDT didn't make it" };
+    let always = (!each_time).then_some(scope.as_str());
+    let ask = Ask { inline: !in_inbox, always, grant: each_time, rows: None, unchanged: "PDT didn't make it" };
     ask_for_call(cx, tool, ask).await.map(|_| ())
 }
 

@@ -51,7 +51,7 @@ function stoppedLine(tasks: { description: string }[]): string | null {
  * An agent session shown as a conversation: the message list over the composer. Sending also reopens a
  * parked, stopped or ended conversation, so there is no separate restart flow.
  */
-export function ConversationView({ session, socketFactory, className, banner, readOnly }: {
+export function ConversationView({ session, socketFactory, className, banner, readOnly, empty, placeholder }: {
   session: Session;
   /** Tests: a fake WebSocket. */
   socketFactory?: (url: string) => EventsSocketLike;
@@ -60,19 +60,27 @@ export function ConversationView({ session, socketFactory, className, banner, re
   banner?: ReactNode;
   /** Shown instead of the composer: the conversation is only to read (an ended PM session). */
   readOnly?: ReactNode;
+  /** Replaces "Ask <agent> something" while there are no messages (the PM's own). */
+  empty?: ReactNode;
+  /** The composer's placeholder while the agent is idle. */
+  placeholder?: string;
 }) {
   const conv = useConversation(session.id, socketFactory);
-  return <ConversationPane session={session} conv={conv} className={className} banner={banner} readOnly={readOnly} />;
+  return <ConversationPane session={session} conv={conv} className={className} banner={banner} readOnly={readOnly} empty={empty} placeholder={placeholder} />;
 }
 
 /** The conversation for events the caller follows (SessionView shares one socket between its header and this). */
-export function ConversationPane({ session, conv, banner, readOnly, className }: {
+export function ConversationPane({ session, conv, banner, readOnly, empty, placeholder, className }: {
   session: Session;
   conv: ConversationData;
   /** A quiet line over the composer (e.g. "Also open in the terminal"). */
   banner?: ReactNode;
   /** Shown instead of the composer. */
   readOnly?: ReactNode;
+  /** Replaces "Ask <agent> something" while there are no messages. */
+  empty?: ReactNode;
+  /** The composer's placeholder while the agent is idle. */
+  placeholder?: string;
   className?: string;
 }) {
   const qc = useQueryClient();
@@ -137,11 +145,11 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
         refs={refs}
         remember={`conversation:${session.id}`}
         empty={
-          conv.ready ? (
+          !conv.ready ? null : empty ?? (
             <EmptyState icon={<MessagesSquare />} className="mt-16 border-0">
               Ask {agentName} something. It works in {session.cwd}.
             </EmptyState>
-          ) : null
+          )
         }
       />
       {banner}
@@ -167,6 +175,7 @@ export function ConversationPane({ session, conv, banner, readOnly, className }:
         onInterrupt={interrupt}
         stopped={state?.stopped ?? null}
         agentName={agentName}
+        placeholder={placeholder}
         models={caps.data?.models ?? []}
         model={shownModel ?? null}
         defaultModel={hostSettings.data?.settings.agentModels?.[agent] ?? null}
