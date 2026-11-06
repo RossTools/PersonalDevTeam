@@ -3,7 +3,11 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@ui';
 import { api } from '../api/client';
-import { ChangeRow, Key, priorityLabel, stageLabel } from './PdtToolCard';
+import { LabelChips } from '../common/LabelChips';
+import { priorityLabel } from '../common/PriorityIcon';
+import { StageBadge } from '../common/StageBadge';
+import { stageLabel } from '../common/StageStepper';
+import { ChangeRow, Key } from './PdtToolCard';
 import { createdTicket, LINK_TEXT, pdtApprovalTitle, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
 import { isRecord } from '../common/guards';
 import { sessionKeys } from '../sessions/queries';
@@ -29,9 +33,9 @@ function NewTicket({ input }: { input: unknown }) {
       <div className="font-semibold">{t.title}</div>
       {t.description && <p className="text-xs text-muted-foreground">{shortText(t.description)}</p>}
       <div className="flex flex-wrap items-center gap-1">
-        <Badge>{stageLabel(t.stage)}</Badge>
+        <StageBadge stage={t.stage} />
         {t.priority && t.priority !== 'none' && <Badge>{priorityLabel(t.priority)}</Badge>}
-        {t.labels.map((l) => <Badge key={l} tone="accent">{l}</Badge>)}
+        <LabelChips labels={t.labels} className="flex-wrap" />
         {parent && <span className="ml-1 flex items-center gap-1 text-xs text-muted-foreground">Part of <Key value={parent} /></span>}
         {files > 0 && <span className="ml-1 text-xs text-muted-foreground">{files === 1 ? 'A file attached' : `${files} files attached`}</span>}
       </div>

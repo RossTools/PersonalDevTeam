@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode, Ref } from 'react';
 import { cn } from '@ui/lib/utils';
 
 const base =
@@ -6,7 +6,8 @@ const base =
 
 /**
  * A neutral mono label for keys, branches and labels. With `href` it is a link (http(s) links open in a new tab
- * with `rel=noreferrer` unless `external={false}`).
+ * with `rel=noreferrer` unless `external={false}`). It forwards its ref and other props (`data-slot`, a hover card's
+ * handlers) to the element.
  */
 export function Chip({
   children,
@@ -16,7 +17,9 @@ export function Chip({
   title,
   className,
   'aria-label': ariaLabel,
-}: {
+  ref,
+  ...rest
+}: Omit<HTMLAttributes<HTMLElement>, 'children' | 'title' | 'className' | 'aria-label'> & {
   children: ReactNode;
   icon?: ReactNode;
   href?: string;
@@ -24,6 +27,7 @@ export function Chip({
   title?: string;
   className?: string;
   'aria-label'?: string;
+  ref?: Ref<HTMLElement>;
 }) {
   const content = (
     <>
@@ -35,6 +39,8 @@ export function Chip({
     const ext = external ?? /^https?:\/\//.test(href);
     return (
       <a
+        {...rest}
+        ref={ref as Ref<HTMLAnchorElement>}
         href={href}
         title={title}
         aria-label={ariaLabel}
@@ -51,7 +57,7 @@ export function Chip({
     );
   }
   return (
-    <span title={title} aria-label={ariaLabel} className={cn(base, className)}>
+    <span {...rest} ref={ref as Ref<HTMLSpanElement>} title={title} aria-label={ariaLabel} className={cn(base, className)}>
       {content}
     </span>
   );

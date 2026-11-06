@@ -13,6 +13,9 @@ export const STAGE_LABEL: Record<TicketStage, string> = {
   wont_do: "Won't do",
 };
 
+/** A stage's label, or the value as given when it isn't one (a tool call's input). */
+export const stageLabel = (s: string) => STAGE_LABEL[s as TicketStage] ?? s;
+
 const FLOW: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done'];
 
 export interface StageStepperProps {

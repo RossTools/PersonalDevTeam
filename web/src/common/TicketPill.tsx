@@ -1,19 +1,20 @@
-// Ticket keys and PR numbers in a conversation as pills (PDT-382): a ticket's opens a card about it on hover or focus.
+// Ticket keys and PR numbers as pills (PDT-382), on the design system's Chip: a ticket's opens a card about it on hover
+// or focus. The one way to show a key that links to its ticket (PDT-545).
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge, HoverCard, Skeleton } from '@ui';
+import { Badge, Chip, HoverCard, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, ApiError } from '../api/client';
 import type { Ticket } from '../api/gen/Ticket';
 import { CI_LABEL, CI_TONE, prName } from '../tickets/PullRequest';
 import { ticketKeys } from '../tickets/queries';
 import { PRIORITY_LABEL } from './PriorityIcon';
-import { STAGE_LABEL } from './StageStepper';
+import { LabelChips } from './LabelChips';
+import { StageBadge } from './StageBadge';
 import { agentLine } from './ticketAgent';
 
-/** A key or number in a pill: mono, a quiet fill and edge, the accent on hover; a bigger hit area on touch. */
-const PILL =
-  'relative touch-hit inline-flex items-center rounded-md border border-border bg-muted px-1 font-mono text-meta leading-[1.45] text-foreground no-underline outline-none align-baseline hover:border-primary hover:text-link focus-visible:ring-2 focus-visible:ring-ring';
+/** A pill sits in running text: a bigger hit area on touch. */
+const PILL = 'relative touch-hit align-baseline';
 
 /** The ticket a hover card shows, by key: fetched on the first hover, then kept a while (React Query). */
 function useTicketCard(ticketKey: string, enabled: boolean) {
@@ -36,9 +37,9 @@ function TicketCard({ ticket: t }: { ticket: Ticket }) {
     <>
       <div className="text-sm font-semibold">{t.title}</div>
       <div className="flex flex-wrap items-center gap-1">
-        <Badge tone={t.stage === 'done' ? 'running' : 'neutral'}>{STAGE_LABEL[t.stage]}</Badge>
+        <StageBadge stage={t.stage} />
         {t.priority !== 'none' && <Badge>{PRIORITY_LABEL[t.priority]}</Badge>}
-        {t.labels.map((l) => <Badge key={l} tone="accent">{l}</Badge>)}
+        <LabelChips labels={t.labels} className="flex-wrap" />
       </div>
       {agent && <div className="text-muted-foreground">{agent.text}</div>}
       {active && t.attempt && (
@@ -72,9 +73,9 @@ export function TicketPill({ ticketKey, className }: { ticketKey: string; classN
   const [asked, setAsked] = useState(false);
   return (
     <HoverCard onOpenChange={(o) => o && setAsked(true)} content={<CardBody ticketKey={ticketKey} open={asked} />}>
-      <a href={`/tickets/${encodeURIComponent(ticketKey)}`} data-slot="ticket-pill" className={cn(PILL, className)}>
+      <Chip href={`/tickets/${encodeURIComponent(ticketKey)}`} data-slot="ticket-pill" className={cn(PILL, className)}>
         {ticketKey}
-      </a>
+      </Chip>
     </HoverCard>
   );
 }
@@ -82,8 +83,8 @@ export function TicketPill({ ticketKey, className }: { ticketKey: string; classN
 /** A pull request's number as a pill linking to it on the forge. */
 export function PrPill({ number, href, className }: { number: number; href: string; className?: string }) {
   return (
-    <a href={href} target="_blank" rel="noreferrer" data-slot="pr-pill" className={cn(PILL, className)}>
+    <Chip href={href} external data-slot="pr-pill" className={cn(PILL, className)}>
       PR #{number}
-    </a>
+    </Chip>
   );
 }
