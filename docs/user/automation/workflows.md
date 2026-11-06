@@ -279,8 +279,8 @@ These ones react to releases, PDT itself and what it looks after:
 - **Disk space recovered**: a disk that was low has enough free space again.
 - **Connection failing**: a connection, or your sign-in to a forge such as GitHub, stopped working (a revoked token,
   the service down). It fires when it starts failing, not on every failed use.
-- **Todo due**: one of your todos comes due, with its title, notes and when it was due (or that it's overdue, if PDT
-  was off then).
+- **Todo due**: one of your [todos](../using-pdt/todos.md) comes due, with its title, notes and when it was due (or
+  that it's overdue, if PDT was off then).
 - **Scryer download finished** (with the Scryer plugin): Scryer finished a download and added it to your library,
   with the title, its type, quality and folder. PDT looks every minute while a trigger is on.
 
@@ -294,38 +294,45 @@ Any trigger can be narrowed to some projects, or to when a condition holds (the 
 
 ### Steps
 
-**Add node** lists every step (search it by name). By what they do:
+**Add node** lists every step (search it by name), in the groups below, after the [triggers](#triggers).
 
-- **Act on tickets**: **Comment on the ticket**, **Move the ticket**, **Create a ticket**, **Finish the ticket** (stop
-  its runs, remove its worktree), **Update with the base**, **Merge the attempt**, and **Find tickets to start**, **Choose tickets to start** and
-  **Start the ticket** (see [Pick up tickets](#pick-up-tickets)).
-- **Talk to agents**: **Tell the agent** messages the ticket's agent once it's between turns; an **Agent step** has a
-  persona do a piece of work. For a stuck agent step: **Nudge the agent**, **Restart in a fresh session**, **Ask me in
-  the Inbox** and **Stop the step**.
-- **Decide**: **If** (yes or no), **Switch** (one exit per value), **Wait** (for a time, or an event with a time
-  limit), **Ask the user** (a gate).
-- **Look after PDT**: **Wait until PDT is idle** (no agent working, inside a time window if you set one, or until a
-  time limit), **Install the update** and **Check PDT is healthy**. **Check disk space** goes on by how full the
-  fullest disk PDT uses is (enough space, low, almost full). **Clean up worktrees** frees space in finished tickets'
-  worktrees: those whose project's delays have passed, or every finished one now (by stage and age), removing build
-  output or the whole worktree when nothing would be lost. **Pause pickup** stops auto-start, with a reason the Board
-  shows, until **Resume pickup** in the same workflow (or you) resumes it.
-- **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue. **Notify me**
-  can set how far it reaches you (from a dot to a desktop notification, or only the chat channel), post to a chat
-  channel too, and do nothing once a given Inbox item is answered. Its link opens a ticket (by key), an Inbox item or a
-  web address (`http` or `https` only).
-- **Show levels** holds how far each kind of notification reaches you, and quiet hours. It starts no runs: PDT reads it
-  from the **Notification rules** workflow as it makes each notification. Add another with **projects** set to give
-  those projects their own levels.
-- **The PM**: **PM daily update** brings the PM's open conversations up to date; **PM journal checkpoint** asks them
-  to write their journal entry.
-- **Work on documents**: **Create a document** (a doc or a sheet, linked to a ticket or the project), **Add to a
-  document** (Markdown at its end or under a heading), **Add rows to a sheet** (under its last row), **Set cells in a
-  sheet**, **Add a chart to a sheet**, and **Comment on a document** (a reply in a comment's thread, or a new comment).
-  Each names its document by title or id, and a dry run says what it would write. In a sheet, a value you type
-  starting with `=` is a formula; text filled in from the event (a ticket's title, say) is always written as text.
-- **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**, **Run a workflow**.
-- Plugins (Jira, Buildkite, GitHub…) add their own steps while they're on.
+- **Actions** do the work. By what they do:
+  - **Act on tickets**: **Comment on the ticket**, **Move the ticket**, **Create a ticket**, **Finish the ticket**
+    (stop its runs, remove its worktree), **Update with the base**, **Merge the attempt**, and **Find tickets to
+    start** and **Start the ticket** (see [Pick up tickets](#pick-up-tickets)).
+  - **Talk to agents**: **Tell the agent** messages the ticket's agent once it's between turns. For a stuck agent
+    step: **Nudge the agent**, **Restart in a fresh session**, **Ask me in the Inbox** and **Stop the step**.
+  - **Look after PDT**: **Install the update**. **Clean up worktrees** frees space in finished tickets' worktrees:
+    those whose project's delays have passed, or every finished one now (by stage and age), removing build output or
+    the whole worktree when nothing would be lost. **Pause pickup** stops auto-start, with a reason the Board shows,
+    until **Resume pickup** in the same workflow (or you) resumes it.
+  - **Tell people**: **Notify me**, **Put it in my Inbox**, a Discord post, a comment on a GitHub issue. **Notify
+    me** can set how far it reaches you (from a dot to a desktop notification, or only the chat channel), post to a
+    chat channel too, and do nothing once a given Inbox item is answered. Its link opens a ticket (by key), an Inbox
+    item or a web address (`http` or `https` only).
+  - **The PM**: **PM daily update** brings the PM's open conversations up to date; **PM journal checkpoint** asks
+    them to write their journal entry.
+  - **Work on documents**: **Create a document** (a doc or a sheet, linked to a ticket or the project), **Add to a
+    document** (Markdown at its end or under a heading), **Add rows to a sheet** (under its last row), **Set cells in
+    a sheet**, **Add a chart to a sheet**, and **Comment on a document** (a reply in a comment's thread, or a new
+    comment). Each names its document by title or id, and a dry run says what it would write. In a sheet, a value
+    you type starting with `=` is a formula; text filled in from the event (a ticket's title, say) is always written
+    as text.
+  - **Reach out**: **Run a command**, **HTTP request** (through a connection), **MCP tool**.
+  - Plugins (Jira, Buildkite, GitHub…) add their own while they're on.
+- **Agent steps**: an **Agent step** has a persona do a piece of work (see
+  [Agent steps and outcomes](#agent-steps-and-outcomes)).
+- **Conditions** pick an exit: **If** (yes or no), **Switch** (one exit per value), **Choose tickets to start**,
+  **Check disk space** (by how full the fullest disk PDT uses is: enough space, low, almost full), and questions
+  about the ticket's attempt: **An agent on the attempt?**, **Anything to merge?**, **Resolve at merge time?**.
+- **Ask the user**: a gate (see [Gates](#gates)).
+- **Waits**: **Wait** (for a time, or an event with a time limit), **Wait until PDT is idle** (no agent working,
+  inside a time window if you set one, or until a time limit) and **Check PDT is healthy**.
+- **Flow**: **Run a workflow** (and wait for it), **End** (end the run here).
+
+**Show levels**, among the triggers, holds how far each kind of notification reaches you, and quiet hours. It starts
+no runs: PDT reads it from the **Notification rules** workflow as it makes each notification. Add another with
+**projects** set to give those projects their own levels.
 
 A step's settings can use what came before: `{{trigger.ticketKey}}` is the event's ticket, `{{steps.review.summary}}`
 is what the step called `review` handed in; the settings panel has a picker for these. Secrets go in as
