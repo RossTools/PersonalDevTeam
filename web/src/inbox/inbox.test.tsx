@@ -526,6 +526,9 @@ describe('inbox', () => {
     expect(table).toHaveTextContent('PDT-1 Proposal 1');
     expect(table).toHaveTextContent('Accept to Todoagentic · High priority');
     expect(table).toHaveTextContent('Duplicateof PDT-1');
+    // Each key, and the ticket a duplicate repeats, is a pill to its ticket (PDT-545).
+    expect([...table.querySelectorAll('[data-slot=ticket-pill]')].map((p) => p.getAttribute('href')))
+      .toEqual(['/tickets/PDT-1', '/tickets/PDT-2', '/tickets/PDT-1', '/tickets/PDT-3']);
     expect(table).toHaveTextContent('Not worth it');
     expect(screen.getByRole('region', { name: 'Agent call' })).toHaveTextContent('PM proposes 3 decisions');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Keep PDT-2' }));

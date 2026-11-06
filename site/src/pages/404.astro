@@ -1,0 +1,23 @@
+---
+// The page GitHub Pages serves for any address the site doesn't have, in the landing frame. Its links are absolute
+// (under the base path), as it is served at whatever address was asked for.
+import Landing from '../layouts/Landing.astro';
+import { siteLinks } from '../links.mjs';
+
+const links = siteLinks(import.meta.env.BASE_URL);
+---
+
+<Landing title="Page not found" description="There's no page at this address." indexed={false}>
+	<header class="hero not-found">
+		<div class="grid-dots"></div>
+		<div class="wrap" style="position:relative">
+			<div class="eyebrow"><b>404</b> Page not found</div>
+			<h1>There's no page <em>at this address.</em></h1>
+			<p class="sub">It may have moved, or the link has a typo. The docs and the home page are good places to start.</p>
+			<div class="cta">
+				<a class="btn primary" href={links.home}>Go home</a>
+				<a class="btn ghost" href={links.docs}>Read the docs</a>
+			</div>
+		</div>
+	</header>
+</Landing>

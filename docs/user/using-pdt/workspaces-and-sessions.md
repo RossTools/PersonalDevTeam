@@ -105,6 +105,15 @@ documents it created, edited or linked (with **Open beside**), and notes it save
 for your yes, its card shows what would be created or changed. Calls that only read tickets stay folded, and their line
 names the tickets they read as pills.
 
+### Make a ticket from a chat
+
+A Claude or Codex conversation that isn't working on a ticket can become one: choose **Make ticket…** in the session's
+**⋯** menu. The agent drafts a title and description from the chat, on the side: the chat itself is left as it is.
+The **Make ticket** form then opens with the draft to edit; if drafting fails, **Try again** or **Write it myself**.
+
+When the chat works in a worktree on its own branch, the form also offers **Start from this chat**: the ticket goes
+to In progress with this chat and its branch as its attempt, and nothing is sent to the agent.
+
 ## Models and permission modes
 
 A conversation's message box has two pickers, both changeable at any time:

@@ -52,6 +52,19 @@ describe('issue links', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/tickets/t1/issues/refresh')).toBe(true));
   });
 
+  it('reading the issues again marks no ticket list, timeline or labels stale: the ticket takes the answer', async () => {
+    let t = ticket(1, { external: [manual] });
+    stub(t, {
+      'GET /api/tickets/t1': () => t,
+      'POST /api/tickets/t1/issues/refresh': () => (t = ticket(1, { external: [{ ...manual, title: 'Crash on launch' }] })),
+    });
+    const { qc } = view();
+    const invalidated = vi.spyOn(qc, 'invalidateQueries');
+    const list = await screen.findByRole('list', { name: 'Issues' });
+    expect(await within(list).findByText('Crash on launch')).toBeInTheDocument();
+    expect(invalidated).not.toHaveBeenCalled();
+  });
+
   it('offers closing on Done only for an issue linked by hand, off until ticked', async () => {
     const calls = stub(ticket(1, { external: [manual, imported] }), { 'PATCH /api/tickets/t1/issues': ticket(1) });
     view();

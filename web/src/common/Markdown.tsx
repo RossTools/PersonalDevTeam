@@ -13,6 +13,7 @@ import { PrPill, TicketPill } from './TicketPill';
 import { TicketKeysContext } from './ticketKeys';
 import { AttachmentImage, AttachmentLink, attachmentRef } from './AttachmentViews';
 import { sessionKeys } from '../sessions/queries';
+import { TICKET_KEY } from '../tickets/model';
 
 interface MdNode {
   type: string;
@@ -126,8 +127,10 @@ const components: Components = {
 
 const LINK = 'text-link underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
 
+const TICKET_HREF = new RegExp(`^/tickets/(${TICKET_KEY})$`);
+
 /** A ticket's path (`/tickets/PDT-12`) → its key. */
-const ticketOfHref = (href: string | undefined) => (href ? /^\/tickets\/([A-Za-z][A-Za-z0-9]*-\d+)$/.exec(href)?.[1] ?? null : null);
+const ticketOfHref = (href: string | undefined) => (href ? TICKET_HREF.exec(href)?.[1] ?? null : null);
 
 /**
  * A link: an attachment opens in its viewer (PDT-300); in a conversation a ticket key or a PR is a pill and a file

@@ -11,7 +11,7 @@ import type { Priority } from '../api/gen/Priority';
 import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { LabelsEditor } from '../tickets/LabelsEditor';
-import { LabelChips } from '../tickets/TicketParts';
+import { LabelChips } from '../common/LabelChips';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { approvalTitle, questionsOf as requestQuestions } from '../conversation/tools';
 import { navigate } from '../shell/router';

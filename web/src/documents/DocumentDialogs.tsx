@@ -14,6 +14,7 @@ import type { DocumentKind } from '../api/gen/DocumentKind';
 import type { Project } from '../api/gen/Project';
 import type { ProviderPicker } from '../api/gen/ProviderPicker';
 import type { SignInAccount } from '../api/gen/SignInAccount';
+import { TicketPill } from '../common/TicketPill';
 import { actionError, useFormAction } from '../common/useAction';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnections } from '../connections/queries';
@@ -22,7 +23,7 @@ import { pickFiles } from './picker';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { useProjects } from '../projects/queries';
 import { KindIcon } from './LinkedDocuments';
-import { KIND_LABEL, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
+import { KIND_LABEL, documentKeys, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
 
 const KINDS: { value: DocumentKind; label: string }[] = [
   { value: 'doc', label: 'Doc' },
@@ -183,9 +184,12 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const [query, setQuery] = useState('');
   const q = useDebounced(query.trim());
   const files = useQuery({
-    queryKey: ['documents', 'provider-files', chosen, q],
+    queryKey: documentKeys.providerFiles(chosen, q),
     queryFn: () => api.providerFiles(chosen!, q),
     enabled: chosen !== null,
+    // A search asks the provider (Drive's API, rate-limited): once, and not again on every refocus.
+    retry: false,
+    staleTime: 30_000,
   });
   // Uploading, importing a found file and the provider's picker share one error line.
   const act = useFormAction((work: () => Promise<void>) => work());
@@ -282,7 +286,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     );
   const account = pickers.length === 1 ? (pickers[0].email ?? pickers[0].name) : pickers.length > 1 ? `${pickers.length} accounts` : undefined;
   const description = ticket
-    ? <>Into <Badge className="font-mono">{ticket.key}</Badge>{projectName && ` · ${projectName}`}</>
+    ? <>Into <TicketPill ticketKey={ticket.key} />{projectName && ` · ${projectName}`}</>
     : projectName && `Into ${projectName}`;
   const empty = files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : (
     <EmptyState size="inline" className="justify-center py-2 text-center" action={browse('secondary', 'sm', `${picker?.label ?? ''} for it`)}>

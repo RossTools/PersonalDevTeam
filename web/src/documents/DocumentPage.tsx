@@ -62,7 +62,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const scroll = useRememberedScroll(`document:${id}`);
   const d = doc.data;
   const provider = d ? providers.data?.providers.find((p) => p.id === d.provider) : undefined;
-  const settle = () => invalidateDocuments(qc);
+  const settle = () => invalidateDocuments(qc, [id]);
   const rename = (title: string) => void runAction(async () => {
     await api.renameDocument(id, title);
     settle();
