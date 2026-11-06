@@ -10,6 +10,8 @@ import { POLL } from '../common/poll';
 
 export const documentKeys = {
   all: ['documents'] as const,
+  /** Every list of documents (the Documents view, a ticket's or project's). */
+  lists: ['documents', 'list'] as const,
   list: (f: DocumentFilter) => ['documents', 'list', f] as const,
   one: (id: string) => ['documents', 'one', id] as const,
   content: (id: string) => ['documents', 'content', id] as const,
@@ -17,6 +19,10 @@ export const documentKeys = {
   charts: (id: string) => ['documents', 'charts', id] as const,
   version: (id: string) => ['documents', 'version', id] as const,
   providers: (project: string | null) => ['documents', 'providers', project] as const,
+  /** A provider's files a search finds (read from the provider). */
+  providerFiles: (provider: string | null, q: string) => ['documents', 'provider-files', provider, q] as const,
+  /** Every session's documents beside it. */
+  besides: ['documents', 'beside'] as const,
 };
 
 export const KIND_LABEL: Record<DocumentKind, string> = { doc: 'Doc', sheet: 'Sheet' };
@@ -64,8 +70,15 @@ export function useDocumentProviders(project: string | null = null) {
 export const providerLabel = (providers: ProviderInfo[] | undefined, id: string) =>
   providers?.find((p) => p.id === id)?.label ?? id;
 
-export function invalidateDocuments(qc: QueryClient) {
-  void qc.invalidateQueries({ queryKey: documentKeys.all });
+/**
+ * After a write to documents (made, imported, renamed, deleted, linked or unlinked): the lists, the panels beside
+ * sessions and the documents it touched. Never their content, versions or a provider's search: those read the provider,
+ * and none of these writes changes what a document says.
+ */
+export function invalidateDocuments(qc: QueryClient, ids: string[] = []) {
+  void qc.invalidateQueries({ queryKey: documentKeys.lists });
+  void qc.invalidateQueries({ queryKey: documentKeys.besides });
+  for (const id of ids) void qc.invalidateQueries({ queryKey: documentKeys.one(id) });
 }
 
 /** Shows a document in the Documents view. */

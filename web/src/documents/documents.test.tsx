@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { focusManager } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Document } from '../api/gen/Document';
@@ -143,11 +144,14 @@ describe('documents', () => {
     expect(await screen.findByRole('heading', { name: 'Plan', level: 1 })).toBeInTheDocument();
     expect(await screen.findByText('Ship it.')).toBeInTheDocument();
     expect(screen.getByText('PDT-1')).toBeInTheDocument();
+    const contentReads = calls.filter((c) => c.path === '/api/documents/d1/content').length;
     await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
     const field = screen.getByRole('textbox', { name: 'Document title' });
     await userEvent.clear(field);
     await userEvent.type(field, 'Q4 plan{Enter}');
     expect(await screen.findByRole('heading', { name: 'Q4 plan', level: 1 })).toBeInTheDocument();
+    // A rename reads the document again, not its content from the provider.
+    expect(calls.filter((c) => c.path === '/api/documents/d1/content')).toHaveLength(contentReads);
     await userEvent.click(screen.getByRole('button', { name: 'Document actions' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Remove from PDT…' }));
     const confirm = await screen.findByRole('alertdialog');
@@ -489,6 +493,25 @@ describe('documents', () => {
     finish(doc('d1', 'Release plan'));
     await waitFor(() => expect(onImported).toHaveBeenCalled());
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ provider: 'fake', reference: 'r1', ticketId: 't9', by: 'user' });
+  });
+
+  it('a provider’s search is not asked again when the window is focused again', async () => {
+    const calls = stubApi({
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+      'GET /api/documents/providers/fake/files': [],
+    });
+    renderWithQuery(<ImportDocumentDialog projectId="p1" onClose={() => {}} onImported={() => {}} />);
+    await screen.findByRole('dialog', { name: 'Import a document' });
+    const searches = () => calls.filter((c) => c.path.startsWith('/api/documents/providers/fake/files')).length;
+    await waitFor(() => expect(searches()).toBe(1));
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(searches()).toBe(1);
+    focusManager.setFocused(undefined);
   });
 
   it('a file dropped anywhere on the dialog is imported, and the zone says what it becomes while it is dragged', async () => {
