@@ -143,6 +143,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 workflow_id: a.workflow,
                 ticket_id,
                 status: a.status,
+                skip_quiet: false,
                 limit: a.limit.unwrap_or(10).clamp(1, 50),
             };
             let mut runs = vec![];

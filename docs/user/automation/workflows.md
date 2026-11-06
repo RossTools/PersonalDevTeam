@@ -199,7 +199,8 @@ one back.
 
 ## Read a run
 
-A workflow's **Runs** tab lists its runs, newest first. Open one to see the graph of the version it ran with the path
+A workflow's **Runs** tab lists its runs, newest first. Runs that ended with **Nothing to do** (an every-minute
+schedule that found no work) are left out; turn on **Show “Nothing to do” runs** above the list to see them. Open one to see the graph of the version it ran with the path
 it took, and each step's input, output or error. **Open session** on an agent step shows what the agent did (step
 sessions aren't in the sidebar's **Agents** list; open them here or from the ticket).
 

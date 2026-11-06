@@ -28,7 +28,8 @@ export const workflowsApi = {
   listWorkflows: (project?: string) => request<Workflow[]>(`/api/workflows${queryString({ project })}`),
   patchWorkflow: (id: string, p: WorkflowPatch) =>
     request<Workflow>(`/api/workflows/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
-  listWorkflowRuns: (q: { workflow?: string; ticket?: string; status?: string; limit?: number } = {}) =>
+  /** `quiet: false` leaves out the runs that ended with nothing to do. */
+  listWorkflowRuns: (q: { workflow?: string; ticket?: string; status?: string; quiet?: boolean; limit?: number } = {}) =>
     request<WorkflowRun[]>(`/api/workflow-runs${queryString(q)}`),
   workflowCatalog: () => request<KindSpec[]>('/api/workflows/catalog'),
   getWorkflow: (id: string) => request<WorkflowDetail>(`/api/workflows/${enc(id)}`),

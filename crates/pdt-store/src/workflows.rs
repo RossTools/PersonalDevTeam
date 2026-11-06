@@ -208,6 +208,8 @@ pub struct RunFilter {
     pub workflow_id: Option<String>,
     pub ticket_id: Option<String>,
     pub status: Option<RunStatus>,
+    /// Leave out runs that ended with nothing to do (`quiet`).
+    pub skip_quiet: bool,
     pub limit: i64,
 }
 
@@ -620,6 +622,9 @@ impl Store {
         }
         if let Some(s) = f.status {
             qb.push(" AND r.status = ").push_bind(s.as_str());
+        }
+        if f.skip_quiet {
+            qb.push(" AND r.status <> ").push_bind(RunStatus::Quiet.as_str());
         }
         qb.push(" ORDER BY r.started_at DESC, r.id DESC LIMIT ").push_bind(f.limit.clamp(1, 500));
         let rows = qb.build().fetch_all(&self.pool).await?;
@@ -1403,6 +1408,14 @@ mod tests {
         assert_eq!(store.get_workflow_run("r1").await.unwrap().unwrap().status, RunStatus::Running);
         let f = RunFilter { ticket_id: Some("tk".into()), limit: 10, ..Default::default() };
         assert_eq!(store.list_workflow_runs(&f).await.unwrap()[0].workflow_name, "w");
+        let mut quiet = run("r2", "k2");
+        quiet.status = RunStatus::Quiet;
+        quiet.started_at = 11;
+        assert!(store.start_workflow_run(&quiet, &[]).await.unwrap());
+        let ids = |rs: Vec<Run>| rs.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(store.list_workflow_runs(&f).await.unwrap()), ["r2", "r1"]);
+        let busy = RunFilter { skip_quiet: true, ..f.clone() };
+        assert_eq!(ids(store.list_workflow_runs(&busy).await.unwrap()), ["r1"]);
         r.status = RunStatus::Succeeded;
         r.ended_at = Some(20);
         store.update_workflow_run(&r).await.unwrap();

@@ -77,7 +77,8 @@ pub(crate) async fn idle(st: &AppState, info: &AttemptInfo, busy: &Busy, own_run
         Ok(Some(t)) if t.summary.stage == TicketStage::InProgress && !t.summary.waiting => {}
         _ => return false,
     }
-    let f = RunFilter { workflow_id: None, ticket_id: Some(ticket.clone()), status: None, limit: 50 };
+    let f =
+        RunFilter { workflow_id: None, ticket_id: Some(ticket.clone()), status: None, skip_quiet: false, limit: 50 };
     st.store
         .list_workflow_runs(&f)
         .await

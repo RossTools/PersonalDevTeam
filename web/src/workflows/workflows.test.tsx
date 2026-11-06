@@ -273,6 +273,25 @@ describe('runs view', () => {
     expect(within(steps).getByText(/"ticket": "PDT-1"/)).toBeInTheDocument();
   });
 
+  it('leaves the "Nothing to do" runs out until they are asked for', async () => {
+    const failed = run('failed', [step('s1', 'ci', 'succeeded')]);
+    const quiet = { ...run('quiet', [step('s1', 'ci', 'succeeded')]), id: 'r2', trigger: { type: 'schedule.fired' } };
+    const calls = stubApi({
+      'GET /api/workflow-runs': (c: { path: string }) => (c.path.includes('quiet=false') ? [failed] : [quiet, failed]),
+      'GET /api/workflow-runs/r1': failed,
+      'GET /api/workflow-runs/r2': quiet,
+      'GET /api/workflows/w1/versions/1': { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', createdAt: 1, doc: DOC },
+      'POST /api/workflows/check': check,
+    });
+    renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={() => {}} />);
+    const list = await screen.findByRole('navigation', { name: 'Runs' });
+    expect(await within(list).findByRole('row', { name: /ci\.run_failed/ })).toBeInTheDocument();
+    expect(within(list).queryByRole('row', { name: /schedule\.fired/ })).not.toBeInTheDocument();
+    expect(calls.find((c) => c.path.startsWith('/api/workflow-runs?'))?.path).toContain('quiet=false');
+    await userEvent.click(within(list).getByRole('switch', { name: 'Show “Nothing to do” runs' }));
+    expect(await within(list).findByRole('row', { name: /schedule\.fired/ })).toBeInTheDocument();
+  });
+
   it('opens an agent step\'s session from its step', async () => {
     const ended = run('succeeded', [step('s1', 'ci', 'succeeded'), step('s2', 'tell', 'succeeded', { output: { outcome: 'done', sessionId: 'sx' } })]);
     stubApi({
