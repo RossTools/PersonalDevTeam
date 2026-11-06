@@ -1,6 +1,8 @@
 // What a write marks stale (PDT-451): the views that show what it changed, not only the one it was made from.
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
+import { documentKeys, invalidateDocuments } from '../documents/queries';
+import { besideKey } from '../documents/BesidePanel';
 import { invalidateTickets, ticketKeys } from '../tickets/queries';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import { invalidateProjects, projectKeys } from '../projects/queries';
@@ -57,6 +59,17 @@ describe('invalidation', () => {
     expect([stale(qc, ['worktrees', 'p1']), stale(qc, ['worktrees', 'p2'])]).toEqual([true, false]);
     invalidateWorktrees(qc);
     expect(stale(qc, ['worktrees', 'p2'])).toBe(true);
+  });
+
+  it("a document write refreshes the lists, the panels beside sessions and its document, never what a provider reads", () => {
+    const keys = [
+      documentKeys.list({ project: 'p1' }), besideKey('s1'), documentKeys.one('d1'),
+      documentKeys.one('d2'), documentKeys.content('d1'), documentKeys.version('d1'), documentKeys.comments('d1'),
+      documentKeys.charts('d1'), documentKeys.providers(null), documentKeys.providerFiles('drive', 'plan'),
+    ];
+    const qc = cached(...keys);
+    invalidateDocuments(qc, ['d1']);
+    expect(keys.map((k) => stale(qc, k))).toEqual([true, true, true, false, false, false, false, false, false, false]);
   });
 
   it("a ticket tab doesn't poll while the ticket's own view does", () => {
