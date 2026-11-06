@@ -44,13 +44,42 @@ pub struct Recognized {
     pub issue: FoundIssue,
 }
 
+/// Why a tracker plugin couldn't read an issue it recognized ([`crate::Integration::find_issue`]).
+#[derive(Debug)]
+pub enum FindError {
+    /// The tracker's failure, for the user (no such issue, no login, the tracker is down).
+    Tracker(String),
+    /// PDT's own (its database's), already logged, as the API says it.
+    Local(ApiError),
+}
+
+impl From<String> for FindError {
+    fn from(m: String) -> Self {
+        FindError::Tracker(m)
+    }
+}
+
+impl From<&str> for FindError {
+    fn from(m: &str) -> Self {
+        FindError::Tracker(m.to_string())
+    }
+}
+
+impl From<pdt_store::StoreError> for FindError {
+    fn from(e: pdt_store::StoreError) -> Self {
+        FindError::Local(e.into())
+    }
+}
+
 /// Why an issue couldn't be linked.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum LinkError {
     /// No tracker plugin that is on recognizes it: a plain link, if it is an address.
     Unrecognized(String),
     /// A tracker recognized it but couldn't read it (no such issue, no login, the tracker is down).
     Tracker(String),
+    /// PDT failed to read it, not the tracker (its database).
+    Local(ApiError),
     /// Another ticket links it already (its key).
     Elsewhere(String),
 }
@@ -63,6 +92,7 @@ impl LinkError {
                  (owner/name#12, ABC-123), or add it as a plain link"
             ),
             LinkError::Tracker(m) => m.clone(),
+            LinkError::Local(e) => e.message().to_string(),
             LinkError::Elsewhere(key) => format!("{key} links that issue already: an issue is linked to one ticket"),
         }
     }
@@ -70,11 +100,12 @@ impl LinkError {
 
 impl From<LinkError> for ApiError {
     fn from(e: LinkError) -> Self {
-        match &e {
-            LinkError::Unrecognized(given) => {
+        match e {
+            LinkError::Unrecognized(ref given) => {
                 ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, codes::UNRECOGNIZED, e.message(given))
             }
-            LinkError::Tracker(m) => ApiError::upstream(codes::TRACKER_ERROR, m.clone()),
+            LinkError::Tracker(m) => ApiError::upstream(codes::TRACKER_ERROR, m),
+            LinkError::Local(e) => e,
             LinkError::Elsewhere(_) => ApiError::conflict(codes::ALREADY_LINKED, e.message("")),
         }
     }
@@ -90,7 +121,10 @@ pub async fn recognize(st: &AppState, project_id: &str, given: &str) -> Result<R
     let registry = st.registry();
     for int in registry.integrations() {
         if let Some(found) = int.find_issue(st, project_id, given).await {
-            return found.map(|issue| Recognized { system: int.id().to_string(), issue }).map_err(LinkError::Tracker);
+            return found.map(|issue| Recognized { system: int.id().to_string(), issue }).map_err(|e| match e {
+                FindError::Tracker(m) => LinkError::Tracker(m),
+                FindError::Local(e) => LinkError::Local(e),
+            });
         }
     }
     Err(LinkError::Unrecognized(given.to_string()))
@@ -158,7 +192,7 @@ pub async fn find_forge_issue(
     project_id: &str,
     given: &str,
     page: IssuePage,
-) -> Option<Result<FoundIssue, String>> {
+) -> Option<Result<FoundIssue, FindError>> {
     let (api, repo, number) = if let Some((host, repo, number)) = page(given) {
         let plugin = st.forge_plugin(kind)?;
         if !plugin.claims_host(&host) {
@@ -169,10 +203,7 @@ pub async fn find_forge_issue(
         let (repo, number) = repo_issue_key(given)?;
         let project = match st.store.get_project(project_id).await {
             Ok(p) => p?,
-            Err(e) => {
-                tracing::warn!(project = %project_id, error = %e, "could not read the project to recognize an issue");
-                return Some(Err("could not read the project (PDT's log says why)".into()));
-            }
+            Err(e) => return Some(Err(e.into())),
         };
         let f = crate::forge::project_forge(st, project_id, &project.repo_path).await?;
         if f.kind != *kind {
@@ -180,13 +211,18 @@ pub async fn find_forge_issue(
         }
         (f.api, repo.unwrap_or(f.repo), number)
     };
-    Some(read_forge_issue(api, repo, number).await.map(|(d, repo)| FoundIssue {
-        connection_id: pdt_core::github_issue::repo_id(&repo),
-        key: pdt_core::github_issue::issue_key(&repo, number),
-        url: d.issue.url.clone(),
-        title: d.issue.title.clone(),
-        state: if d.closed { IssueState::Closed } else { IssueState::Open },
-    }))
+    Some(
+        read_forge_issue(api, repo, number)
+            .await
+            .map(|(d, repo)| FoundIssue {
+                connection_id: pdt_core::github_issue::repo_id(&repo),
+                key: pdt_core::github_issue::issue_key(&repo, number),
+                url: d.issue.url.clone(),
+                title: d.issue.title.clone(),
+                state: if d.closed { IssueState::Closed } else { IssueState::Open },
+            })
+            .map_err(FindError::Tracker),
+    )
 }
 
 /// What forge `kind` says now of a linked issue, from its page's address (`page` parses it). None: the link is not

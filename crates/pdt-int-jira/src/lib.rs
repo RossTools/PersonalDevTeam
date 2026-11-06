@@ -61,7 +61,7 @@ impl Integration for Jira {
         st: &'a AppState,
         project_id: &'a str,
         given: &'a str,
-    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::FoundIssue, String>>> {
+    ) -> BoxFut<'a, Option<Result<pdt_api::sdk::issues::FoundIssue, pdt_api::sdk::issues::FindError>>> {
         Box::pin(links::find(st, project_id, given))
     }
 
