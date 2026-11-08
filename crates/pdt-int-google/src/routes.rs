@@ -10,10 +10,11 @@ use crate::accounts::{self, Pending, Shared, SignIn, config_str};
 use crate::builtin::{self, Client};
 use crate::oauth;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use pdt_api::sdk::{ApiError, AppState, OrNotFound, codes, from_ui, now_ms};
+use pdt_api::sdk::{ApiJson, ApiQuery};
 use pdt_core::integration::{
     AccountSignInCode, AccountSignInDone, AccountSignInInput, AccountSignInStart, SignInAccount,
 };
@@ -143,7 +144,7 @@ pub async fn start_new(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
     headers: HeaderMap,
-    Json(input): Json<AccountSignInInput>,
+    ApiJson(input): ApiJson<AccountSignInInput>,
 ) -> Result<Json<AccountSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let Some(b) = &shared.built_in else {
@@ -160,7 +161,7 @@ pub async fn start(
     shared: axum::Extension<Arc<Shared>>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(input): Json<AccountSignInInput>,
+    ApiJson(input): ApiJson<AccountSignInInput>,
 ) -> Result<Json<AccountSignInStart>, ApiError> {
     ui_only(&st, &headers)?;
     let c = connection(&st, &id).await?;
@@ -238,7 +239,7 @@ async fn added(st: &AppState, shared: &Shared, email: Option<&str>) -> Result<Co
 pub async fn callback(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
-    Query(q): Query<CallbackQuery>,
+    ApiQuery(q): ApiQuery<CallbackQuery>,
 ) -> (StatusCode, Html<String>) {
     match finish(&st, &shared, q).await {
         Ok(m) => page(true, &m),
@@ -252,7 +253,7 @@ pub async fn paste(
     State(st): State<AppState>,
     shared: axum::Extension<Arc<Shared>>,
     headers: HeaderMap,
-    Json(input): Json<AccountSignInCode>,
+    ApiJson(input): ApiJson<AccountSignInCode>,
 ) -> Result<Json<AccountSignInDone>, ApiError> {
     ui_only(&st, &headers)?;
     let Some((state, code)) = builtin::pasted(&input.code) else {

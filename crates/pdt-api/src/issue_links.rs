@@ -6,10 +6,11 @@
 //! `create_ticket`'s `external` come here.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::forge::ForgeKind;
 use pdt_core::issue_link::{IssueState, LinkOrigin, repo_issue_key};
@@ -339,9 +340,8 @@ async fn link(
 async fn unlink(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    q: Result<Query<IssueRef>, QueryRejection>,
+    ApiQuery(r): ApiQuery<IssueRef>,
 ) -> Result<Json<Ticket>, ApiError> {
-    let Query(r) = q.map_err(|e| ApiError::invalid(e.body_text()))?;
     let t = st.store.unlink_external(&id, &r.system, &r.key, pdt_core::ticket::Actor::User, now_ms()).await;
     reply(&st, t.map_err(no_link)?).await
 }

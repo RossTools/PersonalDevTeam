@@ -12,11 +12,12 @@
 //! pass after they end makes one summary.
 
 use crate::error::{ApiError, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::notification_levels::{KIND as LEVELS_KIND, Levels, LevelsConfig};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
@@ -639,7 +640,7 @@ pub(crate) struct ListQuery {
 /// `GET /api/notifications?section=needs_you|updates&project=&unread=&limit=&before=`.
 pub(crate) async fn list(
     State(st): State<AppState>,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> Result<Json<NotificationList>, ApiError> {
     let section = match q.section.as_deref() {
         None | Some("") => None,

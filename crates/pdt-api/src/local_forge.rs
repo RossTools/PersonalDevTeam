@@ -17,8 +17,9 @@
 //! moves. Git uses the user's own credentials; PDT stores none.
 
 use crate::error::{ApiError, OrNotFound};
+use crate::extract::ApiPath;
 use crate::routes::{AppState, now_ms};
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
@@ -830,7 +831,10 @@ pub async fn run_local_ci_watch(st: AppState) {
 }
 
 /// `GET /api/local-ci/runs/{id}/log`: a local CI run's output so far, as text.
-pub(crate) async fn run_log(State(st): State<AppState>, Path(id): Path<i64>) -> Result<impl IntoResponse, ApiError> {
+pub(crate) async fn run_log(
+    State(st): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+) -> Result<impl IntoResponse, ApiError> {
     st.store.local_ci_run(id).await?.or_404("CI run")?;
     let path = log_path(&st.data_dir.join("local-ci"), id);
     let text = match tokio::fs::read(&path).await {
