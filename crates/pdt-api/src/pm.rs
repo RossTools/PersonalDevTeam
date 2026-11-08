@@ -46,8 +46,8 @@ pub(crate) async fn work_folder(st: &AppState, own: &str) -> Result<String, ApiE
     let projects = st.store.list_projects().await?;
     let setting = st.store.get_host_settings().await?.projects_dir;
     let projects_dir = match &setting {
-        Some(_) => crate::projects::projects_dir(setting.as_deref()),
-        None if projects.is_empty() => crate::projects::projects_dir(None).filter(|d| d.is_dir()),
+        Some(_) => crate::projects::projects_dir(st, setting.as_deref()),
+        None if projects.is_empty() => crate::projects::projects_dir(st, None).filter(|d| d.is_dir()),
         None => None,
     };
     let checkouts = projects.iter().map(|p| std::path::Path::new(&p.repo_path));

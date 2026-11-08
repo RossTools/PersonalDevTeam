@@ -177,8 +177,8 @@ pub(crate) fn needs_repo(p: &Project, what: &str) -> Result<(), ApiError> {
 }
 
 /// The folder new clones go in: the host setting (with `~` expanded), else `~/work`.
-pub(crate) fn projects_dir(setting: Option<&str>) -> Option<PathBuf> {
-    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), std::env::home_dir().as_deref()).ok()
+pub(crate) fn projects_dir(st: &AppState, setting: Option<&str>) -> Option<PathBuf> {
+    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), st.home_dir.as_deref()).ok()
 }
 
 /// Makes sure the folder a clone goes in exists. A missing folder is created only when its own parent exists, so a
@@ -214,11 +214,11 @@ pub(crate) async fn clone(
     let key = input.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
     let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
     let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => pdt_core::project::resolve_folder(d, std::env::home_dir().as_deref())
+        Some(d) => pdt_core::project::resolve_folder(d, st.home_dir.as_deref())
             .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
         None => {
             let setting = st.store.get_host_settings().await?.projects_dir;
-            projects_dir(setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
+            projects_dir(&st, setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
         }
     };
     let check = parent.clone();

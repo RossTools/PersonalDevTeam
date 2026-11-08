@@ -9,8 +9,10 @@ use pdt_core::host::CredentialPolicy;
 use pdt_tailscale::testing::RecordingTailscale;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tower::ServiceExt;
+
+#[path = "../../../test-support/wait.rs"]
+mod wait;
 
 /// A fake program that succeeds (and prints `{"loggedIn": true}`) only when `var` is set.
 fn fake_needing(dir: &std::path::Path, name: &str, var: &str) -> String {
@@ -117,16 +119,16 @@ async fn a_conversation_gets_no_api_key_under_the_subscription() {
     let (s, v) = call(&app, "POST", "/api/sessions", Some(body)).await;
     assert_eq!(s, 201, "{v}");
     let id = v["id"].as_str().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let said = loop {
+    let said = wait::wait_until("the turn to end", async || {
         let (_, all) = call(&app, "GET", &format!("/api/sessions/{id}/events?after=0"), None).await;
         let all = all.as_array().unwrap().clone();
         if all.iter().any(|e| e["event"]["kind"] == "turn" && e["event"]["phase"] == "ended") {
-            break all.into_iter().filter(|e| e["event"]["kind"] == "agent_message").collect::<Vec<_>>();
+            Ok(all.into_iter().filter(|e| e["event"]["kind"] == "agent_message").collect::<Vec<_>>())
+        } else {
+            Err(all)
         }
-        assert!(Instant::now() < deadline, "the turn never ended: {all:#?}");
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    };
+    })
+    .await;
     assert_eq!(said.len(), 1, "{said:#?}");
     assert_eq!(said[0]["event"]["markdown"], "ANTHROPIC_API_KEY is unset");
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;

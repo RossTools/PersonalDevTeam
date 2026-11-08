@@ -7,6 +7,7 @@ use crate::common;
 use crate::retired;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_core::brand::RELEASE_REPO;
@@ -16,7 +17,7 @@ use pdt_store::Store;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -115,33 +116,26 @@ async fn look(env: &Env, new: pdt_forge::Issue) {
 
 /// The next Triage session a triage step started (one not in `seen`).
 async fn triage_session(env: &Env, seen: &mut HashSet<String>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    let id = wait_until("a triage session", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
-        let found = list.as_array().unwrap().iter().find_map(|s| {
+        list.as_array().unwrap().iter().find_map(|s| {
             let id = s["id"].as_str().unwrap().to_string();
             (s["persona"]["name"] == "Triage" && !seen.contains(&id)).then_some(id)
-        });
-        if let Some(id) = found {
-            seen.insert(id.clone());
-            return id;
-        }
-        assert!(Instant::now() < deadline, "no triage session");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        })
+    })
+    .await;
+    seen.insert(id.clone());
+    id
 }
 
 async fn first_prompt(env: &Env, session: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the session's prompt", async || {
         let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
-        if let Some(e) = v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message") {
-            return e["event"]["text"].as_str().unwrap().to_string();
-        }
-        assert!(Instant::now() < deadline, "the session got no prompt");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let e = v.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "user_message");
+        e.map(|e| e["event"]["text"].as_str().unwrap().to_string())
+    })
+    .await
 }
 
 /// The agent submits `outcome` (with `data`), and the run it belongs to ends; that run.
@@ -162,21 +156,17 @@ async fn submit(env: &Env, wf: &str, session: &str, outcome: &str, summary: &str
     )
     .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    let id = wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let all = runs(env, wf).await;
-        if let Some(r) = all.iter().find(|r| r["status"] == "succeeded" && !before.contains(r["id"].as_str().unwrap()))
-        {
-            call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
-            let id = r["id"].as_str().unwrap();
-            return call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1;
-        }
         let failed: Vec<_> = all.iter().filter(|r| r["status"] == "failed").collect();
         assert!(failed.is_empty(), "a run failed: {failed:?}");
-        assert!(Instant::now() < deadline, "the run never ended: {all:?}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let done = all.iter().find(|r| r["status"] == "succeeded" && !before.contains(r["id"].as_str().unwrap()));
+        done.map(|r| r["id"].as_str().unwrap().to_string()).ok_or(all)
+    })
+    .await;
+    call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
+    call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1
 }
 
 async fn move_ticket(env: &Env, id: &str, stage: &str) {
@@ -691,17 +681,13 @@ async fn outside_input_stays_outside_through_a_sub_workflow() {
     assert_eq!(runs(&env, &caller).await.len(), 1);
 
     // The sub-workflow's prompt fences all of its input.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let session = loop {
+    let session = wait_until("a session for the sub-workflow's agent step", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
         let found = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "Coder").cloned();
-        if let Some(s) = found {
-            break s["id"].as_str().unwrap().to_string();
-        }
-        assert!(Instant::now() < deadline, "no session for the sub-workflow's agent step");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        found.map(|s| s["id"].as_str().unwrap().to_string()).ok_or(list)
+    })
+    .await;
     let prompt = first_prompt(&env, &session).await;
     let id = prompt.split("<untrusted id=\"").nth(1).and_then(|r| r.split('"').next()).unwrap().to_string();
     assert!(prompt.starts_with(&format!("Text between <untrusted id=\"{id}\">")), "{prompt}");
@@ -715,11 +701,10 @@ async fn outside_input_stays_outside_through_a_sub_workflow() {
     let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": run}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     // The agent asks to use the tool; the user says yes (the refusal is PDT's, not theirs).
-    let deadline = Instant::now() + Duration::from_secs(20);
     // Each request is answered once: on a slow runner the next pass can still list it as open before the agent's
     // reply lands, and answering it again is refused (`request_closed`).
     let mut answered = std::collections::HashSet::new();
-    let said = loop {
+    let said = wait_until("run_with_secrets's answer", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, ev) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
         let open = ev.as_array().unwrap().iter().find(|e| {
@@ -735,12 +720,9 @@ async fn outside_input_stays_outside_through_a_sub_workflow() {
             answered.insert(id);
         }
         let said = agent_says(&env, &session).await;
-        if let Some(m) = said.iter().skip(before).find(|m| m.starts_with("mcp run_with_secrets")) {
-            break m.clone();
-        }
-        assert!(Instant::now() < deadline, "run_with_secrets got no answer: {ev}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        said.iter().skip(before).find(|m| m.starts_with("mcp run_with_secrets")).cloned().ok_or(ev)
+    })
+    .await;
     assert!(said.contains("no secrets"), "{said}");
     call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
 

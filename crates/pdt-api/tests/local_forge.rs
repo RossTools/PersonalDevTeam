@@ -6,7 +6,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
-use common::wait::wait_until;
+use common::wait::{still_after, wait_until};
 use common::{argv_agent, call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -183,9 +183,11 @@ async fn ci_waits_until_the_user_approves_its_command() {
     assert!(notice.body["text"].as_str().unwrap().contains("git ls-files --error-unmatch ok.txt"), "{notice:?}");
     // Still waiting a read later: nothing ran.
     pdt_api::refresh_prs(&env.state).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let ci = ticket(&env).await["attempt"]["pr"]["ci"].clone();
-    assert!(!["running", "passed", "failed"].contains(&ci["state"].as_str().unwrap_or("")), "{ci}");
+    still_after("CI running", Duration::from_millis(300), async || {
+        let ci = ticket(&env).await["attempt"]["pr"]["ci"].clone();
+        ["running", "passed", "failed"].contains(&ci["state"].as_str().unwrap_or(""))
+    })
+    .await;
     let pid = t["projectId"].as_str().unwrap();
 
     common::approve_commands(&env.app, pid, None).await;
