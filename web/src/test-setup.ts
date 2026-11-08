@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
-import { afterEach } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
@@ -48,9 +48,28 @@ afterEach(() => {
   if (typeof window !== 'undefined') window.history.replaceState(null, '', '/');
 });
 
-// What views remember when they're left (PDT-379) starts empty in every test.
+// What views remember when they're left (PDT-379), and what other modules keep for the page (drafts, toasts shown,
+// the phone Inbox's segment, the theme chosen, the router's history), starts empty in every test.
 afterEach(async () => {
   if (typeof window === 'undefined') return;
-  const { clearViewStates } = await import('./common/viewState');
+  const [{ clearViewStates }, { resetDrafts }, { resetClearToasts }, { resetPhoneInboxSegment }, { resetThemePref }, { resetRouter }] =
+    await Promise.all([
+      import('./common/viewState'),
+      import('./conversation/drafts'),
+      import('./tickets/clearToStart'),
+      import('./inbox/PhoneInboxList'),
+      import('@ui/theme'),
+      import('./shell/router'),
+    ]);
   clearViewStates();
+  resetDrafts();
+  resetClearToasts();
+  resetPhoneInboxSegment();
+  resetThemePref();
+  resetRouter();
+});
+
+// A test that fakes timers and fails before it puts the real ones back doesn't leave them fake for the next.
+afterEach(() => {
+  vi.useRealTimers();
 });

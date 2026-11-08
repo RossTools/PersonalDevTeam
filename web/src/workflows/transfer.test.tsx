@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ImportCheck } from '../api/gen/ImportCheck';
 import type { ImportRequest } from '../api/gen/ImportRequest';
 import type { WorkflowExport } from '../api/gen/WorkflowExport';
-import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
+import { Reply, renderWithQuery, stubApi, type Call, stubClipboard } from '../test-utils';
 import { ExportDialog } from './ExportDialog';
 import { ImportDialog } from './ImportDialog';
 import { CATALOG, DOC, detail } from './testData';
@@ -20,7 +20,7 @@ const EXPORT: WorkflowExport = {
 
 const clipboard = () => {
   const writeText = vi.fn(async (_: string) => {});
-  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  stubClipboard({ writeText });
   return writeText;
 };
 

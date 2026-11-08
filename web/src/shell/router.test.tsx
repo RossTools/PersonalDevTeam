@@ -13,12 +13,18 @@ function Guarded({ answer }: { answer: { ok: boolean; asked: number } }) {
   return <p data-testid="loc">{useLocation()}</p>;
 }
 
+/**
+ * Ends the task, so the next navigation is a new entry (navigations in one task make one). The router's own 0 ms
+ * timer was set first, so it has fired by the time this one does.
+ */
+const nextTask = () => new Promise((r) => setTimeout(r, 0));
+
 describe('router', () => {
   it('pushes and replaces history entries, and follows Back', async () => {
     render(<Where />);
     const start = window.history.length;
     act(() => navigate('/tickets'));
-    await new Promise((r) => setTimeout(r, 0));
+    await nextTask();
     act(() => navigate('/tickets?view=board'));
     expect(screen.getByTestId('loc')).toHaveTextContent('/tickets?view=board');
     expect(window.history.length).toBe(start + 2);
@@ -69,9 +75,9 @@ describe('router', () => {
 
   it('holds Back and Forward while a guard is set, and takes the step once it says yes', async () => {
     act(() => navigate('/one'));
-    await new Promise((r) => setTimeout(r, 0));
+    await nextTask();
     act(() => navigate('/two'));
-    await new Promise((r) => setTimeout(r, 0));
+    await nextTask();
     const answer = { ok: false, asked: 0 };
     const { unmount } = render(<Guarded answer={answer} />);
     const length = window.history.length;
@@ -88,8 +94,9 @@ describe('router', () => {
     // Forward is held the same way.
     answer.ok = false;
     await act(() => window.history.forward());
+    // The step was undone before the guard was asked, and refused, nothing follows.
     await waitFor(() => expect(answer.asked).toBe(3));
-    await new Promise((r) => setTimeout(r, 20));
+    expect(window.location.pathname).toBe('/one');
     expect(screen.getByTestId('loc')).toHaveTextContent('/one');
     unmount();
   });

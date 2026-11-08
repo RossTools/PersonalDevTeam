@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { plugins } from '../api/gen/plugins';
@@ -291,8 +291,17 @@ describe('the PM', () => {
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reset' }));
     view.rerender(<PmView selection="c2" onSelect={onSelect} onNew={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'A PDT bug' })).toBeInTheDocument();
+    // The reset refreshes the PM's queries, then picks what to show: once those refreshes are done, it has picked.
+    const refreshes: Promise<void>[] = [];
+    const invalidate = view.qc.invalidateQueries.bind(view.qc);
+    vi.spyOn(view.qc, 'invalidateQueries').mockImplementation((...args) => {
+      const p = invalidate(...args);
+      refreshes.push(p);
+      return p;
+    });
     answer(live('c3', 'CB cutover'));
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => expect(refreshes).toHaveLength(2));
+    await act(() => Promise.all(refreshes));
     expect(onSelect).not.toHaveBeenCalledWith('c3');
   });
 

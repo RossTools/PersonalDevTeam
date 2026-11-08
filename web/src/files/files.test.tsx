@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { FileViewer, FolderList, FolderTree } from './FolderView';
 import { useFolderView } from './useFolderView';
 
@@ -54,7 +54,7 @@ describe('folder view', () => {
     expect(within(header).getByTitle('git: ??')).toHaveTextContent('U');
     expect(within(header).getByText('13 bytes')).toBeInTheDocument();
     const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     await userEvent.click(within(header).getByRole('button', { name: 'File actions' }));
     await userEvent.click(within(await screen.findByRole('menu', { name: 'File actions' })).getByRole('menuitem', { name: 'Copy path' }));
     expect(writeText).toHaveBeenCalledWith('src/main.rs');

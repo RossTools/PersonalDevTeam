@@ -494,10 +494,10 @@ describe('phone', () => {
     });
 
     it('shows no dot while the PM runs a turn', async () => {
-      const calls = stubApi(pmRoutes({ activity: 'working', attentionAt: 5, unseen: true }));
-      renderWithQuery(<AppShell />);
-      await waitFor(() => expect(calls.some((c) => c.path === '/api/pm')).toBe(true));
-      await act(() => new Promise((r) => setTimeout(r, 50)));
+      stubApi(pmRoutes({ activity: 'working', attentionAt: 5, unseen: true }));
+      const { qc } = renderWithQuery(<AppShell />);
+      // Once the PM's state is in, the rail has drawn from it.
+      await waitFor(() => expect(qc.getQueryState(['pm'])?.status).toBe('success'));
       expect(within(rail()).getByRole('button', { name: 'Project manager' })).toBeInTheDocument();
     });
   });

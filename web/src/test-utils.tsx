@@ -2,7 +2,7 @@ import { act, render } from '@testing-library/react';
 import { EditorView } from '@codemirror/view';
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
-import { vi } from 'vitest';
+import { onTestFinished, vi } from 'vitest';
 import { ConfirmProvider, Toaster } from '@ui';
 import { createQueryClient } from './common/queryClient';
 import { connectionKinds } from './api/gen/connectionKinds';
@@ -83,6 +83,22 @@ export function stubApi(given: Record<string, Route>): Call[] {
   }));
   return calls;
 }
+
+/**
+ * Sets `target[key]` (a property jsdom lacks or that `vi.stubGlobal` can't reach, such as `navigator.clipboard` or
+ * `document.fonts`) for this test: what was there is put back when the test ends, passed or failed.
+ */
+export function stubProperty<T extends object>(target: T, key: PropertyKey, value: unknown) {
+  const before = Object.getOwnPropertyDescriptor(target, key);
+  Object.defineProperty(target, key, { value, configurable: true, writable: true });
+  onTestFinished(() => {
+    if (before) Object.defineProperty(target, key, before);
+    else delete (target as Record<PropertyKey, unknown>)[key];
+  });
+}
+
+/** Stubs `navigator.clipboard` for this test (put back when it ends). */
+export const stubClipboard = (clipboard: Partial<Clipboard>) => stubProperty(navigator, 'clipboard', clipboard);
 
 /** The text in a CodeMirror editor, given its text box (or anything inside it). */
 export function editorText(el: HTMLElement): string {
