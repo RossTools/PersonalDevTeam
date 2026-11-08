@@ -1,12 +1,12 @@
 // PDT's own tool calls in a conversation as cards (PDT-382): what the agent created, changed, linked, sent, ran or
 // watched, instead of a folded "Used N tools" line.
-import { useContext, useEffect, useRef, type ReactNode, type Ref } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useContext, useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
 } from 'lucide-react';
-import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, Spinner } from '@ui';
+import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, Spinner, ToolCard } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { focusLost } from '../common/focusLost';
@@ -19,7 +19,6 @@ import { stageLabel } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { actionError, useAction } from '../common/useAction';
 import { MarkdownRefsContext } from '../common/markdownRefs';
-import { besideKey } from '../documents/BesidePanel';
 import { routePath } from '../shell/route';
 import { RUN_STATUS } from '../workflows/runs';
 import {
@@ -44,8 +43,9 @@ import {
   type FieldChange,
 } from './pdtTools';
 import { isTicketKey } from '../tickets/model';
-import { workflowKeys } from '../workflows/queries';
-import { POLL } from '../common/poll';
+import { useWorkflowRun } from '../workflows/queries';
+import { documentKeys } from '../documents/queries';
+import { invalidateWatches, useSessionWatches } from '../common/Watch';
 
 /** A PDT tool call as the card needs it (a `tool_call` event's fields). */
 export interface PdtCall {
@@ -75,34 +75,9 @@ export function TicketPills({ keys }: { keys: string[] }) {
   );
 }
 
-/** The frame every card shares: an icon and a heading, something on the right, then its rows. */
-function Card({ icon, heading, aside, children, label, ref }: {
-  icon: ReactNode;
-  heading: ReactNode;
-  aside?: ReactNode;
-  children?: ReactNode;
-  /** The card's accessible name (the heading's text). */
-  label: string;
-  /** Given, the card can take focus (from a button of its own that went away). */
-  ref?: Ref<HTMLElement>;
-}) {
-  return (
-    <section
-      ref={ref}
-      tabIndex={ref ? -1 : undefined}
-      aria-label={label}
-      data-slot="pdt-card"
-      className="rounded-lg border border-border bg-card text-sm shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <header className={cn('flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground', children && 'border-b border-border')}>
-        <span aria-hidden className="grid size-4 shrink-0 place-items-center text-link [&>svg]:size-3.5">{icon}</span>
-        <span className="flex min-w-0 flex-wrap items-center gap-1.5">{heading}</span>
-        <span className="flex-1" />
-        {aside}
-      </header>
-      {children && <div className="flex flex-col divide-y divide-border px-3">{children}</div>}
-    </section>
-  );
+/** The frame every card shares (`ToolCard`), named by `label`. */
+function Card({ label, ...rest }: Omit<ComponentProps<typeof ToolCard>, 'aria-label'> & { label: string }) {
+  return <ToolCard aria-label={label} {...rest} />;
 }
 
 /** What a call that hasn't (or didn't) run shows instead of its result. */
@@ -253,12 +228,7 @@ function CommentCard({ call }: { call: PdtCall }) {
 function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
   const state = callState(call);
-  const run = useQuery({
-    queryKey: workflowKeys.run(w.runId ?? ''),
-    queryFn: () => api.getWorkflowRun(w.runId!),
-    enabled: !!w.runId,
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.steady : false),
-  });
+  const run = useWorkflowRun(w.runId ?? null);
   const r = run.data;
   const verb = call.status === 'done' ? 'Started' : call.status === 'running' ? 'Starting' : "Didn't start";
   return (
@@ -288,18 +258,14 @@ function WatchCard({ call }: { call: PdtCall }) {
   const w = watchOf(call.input, call.output);
   const session = (resultOf(call.output)?.watching as { sessionId?: string }[] | undefined)?.[0]?.sessionId ?? null;
   const state = callState(call);
-  const list = useQuery({
-    queryKey: ['watches', { session }],
-    queryFn: () => api.watches.list({ session: session! }),
-    enabled: !!w.id && !!session,
-  });
+  const list = useSessionWatches(w.id ? session : null);
   const stop = useMutation({
     meta: { errorShown: true },
     mutationFn: () => api.watches.remove(w.id!),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['watches'] }),
+    onSettled: () => invalidateWatches(qc),
   });
   // Stop watching hides itself: the card keeps the focus it had (PDT-547).
-  const card = useRef<HTMLElement>(null);
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (stop.isSuccess && focusLost()) card.current?.focus({ preventScroll: true });
   }, [stop.isSuccess]);
@@ -424,7 +390,7 @@ function OpenBeside({ documentId }: { documentId: string }) {
   const qc = useQueryClient();
   const sessionId = useContext(MarkdownRefsContext)?.sessionId ?? null;
   const [open, pending] = useAction(async () => {
-    qc.setQueryData(besideKey(sessionId!), await api.openBeside(sessionId!, documentId));
+    qc.setQueryData(documentKeys.beside(sessionId!), await api.openBeside(sessionId!, documentId));
   });
   if (!sessionId) return null;
   return (

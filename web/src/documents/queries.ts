@@ -23,16 +23,21 @@ export const documentKeys = {
   providerFiles: (provider: string | null, q: string) => ['documents', 'provider-files', provider, q] as const,
   /** Every session's documents beside it. */
   besides: ['documents', 'beside'] as const,
+  /** The documents open beside a session. */
+  beside: (sessionId: string) => ['documents', 'beside', sessionId] as const,
 };
 
 export const KIND_LABEL: Record<DocumentKind, string> = { doc: 'Doc', sheet: 'Sheet' };
 
-/** The documents a filter lets through, the most recently changed first (the last answer shows while the next loads). */
-export function useDocuments(f: DocumentFilter, enabled = true) {
+/**
+ * The documents a filter lets through, the most recently changed first (the last answer shows while the next loads).
+ * Polled with the rest of the UI unless `poll` is false (a picker, which shows what was there when it opened).
+ */
+export function useDocuments(f: DocumentFilter, { enabled = true, poll = true }: { enabled?: boolean; poll?: boolean } = {}) {
   return useQuery({
     queryKey: documentKeys.list(f),
     queryFn: () => api.documents(f),
-    refetchInterval: POLL.live,
+    refetchInterval: poll ? POLL.live : false,
     enabled,
     placeholderData: keepPreviousData,
   });

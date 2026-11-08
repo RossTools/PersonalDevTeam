@@ -12,7 +12,6 @@ export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
 export * from './CheckboxPicks';
-export * from './Calendar';
 export * from './Switch';
 export * from './SegmentedControl';
 export * from './Tabs';
@@ -28,6 +27,7 @@ export * from './HoverCard';
 // Status and feedback
 export * from './StatusDot';
 export * from './Badge';
+export * from './IconTile';
 export * from './Chip';
 export * from './OverlapBadge';
 export * from './WatchMark';
@@ -51,6 +51,7 @@ export * from './CommandList';
 export * from './SectionLabel';
 export * from './List';
 export * from './DataList';
+export * from './CheckTable';
 export * from './FilterBar';
 export * from './BulkActionBar';
 export * from './Timeline';
@@ -62,7 +63,8 @@ export * from './ViewHeader';
 export * from './Page';
 export * from './SplitPane';
 export { tabIndexOf, tabListKeyDown } from './tabList';
-// FlowGraph (React Flow) is imported as '@ui/FlowGraph' so it and its styles load only with the workflow builder.
+// FlowGraph (React Flow) is imported as '@ui/FlowGraph' so it and its styles load only with the workflow builder, and
+// Calendar as '@ui/Calendar' so it and its date library load only with the due-date picker.
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
 
@@ -73,6 +75,8 @@ export * from './ApprovalCard';
 export * from './AgentMessage';
 export * from './QuestionCard';
 export * from './CodeCard';
+export * from './ToolCard';
+export * from './PreviewBox';
 export * from './ActionBar';
 export * from './DiffViewer';
 export * from './ImageThumb';

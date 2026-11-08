@@ -8,17 +8,17 @@ import { AttachmentImage, AttachmentLink } from '../common/AttachmentViews';
 import { actionError, runAction } from '../common/useAction';
 import { POLL } from '../common/poll';
 import { OverviewSection } from './TicketParts';
+import { ticketKeys } from './queries';
 
 /** What the file pickers offer: the images and text files a ticket takes (pdtd decides by the bytes). */
 export const ATTACH_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,text/*,.txt,.log,.md,.json,.csv,.yaml,.yml,.toml';
 
-const attachmentKeys = { of: (ticketId: string) => ['ticketAttachments', ticketId] as const };
-
 export function useTicketAttachments(ticketId: string) {
   return useQuery({
-    queryKey: attachmentKeys.of(ticketId),
+    queryKey: ticketKeys.attachments(ticketId),
     queryFn: () => api.ticketAttachments(ticketId),
-    refetchInterval: POLL.live,
+    // Adding and removing one here refreshes the list at once; the poll catches an agent's.
+    refetchInterval: POLL.slow,
   });
 }
 
@@ -68,7 +68,7 @@ export function useAttachmentUploads(ticketId: string) {
         return null;
       }
     }));
-    void qc.invalidateQueries({ queryKey: attachmentKeys.of(ticketId) });
+    void qc.invalidateQueries({ queryKey: ticketKeys.attachments(ticketId) });
     return done.filter((a): a is TicketAttachment => a !== null);
   }, [qc, ticketId]);
   const dismiss = useCallback((key: string) => setUploads((u) => u.filter((x) => x.key !== key)), []);
@@ -148,7 +148,7 @@ export function TicketAttachments({ ticketId }: { ticketId: string }) {
     });
     if (!ok) return;
     await api.deleteTicketAttachment(ticketId, a.id);
-    void qc.invalidateQueries({ queryKey: attachmentKeys.of(ticketId) });
+    void qc.invalidateQueries({ queryKey: ticketKeys.attachments(ticketId) });
   });
   return (
     <OverviewSection title="Attachments" actions={<AttachButton onFiles={(f) => void add(f)} />}>

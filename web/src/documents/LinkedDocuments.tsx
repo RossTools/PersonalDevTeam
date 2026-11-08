@@ -7,7 +7,7 @@ import type { Document } from '../api/gen/Document';
 import type { DocumentLinkInput } from '../api/gen/DocumentLinkInput';
 import { actionError, runAction, useAction } from '../common/useAction';
 import { besideEntries, useBesideTargets } from './BesidePanel';
-import { ImportDocumentDialog, LinkDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
+import { ImportDocumentDialog, LinkDocumentDialog, NewDocumentDialog } from './LazyDocumentDialogs';
 import { invalidateDocuments, openDocument, providerLabel, useDocumentProviders, useDocuments } from './queries';
 import { useProjects } from '../projects/queries';
 

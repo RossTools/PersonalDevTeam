@@ -22,7 +22,7 @@ import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { useOpenChanges } from '../common/open';
 import { ProjectDocuments } from '../documents/DocumentSettings';
 import { formatBytes } from '../common/text';
-import { invalidateProjects, projectKeys } from './queries';
+import { invalidateProjects, invalidateStorage, projectKeys } from './queries';
 import { LoadError } from '../common/QueryStatus';
 
 /**
@@ -97,7 +97,7 @@ function WorktreeRow({ project, wt, storage }: { project: Project; wt: Worktree;
       await api.removeWorktree(wt.id, { force: false, deleteBranch: false });
     } finally {
       invalidateWorktrees(qc, project.id);
-      void qc.invalidateQueries({ queryKey: ['storage'] });
+      void invalidateStorage(qc);
     }
   });
   const [remove, removing] = useRemoveWorktree(wt, size);
@@ -146,7 +146,7 @@ function Cleanup({ project, settings }: { project: Project; settings: StorageSet
   const qc = useQueryClient();
   const save = async (s: Partial<StorageSettings>) => {
     await api.putProjectStorage(project.id, { ...settings, ...s });
-    await qc.invalidateQueries({ queryKey: ['storage'] });
+    await invalidateStorage(qc);
   };
   return (
     <>

@@ -9,7 +9,6 @@ import { cn } from '@ui/lib/utils';
 import { api, ApiError } from '../api/client';
 import type { FileContent } from '../api/gen/FileContent';
 import type { FileEntry } from '../api/gen/FileEntry';
-import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
 import { useRememberedScroll, useViewState } from '../common/viewState';
@@ -18,77 +17,15 @@ import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
-import { useNavigationGuard, whenAllowed } from '../shell/router';
+import { useNavigationGuard } from '../shell/router';
 import { CodeViewer } from './LazyCodeViewer';
-import type { CodeTarget } from './CodeViewer';
 import { FileSearch } from './FileSearch';
 import { sessionsQuery } from '../sessions/queries';
+import type { FolderViewState } from './useFolderView';
+import { fileKeys } from './queries';
 
 // The conflict diff is CodeMirror's merge view: loaded only when it is shown.
 const CodeDiff = lazy(() => import('../review/CodeDiff').then((m) => ({ default: m.CodeDiff })));
-
-/**
- * The checkout picked and the file shown, when something else holds them (the app keeps them in its route, PDT-111);
- * without it the view keeps its own.
- */
-export interface FolderSelection {
-  picked: Place | null;
-  file: string | null;
-  onChange: (picked: Place | null, file: string | null) => void;
-}
-
-export function useFolderView(projects: Project[], initial: Place | null, held?: FolderSelection) {
-  const [ownPicked, setOwnPicked] = useState<Place | null>(null);
-  const [ownFile, setOwnFile] = useState<string | null>(null);
-  const picked = held ? held.picked : ownPicked;
-  const file = held ? held.file : ownFile;
-  // Held: the app's navigation asks about unsaved edits; here, the same guard does.
-  const change = (p: Place | null, f: string | null) => {
-    if (held) held.onChange(p, f);
-    else whenAllowed(() => { setOwnPicked(p); setOwnFile(f); });
-  };
-  const place = picked ?? initial ?? (projects[0] ? { projectId: projects[0].id, worktreeId: null } : null);
-  const placeKey = place ? `${place.projectId}:${place.worktreeId}` : '';
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  // The file with unsaved edits, if any: it can't be renamed or deleted under the editor.
-  const [unsaved, setUnsaved] = useState<string | null>(null);
-  // Where a search result opens its file: the viewer scrolls to it and marks the match (`n` tells clicks apart).
-  const [at, setAt] = useState<(CodeTarget & { path: string }) | null>(null);
-  // Another checkout starts with its folders closed (not the first one shown once projects load: a linked file's
-  // folders are open in it).
-  const shownPlace = useRef(placeKey);
-  useEffect(() => {
-    const was = shownPlace.current;
-    shownPlace.current = placeKey;
-    if (was && was !== placeKey) setOpen(new Set());
-  }, [placeKey]);
-  // A file shown from a link or a reload: its folders open, so it is in the tree.
-  useEffect(() => {
-    const parents = file?.split('/').slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('/')) ?? [];
-    if (parents.some((p) => !open.has(p))) setOpen((s) => new Set([...s, ...parents]));
-    // Only when the file changes: folders closed by hand stay closed.
-  }, [file]);
-  return {
-    projects,
-    place,
-    pick: (p: Place) => change(p, null),
-    open,
-    setOpen,
-    toggle: (path: string) => setOpen((s) => { const n = new Set(s); if (n.has(path)) n.delete(path); else n.add(path); return n; }),
-    file,
-    setFile: (f: string | null) => change(picked, f),
-    at,
-    /** Opens `path` at `line`, the match `[from, to)` in it marked (UTF-16 units). */
-    openAt: (path: string, line: number, from: number, to: number) => {
-      setAt((was) => ({ path, line, from, to, n: (was?.n ?? 0) + 1 }));
-      change(picked, path);
-    },
-    unsaved,
-    setUnsaved,
-  };
-}
-
-export type FolderViewState = ReturnType<typeof useFolderView>;
 
 const STATUS_TONE: Record<string, string> = { ...GIT_STATUS_TONE, '??': GIT_STATUS_TONE.A };
 const statusLetter = (status: string) => (status === '??' ? 'U' : status.slice(0, 1));
@@ -115,7 +52,7 @@ const toNode = (e: FileEntry): FileNode => ({
 /** One folder's entries, as a query (one per folder, cached by place and path). */
 function useFolder(place: Place, path: string) {
   return useQuery({
-    queryKey: ['files', place.projectId, place.worktreeId, path],
+    queryKey: fileKeys.folder(place.projectId, place.worktreeId, path),
     queryFn: () => api.listFiles(place.projectId, place.worktreeId, path),
   });
 }
@@ -170,8 +107,8 @@ function useFileOps(state: FolderViewState, place: Place) {
   const confirm = useConfirm();
   const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
   const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ['files', place.projectId, place.worktreeId] });
-    void qc.invalidateQueries({ queryKey: ['file', place.projectId, place.worktreeId] });
+    void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
+    void qc.invalidateQueries({ queryKey: fileKeys.contents(place.projectId, place.worktreeId) });
   };
   const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
   const create = async (path: string) => {
@@ -293,7 +230,7 @@ function FolderEntries({ state, place, dir }: { state: FolderViewState; place: P
 export function FileViewer({ state, readOnly = false }: { state: FolderViewState; readOnly?: boolean }) {
   const place = state.place;
   const q = useQuery({
-    queryKey: ['file', place?.projectId, place?.worktreeId, state.file],
+    queryKey: fileKeys.content(place?.projectId ?? '', place?.worktreeId ?? null, state.file),
     queryFn: () => api.fileContent(place!.projectId, place!.worktreeId, state.file!),
     enabled: !!place && !!state.file,
   });
@@ -343,7 +280,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   // Saving was refused: the file changed on disk. `disk` is what is there now (null: deleted), once fetched.
   const [conflict, setConflict] = useState<{ disk?: FileContent | null; diff: boolean } | null>(null);
   const dirty = !!edit && edit.text !== edit.base.text;
-  const fileKey = ['file', place.projectId, place.worktreeId, f.path];
+  const fileKey = fileKeys.content(place.projectId, place.worktreeId, f.path);
   const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
   const { setUnsaved } = state;
   useEffect(() => {
@@ -373,7 +310,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
       api.saveFile(place.projectId, { ...wt, path: f.path, text, ...(baseHash ? { baseHash } : {}) }),
     onSuccess: (saved, { text }) => {
       qc.setQueryData(fileKey, saved);
-      void qc.invalidateQueries({ queryKey: ['files', place.projectId, place.worktreeId] });
+      void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
       setConflict(null);
       // Typing during the save keeps the newer text unsaved.
       setEdit((e) => (e && saved.text !== null ? { ...e, base: { ...saved, text: saved.text }, text: e.text === text ? saved.text : e.text } : e));
