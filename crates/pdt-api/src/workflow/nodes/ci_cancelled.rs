@@ -47,18 +47,8 @@ fn head_now(cx: &StepCx<'_>, attempt: &str, head: &str) -> Result<(PullRequestSt
             let runs = pr.ci.iter().flat_map(|c| c.runs.iter()).filter(|r| r.state == CiState::Cancelled).cloned();
             Ok((pr.clone(), runs.collect()))
         }
-        Some(s) => Err(format!("CI on {} is {} now", short(head), state_word(s))),
+        Some(s) => Err(format!("CI on {} is {} now", short(head), s.name())),
         None => Err(format!("{} has no CI runs now", short(head))),
-    }
-}
-
-fn state_word(s: CiState) -> &'static str {
-    match s {
-        CiState::Passed => "passed",
-        CiState::Cancelled => "cancelled",
-        CiState::Queued => "queued",
-        CiState::Running => "running",
-        CiState::Failed => "failed",
     }
 }
 

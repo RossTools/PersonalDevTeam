@@ -8,6 +8,7 @@ use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, ports, schema_of,
 };
+use crate::workflow::nodes::forge_call::ci_call;
 use crate::workflow::nodes::schedule::RESERVED_STATE;
 use pdt_core::workflow::api::{LogEvent, NewLogEvent, Workflow};
 use pdt_core::workflow::cond::Condition;
@@ -84,7 +85,7 @@ impl NodeKind for WorkflowFailed {
         if c.workflow.trim().is_empty() {
             return Err("workflow is empty: give its file (ci.yml) or name".into());
         }
-        crate::workflow::nodes::release::check_repo(&c.repo)?;
+        crate::workflow::nodes::repo_of::check_repo(&c.repo)?;
         if !nonblank(&c.every).is_some_and(templated) {
             c.every_ms()?;
         }
@@ -166,14 +167,11 @@ async fn look(
 ) {
     let what = format!("workflow runs:{}:{}", wf.id, node.id);
     let read = async {
-        let of = crate::workflow::nodes::release::repo_for(st, wf.project_id.as_deref(), &c.repo).await?;
+        let of = crate::workflow::nodes::repo_of::repo_for(st, wf.project_id.as_deref(), &c.repo).await?;
         let actions = of.actions("read workflow runs from")?;
         let (r, w, b, a) =
             (of.repo.clone(), c.workflow.trim().to_string(), nonblank(&c.branch).map(String::from), actions.clone());
-        let runs = tokio::task::spawn_blocking(move || a.workflow_runs(&r, &w, b.as_deref(), true))
-            .await
-            .map_err(|e| format!("the GitHub task failed: {e}"))?
-            .map_err(|e| format!("GitHub: {e}"))?;
+        let runs = ci_call(&a, move |a| a.workflow_runs(&r, &w, b.as_deref(), true)).await?;
         Ok::<_, String>((of.repo, actions, runs))
     };
     let (repo, actions, runs) = match read.await {
@@ -193,13 +191,10 @@ async fn look(
     };
     for run in cursor.fresh(&runs).into_iter().cloned().collect::<Vec<_>>() {
         if reportable(&run) {
-            let (a, r, ci) = (actions.clone(), repo.clone(), run.run.clone());
+            let (r, ci) = (repo.clone(), run.run.clone());
             // Which jobs failed is only for the message: a failed lookup leaves them out.
-            let failed_jobs = tokio::task::spawn_blocking(move || pdt_forge::ci::failed_job_names(a.as_ref(), &r, &ci))
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .unwrap_or_default();
+            let failed_jobs =
+                ci_call(&actions, move |a| pdt_forge::ci::failed_job_names(a, &r, &ci)).await.unwrap_or_default();
             let payload = GithubWorkflowFailed {
                 workflow_id: wf.id.clone(),
                 node_id: node.id.clone(),
