@@ -264,7 +264,8 @@ async fn told_after(env: &Env, session: &str, n: usize, prefix: &str) -> String 
     .await
 }
 
-/// Waits until the session's last turn has ended, and what that sets off has run.
+/// Waits until the session's last turn has ended, then checks its open request stays open past what the end of the
+/// turn sets off.
 async fn turn_over(env: &Env, session: &str) {
     wait_until("the turn to end", async || {
         let all = events(env, session).await;
@@ -272,7 +273,10 @@ async fn turn_over(env: &Env, session: &str) {
         last.is_some_and(|e| e["event"]["phase"] == "ended")
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    still_after("the open request to close after the turn", Duration::from_millis(300), async || {
+        !events(env, session).await.iter().any(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open")
+    })
+    .await;
 }
 
 /// PDT-589: Claude gets PDT's budget for its tools (`MCP_TOOL_TIMEOUT`, in ms), so an asking call can wait for the

@@ -12,7 +12,7 @@
 #              scripts' own tests, that third-party actions are pinned to a commit (check-action-pins.sh) and that
 #              the labels .github uses are listed (check-labels.sh)
 #   site       the user docs check (pnpm --filter site check-docs), the website's tests and build
-#   lint       version, cargo fmt --check, clippy (and pdtd without its integration features)
+#   lint       version, cargo fmt --check, clippy (and pdtd without its integration features, and with each one alone)
 #   web        web typecheck, unused exports and files (knip), tests, build
 #   test       cargo test (pdtd also without its integration features), then the generated files are committed
 #
@@ -77,6 +77,10 @@ check_lint() {
   step cargo fmt --all -- --check
   step cargo clippy --all-targets -- -D warnings
   step cargo clippy -p pdtd --no-default-features --all-targets -- -D warnings
+  # Each integration alone, so one that only compiles beside the others fails here: pdtd's features, but `default`.
+  for f in $(sed -n '/^\[features\]/,/^\[/p' crates/pdtd/Cargo.toml | sed -n 's/^\([a-z0-9_-]*\) *=.*/\1/p' | grep -vx default); do
+    step cargo clippy -p pdtd --no-default-features --features "$f" --all-targets -- -D warnings
+  done
 }
 
 check_web() {

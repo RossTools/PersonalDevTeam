@@ -259,14 +259,13 @@ fn windows_command_lines_split_into_their_arguments() {
     assert_eq!(windows_args(line), ["--a", "b c", "", r"\", r"x\y", r#"k={v = ["N"]}"#, r"d\", r#"e\"f"#]);
 }
 
-/// Parks the test's idle conversation, retrying for up to 10 s: a turn's end is stored before the conversation's
+/// Parks the test's idle conversation, retrying until it can: a turn's end is stored before the conversation's
 /// runtime state says the turn is over, so a test that saw the stored end can call park a moment too early.
 pub async fn park_once_idle(st: &pdt_api::AppState) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while pdt_api::park_idle_conversations(st).await == 0 {
-        assert!(std::time::Instant::now() < deadline, "the conversation never became idle enough to park");
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+    wait::wait_until("the conversation to be idle enough to park", async || {
+        pdt_api::park_idle_conversations(st).await > 0
+    })
+    .await;
 }
 
 /// Makes every insert of an event of type `kind` into the store at `db` fail, as a full disk would; None: inserts work

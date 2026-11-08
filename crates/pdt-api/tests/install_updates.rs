@@ -6,12 +6,13 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::call;
+use common::wait::{still_after, wait_until};
 use pdt_core::activity::Activity;
 use pdt_core::handoff::{UpdateOutcome, UpdateResult, result_path};
 use pdt_core::session::{AgentKind, Session, SessionKind, SessionStatus};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 struct Env {
     app: axum::Router,
@@ -53,29 +54,36 @@ fn step<'a>(run: &'a Value, node: &str) -> &'a Value {
     run["steps"].as_array().unwrap().iter().rev().find(|s| s["nodeId"] == node).unwrap_or_else(|| panic!("{run}"))
 }
 
-/// Ticks the engine until the run ended (5 s at most).
+/// Ticks the engine until the run ended.
 async fn finished(env: &Env, id: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let r = run(env, id).await;
-        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
-            return r;
-        }
-        assert!(Instant::now() < deadline, "the run never ended: {r}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+        if matches!(r["status"].as_str(), Some("running" | "waiting")) { Err(r) } else { Ok(r) }
+    })
+    .await
 }
 
-/// Ticks the engine a few times; the run must still wait.
+/// Ticks the engine for a while; the run must still wait.
 async fn still_waiting(env: &Env, id: &str) -> Value {
-    for _ in 0..4 {
+    still_after("the run to stop waiting", Duration::from_millis(120), async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(30)).await;
-    }
-    let r = run(env, id).await;
-    assert_eq!(r["status"], "waiting", "{r}");
-    r
+        run(env, id).await["status"] != "waiting"
+    })
+    .await;
+    run(env, id).await
+}
+
+/// Registers a `watch` loop that is stale at once (it never passes), and waits until it reads as stopped.
+async fn watch_loop_stopped(env: &Env) {
+    env.state.loops.register("watch", Duration::from_millis(1), Some(1));
+    wait_until("the watch loop to read as stopped", async || {
+        let now =
+            i64::try_from(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis())
+                .unwrap();
+        env.state.loops.health(now).iter().any(|l| l.name == "watch" && l.stale)
+    })
+    .await;
 }
 
 /// A running Claude session that is working: PDT is busy.
@@ -219,8 +227,7 @@ async fn the_check_after_installing_reports_what_is_wrong() {
     still_waiting(&env, &id).await;
 
     // Another version runs, and a loop stopped.
-    env.state.loops.register("watch", Duration::from_millis(1), Some(1));
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    watch_loop_stopped(&env).await;
     let id = one_step(&env, "host.check_health", json!({"settleMs": 0, "version": "0.1.8"}), ports).await;
     let r = finished(&env, &id).await;
     let s = step(&r, "n");
@@ -256,17 +263,15 @@ fn write_result(env: &Env, outcome: UpdateOutcome, from: &str, to: &str) {
 
 /// Ticks the engine until Install updates' runs all ended; them.
 async fn runs_ended(env: &Env, wf: &str) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
+    wait_until("the runs to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs?workflow={wf}"), None).await;
         let list = r.as_array().unwrap().clone();
-        if !list.is_empty() && list.iter().all(|r| !matches!(r["status"].as_str(), Some("running" | "waiting"))) {
-            return list;
-        }
-        assert!(Instant::now() < deadline, "the runs never ended: {list:?}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+        let ended =
+            !list.is_empty() && list.iter().all(|r| !matches!(r["status"].as_str(), Some("running" | "waiting")));
+        if ended { Ok(list) } else { Err(list) }
+    })
+    .await
 }
 
 #[tokio::test]
@@ -294,8 +299,7 @@ async fn a_failed_check_after_installing_goes_to_the_inbox() {
     health["config"]["settleMs"] = json!(0);
     let (s, w) = call(&env.app, "PUT", &format!("/api/workflows/{wf}"), Some(json!({"doc": doc}))).await;
     assert_eq!(s, StatusCode::OK, "{w}");
-    env.state.loops.register("watch", Duration::from_millis(1), Some(1));
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    watch_loop_stopped(&env).await;
     write_result(&env, UpdateOutcome::Installed, "0.1.5", "0.1.7");
     pdt_api::update::log_installed(&env.state).await;
     let r = runs_ended(&env, &wf).await;

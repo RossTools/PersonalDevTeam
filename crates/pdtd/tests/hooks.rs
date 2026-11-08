@@ -60,13 +60,13 @@ fn codex_notify_runs_the_users_chained_notifier() {
     let payload = r#"{"type":"agent-turn-complete","thread-id":"t"}"#;
     let (out, _) = hook(&["codex-notify", "--chain", "node", "-e", script, &file, "--", payload], &[], "");
     assert!(out.status.success());
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !out_file.exists() {
-        assert!(Instant::now() < deadline, "the chained notifier never ran");
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(std::fs::read_to_string(&out_file).unwrap(), payload);
+    // Read until it is all there: the notifier may still be writing it.
+    wait::wait_until_blocking("the chained notifier to write the payload", || {
+        std::fs::read_to_string(&out_file)
+            .ok()
+            .filter(|s| s == payload)
+            .ok_or_else(|| std::fs::read_to_string(&out_file))
+    });
 }
 
 /// A stand-in for `claude` that records its arguments and PDT_SESSION_ID, then waits. Only a session (PDT_SESSION_ID
@@ -120,13 +120,11 @@ fn hook_events_change_a_sessions_activity() {
     assert_eq!(s, 201, "{sess}");
     let id = sess["id"].as_str().unwrap().to_string();
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !bin.join("session.txt").exists() {
-        assert!(Instant::now() < deadline, "the fake claude never started");
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(std::fs::read_to_string(bin.join("session.txt")).unwrap().trim(), id, "PDT_SESSION_ID is set");
+    // The fake claude writes its arguments, then PDT_SESSION_ID: wait until both are all there.
+    wait::wait_until_blocking("the fake claude to start with PDT_SESSION_ID set", || {
+        let session = std::fs::read_to_string(bin.join("session.txt")).unwrap_or_default();
+        if session.trim() == id { Ok(()) } else { Err(session) }
+    });
     let args = std::fs::read_to_string(bin.join("args.txt")).unwrap();
     assert!(args.contains("--settings"), "{args}");
     let settings_file = data.join("sessions").join(&id).join("claude-settings.json");
@@ -139,7 +137,8 @@ fn hook_events_change_a_sessions_activity() {
     // A hook updates activity through a separate `pdtd hook` process, so the change may land a moment after the hook
     // returns; poll for the expected fields rather than reading once (a loaded CI runner can lag).
     let wait = |want: serde_json::Value| {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Not `wait_until`: a session that doesn't get there is diagnosed once, with the daemon's logs.
+        let deadline = Instant::now() + wait::scaled(Duration::from_secs(10));
         loop {
             let t = Instant::now();
             let s = http(port, "GET", &format!("/api/sessions/{id}"), None).1;

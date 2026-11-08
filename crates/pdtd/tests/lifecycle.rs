@@ -1,7 +1,7 @@
 //! Starts the real pdtd binary on a free port with a temp data dir. Never touches the stable instance.
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::common;
 use common::*;
@@ -28,11 +28,10 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
     assert_eq!(status, 201, "{stopped}");
     let stopped_id = stopped["id"].as_str().unwrap().to_string();
     assert_eq!(http(port, "POST", &format!("/api/sessions/{stopped_id}/kill"), None).0, 204);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while http(port, "GET", &format!("/api/sessions/{stopped_id}"), None).1["status"] != "finished" {
-        assert!(Instant::now() < deadline, "stopped session never finished");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait::wait_until_blocking("the stopped session to finish", || {
+        let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
+        if s["status"] == "finished" { Ok(()) } else { Err(s) }
+    });
 
     assert_eq!(http(port, "POST", "/api/shutdown", None).0, 202);
     let status = wait_exit(&mut d, Duration::from_secs(20));
@@ -43,14 +42,10 @@ fn shutdown_interrupts_sessions_and_restart_resumes_only_those() {
 
     let _d = start(port, &data);
     // Sessions restart in the background after the daemon starts answering, so poll.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let s = loop {
+    let s = wait::wait_until_blocking("the session to be resumed", || {
         let (_, s) = http(port, "GET", &format!("/api/sessions/{id}"), None);
-        if s["status"] == "running" || Instant::now() > deadline {
-            break s;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
+        if s["status"] == "running" { Ok(s) } else { Err(s) }
+    });
     assert_eq!((s["status"].as_str(), &s["exitCode"]), (Some("running"), &serde_json::Value::Null), "auto-resumed");
     let (_, s) = http(port, "GET", &format!("/api/sessions/{stopped_id}"), None);
     assert_eq!(s["status"], "finished", "a stopped session is not resumed");
@@ -70,15 +65,11 @@ fn wait_run(port: u16, id: &str, want: &str) -> serde_json::Value {
 /// Waits until the run is `want` with `updatedAt` at or after `since` (Unix ms): a row read back after a restart is
 /// `ready` from before the shutdown until the resume changes it.
 fn wait_run_since(port: u16, id: &str, want: &str, since: i64) -> serde_json::Value {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
+    let what = format!("the run to become {want} after {since}");
+    wait::wait_within_blocking(&what, Duration::from_secs(60), || {
         let (_, r) = http(port, "GET", &format!("/api/runs/{id}"), None);
-        if r["state"] == want && r["updatedAt"].as_i64().is_some_and(|t| t >= since) {
-            return r;
-        }
-        assert!(Instant::now() < deadline, "run never became {want} after {since}: {r}");
-        std::thread::sleep(Duration::from_millis(200));
-    }
+        if r["state"] == want && r["updatedAt"].as_i64().is_some_and(|t| t >= since) { Ok(r) } else { Err(r) }
+    })
 }
 
 fn now_ms() -> i64 {
@@ -142,15 +133,10 @@ fn resume_moves_to_a_free_port_when_the_old_one_is_taken() {
     let mut d = start(port, &data);
     let (id, run_port) = project_with_web_run(port, tmp.path());
     shut_down(port, &mut d);
-    let mut squatter = None;
-    for _ in 0..100 {
-        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", run_port)) {
-            squatter = Some(l);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _squatter = squatter.expect("the old run's port was freed by the shutdown");
+    let _squatter =
+        wait::wait_within_blocking("the shutdown to free the old run's port", Duration::from_secs(10), || {
+            std::net::TcpListener::bind(("127.0.0.1", run_port))
+        });
     let restarted_at = now_ms();
     let mut d = start(port, &data);
     let r = wait_run_since(port, &id, "ready", restarted_at);

@@ -1,6 +1,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -73,12 +74,11 @@ async fn sessions_open_tabs_in_their_project_workspace_or_where_asked() {
     // Removing a session removes its tab.
     let id = &ids[0];
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-    for _ in 0..100 {
-        if call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await.0 == StatusCode::NO_CONTENT {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    wait_until("the session to be removed", async || {
+        let s = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await.0;
+        if s == StatusCode::NO_CONTENT { Ok(()) } else { Err(s) }
+    })
+    .await;
     assert_eq!(tab_sessions(&workspaces(&app).await[0]), ids[1..]);
     state.ptys.shutdown().await;
 }

@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub struct Env {
     pub app: axum::Router,
@@ -127,20 +127,16 @@ pub async fn open_request(env: &Env, session: &str) -> String {
 /// The open request that isn't one of `answered`: a request just answered can still read as open for a moment (a slow
 /// runner), and answering it again would miss the new one.
 pub async fn open_request_except(env: &Env, session: &str, answered: &[String]) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("an open request", async || {
         let all = events(env, session).await;
         let fresh = |e: &&Value| {
             e["event"]["kind"] == "request"
                 && e["event"]["state"] == "open"
                 && !answered.iter().any(|a| e["event"]["id"] == a.as_str())
         };
-        if let Some(e) = all.iter().find(fresh) {
-            return e["event"]["id"].as_str().unwrap().to_string();
-        }
-        assert!(Instant::now() < deadline, "no open request");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        all.iter().find(fresh).map(|e| e["event"]["id"].as_str().unwrap().to_string())
+    })
+    .await
 }
 
 pub async fn ticket_titles(env: &Env) -> Vec<String> {

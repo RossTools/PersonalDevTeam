@@ -15,7 +15,6 @@ use pdt_store::Store;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const FAKE_MCP: &str = env!("CARGO_BIN_EXE_fake-mcp");
@@ -206,10 +205,9 @@ async fn an_acp_agent_gets_the_servers_it_can_connect_to() {
     )
     .await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let mut said = vec![];
-    for _ in 0..200 {
+    let said: Vec<String> = wait_until("the agent to list its servers", async || {
         let (_, ev) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?after=0&limit=1000"), None).await;
-        said = ev
+        let said: Vec<String> = ev
             .as_array()
             .unwrap()
             .iter()
@@ -219,11 +217,9 @@ async fn an_acp_agent_gets_the_servers_it_can_connect_to() {
                 _ => None,
             })
             .collect();
-        if said.iter().any(|m| m.starts_with("servers=")) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if said.iter().any(|m| m.starts_with("servers=")) { Ok(said) } else { Err(said) }
+    })
+    .await;
     assert!(said.contains(&"servers=pdt,notes".to_string()), "{said:?}");
     assert!(said.iter().any(|m| m.contains("doesn't get old")), "SSE isn't one it takes: {said:?}");
     assert!(said.iter().any(|m| m.contains("can't block single MCP tools") && m.contains("notes")), "{said:?}");

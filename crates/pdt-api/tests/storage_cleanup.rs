@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_as_ui, git};
 use pdt_api::AppState;
 use pdt_core::storage::{DiskSpace, GB};
@@ -12,7 +13,6 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -122,16 +122,12 @@ async fn one_step(env: &Env, kind: &str, config: Value, ports: &[&str]) -> Value
     let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": {}}))).await;
     assert_eq!(s, StatusCode::OK, "{r}");
     let id = r["runId"].as_str().unwrap().to_string();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let run = get(env, &format!("/api/workflow-runs/{id}")).await;
-        if !matches!(run["status"].as_str(), Some("running" | "waiting")) {
-            return run;
-        }
-        assert!(Instant::now() < deadline, "never ended: {run}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+        if matches!(run["status"].as_str(), Some("running" | "waiting")) { Err(run) } else { Ok(run) }
+    })
+    .await
 }
 
 fn step<'a>(run: &'a Value, node: &str) -> &'a Value {

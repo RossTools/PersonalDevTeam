@@ -145,18 +145,14 @@ async fn restart_right_after_kill_is_not_overwritten_by_old_exit() {
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     let uri = format!("/api/sessions/{id}/restart");
     // Kill only signals; the process exits a moment later (seconds for a ConPTY shell on a loaded Windows runner).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    let mut restarted = false;
-    while std::time::Instant::now() < deadline {
+    wait_until("the killed process to exit", async || {
         let (s, v) = call(&app, "POST", &uri, Some(json!({"cols": 80, "rows": 24}))).await;
-        if s == StatusCode::OK {
-            restarted = true;
-            break;
+        if s != StatusCode::OK {
+            assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "already_running"));
         }
-        assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "already_running"));
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-    assert!(restarted, "the killed process never exited");
+        s == StatusCode::OK
+    })
+    .await;
     still_after("the old exit ending the restarted session", std::time::Duration::from_millis(500), async || {
         conversation::session(&app, &id).await["status"] != "running" || !state.ptys.is_running(&id)
     })
@@ -609,17 +605,16 @@ async fn stop(app: &axum::Router, id: &str) {
     wait_status(app, id, "finished").await;
 }
 
-/// Waits for the exit recorder to finish its binding attempt (it runs just after the status write; up to 10 s for a
-/// loaded Windows runner).
+/// Waits for the exit recorder to finish its binding attempt (it runs just after the status write; seconds for a
+/// loaded Windows runner); not bound stays so for a while.
 async fn settle_binding(state: &AppState, id: &str, expect_bound: bool) {
-    for _ in 0..100 {
-        if external_id(state, id).await.is_some() == expect_bound {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
-    if !expect_bound {
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    if expect_bound {
+        wait_until("the conversation bound", async || external_id(state, id).await.is_some()).await;
+    } else {
+        still_after("the conversation bound", std::time::Duration::from_millis(300), async || {
+            external_id(state, id).await.is_some()
+        })
+        .await;
     }
 }
 
@@ -778,8 +773,11 @@ async fn a_manual_restart_racing_auto_resume_starts_exactly_one_process() {
         wait_status(&app, &id, "running").await;
     }
     // One recorded launch per round, nothing started twice.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     assert_eq!(launches(&bin, "fakeclaude", 6).await.len(), 6);
+    still_after("a seventh launch", std::time::Duration::from_millis(500), async || {
+        raw_launches(&bin, "fakeclaude").len() > 6
+    })
+    .await;
     state.ptys.shutdown().await;
 }
 

@@ -42,11 +42,11 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   `port_blocks`) are declared once in `main.rs` and imported with `use crate::common;`. A test that changes the
   process environment gets its own `[[test]]` target instead (pdt-api's `checks_env`). Run one file's tests with
   `cargo test -p pdt-api --test integration pm::`.
-- **Waiting:** never sleep a fixed time and then assert. `test-support/wait.rs` (`common::wait` in pdt-api's tests)
-  polls: `wait_until` (and `wait_until_blocking`) until a check holds, with one default timeout, and `still_after`
-  for "this does not happen within N ms", which fails as soon as it does. A check returns `bool`, `Option` or
-  `Result` (its error is shown when the wait times out). `PDT_TEST_WAIT_SCALE=3` triples every timeout on a slow
-  machine. pdt-api's `common::conversation` reads and waits on a session's events and state.
+- **Waiting:** never sleep a fixed time and then assert. `test-support/wait.rs` (`common::wait` in pdt-api's and
+  pdtd's tests, `wait` in pdt-agents') polls: `wait_until` (and `wait_until_blocking`) until a check holds, with one
+  default timeout, and `still_after` for "this does not happen within N ms", which fails as soon as it does. A check
+  returns `bool`, `Option` or `Result` (its error is shown when the wait times out). `PDT_TEST_WAIT_SCALE=3` triples
+  every timeout on a slow machine. pdt-api's `common::conversation` reads and waits on a session's events and state.
 - **Agent settings:** pdt-api's tests build their state with `common::app_state`, which puts the home folder and
   the agents' config folders (`~/.claude`, `~/.codex`, Devin's config) in the test's temp folder.
 - **Agent programs:** a test state never starts the machine's `claude`, `codex` or `devin`, and runs no login shell.

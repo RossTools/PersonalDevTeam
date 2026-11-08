@@ -2,6 +2,7 @@
 
 use crate::common;
 
+use common::wait::{still_after, wait_until};
 use common::{PNG, call, call_raw, conversation, disk_full, git, park_once_idle};
 use futures_util::StreamExt;
 use pdt_api::{AppState, router, with_host_guard};
@@ -230,8 +231,11 @@ async fn messages_queue_while_working_and_send_now_interrupts() {
     // Send now: the running turn is cut short and the message runs at once.
     send(&env, &id, "slow").await;
     wait_turns(&env, &id, 2).await;
-    wait_for(&env, &id, "the second slow turn", |_| true).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    conversation::wait_events(&env.app, &id, "the second slow turn", |all| {
+        all.iter().filter(|e| e["event"]["kind"] == "user_message").count() == 3
+    })
+    .await;
+    wait_activity(&env, &id, "working").await;
     let (st, v) = call(
         &env.app,
         "POST",
@@ -291,15 +295,10 @@ async fn after_clear_the_new_conversation_is_resumed() {
     assert!(!all.iter().any(|e| e["event"]["kind"] == "unknown"), "{all:#?}");
     let reset = all.iter().find(|e| e["event"]["kind"] == "conversation_reset").unwrap();
     assert_eq!(reset["event"]["trigger"], "clear");
-    let mut conversation = Value::Null;
-    for _ in 0..300 {
-        conversation = session(&env, &id).await["externalSessionId"].clone();
-        if conversation.is_string() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let conversation = conversation.as_str().expect("the new conversation id is stored").to_string();
+    let conversation = wait_until("the new conversation id stored", async || {
+        session(&env, &id).await["externalSessionId"].as_str().map(str::to_string)
+    })
+    .await;
     assert_ne!(conversation, id);
 
     // Messages in the same process carry the new id.
@@ -338,10 +337,10 @@ async fn background_tasks_keep_the_process_and_report_back_in_a_turn_of_their_ow
     let id = new_conversation(&env, json!({"initialPrompt": "bg: 1500"})).await["id"].as_str().unwrap().to_string();
     wait_turns(&env, &id, 1).await;
     // Idle but for its background task: parking would end the task before it reports back.
-    for _ in 0..10 {
-        assert_eq!(pdt_api::park_idle_conversations(&env.state).await, 0);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    still_after("parking the conversation", Duration::from_millis(500), async || {
+        pdt_api::park_idle_conversations(&env.state).await != 0
+    })
+    .await;
     let all = wait_turns(&env, &id, 2).await;
     assert_eq!(agent_text(&all).last().unwrap(), "The background task finished.");
     let note = all.iter().find(|e| e["event"]["kind"] == "notice").expect("the task's report is a notice");
@@ -366,16 +365,13 @@ async fn a_session_shows_its_background_tasks_and_their_end_is_news() {
     assert_eq!(st.as_u16(), 204);
     assert_eq!(session(&env, &id).await["unseen"], false);
     // It drops off the list with no turn taking it up: the session's work has finished now, and that is news.
-    for _ in 0..100 {
+    let s = wait_until("the task to end", async || {
         let s = session(&env, &id).await;
-        if s["background"].as_array().is_some_and(Vec::is_empty) {
-            assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
-            call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    panic!("the task never ended: {}", session(&env, &id).await);
+        if s["background"].as_array().is_some_and(Vec::is_empty) { Ok(s) } else { Err(s) }
+    })
+    .await;
+    assert_eq!((s["activity"].as_str(), s["unseen"].as_bool()), (Some("idle"), Some(true)), "{s}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 
 #[tokio::test]
@@ -474,13 +470,11 @@ async fn a_shutdown_ends_the_turn_and_the_next_pdtd_reopens_on_send() {
     // Sending to the interrupted conversation reopens it.
     let (st, v) = call(&app, "POST", &format!("/api/sessions/{id}/messages"), Some(json!({"text": "back"}))).await;
     assert_eq!(st.as_u16(), 202, "{v}");
-    for _ in 0..200 {
+    wait_until("the conversation to reopen", async || {
         let (_, s) = call(&app, "GET", &format!("/api/sessions/{id}"), None).await;
-        if s["status"] == "running" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if s["status"] == "running" { Ok(()) } else { Err(s) }
+    })
+    .await;
     call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
 

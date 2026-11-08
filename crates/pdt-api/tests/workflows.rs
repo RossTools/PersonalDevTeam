@@ -4,6 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -621,8 +622,7 @@ async fn a_comment_on_a_started_ticket_goes_to_its_agent_and_events_are_logged()
     let kinds: Vec<&str> = events.as_array().unwrap().iter().map(|e| e["type"].as_str().unwrap()).collect();
     assert!(kinds.contains(&"ticket.commented") && kinds.contains(&"attempt.started"), "{kinds:?}");
     // The message waits until the agent is ready (idle, nobody typing), which can take a few ticks.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let status = loop {
+    let r = wait_until("the comment's run to deliver it", async || {
         let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={ticket}"), None).await;
         let r = runs
             .as_array()
@@ -631,20 +631,21 @@ async fn a_comment_on_a_started_ticket_goes_to_its_agent_and_events_are_logged()
             .find(|r| r["workflowName"] == "Ticket comments to the agent")
             .cloned()
             .unwrap();
-        if r["status"] != "waiting" || std::time::Instant::now() > deadline {
-            break r["status"].clone();
+        if r["status"] != "waiting" {
+            return Ok(r);
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
         pdt_api::run_workflows(&env.state).await;
-    };
-    assert_eq!(status, "succeeded");
+        Err(r)
+    })
+    .await;
+    assert_eq!(r["status"], "succeeded", "{r}");
     if cfg!(unix) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let screen = || String::from_utf8_lossy(&env.state.ptys.attach(&session).unwrap().scrollback).into_owned();
-        while !screen().contains("Also update the docs.") && std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-        assert!(screen().contains("New comment on"), "{}", screen());
+        wait_until("the comment on the agent's screen", async || {
+            let s = screen();
+            if s.contains("New comment on") && s.contains("Also update the docs.") { Ok(()) } else { Err(s) }
+        })
+        .await;
     }
     env.state.ptys.shutdown().await;
 }
@@ -810,21 +811,13 @@ async fn finish_checks_first_then_cleans_up_or_only_moves_to_done() {
     let (c, _, c_path) = start("Self").await;
     let (app, path) = (env.app.clone(), format!("/api/tickets/{c}/finish"));
     let req = tokio::spawn(async move { call(&app, "POST", &path, Some(json!({"stopRunning": true}))).await });
-    for _ in 0..200 {
+    wait_until("the ticket to be Done", async || {
         let (_, t) = call(&env.app, "GET", &format!("/api/tickets/{c}"), None).await;
-        if t["stage"] == "done" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+        t["stage"] == "done"
+    })
+    .await;
     req.abort();
-    for _ in 0..200 {
-        if !c_path.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(!c_path.exists(), "the worktree is removed after the request is dropped");
+    wait_until("the worktree to be removed after the request is dropped", async || !c_path.exists()).await;
 
     // A Done ticket whose worktree is still there (kept, or left by an older daemon) can still be finished.
     let r = finish(&a, json!({"stopRunning": true})).await;

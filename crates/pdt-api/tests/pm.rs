@@ -8,6 +8,7 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::pm::*;
+use common::wait::wait_until;
 use common::{call, git};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -269,18 +270,17 @@ async fn pm_info(env: &Env, id: &str) -> Value {
 async fn close_pm(env: &Env, id: &str) -> Value {
     let (s, v) = call(&env.app, "DELETE", &format!("/api/pm/sessions/{id}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the conversation to end", async || {
         let info = pm_info(env, id).await;
         // The row is marked done just before a stand-in journal is written; the session finishes once its agent has
         // exited, which can come a moment later.
         if info["open"] == false && !info["journal"].is_null() && info["session"]["status"] != "running" {
-            return info;
+            return Ok(info);
         }
-        assert!(Instant::now() < deadline, "the conversation never ended: {info}");
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        Err(info)
+    })
+    .await
 }
 
 async fn user_says(env: &Env, session: &str) -> Vec<String> {
@@ -779,16 +779,13 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
 
     mcp_server(&env, "Slack").await;
     // The locked-down Triage persona's step session starts with the issue and where its ticket goes (PDT-201).
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let session = loop {
+    let session = wait_until("a triage session", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, list) = call(&env.app, "GET", &format!("/api/projects/{}/sessions", env.project), None).await;
-        if let Some(s) = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "Triage") {
-            break s["id"].as_str().unwrap().to_string();
-        }
-        assert!(Instant::now() < deadline, "no triage session");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        let found = list.as_array().unwrap().iter().find(|s| s["persona"]["name"] == "Triage");
+        found.map(|s| s["id"].as_str().unwrap().to_string()).ok_or(list)
+    })
+    .await;
     wait_said(&env, &session, 1).await;
     let first = events(&env, &session).await;
     let prompt = first.iter().find(|e| e["event"]["kind"] == "user_message").unwrap()["event"]["text"].clone();
@@ -837,18 +834,14 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
         (Some("draft"), Some("external"), Some(false))
     );
     send(&env, &session, r#"mcp: submit_outcome {"outcome": "drafted", "summary": "Drafted PX-2."}"#).await;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    let r = wait_until("the run to succeed", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?workflow={wf}"), None).await;
-        let r = &runs[0];
-        if r["status"] == "succeeded" {
-            assert_eq!(r["output"]["summary"], "Drafted PX-2.", "{r}");
-            break;
-        }
-        assert!(Instant::now() < deadline, "the run never ended: {r}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let r = runs[0].clone();
+        if r["status"] == "succeeded" { Ok(r) } else { Err(r) }
+    })
+    .await;
+    assert_eq!(r["output"]["summary"], "Drafted PX-2.", "{r}");
     call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
 }
 
@@ -883,15 +876,15 @@ async fn approve_open_except(env: &Env, session: &str, answered: &[String]) {
 /// The first thing the agent said after its `n`th message that contains `what` (a nudge after a step's turn can come
 /// in between).
 async fn tool_answer(env: &Env, session: &str, n: usize, what: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(m) = agent_says(env, session).await[n..].iter().find(|m| m.contains(what)) {
-            return m.clone();
+    wait_until(&format!("the agent to say {what}"), async || {
+        let said = agent_says(env, session).await;
+        if let Some(m) = said[n..].iter().find(|m| m.contains(what)) {
+            return Ok(m.clone());
         }
-        assert!(Instant::now() < deadline, "the agent never said {what}");
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        Err(said)
+    })
+    .await
 }
 
 /// PDT-201: the PM lets an external ticket in only with the user's yes to that very call, even in a project that lets
@@ -1189,12 +1182,14 @@ async fn the_briefing_names_the_project_s_release_workflow() {
 async fn reset_pm(env: &Env, id: &str) -> Value {
     let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{id}/reset"));
     let reset = tokio::spawn(async move { call(&app, "POST", &url, None).await });
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !reset.is_finished() {
-        assert!(Instant::now() < deadline, "the reset never answered");
+    wait_until("the reset to answer", async || {
+        if reset.is_finished() {
+            return true;
+        }
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        false
+    })
+    .await;
     let (s, v) = reset.await.unwrap();
     assert_eq!(s, StatusCode::OK, "{v}");
     v
@@ -1361,29 +1356,25 @@ async fn an_abandoned_reset_still_finishes_and_an_unfinished_one_counts_as_ended
     wait_said(&env, &first, 1).await;
     let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{first}/reset"));
     let request = tokio::spawn(async move { call(&app, "POST", &url, None).await });
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while pm_info(&env, &first).await["rotation"] != "journal" {
-        assert!(Instant::now() < deadline, "the reset never started");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until("the reset to start", async || pm_info(&env, &first).await["rotation"] == "journal").await;
     let resetting = pm_info(&env, &first).await;
     assert_eq!((resetting["open"].as_bool(), resetting["reason"].as_str()), (Some(true), Some("reset")));
     request.abort();
-    let fresh = loop {
+    let fresh = wait_until("the abandoned reset to finish", async || {
         let (_, list) = call(&env.app, "GET", "/api/pm/sessions", None).await;
         if let Some(i) = list.as_array().unwrap().iter().find(|i| i["resetFrom"] == first.as_str()) {
-            break i.clone();
+            return Ok(i.clone());
         }
-        assert!(Instant::now() < deadline, "the abandoned reset never finished: {list}");
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        Err(list)
+    })
+    .await;
     assert_eq!((fresh["open"].as_bool(), fresh["title"].as_str()), (Some(true), Some("hello")));
     // The fresh conversation is listed before the reset ends the old one.
-    while pm_info(&env, &first).await["open"] != false {
-        assert!(Instant::now() < deadline, "the abandoned reset never ended the old conversation");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until("the abandoned reset to end the old conversation", async || {
+        pm_info(&env, &first).await["open"] == false
+    })
+    .await;
 
     // A reset cut short after its conversation ended, with no fresh one: ended, not "resetting".
     let other = start_pm(&env, "again").await;

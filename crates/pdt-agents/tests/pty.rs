@@ -1,4 +1,5 @@
 use crate::port_blocks;
+use crate::wait::{still_after, wait_until, wait_within};
 
 use pdt_agents::{Attachment, PtyError, PtyEvent, PtyManager, SpawnSpec};
 use std::path::PathBuf;
@@ -139,20 +140,13 @@ async fn start_grandchild_server(
     s.cwd = dir.path().to_path_buf();
     s.env.push(("P".into(), port.to_string()));
     let exit = m.spawn(s).unwrap();
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err() {
-        assert!(tokio::time::Instant::now() < deadline, "the server never listened");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_until("the server to listen", async || tokio::net::TcpStream::connect(("127.0.0.1", port)).await).await;
     (dir, exit)
 }
 
 async fn assert_port_freed(port: u16) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while std::net::TcpListener::bind(("127.0.0.1", port)).is_err() {
-        assert!(tokio::time::Instant::now() < deadline, "the grandchild server still holds port {port}");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let what = format!("the grandchild server to free port {port}");
+    wait_within(&what, Duration::from_secs(5), async || std::net::TcpListener::bind(("127.0.0.1", port))).await;
 }
 
 /// A run's server is a grandchild (`cmd.exe` → node, `sh` → node): killing the terminal must end it too, or it keeps
@@ -239,8 +233,7 @@ async fn spawn_after_shutdown_is_refused_and_starts_no_process() {
     let r = m.spawn(oneshot_cmd("late", &win, &unix));
     assert!(matches!(r, Err(PtyError::ShuttingDown)), "{r:?}");
     assert!(matches!(m.attach("late"), Err(PtyError::NotFound(_))), "nothing was registered");
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(!marker.exists(), "the command must not have run");
+    still_after("the refused command ran", Duration::from_millis(500), async || marker.exists()).await;
 }
 
 /// Input to a process that has gone is refused, not queued for a writer that leads nowhere (PDT-129): as soon as its
@@ -251,13 +244,7 @@ async fn input_is_refused_once_the_process_is_gone() {
     let exit = m.spawn(interactive("a")).unwrap();
     assert!(m.accepts_input("a"));
     m.write("a", b"exit\r").unwrap();
-    tokio::time::timeout(WAIT, async {
-        while m.accepts_input("a") {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("its input closes");
+    wait_until("its input to close", async || !m.accepts_input("a")).await;
     assert!(matches!(m.write("a", b"x"), Err(PtyError::NotRunning(_))));
     tokio::time::timeout(WAIT, exit).await.unwrap().unwrap();
     assert!(!m.accepts_input("a") && !m.accepts_input("nobody"));

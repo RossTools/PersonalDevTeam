@@ -3,6 +3,7 @@
 use crate::common;
 
 use common::conversation::{self, ended, said};
+use common::wait::wait_until;
 use common::{PNG, call, call_raw, git, park_once_idle};
 use futures_util::{SinkExt, StreamExt};
 use pdt_api::{AppState, router};
@@ -295,12 +296,10 @@ async fn a_thread_that_never_took_a_turn_is_replaced_after_a_restart() {
     let tmp = tempfile::tempdir().unwrap();
     let env = setup(tmp.path()).await;
     let id = new_codex(&env, json!({})).await;
-    let before = loop {
-        if let Some(t) = session(&env, &id).await["externalSessionId"].as_str() {
-            break t.to_string();
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    let before = wait_until("the Codex thread", async || {
+        session(&env, &id).await["externalSessionId"].as_str().map(str::to_string)
+    })
+    .await;
     pdt_api::shutdown_conversations(&env.state).await;
     send(&env, &id, "hello", "next").await;
     let all = wait_turns(&env, &id, 1).await;
@@ -327,15 +326,12 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     let (s, _) = call(&env.app, "POST", &url, Some(json!({"cols": 100, "rows": 30}))).await;
     assert_eq!(s.as_u16(), 204, "opening it again is fine");
     // The fake TUI prints what it was started with.
-    let mut seen = String::new();
-    for _ in 0..400 {
+    let seen = wait_until("the TUI to start", async || {
         let bytes = env.state.ptys.attach(&id).map(|a| a.scrollback).unwrap_or_default();
-        seen = String::from_utf8_lossy(&bytes).into_owned();
-        if seen.contains("fake codex tui") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let seen = String::from_utf8_lossy(&bytes).into_owned();
+        if seen.contains("fake codex tui") { Ok(seen) } else { Err(seen) }
+    })
+    .await;
     let thread = session(&env, &id).await["externalSessionId"].as_str().unwrap().to_string();
     assert!(
         seen.contains(&format!("thread={thread}"))
@@ -345,13 +341,7 @@ async fn the_live_terminal_opens_on_the_thread_after_the_first_turn() {
     );
     let (s, _) = call(&env.app, "DELETE", &url, None).await;
     assert_eq!(s.as_u16(), 204);
-    for _ in 0..400 {
-        if !env.state.ptys.is_running(&id) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(!env.state.ptys.is_running(&id));
+    wait_until("the TUI to exit", async || !env.state.ptys.is_running(&id)).await;
     assert_eq!(session(&env, &id).await["status"], "running", "closing the TUI leaves the conversation");
     // Claude has no live terminal yet.
     let (_, c) = call(

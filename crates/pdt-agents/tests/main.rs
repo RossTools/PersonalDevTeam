@@ -5,6 +5,8 @@
 mod all_listed;
 #[path = "../../../test-support/port_blocks.rs"]
 mod port_blocks;
+#[path = "../../../test-support/wait.rs"]
+mod wait;
 
 mod codex_screen;
 mod pty;

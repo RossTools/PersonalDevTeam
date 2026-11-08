@@ -1,6 +1,6 @@
 //! Waiting in tests: poll for what a test expects instead of sleeping a fixed time and then asserting. Shared by test
-//! crates with `#[path = ".../test-support/wait.rs"] mod wait;` (pdt-api's and the integrations' tests:
-//! `common::wait`).
+//! crates with `#[path = ".../test-support/wait.rs"] mod wait;` (pdt-api's, the integrations' and pdtd's tests:
+//! `common::wait`; pdt-agents' tests: `wait`).
 //!
 //! - [`wait_until`] (async) and [`wait_until_blocking`] poll until a check is ready, and panic after [`timeout`].
 //! - [`still_after`] (async) and [`still_after_blocking`] check that something does not happen within a window, and

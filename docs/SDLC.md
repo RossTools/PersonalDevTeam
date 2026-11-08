@@ -114,7 +114,7 @@ names another (below, "Runners").
 
 | Check | Does | Pull requests | Merge queue |
 |---|---|---|---|
-| lint (linux) | version sync, fmt, clippy (pdtd also without integration features) | a Rust change | unless docs only |
+| lint (linux) | version sync, fmt, clippy (pdtd also without integration features, and with each one alone) | a Rust change | unless docs only |
 | test (linux) | nextest at the stand-in version 9.9.9 (pdtd also without integration features); generated files are committed | a Rust change | unless docs only |
 | web (linux) | web typecheck, knip and build; vitest in 4 shards (`PDT_WEB_SHARDS`) | a web change | unless docs only |
 | build (macos-latest) | clippy, nextest, desktop crate clippy and test | `macos` label, or a `.github/` change | unless docs only |

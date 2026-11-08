@@ -3,6 +3,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{argv_agent, call, conversation, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState, QueueRemoval, QueueRemovalReason};
@@ -198,10 +199,11 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     assert_eq!(data["pr"], 12);
     if cfg!(unix) {
         // The terminal echoes what was typed.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !screen(&env).contains("CI failed on PR #12") && std::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        wait_until("the notice on the terminal", async || {
+            let s = screen(&env);
+            if s.contains("CI failed on PR #12") { Ok(()) } else { Err(s) }
+        })
+        .await;
         assert!(screen(&env).contains("test (linux)"), "{}", screen(&env));
     }
     pdt_api::refresh_prs(&env.state).await;
@@ -209,10 +211,7 @@ async fn ci_shows_on_the_ticket_and_failures_are_told_to_the_agent_once() {
     assert_eq!(pr_events(&env).await.len(), 1, "the same failure is news once");
 
     // The stand-in agent took its one line and exited; news with no running session is recorded as not told.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while env.state.ptys.is_running(&env.session) && std::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("the stand-in agent to exit", async || !env.state.ptys.is_running(&env.session)).await;
     let mut conflicting = pr();
     conflicting.mergeable = Mergeable::Conflicting;
     env.gh.set_pr(BRANCH, Some(conflicting));
@@ -658,14 +657,12 @@ async fn pr_comments_and_reviews_reach_the_agent_once_the_workflow_is_on() {
     .await;
     assert!(st.is_success(), "{st}");
     // Delivered once the agent's terminal is idle: keep the engine going until all three are recorded.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
+    wait_until("all three delivered", async || {
         pdt_api::run_workflows(&env.state).await;
-        if pr_events(&env).await.len() >= 3 || std::time::Instant::now() > deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+        let events = pr_events(&env).await;
+        if events.len() >= 3 { Ok(()) } else { Err(events) }
+    })
+    .await;
     let mut keys: Vec<String> =
         pr_events(&env).await.iter().map(|e| e["data"]["key"].as_str().unwrap().into()).collect();
     keys.sort();
@@ -762,24 +759,20 @@ async fn agent_says(env: &Env, session: &str) -> Vec<String> {
         .collect()
 }
 
-/// Ticks the engine until `done` gives something (up to 20 s).
+/// Ticks the engine until `done` gives something.
 async fn tick_until<T, F, Fut>(env: &Env, what: &str, done: F) -> T
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<T>>,
 {
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
-        if let Some(v) = done().await {
-            return v;
+        match done().await {
+            Some(v) => Ok(v),
+            None => Err(format!("{:#?} {:#?}", agent_says(env, &env.session).await, notice_runs(env).await.last())),
         }
-        if std::time::Instant::now() > deadline {
-            let said = agent_says(env, &env.session).await;
-            panic!("never saw {what}: {said:#?} {:#?}", notice_runs(env).await.last());
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    })
+    .await
 }
 
 /// The open agent step of `node`, once it has its session.
@@ -1190,18 +1183,15 @@ async fn cancel_runs(env: &Env) -> Vec<Value> {
 /// Run `n` of "When CI is cancelled" once its steps match `done`.
 async fn cancel_run(env: &Env, n: usize, done: &[&str]) -> Value {
     let want: Vec<String> = done.iter().map(|s| s.to_string()).collect();
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("cancel run {n} at {done:?}"), async || {
         pdt_api::run_workflows(&env.state).await;
         let runs = cancel_runs(env).await;
-        if let Some(r) = runs.get(n - 1).filter(|r| path(r) == want) {
-            return r.clone();
+        match runs.get(n - 1).filter(|r| path(r) == want) {
+            Some(r) => Ok(r.clone()),
+            None => Err(runs.iter().map(path).collect::<Vec<_>>()),
         }
-        if std::time::Instant::now() > deadline {
-            panic!("never saw cancel run {n} at {done:?}: {:?}", runs.iter().map(path).collect::<Vec<_>>());
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    })
+    .await
 }
 
 fn retried(env: &Env) -> Vec<(String, bool)> {

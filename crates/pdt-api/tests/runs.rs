@@ -177,15 +177,10 @@ async fn stopping_a_web_run_frees_its_port() {
     assert_eq!(s, StatusCode::NO_CONTENT);
     let r = wait_state(&env.app, &id, &["stopped", "failed"]).await;
     assert_eq!(r["state"], "stopped", "{r}");
-    let mut freed = false;
-    for _ in 0..100 {
-        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-            freed = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert!(freed, "the node server (a grandchild of the shell) still holds port {port}");
+    wait_until(&format!("the node server (a grandchild of the shell) to let go of port {port}"), async || {
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    })
+    .await;
     let (s, v) = call(&env.app, "POST", &format!("/api/runs/{id}/restart"), None).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let r = wait_state(&env.app, &id, &["ready", "failed"]).await;
@@ -390,12 +385,10 @@ async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
     let new = r["port"].as_u64().unwrap() as u16;
     assert_ne!(new, old, "{r}");
     assert_eq!(r["url"], format!("https://box.t.ts.net:{new}/"));
-    for _ in 0..600 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", new)).await.is_ok() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    wait_until(&format!("the server on port {new}"), async || {
+        tokio::net::TcpStream::connect(("127.0.0.1", new)).await.is_ok()
+    })
+    .await;
     wait_state(&env.app, "left-behind", &["ready"]).await;
     let calls = fake.calls();
     assert!(calls.iter().all(|c| !c.contains(&format!("--https={old}"))), "the old port is left alone: {calls:?}");
@@ -436,15 +429,10 @@ fn next_pdtd(env: &Env, fake: &Arc<RecordingTailscale>) -> (AppState, axum::Rout
 async fn a_resumed_run_that_moves_port_unmaps_the_port_this_instance_mapped() {
     let mut env = setup().await;
     let (id, old) = exit_with_a_mapped_web_run(&mut env, &recording()).await;
-    let mut squatter = None;
-    for _ in 0..100 {
-        if let Ok(l) = std::net::TcpListener::bind(("127.0.0.1", old)) {
-            squatter = Some(l);
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let _squatter = squatter.expect("the old run's server let go of its port");
+    let _squatter = wait_until("the old run's server to let go of its port", async || {
+        std::net::TcpListener::bind(("127.0.0.1", old))
+    })
+    .await;
     let fake = recording();
     let (next, app) = next_pdtd(&env, &fake);
     pdt_api::apply_remote_access(&next).await;
@@ -511,7 +499,7 @@ async fn toggling_remote_access_updates_running_web_runs() {
     env.state.ptys.shutdown().await;
 }
 
-/// Waits (up to 30 s, well inside nextest's 120 s limit) until the web server on `port` answers with a body ending
+/// Waits until the web server on `port` answers with a body ending
 /// in `want`; on failure says what it last answered and where the run `id` is.
 async fn wait_body(app: &axum::Router, id: &str, port: u16, want: &str) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -522,19 +510,17 @@ async fn wait_body(app: &axum::Router, id: &str, port: u16, want: &str) {
         s.read_to_string(&mut buf).await?;
         Ok(buf)
     };
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    let mut last = String::new();
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout(Duration::from_secs(2), get()).await {
-            Ok(Ok(body)) if body.ends_with(want) => return,
-            Ok(Ok(body)) => last = body,
-            Ok(Err(e)) => last = e.to_string(),
-            Err(_) => last = "no answer within 2 s".into(),
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
-    panic!("port {port} never answered {want} (last: {last:?}); the run: {r}");
+    wait_until(&format!("port {port} to answer {want}"), async || {
+        let last = match tokio::time::timeout(Duration::from_secs(2), get()).await {
+            Ok(Ok(body)) if body.ends_with(want) => return Ok(()),
+            Ok(Ok(body)) => body,
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "no answer within 2 s".into(),
+        };
+        let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
+        Err(format!("{last:?}; the run: {r}"))
+    })
+    .await;
 }
 
 /// Final review #9: a web run whose definition uses `$PDT_RUN_HOST` (a dev PDT's allowlist) restarts on its port when
@@ -628,11 +614,11 @@ async fn a_stop_during_a_host_restart_is_kept() {
     let (s, v) = call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
     wait_state(&env.app, &id, &["stopped"]).await;
-    for _ in 0..20 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    still_after("the Stop overridden", Duration::from_secs(2), async || {
         let (_, r) = call(&env.app, "GET", &format!("/api/runs/{id}"), None).await;
-        assert_eq!(r["state"], "stopped", "the Stop was overridden: {r}");
-    }
+        r["state"] != "stopped"
+    })
+    .await;
     env.state.ptys.shutdown().await;
 }
 
@@ -1065,8 +1051,10 @@ async fn a_detached_run_survives_pdtd_and_is_reattached() {
     // pdtd exits: its terminals are shut down, the run's row stays active.
     env.state.shutting_down.store(true, std::sync::atomic::Ordering::SeqCst);
     env.state.ptys.shutdown().await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert!(pdt_agents::detached::alive(&process), "the command outlives pdtd");
+    still_after("the command dying with pdtd", Duration::from_millis(500), async || {
+        !pdt_agents::detached::alive(&process)
+    })
+    .await;
 
     // The next pdtd, on the same database and data folder.
     let next = common::app_state(env.state.store.clone(), env._tmp.path());
@@ -1131,12 +1119,10 @@ async fn a_detached_run_that_exits_reports_its_code() {
     let r = wait_state(&env.app, &id, &["failed"]).await;
     assert_eq!(r["exitCode"], 3, "{r}");
     wait_output(&env.state, &id, "bye\r\n").await;
-    for _ in 0..200 {
-        if env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited, Some(3));
+    let exited = wait_until("the command's terminal to exit", async || {
+        env.state.ptys.attach(&format!("run:{id}:command")).unwrap().exited
+    })
+    .await;
+    assert_eq!(exited, 3);
     env.state.ptys.shutdown().await;
 }
