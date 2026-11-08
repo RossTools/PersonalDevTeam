@@ -454,14 +454,11 @@ async fn removing_a_session_deletes_its_hook_settings() {
     let dir = tmp.path().join("data").join("sessions").join(&id);
     assert!(dir.join("claude-settings.json").is_file());
     assert_eq!(call(&app, "POST", &format!("/api/sessions/{id}/kill"), None).await.0, StatusCode::NO_CONTENT);
-    let mut removed = StatusCode::CONFLICT;
-    for _ in 0..100 {
-        removed = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await.0;
-        if removed != StatusCode::CONFLICT {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
+    let removed = wait_until("the session to stop being busy", async || {
+        let s = call(&app, "DELETE", &format!("/api/sessions/{id}"), None).await.0;
+        (s != StatusCode::CONFLICT).then_some(s)
+    })
+    .await;
     assert_eq!(removed, StatusCode::NO_CONTENT);
     assert!(!dir.exists(), "the session's data folder is removed with it");
     state.ptys.shutdown().await;

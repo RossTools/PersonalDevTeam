@@ -17,7 +17,7 @@ use pdt_github::transport::testing::Recorded;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -563,15 +563,11 @@ async fn connect_github_enters_a_code_then_signs_in() {
     assert_eq!(v["pending"]["apiUrl"], "https://api.github.com");
     assert_eq!(v["pending"]["userCode"], "ABCD-1234");
     assert_eq!(v["pending"]["verificationUri"], "https://github.com/login/device");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let v = loop {
+    let v = wait_until("signed in", async || {
         let (_, v) = call(&env.app, "GET", LOGIN, None).await;
-        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() {
-            break v;
-        }
-        assert!(Instant::now() < deadline, "never signed in: {v}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() { Ok(v) } else { Err(v) }
+    })
+    .await;
     assert_eq!(
         (v["accounts"][0]["login"].as_str(), v["pending"].is_null(), v["error"].is_null()),
         (Some("alex"), true, true),
@@ -672,15 +668,11 @@ async fn an_expiring_login_is_stored_with_its_refresh_token_renewed_and_reconnec
     t.ok("GET", "https://api.github.com/user", r#"{"login":"alex"}"#);
     let (s, v) = call(&env.app, "POST", &format!("{LOGIN}/device"), Some(json!({"clientId": "Iv1.own"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let v = loop {
+    let v = wait_until("signed in", async || {
         let (_, v) = call(&env.app, "GET", LOGIN, None).await;
-        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() {
-            break v;
-        }
-        assert!(Instant::now() < deadline, "never signed in: {v}");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+        if !v["accounts"].as_array().unwrap().is_empty() || v["error"].is_string() { Ok(v) } else { Err(v) }
+    })
+    .await;
     let expires_at = v["accounts"][0]["expiresAt"].as_i64().expect("an expiry");
     assert!(expires_at > common_now() && expires_at <= common_now() + 600_000, "{v}");
     assert_eq!(v["accounts"][0]["renews"], true, "{v}");
@@ -848,17 +840,16 @@ async fn say_approved(env: &Env, session: &str, text: &str) -> String {
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let req = loop {
+    let req = wait_until("a permission request", async || {
         let (_, all) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
         let open =
             all.as_array().unwrap().iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open");
-        if let Some(e) = open {
-            break e["event"]["id"].as_str().unwrap().to_string();
+        match open {
+            Some(e) => Ok(e["event"]["id"].as_str().unwrap().to_string()),
+            None => Err(all),
         }
-        assert!(Instant::now() < deadline, "no permission request: {all}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    })
+    .await;
     let url = format!("/api/sessions/{session}/requests/{req}");
     let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");

@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -54,10 +55,12 @@ async fn health_reports_each_loop_and_a_stale_one_is_a_notification() {
     assert!(loops[0]["lastPassAt"].is_i64() && loops[0]["stale"] == false, "{h}");
     assert_eq!((loops[1]["everyMs"].clone(), loops[1]["lastPassAt"].clone()), (json!(60_000), Value::Null));
 
-    tokio::time::sleep(Duration::from_millis(60)).await;
-    let (_, h) = call(&env.app, "GET", "/api/health", None).await;
+    let h = wait_until("the poll loop to go stale", async || {
+        let (_, h) = call(&env.app, "GET", "/api/health", None).await;
+        if h["loops"][1]["stale"] == true { Ok(h) } else { Err(h) }
+    })
+    .await;
     assert_eq!(h["status"], "ok");
-    assert_eq!(h["loops"][1]["stale"], true, "{h}");
     pdt_api::sync_notifications(&env.state).await;
     pdt_api::sync_notifications(&env.state).await;
     let rows = loop_notifications(&env.app).await;

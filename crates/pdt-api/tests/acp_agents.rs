@@ -11,7 +11,7 @@ use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -186,17 +186,13 @@ async fn a_persona_on_an_acp_agent_runs_an_agent_step_through_a_permission_reque
     let run_id = r["runId"].as_str().unwrap().to_string();
 
     // The step's session is a conversation with the ACP agent.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let session = loop {
+    let session = wait_until("the step to start a session", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{run_id}"), None).await;
         let step = r["steps"].as_array().and_then(|a| a.iter().find(|s| s["nodeId"] == "review").cloned());
-        if let Some(id) = step.as_ref().and_then(|s| s["wait"]["agent"]["session"].as_str()) {
-            break id.to_string();
-        }
-        assert!(Instant::now() < deadline, "the step never started a session: {r:#}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        step.as_ref().and_then(|s| s["wait"]["agent"]["session"].as_str()).map(str::to_string).ok_or(r)
+    })
+    .await;
     let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
     assert_eq!((s["agent"].as_str(), s["mode"].as_str()), (Some("acp:fake"), Some("conversation")), "{s}");
     assert_eq!(s["permissionMode"], "ask");
@@ -213,16 +209,16 @@ async fn a_persona_on_an_acp_agent_runs_an_agent_step_through_a_permission_reque
     .await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
 
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let r = loop {
+    let r = wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{run_id}"), None).await;
-        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
-            break r;
+        if matches!(r["status"].as_str(), Some("running" | "waiting")) {
+            Err((r, said(&events(&env, &session).await)))
+        } else {
+            Ok(r)
         }
-        assert!(Instant::now() < deadline, "the run never ended: {r:#}\n{:#?}", said(&events(&env, &session).await));
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    })
+    .await;
     assert_eq!((r["status"].as_str(), r["output"]["result"].as_str()), (Some("succeeded"), Some("approved")), "{r:#}");
     // The outcome can end the run before the agent's message about it is recorded.
     wait_for(&env, &session, "the agent saying it submitted", |a| {

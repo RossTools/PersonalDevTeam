@@ -3,6 +3,7 @@
 use crate::common;
 
 use common::conversation::{self, ended, said};
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -207,14 +208,11 @@ async fn a_stopped_conversation_resumes_its_devin_session_or_starts_a_new_one_wh
 
     // Never prompted: Devin never saved it, so the next message starts a new session (with a notice).
     let id = new_devin(&env, json!({})).await;
-    for _ in 0..100 {
-        if session(&env, &id).await["externalSessionId"].is_string() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let unsaved = session(&env, &id).await["externalSessionId"].clone();
-    assert!(unsaved.is_string());
+    let unsaved = wait_until("Devin's session id", async || {
+        let id = session(&env, &id).await["externalSessionId"].clone();
+        id.is_string().then_some(id)
+    })
+    .await;
     stop(&env, &id).await;
     send(&env, &id, "who", "next").await;
     let all = wait_turns(&env, &id, 1).await;

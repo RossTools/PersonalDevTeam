@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::{still_after, wait_until};
 use common::{call, call_as_ui, call_with, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -123,21 +124,17 @@ async fn inbox(env: &Env) -> Vec<Value> {
     v["items"].as_array().unwrap().clone()
 }
 
-/// Ticks the engine until `done` holds (up to 20 s).
+/// Ticks the engine until `done` holds.
 async fn tick_until<F, Fut>(env: &Env, what: &str, done: F) -> Value
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<Value>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
-        if let Some(v) = done().await {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "never saw {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        done().await
+    })
+    .await
 }
 
 async fn run_ended(env: &Env, id: &str) -> Value {
@@ -259,15 +256,11 @@ async fn pdt_mcp_needs_the_session_token_and_lists_its_tools() {
     let wait_said = |n: usize| {
         let (env, session) = (&env, session.clone());
         async move {
-            let deadline = Instant::now() + Duration::from_secs(15);
-            loop {
+            wait_until(&format!("the agent to say {n} things"), async || {
                 let said = agent_says(env, &session).await;
-                if said.len() >= n {
-                    return said;
-                }
-                assert!(Instant::now() < deadline, "the agent said only {said:?}");
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
+                if said.len() >= n { Ok(said) } else { Err(said) }
+            })
+            .await
         }
     };
     let first = wait_said(1).await.len();
@@ -502,14 +495,12 @@ async fn another_personas_prompt_waits_for_the_user_where_the_pm_may_act() {
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
     let card = open_card(&env, &session).await;
     // Long enough for PDT to have answered it, had it thought the Coder could act.
-    for _ in 0..10 {
+    still_after("PDT answering the Coder's request", Duration::from_millis(500), async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
-    let still =
-        v.as_array().unwrap().iter().any(|e| e["event"]["id"] == card.as_str() && e["event"]["state"] == "open");
-    assert!(still, "PDT answered the Coder's request: {v:#}");
+        let (_, v) = call(&env.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
+        !v.as_array().unwrap().iter().any(|e| e["event"]["id"] == card.as_str() && e["event"]["state"] == "open")
+    })
+    .await;
     let (_, o) = call(&env.app, "GET", &format!("/api/tickets/{other}"), None).await;
     assert_eq!(o["title"], "Other", "nothing before the user's yes");
     answer_card(&env, &session, &card, json!({"type": "deny"})).await;
@@ -689,9 +680,11 @@ async fn a_message_sent_as_a_steps_session_is_stopped_is_answered() {
         (s["activity"] == "idle").then_some(s)
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
-    assert_eq!(s["status"], "running", "the close is still pausing");
+    still_after("the session ending while its close pauses", Duration::from_millis(300), async || {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{session}"), None).await;
+        s["status"] != "running"
+    })
+    .await;
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": "compact:7000"})))
             .await;
@@ -1302,16 +1295,13 @@ async fn a_hung_step_holds_up_neither_other_runs_nor_submit_outcome() {
     let mut st = env.state.clone();
     st.engine_tick_wait = Duration::from_millis(200);
     let hung = run_now(&env, &hang, json!({})).await;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    wait_until("the request to start", async || {
         pdt_api::run_workflows(&st).await;
         let r = run(&env, &hung).await;
-        if r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "get" && s["status"] == "running") {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the request never started: {r:#}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let started = r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "get" && s["status"] == "running");
+        if started { Ok(()) } else { Err(r) }
+    })
+    .await;
 
     let t = ticket(&env, "Review me").await;
     let wf = create_workflow(
@@ -1320,17 +1310,12 @@ async fn a_hung_step_holds_up_neither_other_runs_nor_submit_outcome() {
     )
     .await;
     let id = run_now(&env, &wf, json!({"ticketId": t})).await;
-    let started = Instant::now();
-    let deadline = started + Duration::from_secs(30);
-    let r = loop {
+    let r = wait_until("the review to end while the other run hangs", async || {
         pdt_api::run_workflows(&st).await;
         let r = run(&env, &id).await;
-        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
-            break r;
-        }
-        assert!(Instant::now() < deadline, "the review never ended while the other run hung: {r:#}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        if matches!(r["status"].as_str(), Some("running" | "waiting")) { Err(r) } else { Ok(r) }
+    })
+    .await;
     assert_eq!((r["status"].as_str(), r["output"]["result"].as_str()), (Some("succeeded"), Some("approved")), "{r:#}");
     let r = run(&env, &hung).await;
     assert_eq!(r["status"], "running", "{r:#}");
@@ -1440,13 +1425,11 @@ async fn a_turn_ended_waiting_on_a_background_task_is_neither_nudged_nor_stalled
     .await;
     assert_eq!(agent["background"], json!(["Sleep in the background"]), "{agent}");
     // Ticking on while it runs: no nudge, no stall.
-    let until = Instant::now() + Duration::from_millis(1500);
-    while Instant::now() < until {
+    still_after("a nudge or a stall", Duration::from_millis(1500), async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(inbox(&env).await.is_empty());
-    assert!(!agent_says(&env, &session).await.iter().any(|m| m.contains(NUDGE)));
+        !inbox(&env).await.is_empty() || agent_says(&env, &session).await.iter().any(|m| m.contains(NUDGE))
+    })
+    .await;
     // The task's own turn ends without an outcome: that one is nudged, and the nudge's turn stalls.
     let stalled =
         tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
@@ -1643,15 +1626,11 @@ async fn the_background_cap_does_not_stall_a_turn_at_work() {
     let id = run_now(&env, &wf, json!({"ticketId": t})).await;
     let session = step_session(&env, &id).await;
     // No ticks from here until the turn runs: the wait starts at the turn's end, the cap only on a tick.
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    wait_until("the wait on the task", async || {
         let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
-        if v["agent"]["state"] == "background" {
-            break;
-        }
-        assert!(Instant::now() < deadline, "never waited on the task: {}", v["agent"]);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if v["agent"]["state"] == "background" { Ok(()) } else { Err(v["agent"].clone()) }
+    })
+    .await;
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": "slow"}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");

@@ -7,9 +7,9 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::StatusCode;
 use common::call;
 use common::pm::*;
+use common::wait::wait_until;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 
 const USER: &str = "77";
@@ -182,14 +182,11 @@ impl FakeDiscord {
 
     /// Waits for a request matching `f`; returns its body.
     async fn wait_for(&self, what: &str, f: impl Fn(&Seen) -> bool) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            if let Some(s) = self.seen.lock().unwrap().iter().find(|s| f(s)) {
-                return s.2.clone();
-            }
-            assert!(Instant::now() < deadline, "no {what}; saw {:#?}", self.seen.lock().unwrap());
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+        wait_until(what, async || {
+            let seen = self.seen.lock().unwrap();
+            seen.iter().find(|s| f(s)).map(|s| s.2.clone()).ok_or_else(|| format!("{seen:#?}"))
+        })
+        .await
     }
 
     /// Waits for a DM whose content has `text`.
@@ -218,15 +215,11 @@ async fn dm_status(env: &Env, bot: &str) -> Value {
 }
 
 async fn wait_status(env: &Env, bot: &str, state: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("the link to be {state}"), async || {
         let s = dm_status(env, bot).await;
-        if s["state"] == state {
-            return s;
-        }
-        assert!(Instant::now() < deadline, "the link is {s}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if s["state"] == state { Ok(s) } else { Err(s) }
+    })
+    .await
 }
 
 async fn pm_list(env: &Env) -> Vec<Value> {
@@ -372,11 +365,7 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while *discord.identified.lock().unwrap() == before {
-        assert!(Instant::now() < deadline, "the link never started over");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("the link to start over", async || *discord.identified.lock().unwrap() != before).await;
     wait_status(&env, &bot_id, "Connected").await;
     let web = start_pm(&env, "hi from the web").await;
     wait_said(&env, &web, 1).await;
@@ -384,25 +373,19 @@ async fn the_user_talks_to_the_pm_in_the_bots_dms() {
     let n = discord.posted().len();
     send(&env, &web, r#"mcp: create_ticket {"project": "PX", "title": "Inbox one"}"#).await;
     open_request(&env, &web).await;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let note = loop {
+    let note = wait_until("an Inbox DM", async || {
         pdt_api::sync_notifications(&env.state).await;
-        if let Some((_, b)) = discord.posted().into_iter().skip(n).find(|(_, b)| body_text(b).starts_with("**")) {
-            break b;
-        }
-        assert!(Instant::now() < deadline, "no Inbox DM: {:?}", discord.posted());
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };
+        let posted = discord.posted();
+        posted.iter().skip(n).find(|(_, b)| body_text(b).starts_with("**")).map(|(_, b)| b.clone()).ok_or(posted)
+    })
+    .await;
     assert!(note.get("components").is_none(), "an Inbox item is news, not buttons: {note}");
     call(&env.app, "POST", &format!("/api/sessions/{web}/kill"), None).await;
 
     // The connection drops: the bot resumes on its own.
     discord.push.send(json!("drop")).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while discord.identify.lock().unwrap().as_ref().is_none_or(|v| v["op"] != 6) {
-        assert!(Instant::now() < deadline, "it never resumed");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("the bot to resume", async || discord.identify.lock().unwrap().as_ref().is_some_and(|v| v["op"] == 6))
+        .await;
     wait_status(&env, &bot_id, "Connected").await;
     discord.dm(USER, "still there?");
     discord.wait_dm("echo: still there?").await;

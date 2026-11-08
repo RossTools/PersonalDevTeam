@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::{still_after, wait_until};
 use common::{call, call_as_ui, git, mark_pushed};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{CiRun, CiState, Mergeable, PrState};
@@ -13,7 +14,7 @@ use pdt_forge::{ChangeRequest, MergeSettings};
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -163,22 +164,18 @@ async fn pipeline(env: &Env, params: Value, outcomes: &[(&str, &str)]) -> String
     id
 }
 
-/// Ticks the engine (and the scheduler) until `done` holds (up to 30 s).
+/// Ticks the engine (and the scheduler) until `done` holds.
 async fn tick_until<F, Fut>(env: &Env, what: &str, done: F) -> Value
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<Value>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
         common::pick_up(&env.state).await;
-        if let Some(v) = done().await {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "never saw {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        done().await
+    })
+    .await
 }
 
 async fn inbox(env: &Env) -> Vec<Value> {
@@ -776,12 +773,11 @@ async fn a_rejected_tickets_coder_hears_why_once_without_the_whole_task_again() 
     assert_eq!(pass.matches("wrong colour").count(), 1, "the note once, not also as a forwarded comment: {pass}");
     assert!(!pass.contains("Your role") && !pass.contains("Ticket:"), "{pass}");
     // Nor later: "Ticket comments to the agent" leaves a gate's note to its run.
-    for _ in 0..20 {
+    still_after("the note reaching the agent again", Duration::from_millis(500), async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    let all = agent_says(&env, &coder).await.join("\n");
-    assert_eq!(all.matches("wrong colour").count(), 1, "{all}");
+        agent_says(&env, &coder).await.join("\n").matches("wrong colour").count() > 1
+    })
+    .await;
 }
 
 /// pdtd stopping (an update): every running session is interrupted and the conversations' processes close.

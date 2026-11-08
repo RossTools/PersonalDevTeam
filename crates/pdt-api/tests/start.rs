@@ -674,12 +674,11 @@ async fn new_sessions_take_an_initial_prompt() {
 
     // A restart never repeats the prompt.
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
-    for _ in 0..100 {
-        if call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1["status"] == "finished" {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    }
+    wait_until("the session to finish", async || {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await;
+        if s["status"] == "finished" { Ok(()) } else { Err(s) }
+    })
+    .await;
     let (st, v) =
         call(&env.app, "POST", &format!("/api/sessions/{id}/restart"), Some(json!({"cols": 80, "rows": 24}))).await;
     assert_eq!(st, StatusCode::OK, "{v}");

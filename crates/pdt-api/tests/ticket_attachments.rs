@@ -5,11 +5,12 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_raw, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDRfake";
@@ -153,15 +154,11 @@ async fn say(env: &Env, session: &str, text: &str) -> String {
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
+    wait_until("the agent's answer to its tool call", async || {
         let said = agent_says(env, session).await;
-        if let Some(m) = said.iter().skip(before).find(|m| m.starts_with("mcp ")) {
-            return m.clone();
-        }
-        assert!(Instant::now() < deadline, "the agent said only {said:?}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        said.iter().skip(before).find(|m| m.starts_with("mcp ")).cloned().ok_or(said)
+    })
+    .await
 }
 
 fn answer(said: &str, tool: &str) -> Value {

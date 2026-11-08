@@ -270,13 +270,11 @@ async fn with_a_remote_the_merge_is_pushed_and_so_are_ticket_branches() {
     pdt_api::refresh_prs(&env.state).await;
     wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
     // `branches = true`: the ticket branch went to the remote as it opened (in the background).
-    for _ in 0..100 {
-        if rev(&remote, &format!("refs/heads/{branch}")) == head {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    assert_eq!(rev(&remote, &format!("refs/heads/{branch}")), head, "the branch was pushed");
+    wait_until("the branch to be pushed", async || {
+        let at = rev(&remote, &format!("refs/heads/{branch}"));
+        if at == head { Ok(()) } else { Err(at) }
+    })
+    .await;
 
     merge(&env).await;
     let t = wait_for(&env, |t| t["attempt"]["state"] == "merged").await;

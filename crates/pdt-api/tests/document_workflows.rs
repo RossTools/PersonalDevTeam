@@ -4,6 +4,7 @@
 
 use crate::common;
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::documents::testing::FakeProvider;
 use pdt_api::documents::{DocumentContent, DocumentProvider, DocumentProviders};
@@ -12,7 +13,7 @@ use pdt_core::workflow::api::NewLogEvent;
 use pdt_store::Store;
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -102,21 +103,17 @@ async fn run(env: &Env, id: &str) -> Value {
     call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await.1
 }
 
-/// Ticks the engine until `done` holds (up to 20 s).
+/// Ticks the engine until `done` holds.
 async fn tick_until<F, Fut>(env: &Env, what: &str, done: F) -> Value
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<Value>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
-        if let Some(v) = done().await {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "never saw {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        done().await
+    })
+    .await
 }
 
 async fn run_ended(env: &Env, id: &str) -> Value {

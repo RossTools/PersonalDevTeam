@@ -270,7 +270,7 @@ async fn redactions(st: &AppState) -> Redactions {
     secrets.extend(owner.into_iter().chain(st.owner_from_env.clone()));
     Redactions {
         secrets,
-        home: st.home_dir.as_ref().map(|h| h.to_string_lossy().into_owned()),
+        home: st.home_dir.get().map(|h| h.to_string_lossy().into_owned()),
         hostnames: hostnames(st).await,
         names: own_names(st).await,
     }

@@ -88,7 +88,8 @@ pub fn start_with(port: u16, data: &Path, extra_env: &[(&str, &str)]) -> Daemon 
         .spawn()
         .unwrap();
     let mut d = Daemon(child, None);
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // Not `wait_until`: a daemon that doesn't start is diagnosed once, with its logs.
+    let deadline = Instant::now() + wait::scaled(Duration::from_secs(20));
     while Instant::now() < deadline {
         if http(port, "GET", "/api/health", None).0 == 200 {
             d.1 = Some(port);
@@ -176,12 +177,5 @@ pub fn http_with(port: u16, method: &str, path: &str, body: Option<&str>, header
 }
 
 pub fn wait_exit(d: &mut Daemon, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    loop {
-        if let Some(status) = d.0.try_wait().unwrap() {
-            return status;
-        }
-        assert!(Instant::now() < deadline, "pdtd did not exit");
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait::wait_within_blocking("pdtd to exit", within, || d.0.try_wait().unwrap())
 }

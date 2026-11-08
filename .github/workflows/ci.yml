@@ -303,7 +303,7 @@ jobs:
         with:
           cache-key: linux-lint
       # The same lint group developers run before pushing: the version (Cargo.toml and tauri.conf.json agree), fmt,
-      # clippy, and pdtd with no integration at all as well as with all of them (its default).
+      # clippy, and pdtd with no integration, with each one alone and with all of them (its default).
       - run: scripts/check.sh --only lint
 
   # The Rust tests (.github/workflows/rust.yml): one job builds every test binary into a nextest archive, the

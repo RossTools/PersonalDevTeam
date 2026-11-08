@@ -5,6 +5,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::storage::{DiskSpace, GB};
@@ -13,7 +14,6 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const DAY: i64 = 24 * 60 * 60 * 1000;
@@ -118,27 +118,19 @@ fn worktree_of<'a>(v: &'a Value, id: &str) -> &'a Value {
 async fn measured(env: &Env) -> Value {
     let (s, _) = call(&env.app, "POST", "/api/storage/refresh", None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("every worktree measured", async || {
         let v = storage(env).await;
         let all = v["projects"][0]["worktrees"].as_array().unwrap().iter().all(|w| w["size"].is_object());
-        if all && v["measuring"] == false {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "never measured: {v}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if all && v["measuring"] == false { Ok(v) } else { Err(v) }
+    })
+    .await
 }
 
 /// One pass of the automatic cleanup as of `now`, then waits out the measuring its cleaning starts in the
 /// background, so the test's next step never races it.
 async fn cleanup_at(env: &Env, now: i64) {
     pdt_api::storage::auto_cleanup_at(&env.state, now).await;
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while storage(env).await["measuring"] == true {
-        assert!(Instant::now() < deadline, "still measuring");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until("the measuring to end", async || storage(env).await["measuring"] != true).await;
 }
 
 /// The storage loop's look at the disks, then the engine (Clean up storage acting on what it logged).

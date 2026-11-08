@@ -7,10 +7,10 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::call;
+use common::wait::wait_until;
 use common::workflows::{Env, runs, setup};
 use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
 use serde_json::{Value, json};
-use std::time::Duration;
 
 async fn view(env: &Env) -> Value {
     let (s, v) = call(&env.app, "GET", "/api/notification-rules", None).await;
@@ -155,12 +155,13 @@ async fn an_inbox_item_left_unanswered_is_escalated() {
     // One is dealt with before the time is up (not by an answer: closed by its run).
     let at = jiff::Timestamp::now().as_millisecond();
     env.state.store.end_inbox_item("handled", InboxStatus::Closed, &json!({}), at).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(400)).await;
-    for _ in 0..4 {
+    // Both end once the time is up, saying nothing of their own.
+    wait_until("the runs to end quietly", async || {
         pdt_api::run_workflows(&env.state).await;
-    }
-    let done = runs(&env, &wf).await;
-    assert!(done.iter().all(|r| r["status"] == "quiet"), "ended, saying nothing of their own: {done:?}");
+        let done = runs(&env, &wf).await;
+        if done.iter().all(|r| r["status"] == "quiet") { Ok(()) } else { Err(done) }
+    })
+    .await;
     let escalated: Vec<Value> = rows(&env).await.into_iter().filter(|r| r["kind"] == "workflow.notify").collect();
     assert_eq!(escalated.len(), 1, "only the one still open: {escalated:?}");
     let e = &escalated[0];

@@ -790,9 +790,10 @@ async fn the_loop_waits_for_a_busy_host_under_auto_when_idle() {
         let runs = install_runs(&app).await;
         !runs.is_empty() && runs.iter().all(|r| r["status"] != "running")
     };
-    while fake.hits.load(Ordering::SeqCst) < 3 || !settled().await {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until("the checks and the install run to settle", async || {
+        fake.hits.load(Ordering::SeqCst) >= 3 && settled().await
+    })
+    .await;
     task.abort();
     workflows.abort();
     assert!(!request_path(&data(tmp.path())).exists());
@@ -821,9 +822,10 @@ async fn the_loop_never_auto_installs_a_version_that_failed_even_after_a_dismiss
     assert_eq!(code, StatusCode::NO_CONTENT);
     let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
-    while fake.hits.load(Ordering::SeqCst) < 3 || install_runs(&app).await.iter().any(|r| r["status"] != "quiet") {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until("the checks, and the install runs quiet", async || {
+        fake.hits.load(Ordering::SeqCst) >= 3 && install_runs(&app).await.iter().all(|r| r["status"] == "quiet")
+    })
+    .await;
     task.abort();
     workflows.abort();
     assert!(!request_path(&data(tmp.path())).exists(), "not installed automatically");
@@ -859,9 +861,7 @@ async fn setting_updates_to_install_when_idle_installs_the_one_on_offer() {
     set_policy(&app, "notify").await;
     let (task, workflows) = (tokio::spawn(pdt_api::run_update_loop(state.clone())), engine(&state));
     wait_status(&app, state_is("available")).await;
-    while install_runs(&app).await.iter().all(|r| r["status"] != "quiet") {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until("a quiet install run", async || install_runs(&app).await.iter().any(|r| r["status"] == "quiet")).await;
     assert!(!request_path(&data(tmp.path())).exists());
     set_policy(&app, "auto_when_idle").await;
     tokio::time::timeout(Duration::from_secs(5), state.shutdown.notified()).await.expect("pdtd asked to stop");

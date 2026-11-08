@@ -150,7 +150,7 @@ pub(super) async fn ensure_live(
         // An ACP agent resumes its session when it has one (and can load sessions).
         Some(agent @ AgentKind::Acp(_)) => {
             let def = acp_agent(st, agent).await?;
-            (crate::host::expand_home(&def.command, st.home_dir.as_deref()), row.external_session_id.is_some())
+            (crate::host::expand_home(&def.command, st.home_dir.get().as_deref()), row.external_session_id.is_some())
         }
         // Claude saves a conversation only after its first turn; resuming one that was never saved fails.
         _ => {

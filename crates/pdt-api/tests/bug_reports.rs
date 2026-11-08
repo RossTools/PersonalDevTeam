@@ -23,7 +23,7 @@ async fn setup() -> Env {
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
     state.update = Arc::new(pdt_api::UpdateService::new(&base, "o/r", false, "0.1.0-local"));
-    state.home_dir = Some(tmp.path().join("home"));
+    state.home_dir.set(Some(tmp.path().join("home")));
     Env { app: pdt_api::router(state.clone(), None), state, gh, tmp }
 }
 

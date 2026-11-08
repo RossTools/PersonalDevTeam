@@ -6,6 +6,8 @@
 use crate::common;
 
 use axum::http::StatusCode;
+#[cfg(unix)]
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::router;
 use pdt_store::Store;
@@ -15,8 +17,6 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
 
 #[cfg(unix)]
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
@@ -77,7 +77,7 @@ async fn antigravity_installs_verified_signs_in_and_runs_a_conversation() {
     let mut state = common::app_state(store, tmp.path());
     state.platform.login_path = None;
     // Never the real ~/.gemini.
-    state.home_dir = Some(tmp.path().join("home"));
+    state.home_dir.set(Some(tmp.path().join("home")));
     state.conversations.notice_quiet = Duration::ZERO;
     let app = router(state.clone(), None);
 
@@ -154,15 +154,11 @@ async fn antigravity_installs_verified_signs_in_and_runs_a_conversation() {
         let wait = |id: String, what: &'static str, f: fn(&[Value]) -> bool| {
             let app = app.clone();
             async move {
-                let deadline = Instant::now() + Duration::from_secs(20);
-                loop {
+                wait_until(what, async || {
                     let all = events(&app, &id).await;
-                    if f(&all) {
-                        return all;
-                    }
-                    assert!(Instant::now() < deadline, "never saw {what}: {all:#?}");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
+                    if f(&all) { Ok(all) } else { Err(all) }
+                })
+                .await
             }
         };
         // Not signed in: starting it says where to sign in.

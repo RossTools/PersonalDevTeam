@@ -5,13 +5,13 @@
 
 use crate::common;
 
-use common::wait::wait_until;
+use common::wait::{still_after, wait_until};
 use common::{call, conversation};
 use pdt_api::{AppState, router};
 use pdt_store::{SessionMessage, Store};
 use serde_json::{Value, json};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -136,9 +136,12 @@ async fn a_message_the_agent_never_takes_is_reported_not_told() {
     wait_turns(&env, &id, 1).await;
     let m = queue(&env, &id, "are you listening").await;
     assert_eq!(tick_past(&env, &m, "waiting").await, "sending", "handed over, not told");
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    pdt_api::run_workflows(&env.state).await;
-    assert_eq!(status(&env, &m).await, "sending", "no echo, so not told");
+    // No echo, so not told.
+    still_after("the message leaving sending", Duration::from_millis(300), async || {
+        pdt_api::run_workflows(&env.state).await;
+        status(&env, &m).await != "sending"
+    })
+    .await;
     assert_eq!(pdt_api::expire_pending_messages(&env.state).await, 0, "not given up on yet");
 
     env.state.conversations.pending_timeout = Duration::ZERO;
@@ -212,11 +215,11 @@ async fn a_terminal_stuck_at_unknown_has_its_message_reported_by_the_deadline() 
     // Working, then quiet with no turn-end hook: unknown.
     let r = json!({"source": "claude", "event": "UserPromptSubmit"});
     assert_eq!(call(&env.app, "POST", &format!("/api/sessions/{id}/activity"), Some(r)).await.0, 204);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await.1["activity"] != "unknown" {
-        assert!(Instant::now() < deadline, "never unknown");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("the activity unknown", async || {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{id}"), None).await;
+        if s["activity"] == "unknown" { Ok(()) } else { Err(s["activity"].clone()) }
+    })
+    .await;
     let m = queue(&env, &id, "CI failed on your PR").await;
     pdt_api::run_workflows(&env.state).await;
     assert_eq!(status(&env, &m).await, "waiting", "not typed into a terminal PDT can't read");
@@ -253,16 +256,12 @@ async fn a_rerun_send_step_waits_for_its_message_on_its_way() {
         let steps = env.state.store.list_steps(&run).await.unwrap();
         steps.into_iter().find(|s| s.node_id == "tell").unwrap()
     };
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let message = loop {
+    let message = wait_until("the step's message to go out", async || {
         pdt_api::run_workflows(&env.state).await;
         let sending = env.state.store.sending_session_messages(None).await.unwrap();
-        if let Some(m) = sending.into_iter().find(|m| m.step_id.is_some()) {
-            break m;
-        }
-        assert!(Instant::now() < deadline, "the step's message never went out");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        sending.into_iter().find(|m| m.step_id.is_some())
+    })
+    .await;
     // Run the step again, as a restart would.
     let mut s = step().await;
     assert_eq!(s.status, pdt_core::workflow::api::StepStatus::Waiting);

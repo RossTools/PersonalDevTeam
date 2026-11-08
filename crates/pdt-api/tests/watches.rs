@@ -6,10 +6,10 @@ use crate::common;
 use axum::http::StatusCode;
 use common::call;
 use common::pm::*;
-use common::wait::wait_until;
+use common::wait::{still_after, wait_until};
 use pdt_core::ticket::{Actor, EventKind};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A PDT whose watches tell at once (no waiting for a burst).
 async fn env() -> Env {
@@ -156,7 +156,11 @@ async fn a_burst_is_told_in_one_message_and_delivery_waits_for_the_pm_to_be_idle
 
     // The PM is busy with a long turn: the message waits for it.
     send(&env, &pm, "slow").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    wait_until("the PM's slow turn", async || {
+        let (_, s) = call(&env.app, "GET", &format!("/api/sessions/{pm}"), None).await;
+        if s["activity"] == "working" { Ok(()) } else { Err(s["activity"].clone()) }
+    })
+    .await;
     pdt_api::tick_watches_at(&env.state, start + 16_000).await;
     let queued = waiting(&env).await;
     assert_eq!(queued.len(), 1, "one message for the burst");
@@ -165,11 +169,12 @@ async fn a_burst_is_told_in_one_message_and_delivery_waits_for_the_pm_to_be_idle
         "[PDT] Watched PX-1 “Fix the login”:\n- the Coder reported `changes_requested`: Fix the tests\n- the user \
          commented: One more thing"
     );
-    for _ in 0..5 {
+    // Not into a running turn.
+    still_after("the message going into the running turn", Duration::from_millis(250), async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert_eq!(waiting(&env).await.len(), 1, "not into a running turn");
+        waiting(&env).await.len() != 1
+    })
+    .await;
     assert!(told(&env, &pm).await.is_empty());
     call(&env.app, "POST", &format!("/api/sessions/{pm}/interrupt"), None).await;
     let t1 = wait_told(&env, &pm, 1).await;
@@ -246,12 +251,11 @@ async fn watches_follow_a_reset_conversation() {
     // Reset, ticking the engine (and the watches) while it waits for the journal.
     let (app, url) = (env.app.clone(), format!("/api/pm/sessions/{old}/reset"));
     let reset = tokio::spawn(async move { call(&app, "POST", &url, None).await });
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !reset.is_finished() {
-        assert!(Instant::now() < deadline, "the reset never answered");
+    wait_until("the reset to answer", async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        reset.is_finished()
+    })
+    .await;
     let (s, v) = reset.await.unwrap();
     assert_eq!(s, StatusCode::OK, "{v}");
     let fresh = v["id"].as_str().unwrap().to_string();

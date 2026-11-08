@@ -309,13 +309,9 @@ fn quick_watch(state: &mut AppState) {
     };
 }
 
-/// Waits up to 5 s for `f` to hold.
+/// Waits for `f` to hold.
 async fn eventually(what: &str, f: impl Fn() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !f() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    common::wait::wait_until(what, async || f()).await
 }
 
 #[tokio::test]
@@ -378,6 +374,8 @@ async fn the_watch_runs_no_tailscale_command_with_remote_off() {
         state.loops.health(i64::MAX).iter().any(|l| l.name == "remote" && l.last_pass_at.is_some())
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!((fake.status_calls(), fake.calls().len()), (0, 0));
+    common::wait::still_after("a tailscale command", Duration::from_millis(150), async || {
+        (fake.status_calls(), fake.calls().len()) != (0, 0)
+    })
+    .await;
 }

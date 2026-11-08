@@ -10,6 +10,23 @@ use std::path::PathBuf;
 use tower_http::services::{ServeDir, ServeFile};
 use ts_rs::TS;
 
+/// The user's home folder, shared by the state's clones and what they hand it to: setting it (a test's own home)
+/// changes it for all of them.
+#[derive(Clone, Default)]
+pub struct HomeDir(std::sync::Arc<std::sync::RwLock<Option<PathBuf>>>);
+
+impl HomeDir {
+    pub fn new(home: Option<PathBuf>) -> Self {
+        Self(std::sync::Arc::new(std::sync::RwLock::new(home)))
+    }
+    pub fn get(&self) -> Option<PathBuf> {
+        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub fn set(&self, home: Option<PathBuf>) {
+        *self.0.write().unwrap_or_else(|e| e.into_inner()) = home;
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
@@ -159,8 +176,9 @@ pub struct AppState {
     /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
     /// 0; pdtd sets the real one.
     pub instance: pdt_core::instance::InstanceInfo,
-    /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it.
-    pub home_dir: Option<std::path::PathBuf>,
+    /// The home folder the folder picker starts in and writes as `~`. `new` reads it from the OS; tests set it
+    /// ([`HomeDir::set`]). Shared with [`crate::documents::local::LocalProvider`], so it finds the same folders.
+    pub home_dir: HomeDir,
     /// Conversation sessions' runtimes (structured agents).
     pub conversations: crate::conversations::Conversations,
     /// The asking tools each Claude session's process was launched with an ask rule for, by session (PDT-535,
@@ -262,10 +280,11 @@ impl AppState {
         let github_account = crate::secrets::github_login_account(&data_dir, None);
         let forge_logins_account = crate::secrets::forge_logins_account(&data_dir, None);
         let redactor = store.redactor().clone();
+        let home_dir = HomeDir::new(std::env::home_dir());
         let local = std::sync::Arc::new(crate::documents::local::LocalProvider::new(
             store.clone(),
             data_dir.clone(),
-            std::env::home_dir(),
+            home_dir.clone(),
         ));
         Self {
             store,
@@ -348,7 +367,7 @@ impl AppState {
             update_token_account,
             checks: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
-            home_dir: std::env::home_dir(),
+            home_dir,
             conversations: Default::default(),
             engine_lock: Default::default(),
             run_locks: Default::default(),

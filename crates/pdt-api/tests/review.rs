@@ -4,6 +4,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_core::pr::{Mergeable, PrState};
@@ -13,7 +14,6 @@ use pdt_store::Store;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -246,15 +246,11 @@ async fn send_feedback_puts_every_draft_into_the_conversation_once() {
     assert_eq!(s, StatusCode::OK, "{r}");
     assert_eq!((r["sessionId"].as_str(), r["sent"].as_u64()), (Some(env.session.as_str()), Some(2)));
 
-    let mut found = None;
-    for _ in 0..200 {
-        found = user_messages(&env).await.into_iter().find(|t| t.starts_with("Review feedback on"));
-        if found.is_some() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let text = found.expect("the feedback reached the conversation");
+    let text = wait_until("the feedback to reach the conversation", async || {
+        let all = user_messages(&env).await;
+        all.iter().find(|t| t.starts_with("Review feedback on")).cloned().ok_or(all)
+    })
+    .await;
     assert!(text.contains(&format!("Review feedback on {} (2 comments)", env.branch)), "{text}");
     assert!(text.contains("1. a.txt:2\n   > two\n   Make it TWO."), "{text}");
     assert!(text.contains("2. b.rs:1-2 (removed lines)"), "{text}");
@@ -293,12 +289,7 @@ async fn feedback_is_typed_into_a_terminal_session() {
 
     // Once the terminal is stopped there is nowhere to send to.
     call(&env.app, "POST", &format!("/api/sessions/{}/kill", env.session), None).await;
-    for _ in 0..100 {
-        if !env.state.ptys.is_running(&env.session) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until("the terminal to stop", async || !env.state.ptys.is_running(&env.session)).await;
     comment(&env, json!({"path": "a.txt", "side": "new", "line": 1, "lineText": "one", "body": "Again."})).await;
     let (s, e) = call(&env.app, "POST", &format!("/api/worktrees/{}/feedback", env.worktree), None).await;
     assert_eq!((s, e["code"].as_str()), (StatusCode::CONFLICT, Some("session_not_running")), "{e}");
