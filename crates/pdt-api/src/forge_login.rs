@@ -553,7 +553,7 @@ pub(crate) async fn start_device(
         s.pending = Some(Pending {
             user_code: code.user_code.clone(),
             verification_uri: code.verification_uri.clone(),
-            expires_at: now_ms() + i64::try_from(code.expires_in).unwrap_or(900) * 1000,
+            expires_at: now_ms().saturating_add(i64::try_from(code.expires_in).unwrap_or(900).saturating_mul(1000)),
             api_url: api.clone(),
         });
         s.flow

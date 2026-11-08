@@ -51,6 +51,12 @@ fn oauth_error(v: &Value) -> Option<String> {
     Some(v["error_description"].as_str().unwrap_or(e).to_string())
 }
 
+/// How long to wait between polls (seconds): the answer's `interval`, else `default`, kept to 1 s to 1 min so a
+/// forge's `0` can't make PDT poll in a tight loop.
+fn poll_every(v: &Value, default: u64) -> u64 {
+    v["interval"].as_u64().unwrap_or(default).clamp(1, 60)
+}
+
 /// Starts a device flow for OAuth app `client_id`.
 pub fn start_device_flow(t: &dyn Transport, app: &OAuthApp, client_id: &str) -> Result<DeviceCode, String> {
     let (status, v) = post_form(t, app, &app.device_code_url, &[("client_id", client_id), ("scope", app.scopes)])?;
@@ -70,7 +76,7 @@ pub fn start_device_flow(t: &dyn Transport, app: &OAuthApp, client_id: &str) -> 
         user_code: s("user_code")?,
         verification_uri: s("verification_uri")?,
         expires_in: v["expires_in"].as_u64().unwrap_or(app.code_expires_in),
-        interval: v["interval"].as_u64().unwrap_or(5),
+        interval: poll_every(&v, 5),
     })
 }
 
@@ -92,7 +98,7 @@ pub fn poll_device_flow(t: &dyn Transport, app: &OAuthApp, client_id: &str, devi
     }
     match v["error"].as_str() {
         Some("authorization_pending") => DevicePoll::Pending,
-        Some("slow_down") => DevicePoll::SlowDown(v["interval"].as_u64().unwrap_or(10)),
+        Some("slow_down") => DevicePoll::SlowDown(poll_every(&v, 10)),
         Some("expired_token") => DevicePoll::Expired,
         Some("access_denied") => DevicePoll::Denied,
         Some(e) => DevicePoll::Failed(v["error_description"].as_str().unwrap_or(e).to_string()),
@@ -190,6 +196,21 @@ mod tests {
         assert_eq!(start_device_flow(&t, &app(), "c").unwrap_err(), "an unknown app");
         assert_eq!(start_device_flow(&t, &app(), "c").unwrap_err(), "why");
         assert_eq!(start_device_flow(&t, &app(), "c").unwrap_err(), "Forge answered 502");
+    }
+
+    #[test]
+    fn the_poll_interval_is_one_second_to_a_minute() {
+        let t = Recorded::new();
+        let code = |i: &str| format!(r#"{{"device_code":"d","user_code":"U","verification_uri":"v","interval":{i}}}"#);
+        t.ok("POST", "https://f.example/device", &code("0"))
+            .ok("POST", "https://f.example/device", &code("7"))
+            .ok("POST", "https://f.example/device", &code("86400"))
+            .on("POST", "https://f.example/token", Response::new(400, r#"{"error":"slow_down","interval":0}"#))
+            .on("POST", "https://f.example/token", Response::new(400, r#"{"error":"slow_down","interval":9999}"#));
+        let every: Vec<u64> = (0..3).map(|_| start_device_flow(&t, &app(), "c").unwrap().interval).collect();
+        assert_eq!(every, [1, 7, 60]);
+        assert_eq!(poll_device_flow(&t, &app(), "c", "d"), DevicePoll::SlowDown(1));
+        assert_eq!(poll_device_flow(&t, &app(), "c", "d"), DevicePoll::SlowDown(60));
     }
 
     #[test]

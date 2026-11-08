@@ -3,12 +3,14 @@
 import { useContext, useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
+  ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Inbox, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
 } from 'lucide-react';
 import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, EmptyState, Link, Spinner, ToolCard } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
+import type { DecideRow } from '../api/gen/DecideRow';
+import { DECISION_LABEL, decisionDetails } from '../common/DecideRows';
 import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { capitalize, plural } from '../common/text';
@@ -25,6 +27,7 @@ import {
   createdTicket,
   documentOf,
   filedIssue,
+  inboxDecided,
   issueLink,
   noteOf,
   stoppedTicket,
@@ -40,6 +43,7 @@ import {
   watchOf,
   workflowRun,
   type CreatedTicket,
+  type DecidedRow,
   type FieldChange,
 } from './pdtTools';
 import { isTicketKey } from '../tickets/model';
@@ -53,6 +57,8 @@ export interface PdtCall {
   input: unknown;
   status: 'running' | 'done' | 'failed' | 'declined';
   output?: string;
+  /** The rows its request asked, which name each ticket with its title (`inbox_decide`). */
+  rows?: DecideRow[];
 }
 
 /** A key as a pill when it looks like one (`PDT-12`), else as written (an id). */
@@ -484,6 +490,54 @@ function NoteCard({ call }: { call: PdtCall }) {
   );
 }
 
+function DecidedRowView({ d }: { d: DecidedRow }) {
+  const { row, outcome } = d;
+  const left = outcome?.kind === 'unticked';
+  const details = decisionDetails(row);
+  return (
+    <div className="flex flex-wrap items-start gap-x-2 gap-y-1 py-2">
+      <div className={cn('flex min-w-0 flex-1 flex-col gap-0.5', left && 'text-muted-foreground')}>
+        <span className="flex flex-wrap items-center gap-2">
+          <Key value={row.ticketKey} />
+          {row.ticketTitle && <span className={cn('min-w-0', left && 'line-through decoration-border')}>{row.ticketTitle}</span>}
+        </span>
+        <span className={cn('text-xs', left && 'line-through decoration-border')}>
+          <span className={cn(!left && 'font-medium')}>{DECISION_LABEL[row.decision]}</span>
+          {details.length > 0 && <span className="text-muted-foreground"> · {details}</span>}
+        </span>
+        {row.note && <span className="text-xs text-muted-foreground">{row.note}</span>}
+        {outcome?.kind === 'failed' && <span className="text-xs break-words text-failed">{outcome.error}</span>}
+      </div>
+      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+        {outcome?.kind === 'decided' && (outcome.stage ? <StageBadge stage={outcome.stage} /> : <span>Done</span>)}
+        {outcome?.kind === 'unticked' && <span>Unticked</span>}
+        {outcome?.kind === 'failed' && <span className="text-failed">Failed</span>}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * `inbox_decide`: each row the PM proposed and what became of it, decided (with the stage it went to), unticked or
+ * failed, once the user has answered. While it asks, the request's own card has the rows.
+ */
+function InboxDecideCard({ call }: { call: PdtCall }) {
+  const r = inboxDecided(call.input, call.output, call.rows);
+  const state = callState(call);
+  const done = call.status === 'done';
+  const n = r.rows.filter((x) => x.outcome?.kind === 'decided').length;
+  const heading = done
+    ? `Decided ${n === 1 ? 'an Inbox item' : `${n} Inbox items`}`
+    : call.status === 'running' ? 'Deciding Inbox items…' : "Didn't decide the Inbox items";
+  return (
+    <Card icon={<Inbox />} label={heading} heading={heading} aside={state?.aside}>
+      {call.status !== 'running' && r.rows.map((d, i) => <DecidedRowView key={`${d.row.itemId}-${i}`} d={d} />)}
+      {r.errors.map((e, i) => <Failure key={i} text={e} />)}
+      {state?.error && <Failure text={state.error} />}
+    </Card>
+  );
+}
+
 /** The card for a PDT tool call (one of `isCardTool`'s). */
 export function PdtToolCard({ call }: { call: PdtCall }) {
   switch (pdtTool(call.tool)) {
@@ -520,6 +574,8 @@ export function PdtToolCard({ call }: { call: PdtCall }) {
     case 'save_note':
     case 'delete_note':
       return <NoteCard call={call} />;
+    case 'inbox_decide':
+      return <InboxDecideCard call={call} />;
     default:
       return null;
   }

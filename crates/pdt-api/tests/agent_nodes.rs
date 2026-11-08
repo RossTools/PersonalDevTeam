@@ -5,11 +5,12 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{call, call_as_ui, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 
@@ -78,21 +79,17 @@ async fn inbox(env: &Env) -> Vec<Value> {
     v["items"].as_array().unwrap().clone()
 }
 
-/// Ticks the engine until `done` holds (up to 30 s).
+/// Ticks the engine until `done` holds.
 async fn tick_until<F, Fut>(env: &Env, what: &str, done: F) -> Value
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Option<Value>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
+    wait_until(what, async || {
         pdt_api::run_workflows(&env.state).await;
-        if let Some(v) = done().await {
-            return v;
-        }
-        assert!(Instant::now() < deadline, "never saw {what}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        done().await
+    })
+    .await
 }
 
 /// What the agent of a session said (`fake-agent` echoes each message it gets).

@@ -65,16 +65,6 @@ fn ci_state(s: &str) -> CiState {
     }
 }
 
-fn ci_state_str(s: CiState) -> &'static str {
-    match s {
-        CiState::Passed => "passed",
-        CiState::Failed => "failed",
-        CiState::Cancelled => "cancelled",
-        CiState::Queued => "queued",
-        CiState::Running => "running",
-    }
-}
-
 const CHANGE: &str = "SELECT id, project_id, number, branch, base_branch, title, state, auto_merge, head_sha, \
                       created_at, merged_at FROM local_changes";
 const RUN: &str = "SELECT id, change_id, head_sha, command, state, exit_code, created_at, ended_at FROM local_ci_runs";
@@ -247,7 +237,7 @@ impl Store {
         let r = sqlx::query(
             "UPDATE local_ci_runs SET state = ?, exit_code = ?, ended_at = ? WHERE id = ? AND state = 'running'",
         )
-        .bind(ci_state_str(state))
+        .bind(state.name())
         .bind(exit_code)
         .bind(now)
         .bind(id)

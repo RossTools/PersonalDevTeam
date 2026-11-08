@@ -3,18 +3,18 @@
 //! pull request on the tap from a branch of its own (or pushes to the tap's branch). Run again (a retry, a restart), it
 //! finds its branch and pull request instead of making them twice.
 
-use super::release::{check_repo, repo_for_step};
+use super::forge_call::forge_call;
+use super::repo_of::{check_repo, repo_for_step};
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, spec};
 use pdt_core::homebrew::{bump_cask, cask_path, cask_version, mac_asset};
 use pdt_core::pr::PrState;
 use pdt_core::workflow::events::ReleaseAssetRef;
 use pdt_core::workflow::tpl::Tpl;
-use pdt_forge::{FileWrite, Forge, ForgeError, NewChangeRequest};
+use pdt_forge::{FileWrite, NewChangeRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
 use ts_rs::TS;
 
 pub const KIND: &str = "github.homebrew_cask";
@@ -68,18 +68,6 @@ pub struct HomebrewCaskOutput {
     /// The pull request, when it opened one (or found the one an earlier try opened).
     pub number: Option<u32>,
     pub url: Option<String>,
-}
-
-/// Runs a forge call off the async threads.
-async fn on_forge<T: Send + 'static>(
-    forge: &Arc<dyn Forge>,
-    f: impl FnOnce(&dyn Forge) -> Result<T, ForgeError> + Send + 'static,
-) -> Result<T, String> {
-    let forge = forge.clone();
-    tokio::task::spawn_blocking(move || f(forge.as_ref()))
-        .await
-        .map_err(|e| format!("the GitHub task failed: {e}"))?
-        .map_err(|e| format!("GitHub: {e}"))
 }
 
 /// The sha256 of the file at `url`, read as it downloads.
@@ -160,13 +148,13 @@ impl NodeKind for HomebrewCask {
                 Some(b) => b.to_string(),
                 None => {
                     let r = repo.clone();
-                    on_forge(&forge, move |f| f.default_branch(&r)).await?
+                    forge_call(&forge, move |f| f.default_branch(&r)).await?
                 }
             };
             let read = |branch: String| {
                 let (r, p) = (repo.clone(), path.clone());
                 let forge = forge.clone();
-                async move { on_forge(&forge, move |f| f.file(&r, &p, &branch)).await }
+                async move { forge_call(&forge, move |f| f.file(&r, &p, &branch)).await }
             };
             let on_base = read(base.clone()).await?.ok_or_else(|| format!("{repo} has no {path} on {base}"))?;
             let bumped = bump_cask(&on_base.text, &version, &sha256)?;
@@ -187,7 +175,7 @@ impl NodeKind for HomebrewCask {
             if push {
                 let w = FileWrite { branch: base, path, text: bumped, message, replaces: Some(on_base.id) };
                 let r = repo.clone();
-                out.commit = Some(on_forge(&forge, move |f| f.write_file(&r, &w)).await?);
+                out.commit = Some(forge_call(&forge, move |f| f.write_file(&r, &w)).await?);
                 return Ok(Outcome::next("updated", out));
             }
 
@@ -195,20 +183,21 @@ impl NodeKind for HomebrewCask {
             let head = format!("{cask}-{version}");
             out.branch = head.clone();
             let (r, h) = (repo.clone(), head.clone());
-            let open = on_forge(&forge, move |f| f.change_request(&r, &h)).await?.filter(|p| p.state == PrState::Open);
+            let open =
+                forge_call(&forge, move |f| f.change_request(&r, &h)).await?.filter(|p| p.state == PrState::Open);
             if let Some(pr) = open {
                 (out.number, out.url) = (Some(pr.number), Some(pr.url));
                 return Ok(Outcome::next("updated", out));
             }
             let (r, h, b) = (repo.clone(), head.clone(), base.clone());
-            on_forge(&forge, move |f| f.create_branch(&r, &h, &b)).await?;
+            forge_call(&forge, move |f| f.create_branch(&r, &h, &b)).await?;
             let on_head = read(head.clone()).await?;
             let replaces = on_head.as_ref().map(|f| f.id.clone());
             let now = on_head.map(|f| f.text).unwrap_or_default();
             if bump_cask(&now, &version, &sha256).ok().as_deref() != Some(now.as_str()) {
                 let w = FileWrite { branch: head.clone(), path, text: bumped, message: message.clone(), replaces };
                 let r = repo.clone();
-                out.commit = Some(on_forge(&forge, move |f| f.write_file(&r, &w)).await?);
+                out.commit = Some(forge_call(&forge, move |f| f.write_file(&r, &w)).await?);
             }
             let link = nonblank(&c.release_url).map(|u| format!(" ([release]({u}))")).unwrap_or_default();
             let new = NewChangeRequest {
@@ -223,7 +212,7 @@ impl NodeKind for HomebrewCask {
                 draft: false,
             };
             let r = repo.clone();
-            let opened = on_forge(&forge, move |f| f.open_change_request(&r, &new)).await?;
+            let opened = forge_call(&forge, move |f| f.open_change_request(&r, &new)).await?;
             (out.number, out.url) = (Some(opened.number), Some(opened.url));
             Ok(Outcome::next("updated", out))
         })

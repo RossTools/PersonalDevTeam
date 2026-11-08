@@ -27,10 +27,7 @@ async fn gh<T: Send + 'static>(
     if !api.capabilities().issues {
         return Err(format!("{} has no issues", api.name()));
     }
-    tokio::task::spawn_blocking(move || f(api.as_ref()))
-        .await
-        .map_err(|e| format!("the GitHub task failed: {e}"))?
-        .map_err(|e| format!("GitHub: {e}"))
+    super::forge_call::forge_call(&api, f).await
 }
 
 fn templated(s: &str) -> bool {

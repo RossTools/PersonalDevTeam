@@ -3,6 +3,7 @@
 use crate::common;
 
 use axum::http::StatusCode;
+use common::wait::wait_until;
 use common::{argv_agent, call, call_as_ui, git, recorded_launches};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
@@ -563,8 +564,10 @@ async fn a_slow_fetch_in_one_project_holds_up_no_other_start() {
     let upstream = tmp.path().join("upstream");
     git(tmp.path(), &["clone", "-q", "--bare", &env.repo.to_string_lossy(), &upstream.to_string_lossy()]);
     git(&env.repo, &["remote", "add", "origin", &upstream.to_string_lossy()]);
-    // Fetching from it takes 3 s (Start gives a fetch up to 10).
-    git(&env.repo, &["config", "remote.origin.uploadpack", "sleep 3; git-upload-pack"]);
+    // Fetching from it takes 3 s (Start gives a fetch up to 10), and leaves a mark when it begins.
+    let fetching = tmp.path().join("fetching");
+    let mark = fetching.to_string_lossy().replace('\\', "/");
+    git(&env.repo, &["config", "remote.origin.uploadpack", &format!("touch '{mark}'; sleep 3; git-upload-pack")]);
     let other = tmp.path().join("other repo");
     std::fs::create_dir_all(&other).unwrap();
     git(&other, &["init", "-q", "-b", "main"]);
@@ -584,7 +587,8 @@ async fn a_slow_fetch_in_one_project_holds_up_no_other_start() {
         let (app, body) = (env.app.clone(), no_session.clone());
         tokio::spawn(async move { call(&app, "POST", &format!("/api/tickets/{slow}/start"), Some(body)).await })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    // The slow Start is fetching (and would hold any lock it took before the fetch).
+    wait_until("the slow Start's fetch", async || fetching.exists()).await;
     let (s, v) = start(&env, &quick, no_session).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     assert!(began.elapsed() < std::time::Duration::from_secs(2), "the other project's Start didn't wait for the fetch");

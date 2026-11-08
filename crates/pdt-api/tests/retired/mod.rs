@@ -2,7 +2,6 @@
 //! nightly release watches), and Cut a release until PDT-301, as a host that had them stored them: `fixtures/retired_builtins/<id>.json` is each one's
 //! document as its last release installed it. A test puts one in the store before pdtd starts, as an upgraded host
 //! has it; pdtd then keeps it as the user's own workflow.
-#![allow(dead_code)]
 
 use pdt_core::workflow::api::{Author, Scope, Source, Workflow};
 use pdt_core::workflow::doc::WorkflowDoc;

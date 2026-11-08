@@ -8,7 +8,7 @@ import { PRIORITY_LABEL } from './PriorityIcon';
 import { TicketPill } from './TicketPill';
 import { isTicketKey } from '../tickets/model';
 
-const DECISION_LABEL: Record<DecideChoice, string> = {
+export const DECISION_LABEL: Record<DecideChoice, string> = {
   accept_todo: 'Accept to Todo',
   accept_backlog: 'Accept to backlog',
   duplicate: 'Duplicate',
@@ -16,7 +16,7 @@ const DECISION_LABEL: Record<DecideChoice, string> = {
 };
 
 /** What a row's decision does beyond its choice: the edits, `agentic` and the ticket it repeats. */
-function details(r: DecideRow): ReactNode[] {
+export function decisionDetails(r: DecideRow): ReactNode[] {
   const out: ReactNode[] = [];
   if (r.duplicateOf) out.push(<>of {isTicketKey(r.duplicateOf) ? <TicketPill ticketKey={r.duplicateOf.toUpperCase()} /> : <Chip>{r.duplicateOf}</Chip>}</>);
   if (r.agentic) out.push('agentic');
@@ -34,7 +34,7 @@ const COLUMNS: CheckTableColumn<DecideRow>[] = [
     cell: (r) => (
       <>
         {DECISION_LABEL[r.decision]}
-        {details(r).length > 0 && <div className="text-xs text-muted-foreground">{details(r)}</div>}
+        {decisionDetails(r).length > 0 && <div className="text-xs text-muted-foreground">{decisionDetails(r)}</div>}
         {r.note && <div className="mt-1 text-xs sm:hidden">{r.note}</div>}
       </>
     ),

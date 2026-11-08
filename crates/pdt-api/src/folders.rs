@@ -205,7 +205,7 @@ pub(crate) async fn list(
     let home = home(&st);
     let mut path = resolve(&q.path, home.as_deref())?;
     let projects = st.store.list_projects().await?;
-    let projects_dir = crate::projects::projects_dir(st.store.get_host_settings().await?.projects_dir.as_deref())
+    let projects_dir = crate::projects::projects_dir(&st, st.store.get_host_settings().await?.projects_dir.as_deref())
         .and_then(|p| host_path::normalize(&p.to_string_lossy(), STYLE));
     let listing = tokio::task::spawn_blocking(move || -> Result<FolderListing, ApiError> {
         if q.nearest {
