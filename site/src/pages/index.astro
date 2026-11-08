@@ -10,7 +10,7 @@ import workspacesShot from '../assets/screens/workspaces.webp';
 import backlogShot from '../assets/screens/backlog.webp';
 import workflowsShot from '../assets/screens/workflows.webp';
 import pmChatShot from '../assets/screens/pm-chat.webp';
-import { siteLinks, STABLE_PORT } from '../links.mjs';
+import { downloadUrl, siteLinks, STABLE_PORT } from '../links.mjs';
 import { repoStats } from '../stats.mjs';
 import { NAME, SHORT_NAME, SITE_NAME } from '../brand.mjs';
 
@@ -58,7 +58,7 @@ const shots = [
 		<h1>A dev team that lives <em>on your machine.</em></h1>
 		<p class="sub">Write the ticket, or ask the PM to plan it. Agents build it in their own worktrees, review it, test it and open the PR. You approve what ships.</p>
 		<div class="cta">
-			<a class="btn primary" href={links.download} data-download-label>Download for macOS</a>
+			<a class="btn primary" href={downloadUrl('mac')} data-download-label>Download for macOS</a>
 			<a class="btn ghost" href={links.docs}>Read the docs</a>
 		</div>
 		<InstallBox id="install" />
@@ -205,9 +205,9 @@ const shots = [
 		<p class="lead">Free and open source. Bring your own agents.</p>
 		<InstallBox id="install-final" />
 		<div class="cta" data-download-row>
-			<a class="btn primary" href={links.download} data-os="mac">Download for macOS</a>
-			<a class="btn ghost" href={links.download} data-os="windows">Download for Windows</a>
-			<a class="btn ghost" href={links.download} data-os="linux">Download for Linux</a>
+			<a class="btn primary" href={downloadUrl('mac')} data-os="mac">Download for macOS</a>
+			<a class="btn ghost" href={downloadUrl('windows')} data-os="windows">Download for Windows</a>
+			<a class="btn ghost" href={downloadUrl('linux')} data-os="linux">Download for Linux</a>
 		</div>
 	</div>
 </section>

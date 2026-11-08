@@ -11,15 +11,17 @@
 #
 # or, run as a script block, parameters: & ([scriptblock]::Create((irm https://pdt.dev/install.ps1))) -Channel nightly
 #
-# It downloads the installer (*_x64-setup.exe) from GitHub, checks that the release's SHA256SUMS carries PDT's release
-# signature (SHA256SUMS.sig, against the key in Install-Pdt) and the installer against SHA256SUMS, and runs it
-# silently; the installer starts PDT and registers it to start at login. macOS and Linux have install.sh.
+# It downloads the installer (*-setup.exe) from GitHub (without GITHUB_TOKEN, a stable release takes no call to GitHub's
+# API, a nightly one call), checks that the release's SHA256SUMS carries PDT's release signature (SHA256SUMS.sig,
+# against the key in Install-Pdt) and the installer against SHA256SUMS, and runs it silently; the installer starts PDT
+# and registers it to start at login. macOS and Linux have install.sh.
 #
 # Everything runs from Install-Pdt, called on the last line: a download cut short runs nothing. It never calls `exit`,
 # which would close the PowerShell window `iex` runs in.
 #
-# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_LOCAL (where a running PDT
-# answers, http://127.0.0.1:7420) and PDT_INSTALL_SIGNING_KEY (the release signing key).
+# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_WEB (where releases download
+# from, https://github.com), PDT_INSTALL_LOCAL (where a running PDT answers, http://127.0.0.1:7420) and
+# PDT_INSTALL_SIGNING_KEY (the release signing key).
 
 param(
     [string]$Channel = $env:PDT_CHANNEL,
@@ -71,6 +73,23 @@ function Test-ReleaseSignature([string]$key, [string]$tag, [byte[]]$sums, [byte[
     }
 }
 
+# The newest stable release's tag, from where github.com's releases/latest ($url) redirects (…/releases/tag/<tag>).
+# $null when it doesn't redirect to a tag (no release yet, or no answer).
+function Get-LatestTag([string]$url) {
+    try {
+        $request = [Net.HttpWebRequest]::Create($url)
+        $request.AllowAutoRedirect = $false
+        $request.UserAgent = 'pdt-install'
+        # .NET answers a redirect it isn't following as the response, or (some versions) as a WebException holding it.
+        try { $response = $request.GetResponse() } catch [Net.WebException] { $response = $_.Exception.Response }
+        if (-not $response) { return $null }
+        $location = $response.Headers['Location']
+        $response.Close()
+    } catch { return $null }
+    if ($location -match '/releases/tag/([^/?#]+)$') { return [Uri]::UnescapeDataString($Matches[1]) }
+    return $null
+}
+
 function Install-Pdt {
     param([string]$Channel, [string]$Version, [bool]$Force)
 
@@ -85,6 +104,7 @@ function Install-Pdt {
     $signingKey = ''
     if ($env:PDT_INSTALL_SIGNING_KEY) { $signingKey = $env:PDT_INSTALL_SIGNING_KEY }
     $api = if ($env:PDT_INSTALL_API) { $env:PDT_INSTALL_API } else { 'https://api.github.com' }
+    $web = if ($env:PDT_INSTALL_WEB) { $env:PDT_INSTALL_WEB } else { 'https://github.com' }
     $local = if ($env:PDT_INSTALL_LOCAL) { $env:PDT_INSTALL_LOCAL } else { "http://127.0.0.1:$port" }
 
     function Write-Failure([string]$message) {
@@ -185,67 +205,119 @@ function Install-Pdt {
     } else {
         "could not read $product's releases from GitHub. Try again later; if GitHub's rate limit is used up or $repo is a private fork, set `$env:GITHUB_TOKEN to a token that can read it and run this again."
     }
+    $noNightly = "found no nightly build of $product (the releases: $releases)."
+    # The newest release a host on the nightly channel takes: a nightly build or a full release, listed newest first.
+    $nightlyTag = '^v\d+\.\d+\.\d+(-nightly\.[0-9.]+)?$'
 
+    # Without a token, GitHub's API is used only to list the nightly builds (an IP has 60 anonymous API calls an hour):
+    # the newest stable release's tag comes from github.com's releases/latest redirect, and the files download by name
+    # from github.com, which has no such limit. With one, everything goes through the API (a private fork needs that).
     Write-Host 'Finding the release...'
+    $release = $null
     try {
-        if ($Version) {
+        if (-not $env:GITHUB_TOKEN) {
+            if ($Version) {
+                $tag = "v$Version"
+            } elseif ($Channel -eq 'nightly') {
+                $list = Invoke-RestMethod -Uri "$api/repos/$repo/releases?per_page=30" -Headers $headers -UseBasicParsing
+                $tag = @($list | Where-Object { $_.tag_name -match $nightlyTag }) | Select-Object -First 1 -ExpandProperty tag_name
+                if (-not $tag) { return Write-Failure $noNightly }
+            } else {
+                $tag = Get-LatestTag -url "$web/$repo/releases/latest"
+                if (-not $tag) { return Write-Failure $noReleases }
+            }
+        } elseif ($Version) {
             try {
                 $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/tags/v$Version" -Headers $headers -UseBasicParsing
             } catch { return Write-Failure "there is no $product release v$Version (the releases: $releases)." }
         } elseif ($Channel -eq 'nightly') {
-            # The newest release a host on the nightly channel takes: a nightly build or a full release, listed newest first.
             $list = Invoke-RestMethod -Uri "$api/repos/$repo/releases?per_page=30" -Headers $headers -UseBasicParsing
-            $release = @($list | Where-Object { $_.tag_name -match '^v\d+\.\d+\.\d+(-nightly\.[0-9.]+)?$' }) | Select-Object -First 1
-            if (-not $release) { return Write-Failure "found no nightly build of $product (the releases: $releases)." }
+            $release = @($list | Where-Object { $_.tag_name -match $nightlyTag }) | Select-Object -First 1
+            if (-not $release) { return Write-Failure $noNightly }
         } else {
             $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/latest" -Headers $headers -UseBasicParsing
         }
     } catch { return Write-Failure $noReleases }
-    $tag = $release.tag_name
+    if ($release) { $tag = $release.tag_name }
 
-    $asset = @($release.assets | Where-Object { $_.name -like '*-setup.exe' }) | Select-Object -First 1
-    if (-not $asset) { return Write-Failure "release $tag has no installer for Windows." }
-    $sums = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS' }) | Select-Object -First 1
-    if (-not $sums) { return Write-Failure "release $tag has no SHA256SUMS, so the download can't be checked. Nothing was installed." }
-    $sig = @($release.assets | Where-Object { $_.name -eq 'SHA256SUMS.sig' }) | Select-Object -First 1
-    if ($signingKey -and -not $sig) {
-        return Write-Failure "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
+    # Downloads the release file named $name to $out: from github.com, or through the API with a token. Returns
+    # nothing once it is there, else GitHub's HTTP status (0: no answer; 404 also for a file the release doesn't list).
+    function Get-ReleaseFile([string]$name, [string]$out) {
+        if ($release) {
+            $asset = @($release.assets | Where-Object { $_.name -eq $name }) | Select-Object -First 1
+            if (-not $asset) { return 404 }
+            $uri = "$api/repos/$repo/releases/assets/$($asset.id)"
+            $download = @{ Accept = 'application/octet-stream'; Authorization = "Bearer $env:GITHUB_TOKEN" }
+        } else {
+            $uri = "$web/$repo/releases/download/$tag/$([Uri]::EscapeDataString($name))"
+            $download = @{}
+        }
+        try {
+            Invoke-WebRequest -Uri $uri -Headers $download -OutFile $out -UseBasicParsing
+        } catch {
+            $status = 0
+            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            return $status
+        }
+    }
+    # Why a download of $name failed with $status other than a 404, when GitHub's answer tells.
+    function Get-DownloadFailure([string]$name, [int]$status) {
+        $why = switch ($status) {
+            0 { 'GitHub did not answer: check the connection and try again.' }
+            401 { "GitHub refused GITHUB_TOKEN (HTTP 401): check that it is current and can read $repo." }
+            { $_ -eq 403 -or $_ -eq 429 } {
+                if ($env:GITHUB_TOKEN) {
+                    "GitHub refused it (HTTP $status): check that GITHUB_TOKEN can read $repo, or wait for its rate limit to reset."
+                } else {
+                    "GitHub refused it (HTTP $status): its rate limit may be used up. Try again later, or set `$env:GITHUB_TOKEN to a token that can read $repo and run this again."
+                }
+            }
+            default { "GitHub answered HTTP $status. Try again later." }
+        }
+        return "could not download $name of $($tag). $why"
     }
 
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ("pdt-install-" + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tmp | Out-Null
     try {
-        $download = @{ Accept = 'application/octet-stream' }
-        if ($env:GITHUB_TOKEN) { $download.Authorization = "Bearer $env:GITHUB_TOKEN" }
-        $exe = Join-Path $tmp $asset.name
         $sumsFile = Join-Path $tmp 'SHA256SUMS'
         $sigFile = Join-Path $tmp 'SHA256SUMS.sig'
-        Write-Host "Downloading $product $tag ($($asset.name))..."
-        try {
-            Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($sums.id)" -Headers $download -OutFile $sumsFile -UseBasicParsing
-            if ($signingKey) {
-                Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($sig.id)" -Headers $download -OutFile $sigFile -UseBasicParsing
-            }
-        } catch { return Write-Failure "could not download SHA256SUMS of $($tag): $($_.Exception.Message)" }
+        # SHA256SUMS lists the release's files: the installer is picked from it.
+        $failed = Get-ReleaseFile -name 'SHA256SUMS' -out $sumsFile
+        if ($failed -eq 404 -and $Version) { return Write-Failure "there is no $product release v$Version (the releases: $releases)." }
+        if ($failed -eq 404) { return Write-Failure "release $tag has no SHA256SUMS, so the download can't be checked. Nothing was installed." }
+        if ($null -ne $failed) { return Write-Failure (Get-DownloadFailure -name 'SHA256SUMS' -status $failed) }
         if ($signingKey) {
+            $failed = Get-ReleaseFile -name 'SHA256SUMS.sig' -out $sigFile
+            if ($failed -eq 404) {
+                return Write-Failure "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
+            }
+            if ($null -ne $failed) { return Write-Failure (Get-DownloadFailure -name 'SHA256SUMS.sig' -status $failed) }
             if (-not (Test-ReleaseSignature -key $signingKey -tag $tag -sums ([IO.File]::ReadAllBytes($sumsFile)) -signature ([IO.File]::ReadAllBytes($sigFile)))) {
                 return Write-Failure "the signature of $tag's SHA256SUMS does not match $product's release key. Nothing was installed."
             }
             Write-Host 'Signature verified.'
         }
-        try {
-            Invoke-WebRequest -Uri "$api/repos/$repo/releases/assets/$($asset.id)" -Headers $download -OutFile $exe -UseBasicParsing
-        } catch { return Write-Failure "could not download $($asset.name): $($_.Exception.Message)" }
-
-        $want = $null
+        $sums = @{}
+        $assetName = $null
         foreach ($line in Get-Content $sumsFile) {
             $hash, $name = $line -split '\s+\*?', 2
-            if ($name -eq $asset.name) { $want = $hash.ToLowerInvariant(); break }
+            if (-not $name) { continue }
+            $sums[$name] = $hash.ToLowerInvariant()
+            if (-not $assetName -and $name -like '*-setup.exe') { $assetName = $name }
         }
-        if (-not $want) { return Write-Failure "SHA256SUMS of $tag does not list $($asset.name), so it can't be checked. Nothing was installed." }
+        if (-not $assetName) { return Write-Failure "release $tag has no installer for Windows." }
+
+        $exe = Join-Path $tmp $assetName
+        Write-Host "Downloading $product $tag ($assetName)..."
+        $failed = Get-ReleaseFile -name $assetName -out $exe
+        if ($failed -eq 404) { return Write-Failure "release $tag has no installer for Windows ($assetName)." }
+        if ($null -ne $failed) { return Write-Failure (Get-DownloadFailure -name $assetName -status $failed) }
+
+        $want = $sums[$assetName]
         $got = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash.ToLowerInvariant()
         if ($got -ne $want) {
-            return Write-Failure "the checksum of $($asset.name) does not match SHA256SUMS (expected $want, got $got). Nothing was installed."
+            return Write-Failure "the checksum of $assetName does not match SHA256SUMS (expected $want, got $got). Nothing was installed."
         }
         Write-Host 'Checksum verified.'
 

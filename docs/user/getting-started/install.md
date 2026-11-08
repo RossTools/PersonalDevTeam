@@ -59,7 +59,8 @@ the version it installed.
 
 `PDT_CHANNEL`, `PDT_VERSION` and `PDT_FORCE` work on macOS and Linux too, where `PDT_YES` also answers the script's
 questions. You don't need a GitHub token.
-Set `GITHUB_TOKEN` only to install from a private fork, or if GitHub says its rate limit is used up.
+Set `GITHUB_TOKEN` only to install from a private fork, or if GitHub says its rate limit is used up (only a nightly
+build is looked up through GitHub's API, which allows 60 calls an hour from one address without a token).
 
 ## Install by hand
 

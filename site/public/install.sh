@@ -11,16 +11,17 @@
 #   --yes                     PDT_YES=1     answer yes to questions (Linux: keep PDT running after you log out)
 #   GITHUB_TOKEN                            optional: only for a private fork, or when GitHub's rate limit is used up
 #
-# It downloads the release for this system from GitHub, checks that the release's SHA256SUMS carries PDT's release
-# signature (SHA256SUMS.sig, checked with openssl against the key below) and the download against SHA256SUMS, and
-# installs it:
+# It downloads the release for this system from GitHub (without GITHUB_TOKEN, a stable release takes no call to
+# GitHub's API, a nightly one call), checks that the release's SHA256SUMS carries PDT's release signature
+# (SHA256SUMS.sig, checked with openssl against the key below) and the download against SHA256SUMS, and installs it:
 # macOS into ~/Applications (then opens it once, which starts it at login), Linux into ~/.local/opt/pdt as a systemd
 # user service. Windows has install.ps1.
 #
 # Everything runs from pdt_install, called on the last line: a download cut short runs nothing.
 #
-# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_LOCAL (where a running PDT
-# answers, http://127.0.0.1:7420), PDT_INSTALL_SYSTEM_APPS (/Applications) and PDT_INSTALL_SIGNING_KEY (the key below).
+# For tests only: PDT_INSTALL_API (GitHub's API, https://api.github.com), PDT_INSTALL_WEB (where releases download
+# from, https://github.com), PDT_INSTALL_LOCAL (where a running PDT answers, http://127.0.0.1:7420),
+# PDT_INSTALL_SYSTEM_APPS (/Applications) and PDT_INSTALL_SIGNING_KEY (the key below).
 
 set -eu
 
@@ -37,6 +38,7 @@ pdt_install() {
 	signing_key=""
 	signing_key="${PDT_INSTALL_SIGNING_KEY:-$signing_key}"
 	api="${PDT_INSTALL_API:-https://api.github.com}"
+	web="${PDT_INSTALL_WEB:-https://github.com}"
 	local_url="${PDT_INSTALL_LOCAL:-http://127.0.0.1:$port}"
 	sys_apps="${PDT_INSTALL_SYSTEM_APPS:-/Applications}"
 	channel="${PDT_CHANNEL:-stable}"
@@ -159,44 +161,66 @@ pdt_install() {
 	trap 'exit 130' INT TERM
 
 	say "Finding the release..."
-	if [ -n "$version" ]; then
-		fetch_json "/repos/$repo/releases/tags/v$version" "$tmp/release.json" ||
-			die "there is no $product release v$version (the releases: https://github.com/$repo/releases)."
-	elif [ "$channel" = nightly ]; then
-		fetch_json "/repos/$repo/releases?per_page=30" "$tmp/releases.json" || no_releases
-		# The newest release a host on the nightly channel takes: a nightly build or a full release, listed newest first.
-		tag="$(field tag_name <"$tmp/releases.json" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-nightly\.[0-9.]+)?$' | head -n 1)" ||
-			true
-		[ -n "$tag" ] || die "found no nightly build of $product (the releases: https://github.com/$repo/releases)."
-		fetch_json "/repos/$repo/releases/tags/$tag" "$tmp/release.json" || no_releases
+	# Without a token, GitHub's API is used only to list the nightly builds (an IP has 60 anonymous API calls an hour):
+	# the newest stable release's tag comes from github.com's releases/latest redirect, and the files download by name
+	# from github.com, which has no such limit. With one, everything goes through the API (a private fork needs that).
+	if [ -z "${GITHUB_TOKEN:-}" ]; then
+		if [ -n "$version" ]; then
+			tag="v$version"
+		elif [ "$channel" = nightly ]; then
+			fetch_json "/repos/$repo/releases?per_page=30" "$tmp/releases.json" || no_releases
+			tag="$(nightly_tag <"$tmp/releases.json")" || true
+		else
+			tag="$(latest_tag)" || no_releases
+		fi
 	else
-		fetch_json "/repos/$repo/releases/latest" "$tmp/release.json" || no_releases
+		if [ -n "$version" ]; then
+			fetch_json "/repos/$repo/releases/tags/v$version" "$tmp/release.json" ||
+				die "there is no $product release v$version (the releases: https://github.com/$repo/releases)."
+		elif [ "$channel" = nightly ]; then
+			fetch_json "/repos/$repo/releases?per_page=30" "$tmp/releases.json" || no_releases
+			tag="$(nightly_tag <"$tmp/releases.json")" || true
+			[ -n "$tag" ] || no_nightly
+			fetch_json "/repos/$repo/releases/tags/$tag" "$tmp/release.json" || no_releases
+		else
+			fetch_json "/repos/$repo/releases/latest" "$tmp/release.json" || no_releases
+		fi
+		tag="$(field tag_name <"$tmp/release.json" | head -n 1)"
+		[ -n "$tag" ] || die "GitHub's answer about the release could not be read."
+		assets <"$tmp/release.json" >"$tmp/assets"
 	fi
-	tag="$(field tag_name <"$tmp/release.json" | head -n 1)"
-	[ -n "$tag" ] || die "GitHub's answer about the release could not be read."
-	assets <"$tmp/release.json" >"$tmp/assets"
-	if [ "$os" = mac ]; then
-		asset="$(cut -d' ' -f2 "$tmp/assets" | grep -E '.\.app\.tar\.gz$' | head -n 1)" || true
-	else
-		asset="$slug-linux-$arch.tar.gz"
-	fi
-	asset_id=""
-	if [ -n "$asset" ]; then asset_id="$(find_asset "$asset" <"$tmp/assets")" || true; fi
-	[ -n "$asset_id" ] || die "release $tag has no download for this system${asset:+ ($asset)}."
-	sums_id="$(find_asset SHA256SUMS <"$tmp/assets")" ||
-		die "release $tag has no SHA256SUMS, so the download can't be checked. Nothing was installed."
+	if [ -z "$tag" ]; then no_nightly; fi
 
-	say "Downloading $product $tag ($asset)..."
-	download "$sums_id" "$tmp/SHA256SUMS" || die "could not download SHA256SUMS of $tag."
+	# SHA256SUMS lists the release's files: the one for this system is picked from it.
+	if ! download SHA256SUMS "$tmp/SHA256SUMS"; then
+		if [ "$http" = 404 ] && [ -n "$version" ]; then
+			die "there is no $product release v$version (the releases: https://github.com/$repo/releases)."
+		fi
+		[ "$http" = 404 ] && die "release $tag has no SHA256SUMS, so the download can't be checked. Nothing was installed."
+		download_failed SHA256SUMS
+	fi
 	if [ -n "$signing_key" ]; then
-		sig_id="$(find_asset SHA256SUMS.sig <"$tmp/assets")" ||
-			die "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
-		download "$sig_id" "$tmp/SHA256SUMS.sig" || die "could not download SHA256SUMS.sig of $tag."
+		if ! download SHA256SUMS.sig "$tmp/SHA256SUMS.sig"; then
+			[ "$http" = 404 ] &&
+				die "release $tag is not signed (it has no SHA256SUMS.sig), so its SHA256SUMS can't be trusted. Nothing was installed."
+			download_failed SHA256SUMS.sig
+		fi
 		verify_signature ||
 			die "the signature of $tag's SHA256SUMS does not match $product's release key. Nothing was installed."
 		say "Signature verified."
 	fi
-	download "$asset_id" "$tmp/$asset" || die "could not download $asset."
+	if [ "$os" = mac ]; then
+		asset="$(sum_names | grep -E '.\.app\.tar\.gz$' | head -n 1)" || true
+		[ -n "$asset" ] || die "release $tag has no download for this system."
+	else
+		asset="$slug-linux-$arch.tar.gz"
+	fi
+
+	say "Downloading $product $tag ($asset)..."
+	if ! download "$asset" "$tmp/$asset" --progress-bar; then
+		[ "$http" = 404 ] && die "release $tag has no download for this system ($asset)."
+		download_failed "$asset"
+	fi
 	want="$(awk -v n="$asset" '{ f = $2; sub(/^\*/, "", f) } f == n { print tolower($1); exit }' "$tmp/SHA256SUMS")"
 	[ -n "$want" ] || die "SHA256SUMS of $tag does not list $asset, so it can't be checked. Nothing was installed."
 	got="$(sha256 "$tmp/$asset")"
@@ -306,14 +330,60 @@ fetch_json() {
 	fi
 }
 
-# A release asset by id into $2 (through the API, so a token works for a private repository).
+# The release file named $1 into $2 ($3: curl's progress option, else silent), from github.com, or through the API
+# with a token (a private repository needs that). Sets http to GitHub's answer (000: none; 404 also for a file the
+# release's asset list doesn't have). Fails when it isn't the file.
 download() {
+	progress="${3:--sS}"
 	if [ -n "${GITHUB_TOKEN:-}" ]; then
-		curl -fSL --progress-bar -H "Accept: application/octet-stream" -H "Authorization: Bearer $GITHUB_TOKEN" \
-			"$api/repos/$repo/releases/assets/$1" -o "$2"
+		id="$(find_asset "$1" <"$tmp/assets")" || { http=404; return 1; }
+		http="$(curl -fL "$progress" -w '%{http_code}' -H "Accept: application/octet-stream" \
+			-H "Authorization: Bearer $GITHUB_TOKEN" "$api/repos/$repo/releases/assets/$id" -o "$2")" || return 1
 	else
-		curl -fSL --progress-bar -H "Accept: application/octet-stream" "$api/repos/$repo/releases/assets/$1" -o "$2"
+		http="$(curl -fL "$progress" -w '%{http_code}' "$web/$repo/releases/download/$tag/$1" -o "$2")" || return 1
 	fi
+}
+
+# Stops on a download of $1 that failed other than with a 404, saying why when GitHub's answer tells.
+download_failed() {
+	case "$http" in
+	000 | "") why="GitHub did not answer: check the connection and try again." ;;
+	403 | 429)
+		if [ -n "${GITHUB_TOKEN:-}" ]; then
+			why="GitHub refused it (HTTP $http): check that GITHUB_TOKEN can read $repo, or wait for its rate limit to reset."
+		else
+			why="GitHub refused it (HTTP $http): its rate limit may be used up. Try again later, or set GITHUB_TOKEN to a token that can read $repo and run this again."
+		fi
+		;;
+	401) why="GitHub refused GITHUB_TOKEN (HTTP 401): check that it is current and can read $repo." ;;
+	*) why="GitHub answered HTTP $http. Try again later." ;;
+	esac
+	die "could not download $1 of $tag. $why"
+}
+
+# The newest stable release's tag, from where github.com's releases/latest redirects (…/releases/tag/<tag>). Fails
+# when it doesn't redirect to a tag (no release yet, or no answer).
+latest_tag() {
+	to="$(curl -fsS -o /dev/null -w '%{redirect_url}' "$web/$repo/releases/latest")" || return 1
+	case "$to" in */releases/tag/?*) ;; *) return 1 ;; esac
+	t="${to##*/releases/tag/}"
+	case "$t" in */* | *\?*) return 1 ;; esac
+	printf '%s\n' "$t"
+}
+
+# The newest release a host on the nightly channel takes (stdin: the releases, newest first): a nightly build or a
+# full release.
+nightly_tag() {
+	field tag_name | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-nightly\.[0-9.]+)?$' | head -n 1
+}
+
+no_nightly() {
+	die "found no nightly build of $product (the releases: https://github.com/$repo/releases)."
+}
+
+# The file names SHA256SUMS lists, one per line.
+sum_names() {
+	awk '{ f = $2; sub(/^\*/, "", f); if (f != "") print f }' "$tmp/SHA256SUMS"
 }
 
 no_releases() {
@@ -334,7 +404,7 @@ field() {
 	split_json | sed -n "s/^[[:space:]]*\"$1\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
 }
 
-# A release's assets as "<id> <name>" lines: each asset's API url (…/releases/assets/<id>) comes before its
+# A release's assets as "<id> <name>" lines (with a token): each asset's API url (…/releases/assets/<id>) comes before its
 # browser_download_url (…/<name>).
 assets() {
 	split_json | awk '
@@ -348,7 +418,6 @@ assets() {
 		}'
 }
 
-# The id of the asset named $1 (stdin: assets' lines). Fails when there is none.
 # SHA256SUMS.sig is an ECDSA P-256 signature (DER) over the tag, a newline, then SHA256SUMS: it vouches for this
 # release only.
 verify_signature() {
@@ -364,6 +433,7 @@ verify_signature() {
 	openssl dgst -sha256 -verify "$tmp/release-key.pem" -signature "$tmp/SHA256SUMS.sig" "$tmp/signed" >/dev/null 2>&1
 }
 
+# The id of the asset named $1 (stdin: assets' lines). Fails when there is none.
 find_asset() {
 	awk -v n="$1" '$2 == n { print $1; found = 1; exit } END { exit !found }'
 }
