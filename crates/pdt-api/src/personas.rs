@@ -2,10 +2,11 @@
 //! (Refiner, Coder, Reviewer, QA) are installed on start and follow newer templates until the user edits them.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::{ApiPath, ApiQuery};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::persona::{
     BUILTIN_PERSONAS, NewPersona, Persona, PersonaAuthor, PersonaDiff, PersonaPatch, PersonaVersion, SavePersona,
@@ -151,7 +152,7 @@ pub(crate) async fn versions(
 
 pub(crate) async fn version(
     State(st): State<AppState>,
-    Path((id, v)): Path<(String, u32)>,
+    ApiPath((id, v)): ApiPath<(String, u32)>,
 ) -> Result<Json<PersonaVersion>, ApiError> {
     st.store.get_persona_version(&id, v).await?.map(Json).or_404("persona version")
 }
@@ -166,7 +167,7 @@ pub(crate) struct DiffQuery {
 pub(crate) async fn diff(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<DiffQuery>,
+    ApiQuery(q): ApiQuery<DiffQuery>,
 ) -> Result<Json<PersonaDiff>, ApiError> {
     let p = load(&st, &id).await?;
     let to = q.to.unwrap_or(p.version);

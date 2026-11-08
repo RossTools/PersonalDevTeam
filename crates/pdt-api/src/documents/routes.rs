@@ -4,10 +4,11 @@
 use super::local::{self, DiffsApplied, DocEvent, LocalProvider};
 use super::{CommentInput, DocumentProvider, NewFile, ProviderError, provider, providers};
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::document::{
     ChartView, CommentReply, Document, DocumentComment, DocumentCommentInput, DocumentContent, DocumentEdit,
@@ -128,7 +129,7 @@ pub(crate) struct ProvidersQuery {
 /// `GET /api/documents/providers[?project=]`.
 pub(crate) async fn list_providers(
     State(st): State<AppState>,
-    Query(q): Query<ProvidersQuery>,
+    ApiQuery(q): ApiQuery<ProvidersQuery>,
 ) -> Result<Json<DocumentProvidersView>, ApiError> {
     let project = match q.project.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(p) => Some(project_id(&st, p).await?),
@@ -154,7 +155,7 @@ pub(crate) struct SearchQuery {
 pub(crate) async fn search(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<SearchQuery>,
+    ApiQuery(q): ApiQuery<SearchQuery>,
 ) -> Result<Json<Vec<FoundFile>>, ApiError> {
     let p = need(&provider(&st, &id), &id)?;
     let mut found = Vec::new();
@@ -173,7 +174,7 @@ pub(crate) async fn search(
 /// `ticket` take an id or a key.
 pub(crate) async fn list(
     State(st): State<AppState>,
-    Query(mut f): Query<DocumentFilter>,
+    ApiQuery(mut f): ApiQuery<DocumentFilter>,
 ) -> Result<Json<Vec<Document>>, ApiError> {
     if let Some(p) = f.project.take().filter(|p| !p.trim().is_empty()) {
         f.project = Some(project_id(&st, &p).await?);
@@ -387,7 +388,7 @@ pub(crate) struct DeleteQuery {
 pub(crate) async fn remove(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<DeleteQuery>,
+    ApiQuery(q): ApiQuery<DeleteQuery>,
 ) -> Result<StatusCode, ApiError> {
     let d = document(&st, &id).await?;
     if q.file {
@@ -775,7 +776,7 @@ pub(crate) struct DiffsQuery {
 pub(crate) async fn sheet_diffs(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<DiffsQuery>,
+    ApiQuery(q): ApiQuery<DiffsQuery>,
     body: axum::body::Bytes,
 ) -> Result<Json<DiffsApplied>, ApiError> {
     let (d, local) = local_doc(&st, &id).await?;
@@ -805,7 +806,7 @@ const WATCH_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 pub(crate) async fn events(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<EventsQuery>,
+    ApiQuery(q): ApiQuery<EventsQuery>,
 ) -> Result<
     axum::response::sse::Sse<
         impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>,
@@ -890,7 +891,7 @@ pub(crate) struct ExportQuery {
 pub(crate) async fn export(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<ExportQuery>,
+    ApiQuery(q): ApiQuery<ExportQuery>,
 ) -> Result<axum::response::Response, ApiError> {
     let d = document(&st, &id).await?;
     let format = q.format.trim().to_ascii_lowercase();
@@ -966,7 +967,7 @@ pub struct UploadedDocument {
 /// local document: `.md` a doc, `.xlsx` or `.csv` a sheet.
 pub(crate) async fn upload(
     State(st): State<AppState>,
-    Query(q): Query<UploadQuery>,
+    ApiQuery(q): ApiQuery<UploadQuery>,
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<UploadedDocument>), ApiError> {
     if body.is_empty() {
@@ -999,7 +1000,7 @@ pub struct SavedImage {
 pub(crate) async fn image(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<ImageQuery>,
+    ApiQuery(q): ApiQuery<ImageQuery>,
     body: axum::body::Bytes,
 ) -> Result<(StatusCode, Json<SavedImage>), ApiError> {
     let (d, local) = local_doc(&st, &id).await?;

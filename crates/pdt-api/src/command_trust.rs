@@ -3,9 +3,10 @@
 //! PDT (the UI token, `untrusted::from_ui`), never an agent's call. What waits on one is in the Inbox as a notice.
 
 use crate::error::{ApiError, codes};
+use crate::extract::{ApiJson, ApiQuery};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::command_trust::{self, ConfigCommand};
 use pdt_core::inbox::{InboxGroup, InboxKind, InboxStatus};
@@ -131,7 +132,7 @@ pub(crate) struct Where {
 pub(crate) async fn list(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(w): Query<Where>,
+    ApiQuery(w): ApiQuery<Where>,
 ) -> Result<Json<ProjectCommands>, ApiError> {
     let project = st.project(&id).await?;
     crate::projects::needs_repo(&project, "commands")?;
@@ -161,7 +162,7 @@ pub(crate) async fn trust(
     State(st): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-    Json(input): Json<TrustCommands>,
+    ApiJson(input): ApiJson<TrustCommands>,
 ) -> Result<StatusCode, ApiError> {
     st.project(&id).await?;
     if !crate::untrusted::from_ui(&st, &headers)? {

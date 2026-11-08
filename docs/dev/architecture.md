@@ -84,7 +84,10 @@ Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients mat
 in `error::codes`, with one status each (the module's doc says which status means what), built with `ApiError`'s
 constructors (`invalid`, `conflict`, `upstream`, `keychain`, `io`, …); a test fails on a code spelled out in a route.
 A missing record is `.or_404("what")` (`error::OrNotFound`), and `st.project(id)`, `st.ticket(id)`, `st.session(id)`
-load one by id. API types derive ts-rs and are generated into `web/src/api/gen`.
+load one by id. Handlers take a body, query string or typed path segment through `ApiJson`, `ApiQuery` and `ApiPath`
+(`extract.rs`; `Result<Json<T>, JsonRejection>` when a missing body has a default), so a request axum can't parse
+is refused as `invalid_input` too; a test fails on axum's bare `Json`, `Query` or typed `Path` in a handler.
+API types derive ts-rs and are generated into `web/src/api/gen`.
 
 ## The model
 

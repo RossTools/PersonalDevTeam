@@ -589,7 +589,7 @@ fn without_path(word: &str) -> std::borrow::Cow<'_, str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -663,7 +663,7 @@ mod tests {
     }
 
     /// The `.rs` files under `dir`, recursively.
-    fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    pub(crate) fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for e in std::fs::read_dir(dir).unwrap().flatten() {
             let p = e.path();
             if p.is_dir() {

@@ -2,10 +2,11 @@
 //! timeline and comments, and a project's labels.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Path, Query, State};
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::ticket::{
     Actor, AttemptState, BulkRequest, BulkResult, By, EventPage, EventQuery, MAX_LIMIT, NewComment, NewTicket,
@@ -17,9 +18,8 @@ use pdt_store::{DeleteTicket, TicketError};
 
 pub(crate) async fn list(
     State(st): State<AppState>,
-    query: Result<Query<TicketQuery>, QueryRejection>,
+    ApiQuery(q): ApiQuery<TicketQuery>,
 ) -> Result<Json<TicketPage>, ApiError> {
-    let Query(q) = query.map_err(|e| ApiError::invalid(e.body_text()))?;
     let mut filter = q.validate()?;
     let idx = crate::overlap::index(&st, filter.project.as_deref()).await?;
     match filter.conflicts {
@@ -259,9 +259,8 @@ pub(crate) async fn remove_link(
 pub(crate) async fn events(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    query: Result<Query<EventQuery>, QueryRejection>,
+    ApiQuery(q): ApiQuery<EventQuery>,
 ) -> Result<Json<EventPage>, ApiError> {
-    let Query(q) = query.map_err(|e| ApiError::invalid(e.body_text()))?;
     let limit = q.limit.unwrap_or(pdt_core::ticket::DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     let cursor = q.cursor.as_deref().map(str::trim).filter(|c| !c.is_empty());
     let page = st.store.list_events(&id, cursor, limit, q.newest_first.unwrap_or(false)).await?;
