@@ -12,7 +12,6 @@ export * from './SuggestInput';
 export * from './Field';
 export * from './Checkbox';
 export * from './CheckboxPicks';
-export * from './Calendar';
 export * from './Switch';
 export * from './SegmentedControl';
 export * from './Tabs';
@@ -62,7 +61,8 @@ export * from './ViewHeader';
 export * from './Page';
 export * from './SplitPane';
 export { tabIndexOf, tabListKeyDown } from './tabList';
-// FlowGraph (React Flow) is imported as '@ui/FlowGraph' so it and its styles load only with the workflow builder.
+// FlowGraph (React Flow) is imported as '@ui/FlowGraph' so it and its styles load only with the workflow builder, and
+// Calendar as '@ui/Calendar' so it and its date library load only with the due-date picker.
 
 export { applyThemePref, readThemePref, useThemePref, type ThemePref } from './theme';
 

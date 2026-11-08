@@ -12,7 +12,8 @@ import type { TodoPatch } from '../api/gen/TodoPatch';
 import { ProjectKey } from '../common/BranchChip';
 import { InlineRename } from '../common/InlineRename';
 import { useMediaQuery } from '../common/useMediaQuery';
-import { DuePicker, dayText } from './DuePicker';
+import { dayText } from './due';
+import { DuePicker } from './LazyDuePicker';
 import { bodyPreview, formatDay, repeatText, type DueGroupId } from './model';
 
 const TODO_DRAG_KIND = 'todo';

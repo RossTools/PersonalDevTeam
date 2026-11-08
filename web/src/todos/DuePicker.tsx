@@ -4,35 +4,15 @@
 import { useState, type ReactNode, type RefObject } from 'react';
 import { Ban, ChevronLeft, CircleArrowRight, Clock, Repeat, Search, Sofa, Sun, Sunrise, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Calendar, ChoiceCard, IconButton, Input, MenuList, Popover, Select, type MenuEntry } from '@ui';
+import { ChoiceCard, IconButton, Input, MenuList, Popover, Select, type MenuEntry } from '@ui';
+import { Calendar } from '@ui/Calendar';
 import type { Recurrence } from '../api/gen/Recurrence';
 import type { RepeatFrom } from '../api/gen/RepeatFrom';
 import type { TodoPatch } from '../api/gen/TodoPatch';
+import { dayText, type DuePanel, type DueValue } from './due';
 import { addDays, formatDay, localDay, quickPicks, repeatPresets, repeatText, sameRule, WEEKDAYS, weekdayOf, type QuickPick } from './model';
 import { parseTodo } from './parse';
 import { useMediaQuery } from '../common/useMediaQuery';
-
-/** What the picker edits: a todo's due day, time and repeat rule. */
-export type DueValue = { dueOn: string | null; dueTime: string | null; recurrence: Recurrence | null };
-export type DuePanel = 'date' | 'time' | 'repeat';
-
-/** A patch applied to a value, as the server would (clearing the day clears its time and rule). */
-export function applyDuePatch(v: DueValue, p: TodoPatch): DueValue {
-  const cleared = p.dueOn === '';
-  return {
-    dueOn: p.dueOn !== undefined ? p.dueOn || null : v.dueOn,
-    dueTime: cleared ? null : p.dueTime !== undefined ? p.dueTime || null : v.dueTime,
-    recurrence: cleared ? null : p.recurrence !== undefined ? p.recurrence : v.recurrence,
-  };
-}
-
-/** A day for people: Today, Tomorrow, or "Wed 28 Oct". */
-export function dayText(day: string, now: Date): string {
-  const today = localDay(now);
-  if (day === today) return 'Today';
-  if (day === addDays(today, 1)) return 'Tomorrow';
-  return formatDay(day, now);
-}
 
 const PICK_ICON: Record<QuickPick['id'], ReactNode> = {
   hour: <Clock aria-hidden className="text-running" />,

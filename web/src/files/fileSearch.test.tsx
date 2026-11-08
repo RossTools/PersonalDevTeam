@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { SearchResult } from '../api/gen/SearchResult';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
-import { FileViewer, FolderTree, useFolderView } from './FolderView';
+import { FileViewer, FolderTree } from './FolderView';
+import { useFolderView } from './useFolderView';
 import type { CodeTarget } from './CodeViewer';
 
 vi.mock('./CodeViewer', () => ({
