@@ -121,7 +121,7 @@ names another (below, "Runners").
 | build (windows-latest) | clippy, nextest | `windows` label, or a Rust change to `windows/`, `*.ps1`, `*.cmd`, `.github/` | unless docs only |
 | site | the install scripts' lint, the website's tests (the docs check included) and build | a change to `site/`, `docs/`, the pnpm lockfile or workspace, `ci.yml` or `pages.yml` | same |
 | secrets | gitleaks over the commits the PR (or the queued group) adds | always | always |
-| changelog | a fragment or the `no-changelog` label; the scripts' tests | unless docs only | skipped |
+| changelog | a fragment or the `no-changelog` label; the scripts' tests; action pins and labels | unless docs only | skipped |
 | bundle (…) | the macOS app (each CPU built in its own job, `bundle (macos, <target>)`, then joined into the universal app, signed and checked with `lipo -archs` in `bundle (macos-latest, app)`), the Windows installer, the Linux tarball and AppImage, as workflow artifacts (GitHub's runners always: signing) | the release PR only | never |
 
 - **Docs-only PRs** (every changed file under `docs/` or `site/`, or a `*.md`) run only `changes`, `secrets` and
@@ -260,6 +260,27 @@ conflict), push, and merge again.
 - **On a contributor's fork**, `pages.yml`, `cache.yml` and `audit.yml`'s daily run skip
   (`github.event.repository.fork`); `ci.yml` checks their PRs here; `release.yml` stops with a message when
   `PDT_RELEASE_TOKEN` is missing.
+
+## Labels
+
+`.github/labels.yml` lists the repository's GitHub labels, with their colors and descriptions. Change a label there in
+the PR that starts or stops using it, then make GitHub match by hand (`gh label create`, `gh label edit`,
+`gh label delete`).
+
+| Label | On | Does |
+|---|---|---|
+| `windows` | PRs | runs the Windows checks (any path, process or file-system change) |
+| `macos` | PRs | runs the macOS checks (otherwise they run only in the merge queue) |
+| `no-changelog` | PRs | passes the changelog job without a fragment (only docs, CI or tests change) |
+| `dependencies` | PRs | Dependabot's |
+| `from-pdt` | issues | a report filed with Report a bug; triage keys off it, so the issue forms never add it |
+| `agentic` | issues | an agent may work it without a human approval gate |
+| `bug`, `enhancement` | issues | the issue forms' (Bug report; Feature request and Plugin request) |
+
+The rest are GitHub's defaults. `scripts/check-labels.sh` (in `check.sh`'s changelog group and CI's changelog job)
+fails when the list repeats a label or misses a color or description, or when `.github` names a label it doesn't
+list: Dependabot's and the issue forms' `labels:`, and the labels `ci.yml` tests for. `scripts/check-labels.sh --live`
+also compares the list with GitHub's labels (it needs `gh`; CI doesn't run it).
 
 ## Dependabot
 
