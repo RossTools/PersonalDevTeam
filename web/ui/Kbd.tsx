@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { cn } from '@ui/lib/utils';
 import { Kbd as KbdPrimitive, KbdGroup } from '@ui/primitives/kbd';
 
@@ -23,4 +24,24 @@ export function Kbd({ children, keys, className }: KbdProps) {
     );
   }
   return <KbdPrimitive className={cn(HIDE_ON_TOUCH, className)}>{children}</KbdPrimitive>;
+}
+
+/** A key hint in a `KeyHints` line: the keys, then what they do. */
+export type KeyHint = [keys: string[], does: string];
+
+/**
+ * The keys a view answers to, in a line: "↑ ↓ move · Enter import · Esc close" (a dialog's footer, a composer's
+ * meta). Muted, meta-sized text; hidden on touch screens, and a dialog footer that holds only this hides with it.
+ */
+export function KeyHints({ hints, className }: { hints: KeyHint[]; className?: string }) {
+  return (
+    <span data-slot="key-hints" className={cn('flex flex-wrap items-center gap-1 text-meta text-muted-foreground', HIDE_ON_TOUCH, className)}>
+      {hints.map(([keys, does], i) => (
+        <Fragment key={i}>
+          {i > 0 && ' · '}
+          {keys.map((k) => <KbdPrimitive key={k}>{k}</KbdPrimitive>)} {does}
+        </Fragment>
+      ))}
+    </span>
+  );
 }

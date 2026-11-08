@@ -6,6 +6,10 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 /** The first letter upper-cased: "merge conflict" → "Merge conflict". */
 export const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** Items in a sentence: "a", "a and b", "a, b and c"; `last` joins the final pair ("or"). */
+export const listText = (items: string[], last = 'and') =>
+  items.length > 1 ? `${items.slice(0, -1).join(', ')} ${last} ${items[items.length - 1]}` : (items[0] ?? '');
+
 /** `bytes` for people: "512 MB", "1.5 GB" (as the server's Inbox items say it). */
 export function formatBytes(bytes: number): string {
   const units = ['bytes', 'KB', 'MB', 'GB', 'TB'];

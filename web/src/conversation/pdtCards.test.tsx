@@ -75,7 +75,7 @@ describe('PDT tool cards', () => {
   it('create_ticket: a proposal, a running call and a failed one', () => {
     stubApi({});
     const { rerender } = renderWithQuery(<PdtToolCard call={done('create_ticket', { title: 'Idea' }, { key: 'ALP-9', proposal: true })} />);
-    expect(screen.getByRole('region', { name: 'Proposed a ticket' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Proposed 1 ticket' })).toBeInTheDocument();
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Idea' }, status: 'running' }} />);
     expect(screen.getByRole('region', { name: 'Creating a ticket…' })).toBeInTheDocument();
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Idea' }, status: 'failed', output: 'no project ZZZ' }} />);

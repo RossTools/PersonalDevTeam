@@ -339,7 +339,7 @@ describe('phone triage', () => {
     expect(answered(calls)).toBeUndefined();
     expect(await within(dialog).findByRole('link', { name: /PR #42/ })).toBeInTheDocument();
     expect(within(dialog).getByText('CI passed')).toBeInTheDocument();
-    expect(await within(dialog).findByText('2 files, +13 −3')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText('Diff size')).toHaveTextContent(/^2 files, \+13\s*−3$/));
     expect(within(dialog).getByRole('button', { name: 'View changes' })).toBeInTheDocument();
     // Cancel answers nothing.
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));

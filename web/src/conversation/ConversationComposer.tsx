@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Paperclip } from 'lucide-react';
-import { Alert, IconButton, ImageThumb, Kbd, PromptBox, Select, StatusDot, SuggestionList, suggestionId, type SelectOption, type Suggestion } from '@ui';
+import { Alert, IconButton, ImageThumb, KeyHints, PromptBox, Select, StatusDot, SuggestionList, suggestionId, type SelectOption, type Suggestion } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentCommandInfo } from '../api/gen/AgentCommandInfo';
 import type { AgentModel } from '../api/gen/AgentModel';
@@ -433,9 +433,7 @@ export function ConversationComposer({
               {turnRunning ? 'working' : stopped ? 'stopped' : 'ready'}
             </span>
           ) : turnRunning ? (
-            <span>
-              <Kbd>↵</Kbd> queues · <Kbd>{isMac() ? '⌘↵' : 'Ctrl+↵'}</Kbd> sends now · <Kbd>Esc</Kbd> stops
-            </span>
+            <KeyHints hints={[[['↵'], 'queues'], [[isMac() ? '⌘↵' : 'Ctrl+↵'], 'sends now'], [['Esc'], 'stops']]} />
           ) : (
             readout
           )

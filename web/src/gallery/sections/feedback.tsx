@@ -165,6 +165,7 @@ function render() {
           <div className="flex w-full flex-col gap-2 rounded-lg border border-border p-3">
             <EmptyState size="inline">None yet.</EmptyState>
             <EmptyState size="inline" action={<Button size="sm" variant="secondary">Add secret</Button>}>No secrets yet.</EmptyState>
+            <EmptyState size="inline" tone="error">Can't load the inbox.</EmptyState>
           </div>
         </Row>
 

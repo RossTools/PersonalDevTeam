@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { Kbd } from './Kbd';
+import { Kbd, KeyHints } from './Kbd';
 
 describe('Kbd', () => {
   it('renders one key as <kbd>', () => {
@@ -19,5 +19,15 @@ describe('Kbd', () => {
     expect(screen.getByText('Esc').className).toContain('pointer-coarse:hidden');
     const { container } = render(<Kbd keys={['Ctrl', ']']} />);
     expect(container.querySelector('[data-slot=kbd-group]')!.className).toContain('pointer-coarse:hidden');
+  });
+});
+
+describe('KeyHints', () => {
+  it('lists each hint\'s keys and what they do, hidden on touch screens as a whole', () => {
+    const { container } = render(<KeyHints hints={[[['↑', '↓'], 'move'], [['Esc'], 'close']]} />);
+    const line = container.querySelector('[data-slot=key-hints]')!;
+    expect(line.textContent).toBe('↑↓ move · Esc close');
+    expect([...line.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual(['↑', '↓', 'Esc']);
+    expect(line.className).toContain('pointer-coarse:hidden');
   });
 });

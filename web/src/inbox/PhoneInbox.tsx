@@ -1,9 +1,8 @@
 // The Inbox on a phone (PDT-117): the list with Needs you | Updates and Review all, and one item per screen
 // with its decision fixed at the bottom, in the thumb's reach.
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { ChevronDown } from 'lucide-react';
-import { Button, Dialog, EmptyState, Sheet, Skeleton, Textarea } from '@ui';
+import { Button, Dialog, DialogActions, DiffStat, EmptyState, Sheet, Skeleton, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
@@ -14,14 +13,14 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { useOpenSession, useOpenTicket, useOpenChanges, openExternal } from '../common/open';
 import { PrDetails } from '../tickets/PullRequest';
-import { useProjectForge, useTicket } from '../tickets/queries';
+import { useProjectForge } from '../tickets/queries';
 import { UpdateView } from './InboxView';
 import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
+import { useChangeSize, useItemAttempt } from './itemAttempt';
 import { ItemHeader, Why } from './ItemLayout';
 import { capitalize, plural } from '../common/text';
-import { changesKey } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
@@ -68,9 +67,8 @@ function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy:
 }
 
 /** Choices as full-width 48px rows (a question's answers, More ▾, Take over's outcomes). */
-function Rows({ rows, selected, disabled, onPick, label }: {
+function Rows({ rows, disabled, onPick, label }: {
   rows: Decision[];
-  selected?: string;
   disabled?: boolean;
   onPick: (id: string) => void;
   label?: string;
@@ -79,8 +77,7 @@ function Rows({ rows, selected, disabled, onPick, label }: {
     <div role="group" aria-label={label} className="flex flex-col gap-1.5">
       {rows.map((r) => (
         <Button key={r.id} variant="secondary" disabled={disabled || r.disabled}
-          {...(selected !== undefined ? { 'aria-pressed': selected === r.id } : {})}
-          size="lg" className={cn('w-full justify-start px-3', selected === r.id && 'border-primary bg-accent')}
+          size="lg" className="w-full justify-start px-3"
           onClick={() => onPick(r.id)}>
           <span className="truncate">{r.title}</span>
         </Button>
@@ -256,15 +253,11 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const ticket = useTicket(item.ticketId);
+  const { ticket, attempt } = useItemAttempt(item);
   const openChanges = useOpenChanges();
   const t = ticket.data;
-  const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
   const worktreeId = attempt?.worktreeId ?? null;
-  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
-  const files = changes.data?.files ?? [];
-  const added = files.reduce((n, f) => n + f.added, 0);
-  const removed = files.reduce((n, f) => n + f.removed, 0);
+  const size = useChangeSize(worktreeId);
   const title = capitalize(item.choices.find((c) => c.id === choice)?.title ?? choice);
   const ci = attempt?.pr?.ci ?? attempt?.ci ?? null;
   const queueName = useProjectForge(attempt?.pr ? t?.projectId ?? null : null).data?.queueName ?? undefined;
@@ -273,12 +266,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
       onClose={onCancel}
       title={`${title} ${item.ticketKey ?? 'this'}?`}
       description={item.ticketTitle ?? item.title}
-      footer={
-        <>
-          <Button size="lg" onClick={onCancel}>Cancel</Button>
-          <Button variant="primary" size="lg" pending={busy} onClick={onConfirm}>{title}</Button>
-        </>
-      }
+      footer={<DialogActions onCancel={onCancel} action={title} onAction={onConfirm} pending={busy} />}
     >
       <div className="flex flex-col gap-3 text-sm" aria-label="What merges">
         {ticket.isLoading ? <Skeleton lines={2} /> : attempt?.pr ? (
@@ -293,7 +281,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
         {worktreeId && (
           <div className="flex flex-wrap items-center gap-2">
             <span aria-label="Diff size">
-              {changes.isLoading ? 'Counting the changes…' : `${plural(files.length, 'file')}, +${added} −${removed}`}
+              {size.loading ? 'Counting the changes…' : <>{plural(size.files, 'file')}, <DiffStat added={size.added} removed={size.removed} /></>}
             </span>
             <Button variant="ghost" size="sm" onClick={() => { onCancel(); openChanges({ id: worktreeId, projectId: item.projectId ?? '' }, { ticketId: item.ticketId ?? undefined }); }}>
               View changes

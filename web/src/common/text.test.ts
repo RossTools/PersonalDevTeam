@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capitalize, formatBytes, plural } from './text';
+import { capitalize, formatBytes, listText, plural } from './text';
 
 const GB = 1024 ** 3;
 
@@ -9,6 +9,15 @@ describe('plural', () => {
     expect(plural(0, 'file')).toBe('0 files');
     expect(plural(3, 'review comment')).toBe('3 review comments');
     expect(plural(2, 'entry', 'entries')).toBe('2 entries');
+  });
+});
+
+describe('listText', () => {
+  it('joins with commas and a last "and" (or the word given)', () => {
+    expect(listText([])).toBe('');
+    expect(listText(['a'])).toBe('a');
+    expect(listText(['a', 'b'])).toBe('a and b');
+    expect(listText(['a', 'b', 'c'], 'or')).toBe('a, b or c');
   });
 });
 

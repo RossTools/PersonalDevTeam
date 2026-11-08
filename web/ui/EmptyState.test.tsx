@@ -30,4 +30,12 @@ describe('EmptyState', () => {
     expect(p.className).toContain('text-muted-foreground');
     expect(screen.getByRole('button', { name: 'Add one' })).toBeInTheDocument();
   });
+
+  it('inline error: a coloured line, announced', () => {
+    render(<EmptyState size="inline" tone="error">Can't load the inbox.</EmptyState>);
+    const line = screen.getByRole('alert');
+    expect(line).toHaveTextContent("Can't load the inbox.");
+    expect(line.className).toContain('text-failed');
+    expect(line.className).not.toContain('text-muted-foreground');
+  });
 });

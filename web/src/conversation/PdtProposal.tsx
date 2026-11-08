@@ -13,12 +13,11 @@ import { stageLabel } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { ChangeRow, Key } from './PdtToolCard';
 import { createdTicket, editText, LINK_TEXT, pdtApprovalTitle, pdtTool, sentMessage, ticketEdit, ticketLink } from './pdtTools';
-import { isRecord, nonBlank } from '../common/guards';
+import { isRecord, nonBlank, strings } from '../common/guards';
+import { capitalize, plural } from '../common/text';
 import { sessionKeys } from '../sessions/queries';
 import { ticketKeys } from '../tickets/queries';
 import { documentKeys } from '../documents/queries';
-
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 function Box({ children }: { children: ReactNode }) {
   return <div className="flex flex-col gap-1.5 rounded-md border border-border bg-surface-2 p-2.5">{children}</div>;
@@ -97,7 +96,7 @@ function NewTicket({ input }: { input: unknown }) {
         {t.priority && t.priority !== 'none' && <Badge>{priorityLabel(t.priority)}</Badge>}
         <LabelChips labels={t.labels} className="flex-wrap" />
         {parent && <span className="ml-1 flex items-center gap-1 text-xs text-muted-foreground">Part of <TicketRef value={parent} /></span>}
-        {files > 0 && <span className="ml-1 text-xs text-muted-foreground">{files === 1 ? 'A file attached' : `${files} files attached`}</span>}
+        {files > 0 && <span className="ml-1 text-xs text-muted-foreground">{plural(files, 'file')} attached</span>}
       </div>
       {areas.length > 0 && <Line>Areas: {areas.join(', ')}</Line>}
       {external.length > 0 && (
@@ -122,7 +121,7 @@ function EditBody({ edit }: { edit: unknown }) {
   const phrase = editText(edit);
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs">{phrase[0].toUpperCase() + phrase.slice(1)}</span>
+      <span className="text-xs">{capitalize(phrase)}</span>
       {text !== null && <Text mono>{text}</Text>}
     </div>
   );
@@ -141,6 +140,7 @@ export function pdtApproval(tool: string, input: unknown): { title: string; prev
 export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
   const a = isRecord(input) ? input : {};
   const ticket = nonBlank(a.ticket);
+  const body = nonBlank(a.body);
   switch (pdtTool(tool)) {
     case 'create_ticket':
       return <NewTicket input={input} />;
@@ -157,7 +157,7 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
                 {description.trim() ? <Text label="New description">{description}</Text> : <span className="text-xs">Description emptied</span>}
               </div>
             )}
-            {e.files > 0 && <div className="py-2 text-xs text-muted-foreground">Attaches {e.files === 1 ? 'a file' : `${e.files} files`}</div>}
+            {e.files > 0 && <div className="py-2 text-xs text-muted-foreground">Attaches {plural(e.files, 'file')}</div>}
           </div>
         </Box>
       );
@@ -188,7 +188,7 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
       return (
         <Box>
           <Line>On <TicketRef value={ticket} none="this session's ticket" /></Line>
-          <Text>{typeof a.body === 'string' ? a.body : ''}</Text>
+          <Text>{body ?? ''}</Text>
           {strings(a.files).length > 0 && <Line>Attaches {strings(a.files).length === 1 ? 'a file' : `${strings(a.files).length} files`}</Line>}
         </Box>
       );
@@ -207,11 +207,12 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
       return (
         <Box>
           <Line>They come in turned off.</Line>
-          <Text mono>{typeof a.text === 'string' ? a.text : ''}</Text>
+          <Text mono>{nonBlank(a.text) ?? ''}</Text>
         </Box>
       );
     case 'stop_ticket': {
-      const stage = typeof a.stage === 'string' ? stageLabel(a.stage) : 'To do';
+      const given = nonBlank(a.stage);
+      const stage = given ? stageLabel(given) : 'To do';
       return (
         <Box>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -235,7 +236,7 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
                 : "On the forge of this session's project"}
           </Line>
           <div className="font-semibold">{nonBlank(a.title) ?? (ticket ? "The ticket's title" : 'Untitled')}</div>
-          {typeof a.body === 'string' && a.body.trim() ? <Text>{a.body}</Text> : ticket && <Line>The ticket's description as its body</Line>}
+          {body ? <Text>{body}</Text> : ticket && <Line>The ticket's description as its body</Line>}
           <LabelChips labels={strings(a.labels)} className="flex-wrap" />
         </Box>
       );
@@ -297,14 +298,14 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
       return (
         <Box>
           <Line>On a comment in <DocName value={nonBlank(a.document)} /></Line>
-          {typeof a.body === 'string' && <Text>{a.body}</Text>}
+          {body && <Text>{body}</Text>}
         </Box>
       );
     case 'run_with_secrets': {
       const env = isRecord(a.env) ? Object.entries(a.env) : [];
       return (
         <Box>
-          <Text mono>{typeof a.command === 'string' ? a.command : ''}</Text>
+          <Text mono>{nonBlank(a.command) ?? ''}</Text>
           {nonBlank(a.cwd) && <Line>In <span className="font-mono">{nonBlank(a.cwd)}</span></Line>}
           {env.length > 0 && <Pairs entries={env} mono />}
         </Box>
@@ -314,7 +315,7 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
       return (
         <Box>
           <span className="font-mono text-xs break-all">{nonBlank(a.path) ?? '?'}</span>
-          <Text mono>{typeof a.template === 'string' ? a.template : ''}</Text>
+          <Text mono>{nonBlank(a.template) ?? ''}</Text>
         </Box>
       );
     default:

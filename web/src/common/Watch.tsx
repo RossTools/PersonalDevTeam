@@ -10,6 +10,7 @@ import { api } from '../api/client';
 import type { WatchInfo } from '../api/gen/WatchInfo';
 import { runAction } from './useAction';
 import { POLL } from './poll';
+import { listText } from './text';
 
 /** A watched target: a ticket's id or a workflow run's. */
 export type WatchOf = { ticket: string } | { run: string };
@@ -34,8 +35,7 @@ export function useAllWatches() {
 /** "Watched by you and PM “Docs”". */
 function watchedByText(watches: Pick<WatchInfo, 'watcher'>[]): string {
   const names = watches.map((w) => w.watcher);
-  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
-  return `Watched by ${list}`;
+  return `Watched by ${listText(names)}`;
 }
 
 /** Stops a watch and refreshes every list of them. */
