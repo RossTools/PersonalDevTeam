@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from 'react';
 import { ApprovalCard, type ApprovalAnswer } from '@ui/ApprovalCard';
+import { Eye, Pencil } from 'lucide-react';
 import { DiffViewer } from '@ui/DiffViewer';
+import { PreviewBox } from '@ui/PreviewBox';
+import { ToolCard } from '@ui/ToolCard';
 import { ImageThumb } from '@ui/ImageThumb';
 import { SuggestionList } from '@ui/SuggestionList';
 import { ConversationComposer } from '../../conversation/ConversationComposer';
@@ -187,13 +190,26 @@ export const section = {
           <ApprovalCard title="Edit this file?" preview={<DiffViewer diff={DIFF.split('--- /dev/null')[0]} />} onAnswer={answered} />
         </div>
       </Demo>
+      <Demo label="ToolCard · a heading with an aside, rows; PreviewBox · what a request carries">
+        <div className="flex flex-col gap-3">
+          <ToolCard icon={<Pencil />} aria-label="Changed SHOP-19" heading={<>Changed <span className="font-medium text-foreground">SHOP-19</span></>} aside={<span>Queued</span>}>
+            <div className="py-2">Stage: To do → In progress</div>
+            <div className="py-2">Priority: Low → High</div>
+          </ToolCard>
+          <ToolCard icon={<Eye />} aria-label="Stopped watching" heading="Stopped watching" />
+          <PreviewBox className="flex flex-col gap-1.5">
+            <span className="font-semibold">Guest checkout: email-only orders</span>
+            <span className="text-xs text-muted-foreground">In SHOP · To do · High</span>
+          </PreviewBox>
+        </div>
+      </Demo>
       <Demo label="DiffViewer · two files (one new); hunks without line numbers">
         <div className="flex flex-col gap-3">
           <DiffViewer diff={DIFF} />
           <DiffViewer diff={'--- a/notes.md\n+++ b/notes.md\n@@ @@\n-line two\n+pear'} />
         </div>
       </Demo>
-      <Demo label="ApprovalCard · question (descriptions, Other…), plan (Claude: accept edits)">
+      <Demo label="ApprovalCard · questions (descriptions, several picks, Something else), plan (Claude: accept edits)">
         <div className="flex flex-col gap-3">
           <ApprovalCard
             kind="question"

@@ -72,11 +72,14 @@ describe('ApprovalCard', () => {
     );
     const submit = screen.getByRole('button', { name: 'Submit' });
     expect(submit).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: 'SQLite' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Postgres' }));
-    expect(screen.getByRole('button', { name: 'SQLite' })).toHaveAttribute('aria-pressed', 'false');
-    await userEvent.click(screen.getByRole('button', { name: 'FTS' }));
-    await userEvent.click(screen.getByRole('button', { name: 'JSON' }));
+    expect(screen.getByText('DB')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'SQLite' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Postgres' }));
+    expect(screen.getByRole('radio', { name: 'SQLite' })).not.toBeChecked();
+    // A multi-select question's choices are checkboxes: both stay ticked.
+    await userEvent.click(screen.getByRole('checkbox', { name: 'FTS' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'JSON' }));
+    expect(screen.getByRole('checkbox', { name: 'FTS' })).toBeChecked();
     await userEvent.click(submit);
     expect(onAnswer).toHaveBeenCalledWith({ type: 'question', answers: { 'Which database?': ['Postgres'], 'Which extras?': ['FTS', 'JSON'] } });
   });
@@ -92,11 +95,12 @@ describe('ApprovalCard', () => {
       />,
     );
     expect(screen.getByText('A fruit')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'apple' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Other…' }));
-    expect(screen.getByRole('button', { name: 'apple' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('radio', { name: 'apple' })).toHaveAccessibleDescription('A fruit');
+    await userEvent.click(screen.getByRole('radio', { name: 'apple' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Something else' }));
+    expect(screen.getByRole('radio', { name: 'apple' })).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Your answer' }), ' plum {Enter}');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Something else for question 1' }), ' plum {Enter}');
     expect(onAnswer).toHaveBeenCalledWith({ type: 'question', answers: { 'Which word?': ['plum'] } });
   });
 

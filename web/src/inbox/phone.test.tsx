@@ -145,7 +145,7 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     expect(screen.getByText('A question for you')).toBeInTheDocument();
     expect(screen.getByText("PM asks you in its conversation; the answer goes back to it.")).toBeInTheDocument();
     expect(screen.queryByText(/permission mode|AskUserQuestion/)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /valibot/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /valibot/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/req-9')?.body)
       .toEqual({ answer: { type: 'question', answers: { 'Which library?': ['valibot'] } } }));

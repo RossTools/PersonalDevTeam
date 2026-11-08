@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { File, Folder } from 'lucide-react';
 import { Badge } from '@ui/Badge';
+import { CheckTable } from '@ui/CheckTable';
 import { Button } from '@ui/Button';
 import { StatusDot, type Status } from '@ui/StatusDot';
 import { Input } from '@ui/Input';
@@ -238,6 +239,31 @@ function SettingsScreenSample() {
   );
 }
 
+const PICKS = [
+  { id: 'a', name: 'Flaky checkout test', what: 'Accept to Todo', note: 'Fails one run in five.' },
+  { id: 'b', name: 'Same flaky test', what: 'Duplicate', note: '' },
+  { id: 'c', name: 'Rename everything', what: 'Reject', note: 'Not worth the churn.' },
+];
+
+function Picks() {
+  const [off, setOff] = useState<ReadonlySet<number>>(() => new Set([2]));
+  return (
+    <CheckTable
+      aria-label="Decisions"
+      rows={PICKS}
+      rowKey={(r) => r.id}
+      columns={[
+        { id: 'name', header: 'Ticket', cell: (r) => r.name },
+        { id: 'what', header: 'Decision', cell: (r) => r.what },
+        { id: 'note', header: 'Note', wide: true, cell: (r) => r.note },
+      ]}
+      checked={(n) => !off.has(n)}
+      onCheck={(n, on) => setOff((o) => { const next = new Set(o); if (on) next.delete(n); else next.add(n); return next; })}
+      checkLabel={(r) => `Keep ${r.name}`}
+    />
+  );
+}
+
 export const section = {
   title: 'Lists and layout',
   order: 40,
@@ -248,6 +274,7 @@ export const section = {
         <Demo label="List · workspaces (drag the handle to reorder)"><Workspaces /></Demo>
         <Demo label="TreeView · files (lazy folders, git status)"><Files /></Demo>
       </div>
+      <Demo label="CheckTable · rows to keep (unticked: struck through; Note hidden on phones)"><Picks /></Demo>
       <Demo label="ViewHeader"><Headers /></Demo>
       <Demo label="Page · Section · SettingsRow"><SettingsSample /></Demo>
       <Demo label="SettingsScreen · one section on a screen of its own (the section's heading is the title)"><SettingsScreenSample /></Demo>

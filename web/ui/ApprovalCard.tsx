@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
-import { ChevronDown, ShieldQuestion } from 'lucide-react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { ShieldQuestion } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Button } from './Button';
+import { Disclosure } from './Disclosure';
 import { Input } from './Input';
 import { Kbd } from './Kbd';
+import { PreviewBox } from './PreviewBox';
+import { NO_ANSWER, QuestionCard, type QuestionAnswer } from './QuestionCard';
+import { SectionLabel } from './SectionLabel';
 
 /** The answer the card gives (the same shape as the API's `Answer`). */
 export type ApprovalAnswer =
@@ -94,11 +98,10 @@ export function ApprovalCard({
 }: ApprovalCardProps) {
   const [pending, setPending] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
-  const [showDetails, setShowDetails] = useState(detailsOpen);
   const [reason, setReason] = useState('');
-  const [picked, setPicked] = useState<Record<string, string[]>>({});
-  // Questions answered in the user's own words ("Other…"): question → text (present while the field is open).
-  const [other, setOther] = useState<Record<string, string>>({});
+  // Each question's answer, by its text: the choices picked and the user's own words.
+  const [picked, setPicked] = useState<Record<string, QuestionAnswer>>({});
+  const idBase = useId();
   const reasonRef = useRef<HTMLInputElement>(null);
   const busy = disabled || pending !== null;
 
@@ -162,25 +165,13 @@ export function ApprovalCard({
     }
   };
 
-  const toggle = (q: ApprovalQuestion, label: string) => {
-    setPicked((p) => {
-      const cur = p[q.question] ?? [];
-      const next = q.multiSelect ? (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]) : [label];
-      return { ...p, [q.question]: next };
-    });
-    // One answer per single-choice question: an option closes "Other…".
-    if (!q.multiSelect) setOther(({ [q.question]: _, ...rest }) => rest);
-  };
-  const toggleOther = (q: ApprovalQuestion) => {
-    const open = q.question in other;
-    setOther(({ [q.question]: _, ...rest }) => (open ? rest : { ...rest, [q.question]: '' }));
-    if (!open && !q.multiSelect) setPicked(({ [q.question]: _, ...rest }) => rest);
-  };
   const answersOf = (): Record<string, string[]> =>
     Object.fromEntries(
       questions.map((q) => {
-        const own = other[q.question]?.trim();
-        return [q.question, [...(picked[q.question] ?? []), ...(own ? [own] : [])]];
+        const a = picked[q.question] ?? NO_ANSWER;
+        const own = a.other?.trim();
+        if (q.multiSelect) return [q.question, [...(a.choices ?? []), ...(own ? [own] : [])]];
+        return [q.question, a.other !== null ? (own ? [own] : []) : a.choice ? [a.choice] : []];
       }),
     );
   const allAnswered = questions.length > 0 && Object.values(answersOf()).every((a) => a.length > 0);
@@ -198,85 +189,36 @@ export function ApprovalCard({
         <span className="min-w-0">{title}</span>
       </header>
       {subject && (
-        <pre className="max-h-48 overflow-auto rounded-md border border-border bg-surface-2 p-2 font-mono text-xs whitespace-pre-wrap break-words">
+        <PreviewBox as="pre" className="max-h-48 overflow-auto p-2 font-mono text-xs whitespace-pre-wrap break-words">
           {subject}
-        </pre>
+        </PreviewBox>
       )}
       {preview && <div className="max-h-96 overflow-auto">{preview}</div>}
       {details && (
-        <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            aria-expanded={showDetails}
-            onClick={() => setShowDetails((o) => !o)}
-            className="flex items-center gap-1 self-start rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-control-touch"
-          >
-            {detailsLabel}
-            <ChevronDown aria-hidden className={cn('size-3.5 transition-transform motion-reduce:transition-none', showDetails && 'rotate-180')} />
-          </button>
-          {showDetails && <div className="max-h-80 overflow-auto">{details}</div>}
-        </div>
+        <Disclosure title={detailsLabel} defaultOpen={detailsOpen} triggerClassName="pointer-coarse:min-h-control-touch" panelClassName="max-h-80 overflow-auto">
+          {details}
+        </Disclosure>
       )}
       {description && <div className="text-xs text-muted-foreground">{description}</div>}
       {kind === 'plan' && plan && <div className="max-h-96 overflow-auto rounded-md border border-border p-2">{plan}</div>}
       {kind === 'question' &&
-        questions.map((q) => (
-          <fieldset key={q.question} className="flex flex-col gap-1.5">
-            <legend className="mb-1 text-sm">
-              {q.header && <span className="mr-1.5 text-2xs font-medium tracking-wide text-muted-foreground uppercase">{q.header}</span>}
-              {q.question}
-            </legend>
-            <div className="flex flex-col gap-1">
-              {q.options.map((o) => {
-                const on = (picked[q.question] ?? []).includes(o.label);
-                return (
-                  <button
-                    key={o.label}
-                    type="button"
-                    aria-pressed={on}
-                    aria-label={o.label}
-                    title={o.description}
-                    disabled={busy}
-                    onClick={() => toggle(q, o.label)}
-                    className={cn(
-                      'flex min-h-control-md w-full flex-wrap items-baseline gap-x-2 rounded-md border px-2 py-1.5 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
-                      on ? 'border-primary bg-accent text-foreground' : 'border-border hover:bg-accent',
-                    )}
-                  >
-                    <span className="font-medium">{o.label}</span>
-                    {o.description && <span aria-hidden className="text-muted-foreground">{o.description}</span>}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                aria-pressed={q.question in other}
-                disabled={busy}
-                onClick={() => toggleOther(q)}
-                className={cn(
-                  'flex min-h-control-md w-full items-center rounded-md border border-dashed px-2 text-left text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 pointer-coarse:min-h-control-touch',
-                  q.question in other ? 'border-primary bg-accent text-foreground' : 'border-border text-muted-foreground hover:bg-accent',
-                )}
-              >
-                Other…
-              </button>
-            </div>
-            {q.question in other && (
-              <Input
-                aria-label={questions.length > 1 ? `Your answer: ${q.question}` : 'Your answer'}
-                placeholder="Your answer"
-                value={other[q.question]}
-                disabled={busy}
-                onChange={(e) => setOther((o) => ({ ...o, [q.question]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && allAnswered) {
-                    e.preventDefault();
-                    void answer('question', { type: 'question', answers: answersOf() });
-                  }
-                }}
-              />
-            )}
-          </fieldset>
+        questions.map((q, n) => (
+          <QuestionCard
+            key={q.question}
+            id={`${idBase}-q${n}`}
+            index={n}
+            total={questions.length}
+            label={q.question}
+            question={<>{q.header && <SectionLabel as="span" className="mr-1.5">{q.header}</SectionLabel>}{q.question}</>}
+            choices={q.options}
+            multiple={q.multiSelect}
+            value={picked[q.question] ?? NO_ANSWER}
+            disabled={busy}
+            onChange={(a) => setPicked((p) => ({ ...p, [q.question]: a }))}
+            onSubmit={() => {
+              if (allAnswered) void answer('question', { type: 'question', answers: answersOf() });
+            }}
+          />
         ))}
 
       {denying && kind !== 'question' ? (
