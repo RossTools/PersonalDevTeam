@@ -144,6 +144,17 @@ export function useBackCloses(open: boolean, close: () => void) {
   }, [open]);
 }
 
+/**
+ * Forgets the history the router has seen, so each test starts afresh (test-setup.ts). The guard and the open
+ * drawers' count are its components' own: unmounting them (which may come after this) undoes them.
+ */
+export function resetRouter() {
+  shownN = 0;
+  undoing = null;
+  passing = false;
+  pushedThisTask = false;
+}
+
 /** The current path and query string, re-rendering on navigation and on Back/Forward. */
 export function useLocation(): string {
   return useSyncExternalStore(subscribe, currentLocation);

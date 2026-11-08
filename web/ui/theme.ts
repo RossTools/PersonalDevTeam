@@ -18,6 +18,12 @@ export function readThemePref(): ThemePref {
 /** The choice made in this page, which holds even when storage can't keep it; null until one is made. */
 let chosen: ThemePref | null = null;
 
+/** Forgets the page's choice and its theme on the page (tests; the stored one goes with the rest of storage). */
+export function resetThemePref(): void {
+  chosen = null;
+  document.documentElement.removeAttribute('data-theme');
+}
+
 export function applyThemePref(pref: ThemePref): void {
   const root = document.documentElement;
   if (pref === 'system') root.removeAttribute('data-theme');

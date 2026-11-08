@@ -10,6 +10,11 @@ type Segment = 'needs' | 'updates';
 // The segment shown last, so coming back from an item (or an update) shows the same one.
 let lastSegment: Segment = 'needs';
 
+/** Back to Needs you (tests). */
+export function resetPhoneInboxSegment() {
+  lastSegment = 'needs';
+}
+
 /** The bottom bar's buttons: 48px, whatever the pointer. */
 
 /**

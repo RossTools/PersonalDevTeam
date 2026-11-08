@@ -183,8 +183,13 @@ describe('board', () => {
     const dt = transfer();
     fireEvent.dragStart(c, { dataTransfer: dt });
     fireEvent.drop(column('To do'), { dataTransfer: dt });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(calls.some((x) => x.method === 'PATCH')).toBe(false);
+    // Then a drop that moves it: its PATCH is the only one.
+    const again = transfer();
+    fireEvent.dragStart(c, { dataTransfer: again });
+    fireEvent.dragOver(column('Done'), { dataTransfer: again });
+    fireEvent.drop(column('Done'), { dataTransfer: again });
+    await waitFor(() => expect(calls.some((x) => x.method === 'PATCH')).toBe(true));
+    expect(calls.filter((x) => x.method === 'PATCH').map((x) => x.body)).toEqual([{ stage: 'done' }]);
   });
 
   it('moves a card from its menu, and offers Start… for a To do ticket', async () => {
@@ -457,14 +462,13 @@ describe('board lanes', () => {
     dt = transfer();
     fireEvent.dragStart(plain, { dataTransfer: dt });
     fireEvent.drop(column('ALP-10 · Done'), { dataTransfer: dt });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(calls.some((x) => x.method === 'PATCH')).toBe(false);
-    // Within its lane: moved.
+    // Within its lane: moved, and that PATCH is the only one.
     dt = transfer();
     fireEvent.dragStart(part, { dataTransfer: dt });
     fireEvent.dragOver(column('ALP-10 · Done'), { dataTransfer: dt });
     fireEvent.drop(column('ALP-10 · Done'), { dataTransfer: dt });
-    await waitFor(() => expect(calls.find((x) => x.method === 'PATCH')).toMatchObject({ path: '/api/tickets/t11', body: { stage: 'done' } }));
+    await waitFor(() => expect(calls.some((x) => x.method === 'PATCH')).toBe(true));
+    expect(calls.filter((x) => x.method === 'PATCH')).toMatchObject([{ path: '/api/tickets/t11', body: { stage: 'done' } }]);
   });
 
   it('shows a large epic as a bar, and no PR in any lane header', async () => {

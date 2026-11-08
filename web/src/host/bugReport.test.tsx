@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { BugReportDialog } from './BugReportDialog';
 
 afterEach(() => {
@@ -77,7 +77,7 @@ describe('BugReportDialog', () => {
     const open = vi.fn();
     vi.stubGlobal('open', open);
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     renderWithQuery(<BugReportDialog onClose={() => {}} onOpenSettings={() => {}} />);
     expect(await screen.findByText(/isn't connected to GitHub/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Connect GitHub' })).toBeInTheDocument();
