@@ -1,9 +1,10 @@
 ---
 // The one-line install command (public/install.sh and install.ps1, served beside the site), with a tab per system and
 // a copy button. Its script picks the visitor's system and makes the page's "Download for …" buttons follow it
-// (`data-download-label`, and `data-os` on a row of buttons: the visitor's becomes the primary one). Without JS the
-// macOS tab shows, and the tabs are links to their panels (`:target` shows the one picked); there is no copy button.
-import { siteLinks } from '../links.mjs';
+// (`data-download-label` gets the system's name and its file, and `data-os` on a row of buttons: the visitor's becomes
+// the primary one). Without JS the macOS tab shows, and the tabs are links to their panels (`:target` shows the one
+// picked); there is no copy button.
+import { downloadUrl, siteLinks } from '../links.mjs';
 import { OSES, installCommand } from '../install.mjs';
 
 interface Props {
@@ -42,13 +43,14 @@ const commands = OSES.map((os) => {
 				<code>{commands[i].head}<span class="install-pipe">{commands[i].pipe}</span></code>
 				<button type="button" class="install-copy" hidden aria-label={`Copy the ${os.label} command`}>Copy</button>
 			</div>
-			<p class="install-note">{os.note} Or <a href={links.download}>download it</a>.</p>
+			<p class="install-note">{os.note} Or <a href={downloadUrl(os.id)}>download it</a>.</p>
 		</div>
 	))}
 </div>
 
 <script>
 	import { detectOs, OSES } from '../install.mjs';
+	import { downloadUrl } from '../links.mjs';
 
 	const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
 	const os = detectOs(nav.userAgentData?.platform, navigator.userAgent);
@@ -86,7 +88,10 @@ const commands = OSES.map((os) => {
 	}
 
 	// "Download for …" follows the visitor's system.
-	for (const el of document.querySelectorAll<HTMLElement>('[data-download-label]')) el.textContent = `Download for ${label}`;
+	for (const el of document.querySelectorAll<HTMLAnchorElement>('[data-download-label]')) {
+		el.textContent = `Download for ${label}`;
+		el.href = downloadUrl(os);
+	}
 	for (const row of document.querySelectorAll<HTMLElement>('[data-download-row]')) {
 		const buttons = [...row.querySelectorAll<HTMLElement>('[data-os]')];
 		buttons.forEach((b) => {

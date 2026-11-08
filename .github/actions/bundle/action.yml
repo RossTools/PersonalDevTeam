@@ -149,14 +149,15 @@ runs:
           --bundles "$bundles" "${target[@]}"
     # Asset names must match what hosts install (pdt_core::release::select_asset): *-setup.exe, and on Linux
     # pdt-linux-<arch>.tar.gz and pdt-linux-<arch>.AppImage (<arch>: x86_64 or aarch64, as `uname -m` says). A macOS
-    # app for one CPU is only an input to the universal one (bundle-macos makes the *.app.tar.gz asset).
+    # app for one CPU is only an input to the universal one (bundle-macos makes the *.app.tar.gz asset). None carries
+    # the version, so the website links each one under releases/latest/download/ (site/src/links.mjs).
     - name: Collect the bundle
       shell: bash
       run: |
         mkdir -p "$RUNNER_TEMP/release"
         if [ "${{ inputs.bundles }}" = nsis ]; then
           # Only this version's installer (a cached target dir can hold older ones).
-          cp "$PDT_BUNDLE_DIR"/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/"
+          cp "$PDT_BUNDLE_DIR"/nsis/*_"$PDT_VERSION"_*-setup.exe "$RUNNER_TEMP/release/pdt-windows-x64-setup.exe"
         elif [ "${{ inputs.bundles }}" = linux ]; then
           # The headless tarball: a pdt/ folder with pdtd, pdt-host and the web UI (crates/pdt-host/src/linux.rs).
           stage="$RUNNER_TEMP/tarball"
