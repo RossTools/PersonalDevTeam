@@ -1,7 +1,8 @@
 use crate::error::{ApiError, codes};
+use crate::extract::ApiQuery;
 use crate::routes::AppState;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use pdt_core::brand::PROJECT_CONFIG_FILE;
 use pdt_core::project::Project;
 use pdt_core::runconfig::{RunConfig, RunConfigError, Source, merge, parse};
@@ -187,7 +188,7 @@ pub(crate) fn validate_overrides(text: &str) -> Result<(), ApiError> {
 pub(crate) async fn get_config(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(w): Query<Where>,
+    ApiQuery(w): ApiQuery<Where>,
 ) -> Result<Json<RunConfigView>, ApiError> {
     let project = st.project(&id).await?;
     let (dir, _) = checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;

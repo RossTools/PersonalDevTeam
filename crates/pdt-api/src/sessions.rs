@@ -27,7 +27,7 @@ pub(crate) struct RecentQuery {
 pub(crate) async fn list(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<RecentQuery>,
+    crate::extract::ApiQuery(q): crate::extract::ApiQuery<RecentQuery>,
 ) -> Result<Json<Vec<Session>>, ApiError> {
     st.project(&id).await?;
     Ok(Json(match q.ended {

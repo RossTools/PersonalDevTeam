@@ -3,10 +3,11 @@
 //! agents through pdt-mcp by local path ([`attach_path`]). Removed with their ticket ([`prune`]).
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use pdt_core::conversation::composer::MAX_IMAGE_BYTES;
@@ -262,7 +263,7 @@ pub(crate) struct UploadQuery {
 pub(crate) async fn upload(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<UploadQuery>,
+    ApiQuery(q): ApiQuery<UploadQuery>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<TicketAttachment>), ApiError> {
     let id = ticket_id(&st, &id).await?;

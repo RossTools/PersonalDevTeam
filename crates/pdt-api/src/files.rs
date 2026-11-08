@@ -5,9 +5,10 @@
 //! changed on disk since is never overwritten silently.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::{ApiJson, ApiQuery};
 use crate::routes::AppState;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
@@ -284,7 +285,7 @@ pub(crate) fn entries(dir: &str, files: &[String], status: &[(String, String)]) 
 pub(crate) async fn list(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FilesQuery>,
+    ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
     let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     let list = tokio::task::spawn_blocking(move || -> Result<Vec<FileEntry>, ApiError> {
@@ -304,7 +305,7 @@ pub(crate) async fn list(
 pub(crate) async fn content(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FilesQuery>,
+    ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<Json<FileContent>, ApiError> {
     let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
     if rel.is_empty() {
@@ -325,7 +326,7 @@ pub(crate) async fn content(
 pub(crate) async fn save(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Json(b): Json<SaveFile>,
+    ApiJson(b): ApiJson<SaveFile>,
 ) -> Result<Json<FileContent>, ApiError> {
     let rel = clean_write_path(&b.path)?;
     let q = FilesQuery { worktree_id: b.worktree_id, path: rel.clone() };
@@ -383,7 +384,7 @@ fn not_editable() -> ApiError {
 pub(crate) async fn rename(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Json(b): Json<RenameFile>,
+    ApiJson(b): ApiJson<RenameFile>,
 ) -> Result<StatusCode, ApiError> {
     let from = clean_write_path(&b.from)?;
     let to = clean_write_path(&b.to)?;
@@ -416,7 +417,7 @@ pub(crate) async fn rename(
 pub(crate) async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FilesQuery>,
+    ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<StatusCode, ApiError> {
     clean_write_path(&q.path)?;
     let (checkout, rel, _) = resolve(&st, &id, &q).await?;
@@ -452,7 +453,7 @@ fn tell_text(paths: &[String]) -> String {
 pub(crate) async fn tell(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Json(b): Json<TellFilesChanged>,
+    ApiJson(b): ApiJson<TellFilesChanged>,
 ) -> Result<StatusCode, ApiError> {
     let s = st.store.get_session(&b.session_id).await?.filter(|s| s.project_id == id);
     let s = s.or_404("session")?;

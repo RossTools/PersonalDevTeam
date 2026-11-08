@@ -13,6 +13,7 @@ mod connection_health;
 mod conversations;
 pub mod documents;
 mod error;
+mod extract;
 mod files;
 mod files_find;
 mod files_search;

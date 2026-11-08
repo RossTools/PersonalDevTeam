@@ -3,11 +3,12 @@
 //! entry, the notes routes, and the project policy that answers the PM's asking tools for the user.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::conversation::{Answer, PermissionMode, SessionMode};
 use pdt_core::pm::{
@@ -857,7 +858,7 @@ pub(crate) async fn in_flight(
         limit: Some(100),
         ..Default::default()
     };
-    let Json(page) = crate::tickets::list(State(st.clone()), Ok(Query(q))).await?;
+    let Json(page) = crate::tickets::list(State(st.clone()), ApiQuery(q)).await?;
     Ok(page.items)
 }
 
@@ -983,7 +984,7 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
 
 /// The Inbox, for a briefing or an update.
 async fn brief_inbox(st: &AppState) -> Result<Vec<BriefInbox>, ApiError> {
-    let Json(inbox) = crate::inbox::list(State(st.clone()), Query(Default::default())).await?;
+    let Json(inbox) = crate::inbox::list(State(st.clone()), ApiQuery(Default::default())).await?;
     Ok(inbox
         .items
         .into_iter()
@@ -1043,7 +1044,7 @@ pub(crate) struct NotesQuery {
 /// `GET /api/pm/notes?q=&project=&kind=`.
 pub(crate) async fn list_notes(
     State(st): State<AppState>,
-    Query(q): Query<NotesQuery>,
+    ApiQuery(q): ApiQuery<NotesQuery>,
 ) -> Result<Json<Vec<PmNote>>, ApiError> {
     let project_id = match q.project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(p) => Some(project_id(&st, p).await.map_err(ApiError::invalid)?),
