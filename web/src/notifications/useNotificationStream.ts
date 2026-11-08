@@ -23,12 +23,22 @@ export interface OnScreen {
  * one shows as a toast or, while the page is hidden, a desktop notification, as its Show and this device allow
  * (`presentation`). A cleared row closes its desktop notification. EventSource reconnects by itself and sends
  * `Last-Event-ID`, so a dropped connection gets what it missed. While it is connected the Updates poll slowly. `open` opens a row's target.
+ * A toast closes once the Inbox item or session it is about comes on screen, so it never covers that item's own
+ * buttons (PDT-580).
  */
 export function useNotificationStream(open: (t: NotificationTarget) => void, onScreen: OnScreen) {
   const qc = useQueryClient();
   const latest = useRef({ open, onScreen });
+  // The toasts up now, by the Inbox item (`inbox:<id>`) or session (`session:<id>`) they are about.
+  const toasts = useRef(new Map<string, string | number>());
   useEffect(() => {
     latest.current = { open, onScreen };
+    for (const key of [onScreen.inbox && `inbox:${onScreen.inbox}`, onScreen.session && `session:${onScreen.session}`]) {
+      const id = key ? toasts.current.get(key) : undefined;
+      if (id === undefined) continue;
+      toast.dismiss(id);
+      toasts.current.delete(key!);
+    }
   }, [open, onScreen]);
   useEffect(() => {
     if (typeof EventSource === 'undefined') return;
@@ -83,7 +93,9 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
         const shownAs = n.severity === 'error' ? toast.error : n.severity === 'warning' ? toast.info : toast.success;
         // A question asks: a "?", not a success tick (PDT-576).
         const icon = n.kind === 'inbox.question' ? createElement(CircleHelp, { className: 'size-4 text-link' }) : undefined;
-        shownAs(n.title, { description: n.body || undefined, action, icon });
+        const id = shownAs(n.title, { description: n.body || undefined, action, icon });
+        if (n.inboxItemId) toasts.current.set(`inbox:${n.inboxItemId}`, id);
+        if (n.sessionId) toasts.current.set(`session:${n.sessionId}`, id);
       } else {
         const d = showDesktop(n.title, n.body, n.dedupeKey, click);
         if (d) desktop.set(n.dedupeKey, d);

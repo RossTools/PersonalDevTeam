@@ -128,7 +128,8 @@ In **Settings › Notifications**, each kind of notification shows as:
 
 - **Off** or **Dot only** (a marker on the session or ticket);
 - **Inbox**: a row in the Inbox;
-- **Inbox and toast**: also a pop-up while PDT is open;
+- **Inbox and toast**: also a pop-up while PDT is open (not for what's already on screen; it closes when you open what
+  it's about);
 - **Desktop notification**: also a system notification while PDT is in the background.
 
 Each level includes the ones before it. Things that wait on you never go below **Inbox**.

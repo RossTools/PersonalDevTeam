@@ -33,4 +33,12 @@ describe('toast', () => {
     const ol = container.ownerDocument.querySelector<HTMLElement>('[data-sonner-toaster]')!;
     expect(ol.style.zIndex).toBe('var(--pdt-z-toast)');
   });
+
+  it('sits above the bars at the bottom of a view on a desktop', async () => {
+    const { container } = render(<Toaster />);
+    act(() => { toast.info('Hello'); });
+    await screen.findByText('Hello');
+    const ol = container.ownerDocument.querySelector<HTMLElement>('[data-sonner-toaster]')!;
+    expect(ol.style.getPropertyValue('--offset-bottom')).toBe('8rem');
+  });
 });
