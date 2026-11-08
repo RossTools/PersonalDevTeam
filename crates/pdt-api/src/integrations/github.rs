@@ -9,10 +9,12 @@ use super::action::{Action, ActionCx, AnyAction, NodeFace, ToolFace, Via};
 use crate::issues::{FiledIssue, NewForgeIssue};
 use crate::workflow::catalog::{BoxFut, NodeKind};
 use crate::workflow::nodes::github::{GithubClose, GithubComment, GithubImport};
+use crate::workflow::nodes::github_change_request::GithubChangeRequest;
+use crate::workflow::nodes::github_nightly::GithubNightly;
+use crate::workflow::nodes::github_workflow_latest::GithubWorkflowLatest;
+use crate::workflow::nodes::github_workflow_run::GithubWorkflowRun;
 use crate::workflow::nodes::outside_pr::{PrClose, PrMerge, PrReview, PrTicket};
-use crate::workflow::nodes::release::{
-    GithubChangeRequest, GithubNightly, GithubRelease, GithubWorkflowLatest, GithubWorkflowRun,
-};
+use crate::workflow::nodes::release::GithubRelease;
 use pdt_core::integration::{Icon, PluginCategory, ToolDecl};
 use pdt_core::pm::AskTarget;
 use pdt_core::ticket::Actor;

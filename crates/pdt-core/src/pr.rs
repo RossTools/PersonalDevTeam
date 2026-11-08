@@ -38,6 +38,19 @@ pub enum CiState {
     Failed,
 }
 
+impl CiState {
+    /// Its name as the API and the workflow nodes' ports write it (`passed`, `failed`, …).
+    pub fn name(self) -> &'static str {
+        match self {
+            CiState::Passed => "passed",
+            CiState::Cancelled => "cancelled",
+            CiState::Queued => "queued",
+            CiState::Running => "running",
+            CiState::Failed => "failed",
+        }
+    }
+}
+
 /// One CI run of a provider (PDT-242): a GitHub Actions workflow run, a Buildkite build, a local CI command's run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +120,14 @@ impl CiRun {
     pub fn key(&self) -> String {
         format!("{}.{}", self.id, self.attempt)
     }
+
+    /// Its failed jobs as a Markdown list, `- workflow: job` (the workflow alone when it names none).
+    pub fn failed_jobs_markdown(&self) -> String {
+        if self.failed_jobs.is_empty() {
+            return format!("- {}", self.name);
+        }
+        self.failed_jobs.iter().map(|j| format!("- {}: {j}", self.name)).collect::<Vec<_>>().join("\n")
+    }
 }
 
 /// CI on one commit: the newest run of each provider's workflow (or pipeline), rolled up (a failure wins, then
@@ -145,6 +166,11 @@ impl CiStatus {
 
     pub fn failed(&self) -> impl Iterator<Item = &CiRun> {
         self.runs.iter().filter(|r| r.state == CiState::Failed)
+    }
+
+    /// The failed runs' jobs as one Markdown list ([`CiRun::failed_jobs_markdown`]).
+    pub fn failed_jobs_markdown(&self) -> String {
+        self.failed().map(CiRun::failed_jobs_markdown).collect::<Vec<_>>().join("\n")
     }
 
     /// Two providers' CI on one commit as one: their runs together, rolled up the same way.
@@ -789,6 +815,21 @@ pub(crate) mod tests {
             created_at: at.into(),
             failed_jobs: vec![],
         }
+    }
+
+    #[test]
+    fn failed_jobs_are_one_markdown_list_naming_their_workflow() {
+        let mut ci = run(1, "ci", "a", "1", CiState::Failed);
+        assert_eq!(ci.failed_jobs_markdown(), "- ci");
+        ci.failed_jobs = vec!["test (linux)".into(), "lint".into()];
+        assert_eq!(ci.failed_jobs_markdown(), "- ci: test (linux)\n- ci: lint");
+        let status = CiStatus::of(
+            &[ci, run(2, "docs", "a", "1", CiState::Passed), run(3, "publish", "a", "1", CiState::Failed)],
+            "a",
+        )
+        .unwrap();
+        assert_eq!(status.failed_jobs_markdown(), "- ci: test (linux)\n- ci: lint\n- publish");
+        assert_eq!(CiState::Queued.name(), "queued");
     }
 
     fn actions() -> CiSource {

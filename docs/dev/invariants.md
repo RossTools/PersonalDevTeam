@@ -192,7 +192,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   fields later steps read from the kind's output schema.
 - **A node kind's config changes incompatibly only with a version bump and a migration.** Stored documents keep each
   node's `version`; the engine and validation bring an older config up to date as they read it (`NodeKind::migrate`
-  in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/release.rs`), so a user's
+  in pdt-api `workflow/catalog.rs`; e.g. `github.nightly` 1 → 2 in `workflow/nodes/github_nightly.rs`), so a user's
   workflows run unchanged after an update. Never rewrite their documents for it.
 - **Never hold `engine_lock` across a slow node body.** Action and agent bodies run outside it; a flow, gate, wait or
   condition kind that does slow work (git, like `attempt.has_changes`) opts out with `NodeKind::in_engine_lock`. A
@@ -271,7 +271,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `adapter/lines.rs` `CappedLines` (an overlong line is skipped), never `lines()`. The `unstored` queue gives up its
   oldest events past a count and a byte bound; PTY input waiting for a terminal that doesn't read it is bounded too.
 - **A step's setup error is never retried.** An error that waiting won't fix (no project, a bad repository) is made
-  with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/release.rs`), and `fail_step` skips the
+  with `setup_error` (pdt-api `workflow/catalog.rs`; `repo_for_step` in `nodes/repo_of.rs`), and `fail_step` skips the
   node's retries for it. A kind that works on the run's project says so in `NodeKind::needs_project`, so a manual start
   of a workflow without a project is refused and Run now asks for one (`WorkflowDetail::needs_project`).
 - **Built-in workflows, templates and personas follow newer versions only while the user hasn't edited them.** Repo
