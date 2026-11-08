@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { Button, EmptyState, RelativeTime, Skeleton, ViewHeader } from '@ui';
-import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { useOpenTicket } from '../common/open';
 import { after, selectedUpdate, step } from './model';
-import { useClearUpdate, useReadNotification } from '../notifications/queries';
+import { useClearUpdate, useReadItemNotifications, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
 import { useItemView } from './itemView';
 import { ItemLayout } from './ItemLayout';
@@ -50,9 +49,10 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
   }, [item, updateId, items, onSelect]);
   // Opening an item reads its notifications.
   const itemId = item && !item.id.startsWith('session:') ? item.id : null;
+  const { mutate: readItem } = useReadItemNotifications();
   useEffect(() => {
-    if (itemId) void api.readNotifications({ inboxItemId: itemId }).catch(() => {});
-  }, [itemId]);
+    if (itemId) readItem(itemId);
+  }, [itemId, readItem]);
 
   if (updateId) {
     return update ? <UpdateView update={update} onOpenTarget={onOpenTarget} onCleared={() => onSelect(null)} /> : <EmptyState>This update is gone.</EmptyState>;

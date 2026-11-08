@@ -5,6 +5,7 @@ import { POLL } from '../common/poll';
 
 export const changesKey = (worktreeId: string) => ['changes', worktreeId] as const;
 const commentsKey = (worktreeId: string) => ['review-comments', worktreeId] as const;
+export const mergePreviewKey = (attemptId: string) => ['merge-preview', attemptId] as const;
 
 export function useChanges(worktreeId: string | null) {
   return useQuery({

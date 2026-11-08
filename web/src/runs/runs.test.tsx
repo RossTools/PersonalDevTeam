@@ -9,6 +9,7 @@ import { OpenSessionContext } from '../common/open';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
 import { RunView } from './RunView';
+import { runKeys } from './queries';
 
 vi.mock('../files/CodeViewer', () => ({ CodeViewer: ({ text }: { text: string }) => <pre data-testid="code">{text}</pre> }));
 vi.mock('../terminal/TerminalView', () => ({
@@ -186,13 +187,17 @@ describe('RunView', () => {
           ? new Reply(409, { code: 'untrusted_commands', message: 'PDT hasn\'t run this command', data: { projectId: 'p', commands: [command] } })
           : run({}),
     });
-    renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    const { qc } = renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
+    // Settings' list of the project's commands, as it was before approving.
+    qc.setQueryData(runKeys.commands('p'), { commands: [command], untrusted: ['f1'], error: null });
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Run this command?' });
     expect(within(dialog).getByRole('group', { name: 'Command for run "web"' })).toHaveTextContent('pnpm i PORT=1 pnpm dev');
     await confirmWith('Approve and run');
     await waitFor(() => expect(calls.filter((c) => c.path === '/api/runs/r1/restart')).toHaveLength(2));
     expect(calls.find((c) => c.path === '/api/projects/p/commands/trust')?.body).toEqual({ fingerprints: ['f1'] });
+    // ...and it no longer says "Not approved" until it refetches.
+    expect(qc.getQueryState(runKeys.commands('p'))?.isInvalidated).toBe(true);
   });
 
   it('runs nothing when the user does not approve the command', async () => {

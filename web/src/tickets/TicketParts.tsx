@@ -560,7 +560,7 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
  */
 export function TicketTimeline({ ticketId, recent, composer = false }: { ticketId: string; recent?: number; composer?: boolean }) {
   const full = useInfiniteQuery({
-    queryKey: [...ticketKeys.events(ticketId), 'all'],
+    queryKey: ticketKeys.timeline(ticketId),
     queryFn: ({ pageParam }) => api.ticketEvents(ticketId, { newestFirst: true, limit: EVENT_PAGE, ...(pageParam ? { cursor: pageParam } : {}) }),
     initialPageParam: '' as string,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
@@ -568,7 +568,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
     enabled: recent === undefined,
   });
   const short = useQuery({
-    queryKey: [...ticketKeys.events(ticketId), 'recent', recent],
+    queryKey: ticketKeys.recentEvents(ticketId, recent),
     queryFn: () => api.ticketEvents(ticketId, { newestFirst: true, limit: recent }),
     refetchInterval: POLL.live,
     enabled: recent !== undefined,

@@ -143,3 +143,11 @@ describe('design system rules', () => {
     ).toEqual([]);
   });
 });
+
+describe('query rules', () => {
+  it('keys queries from their area\'s key factory (`<area>/queries.ts`), never an array literal elsewhere', () => {
+    // A literal key in a screen drifts from the area's (another key, other options, a write that misses it):
+    // docs/dev/architecture.md "Web queries".
+    expect(offenders(/\bqueryKey:\s*\[|QueryData\(\s*\[/, (p) => p.startsWith('src/') && !p.endsWith('/queries.ts'))).toEqual([]);
+  });
+});

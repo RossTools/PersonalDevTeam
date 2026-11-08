@@ -17,7 +17,7 @@ import { GraphView } from './GraphView';
 import type { Catalog } from './model';
 import { RUN_STATUS, pathOf, runSteps } from './runs';
 import { StepList, type StepRow } from './StepList';
-import { workflowKeys } from './queries';
+import { useWorkflowRun, workflowKeys } from './queries';
 import { POLL } from '../common/poll';
 import { LoadError } from '../common/QueryStatus';
 
@@ -50,11 +50,7 @@ function stepSession(s: WorkflowStep): string | null {
 
 function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflowId: string; catalog: Catalog; viewOnly: boolean }) {
   const qc = useQueryClient();
-  const run = useQuery({
-    queryKey: workflowKeys.run(id),
-    queryFn: () => api.getWorkflowRun(id),
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.live : false),
-  });
+  const run = useWorkflowRun(id);
   const version = run.data?.version;
   const doc = useQuery({
     queryKey: workflowKeys.version(workflowId, version ?? 0),
@@ -147,7 +143,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
 }) {
   const [showQuiet, setShowQuiet] = useState(false);
   const runs = useQuery({
-    queryKey: [...workflowKeys.runs(workflowId), { quiet: showQuiet }],
+    queryKey: workflowKeys.runList(workflowId, showQuiet),
     queryFn: () => api.listWorkflowRuns({ workflow: workflowId, quiet: showQuiet ? undefined : false, limit: 100 }),
     refetchInterval: POLL.live,
   });

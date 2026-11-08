@@ -1,8 +1,6 @@
 // The links row under an Inbox item's title (PDT-361): its ticket, session, changes, pull request and runs.
 import type { ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Button, Kbd, toast } from '@ui';
-import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { actionError } from '../common/useAction';
 import { useOpenSession, useOpenTicket, useOpenChanges, openExternal } from '../common/open';
@@ -12,7 +10,7 @@ import { useStartRun } from '../runs/useStartRun';
 import { prHref } from '../tickets/PullRequest';
 import { useTicket } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
-import { changesKey } from '../review/queries';
+import { useChanges } from '../review/queries';
 
 /** A link the item's kind adds to the row (Storage settings, the workflow's versions). */
 export interface ItemLink {
@@ -35,7 +33,7 @@ function useItemAttempt(item: InboxItem) {
 
 /** The size of a worktree's changes: files, lines added and removed. */
 function useChangeSize(worktreeId: string | null) {
-  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useChanges(worktreeId);
   const files = changes.data?.files ?? [];
   return {
     loading: changes.isLoading,

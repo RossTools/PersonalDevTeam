@@ -1,14 +1,12 @@
 // Settings → All connections (PDT-228): every connection from every plugin in one searchable table (and GitHub's
 // login). A row opens its plugin's page, where connections are added and edited.
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { Badge, Input, Page, Skeleton } from '@ui';
-import { api } from '../api/client';
 import { useConnections } from '../connections/queries';
 import { connectionDetails } from '../connections/ConnectionRow';
 import { useConnectionKinds } from '../connections/kinds';
 import { pluginOf } from './model';
-import { usePlugins } from './queries';
+import { useForgeLogin, usePlugins } from './queries';
 import { LoadError } from '../common/QueryStatus';
 
 interface Line {
@@ -24,7 +22,7 @@ export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => v
   const plugins = usePlugins();
   const { kindOf } = useConnectionKinds();
   const connections = useConnections();
-  const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
+  const github = useForgeLogin('github');
   const [q, setQ] = useState('');
   const ps = plugins.data ?? [];
   const lines: Line[] = [
