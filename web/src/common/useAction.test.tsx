@@ -1,19 +1,9 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Toaster, toast } from '@ui/Toaster';
 import { ApiError } from '../api/client';
 import { actionError, runAction, useAction, useFormAction } from './useAction';
-
-beforeAll(() => {
-  Element.prototype.setPointerCapture ??= () => {};
-  Element.prototype.releasePointerCapture ??= () => {};
-  window.matchMedia ??= ((query: string) => ({
-    matches: false, media: query, onchange: null,
-    addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-});
 
 afterEach(() => act(() => { toast.dismiss(); }));
 

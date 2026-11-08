@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 import { OpenTicketContext, OpenChangesContext } from '../common/open';
@@ -206,11 +207,12 @@ describe('inbox', () => {
   it('never asks for the run configuration of an item without a worktree, such as the PM\'s', async () => {
     const pm = item('pm', { kind: 'question', group: 'question', projectId: 'pm-project', ticketId: null, ticketKey: null, ticketTitle: null,
       sessionId: 'pm-sess', personaName: 'PM', title: 'Which first?', body: { questions: [{ question: 'Which first?', choices: [] }] } });
-    const calls = stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    // A query starts fetching as the render that mounts it commits: none asked by then is none asked.
+    const runConfig = vi.spyOn(api, 'runConfig');
     renderWithQuery(<InboxView items={[pm]} selectedId="pm" onSelect={() => {}} />);
     expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(calls.filter((c) => c.path.includes('/run-config'))).toEqual([]);
+    expect(runConfig).not.toHaveBeenCalled();
   });
 
   it('answers a gate with Enter and moves on', async () => {
@@ -229,11 +231,12 @@ describe('inbox', () => {
     const hold = screen.getByRole('button', { name: /hold/ });
     hold.focus();
     // The Inbox's window listener sees the keydown before the button's press (React Aria presses on keyup).
-    fireEvent.keyDown(hold, { key: 'Enter' }); await new Promise((r) => setTimeout(r, 50)); expect(calls.filter((c) => c.path.endsWith('/answer'))).toEqual([]);
+    fireEvent.keyDown(hold, { key: 'Enter' });
     await userEvent.click(hold);
+    // Only the press answered: a primary decision from the keydown would have been sent first.
     const answers = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'));
-    await waitFor(() => expect(answers()).toHaveLength(1));
-    expect(answers()[0].body).toEqual({ choice: 'hold' });
+    await waitFor(() => expect(answers()).not.toHaveLength(0));
+    expect(answers().map((c) => c.body)).toEqual([{ choice: 'hold' }]);
   });
 
   it('Enter on a focused link follows it and does not take the primary decision', async () => {
@@ -246,8 +249,11 @@ describe('inbox', () => {
     const link = screen.getByRole('link', { name: 'the spec' });
     link.focus();
     fireEvent.keyDown(link, { key: 'Enter' });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(calls.filter((c) => c.path.endsWith('/answer'))).toEqual([]);
+    // Then the other decision, clicked: its answer is the only one.
+    await userEvent.click(screen.getByRole('button', { name: /failed/ }));
+    const answers = () => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'));
+    await waitFor(() => expect(answers()).not.toHaveLength(0));
+    expect(answers().map((c) => c.body)).toEqual([{ choice: 'failed' }]);
   });
 
   it('takes a requested secret in a masked field and sends it only as the secret', async () => {
