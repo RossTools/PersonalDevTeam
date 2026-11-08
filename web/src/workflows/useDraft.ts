@@ -3,18 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useDebounced } from '../common/useDebounced';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
 import { sameDoc } from './textFormat';
 import { workflowKeys } from './queries';
-
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
 
 export interface Draft {
   doc: WorkflowDoc;

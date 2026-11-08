@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import {
-  Alert, Badge, Button, CommandList, Dialog, DialogActions, DropZone, EmptyState, Field, IconTile, Input, Kbd, Link, MenuButton,
+  Alert, Badge, Button, CommandList, Dialog, DialogActions, DropZone, EmptyState, Field, IconTile, Input, KeyHints, Link, MenuButton,
   RelativeTime, SectionLabel, SegmentedControl, Select, SourceCard, Spinner, toast, useFileDrop, type CommandItem,
   type FileDrag,
 } from '@ui';
@@ -15,12 +15,12 @@ import type { Project } from '../api/gen/Project';
 import type { ProviderPicker } from '../api/gen/ProviderPicker';
 import type { SignInAccount } from '../api/gen/SignInAccount';
 import { TicketPill } from '../common/TicketPill';
+import { useDebounced } from '../common/useDebounced';
 import { actionError, useFormAction } from '../common/useAction';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnections } from '../connections/queries';
 import { useSignInAccounts } from '../plugins/AccountSignIn';
 import { pickFiles } from './picker';
-import { useMediaQuery } from '../common/useMediaQuery';
 import { useProjects } from '../projects/queries';
 import { KindIcon } from './LinkedDocuments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, useDocumentProviders, useDocuments } from './queries';
@@ -32,16 +32,6 @@ const KINDS: { value: DocumentKind; label: string }[] = [
 
 /** No project: the document is linked to none (host-wide). */
 const NO_PROJECT = '';
-
-/** Waits until typing pauses before asking the API. */
-function useDebounced<T>(value: T, ms = 250): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
 
 /**
  * New document: a title, Doc or Sheet, the provider (the project's default first) and the project it is linked to.
@@ -182,7 +172,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const chosen = provider ?? searchers.find((p) => p.id === providers.data?.default)?.id ?? searchers[0]?.id ?? null;
   const source = searchers.find((p) => p.id === chosen);
   const [query, setQuery] = useState('');
-  const q = useDebounced(query.trim());
+  const q = useDebounced(query.trim(), 250);
   const files = useQuery({
     queryKey: documentKeys.providerFiles(chosen, q),
     queryFn: () => api.providerFiles(chosen!, q),
@@ -229,8 +219,6 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   useEffect(() => {
     if (!picking && pickedFrom) setPickedFrom(null);
   }, [picking, pickedFrom]);
-  // The keyboard hints, only where there is a keyboard: not on phones or touch screens.
-  const touch = useMediaQuery('(max-width: 639.98px), (pointer: coarse)');
   const found = files.data ?? [];
   const items: CommandItem[] = found.map((f) => {
     const onTicket = !!ticket && f.ticketIds.includes(ticket.id);
@@ -290,19 +278,18 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
   const description = ticket
     ? <>Into <TicketPill ticketKey={ticket.key} />{projectName && ` · ${projectName}`}</>
     : projectName && `Into ${projectName}`;
-  const empty = files.isFetching ? 'Searching…' : files.isError ? actionError(files.error) : (
+  const empty = files.isFetching ? 'Searching…' : files.isError ? (
+    <EmptyState size="inline" tone="error" className="justify-center py-2 text-center">{actionError(files.error)}</EmptyState>
+  ) : (
     <EmptyState size="inline" className="justify-center py-2 text-center" action={browse('secondary', 'sm', `${picker?.label ?? ''} for it`)}>
       <span className="w-full font-medium text-foreground">{q ? `No files named “${q}” that PDT can open` : 'No files PDT can open yet'}</span>
       {searchNote && <span className="w-full">{searchNote}</span>}
     </EmptyState>
   );
-  const keys = (
-    <p className="mr-auto flex items-center gap-1 text-meta text-muted-foreground">
-      <Kbd>↑</Kbd> <Kbd>↓</Kbd> move · <Kbd>Enter</Kbd> import · <Kbd>Esc</Kbd> close
-    </p>
-  );
+  // The keyboard hints, only where there is a keyboard (KeyHints hides on touch screens).
+  const keys = <KeyHints className="mr-auto" hints={[[['↑', '↓'], 'move'], [['Enter'], 'import'], [['Esc'], 'close']]} />;
   return (
-    <Dialog onClose={onClose} title="Import a document" description={description || undefined} size="md" footer={touch ? undefined : keys}>
+    <Dialog onClose={onClose} title="Import a document" description={description || undefined} size="md" footer={keys}>
       <div className="flex flex-col gap-3" {...(hasLocal ? fileDrop.dropProps : {})}>
         {searchers.length > 1 && chosen && (
           <SegmentedControl
@@ -407,7 +394,7 @@ export function LinkDocumentDialog({ title, exclude, onPick, onClose }: {
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const q = useDebounced(query.trim());
+  const q = useDebounced(query.trim(), 250);
   // The best matches only: typing narrows them.
   const docs = useDocuments({ ...(q ? { q } : {}), limit: 50 + exclude.length }, { poll: false });
   const [error, setError] = useState<string | null>(null);

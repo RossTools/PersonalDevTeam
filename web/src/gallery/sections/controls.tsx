@@ -11,7 +11,7 @@ import { Checkbox } from '@ui/Checkbox';
 import { CheckboxPicks } from '@ui/CheckboxPicks';
 import { Switch } from '@ui/Switch';
 import { SegmentedControl } from '@ui/SegmentedControl';
-import { Kbd } from '@ui/Kbd';
+import { Kbd, KeyHints } from '@ui/Kbd';
 import { Link } from '@ui/Link';
 import { Spinner } from '@ui/Spinner';
 import { Skeleton } from '@ui/Skeleton';
@@ -260,6 +260,9 @@ function render() {
         <span className="text-xs text-muted-foreground">
           then <Kbd>t</Kbd> new tab
         </span>
+      </Row>
+      <Row label="KeyHints (a dialog footer's or composer's keys; hidden on touch)">
+        <KeyHints hints={[[['↑', '↓'], 'move'], [['Enter'], 'import'], [['Esc'], 'close']]} />
       </Row>
       <Row label="Link">
         <Link onClick={() => {}}>Open settings</Link>

@@ -71,7 +71,7 @@
   `ListRow`s, never raw buttons: `current` marks the one on screen (the accent fill and a bar on its left edge),
   `details` adds wrapping lines under the title. Anything that navigates (opens a page, a ticket, a session) is a
   `Link`; `tone="quiet"` for a name or key inside a line of text. An empty list in a section or card is
-  `EmptyState size="inline"` ("None yet."), the page-sized `EmptyState` for an empty view. A menu inside a popover's
+  `EmptyState size="inline"` ("None yet."; `tone="error"` when it is empty because something failed), the page-sized `EmptyState` for an empty view. A menu inside a popover's
   panel is a `MenuList` (the same entries as `MenuButton`'s; `checked` ticks the option in force, `detail` adds
   muted text), never a column of buttons. A card to pick is
   a `ChoiceCard` (`selection="current"` for the card of what's on screen), one of a few options in a form a

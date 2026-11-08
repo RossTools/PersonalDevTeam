@@ -1,11 +1,10 @@
-import { isRecord, nonBlank } from '../common/guards';
+import { isRecord, nonBlank, strings } from '../common/guards';
+import { capitalize, listText } from '../common/text';
 import { isTicketKey } from '../tickets/model';
 import type { DecideChoice } from '../api/gen/DecideChoice';
 import type { DecideRow } from '../api/gen/DecideRow';
 // PDT's own tools in a conversation (PDT-382): which calls show as cards instead of folding into "Used N tools", and
 // what each card reads from the call's input and result.
-
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 /** A pdt-mcp tool's own name: Claude's (and ACP agents') `mcp__pdt__create_ticket`, Codex's `mcp:pdt/create_ticket`. */
 export function pdtTool(tool: string): string | null {
@@ -190,7 +189,7 @@ export function watchEventsText(events: string[]): string {
   const given = events.length ? events : ['finished', 'failed', 'needs_you'];
   const own = given.filter((e) => !(e in ofOthers)).map((e) => ofIt[e] ?? e);
   const list = [...own.map((w, i) => (i === 0 ? `it ${w}` : w)), ...given.filter((e) => e in ofOthers).map((e) => ofOthers[e])];
-  return list.length > 1 ? `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}` : list[0];
+  return listText(list, 'or');
 }
 
 /** A `stop_ticket` call: the ticket and, once it ran, where it went and what stopped. */
@@ -317,8 +316,7 @@ export function editsText(edits: unknown): string | null {
   const list = Array.isArray(edits) ? edits.map(editText) : [];
   if (!list.length) return null;
   const shown = list.length > 3 ? [...list.slice(0, 2), `${list.length - 2} more`] : list;
-  const text = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0];
-  return text[0].toUpperCase() + text.slice(1);
+  return capitalize(listText(shown));
 }
 
 export function documentOf(tool: string, input: unknown, output?: string): DocumentView {

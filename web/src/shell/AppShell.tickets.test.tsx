@@ -94,7 +94,7 @@ describe('tickets', () => {
     renderWithQuery(<AppShell />);
     await screen.findByRole('tab', { name: /Claude A/ });
     await userEvent.click(screen.getByRole('button', { name: /^Inbox/ }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Open session' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Session' }));
     expect(await screen.findByText('that session, run, ticket or worktree does not exist')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Inbox/ })).toHaveAttribute('aria-current', 'page');
   });

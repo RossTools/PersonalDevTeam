@@ -81,8 +81,6 @@ export interface InboxQuestion {
   why: string | null;
 }
 
-const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
-
 /** A question's title that is more than the one line `ask_user` now takes: the header clamps it. */
 export function longTitle(item: InboxItem): boolean {
   return item.kind === 'question' && (item.title.length > 120 || item.title.includes('\n'));
@@ -99,10 +97,10 @@ export function questionsOf(item: InboxItem): InboxQuestion[] {
       if (typeof c === 'string') return [{ label: c, description: null }];
       if (typeof c !== 'object' || c === null) return [];
       const o = c as Record<string, unknown>;
-      return typeof o.label === 'string' ? [{ label: o.label, description: text(o.description) }] : [];
+      return typeof o.label === 'string' ? [{ label: o.label, description: nonBlank(o.description) }] : [];
     });
     const recommended = choices.some((c) => c.label === r.recommended) ? (r.recommended as string) : null;
-    return [{ question: r.question, context: text(r.context), choices, recommended, why: recommended ? text(r.why) : null }];
+    return [{ question: r.question, context: nonBlank(r.context), choices, recommended, why: recommended ? nonBlank(r.why) : null }];
   });
 }
 

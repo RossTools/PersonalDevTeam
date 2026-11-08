@@ -18,9 +18,11 @@ function context(i: InboxItem): string {
 
 /** An empty list's line: what it says when empty, or that `what` can't be loaded. */
 function EmptyLine({ failed, what, children }: { failed?: boolean; what: string; children: string }) {
-  return failed
-    ? <p role="alert" className="px-3 py-2 text-xs text-failed">Can't load {what}.</p>
-    : <EmptyState size="inline" className="px-3 py-2">{children}</EmptyState>;
+  return (
+    <EmptyState size="inline" tone={failed ? 'error' : 'muted'} className="px-3 py-2">
+      {failed ? `Can't load ${what}.` : children}
+    </EmptyState>
+  );
 }
 
 /**

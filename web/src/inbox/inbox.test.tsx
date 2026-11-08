@@ -211,7 +211,7 @@ describe('inbox', () => {
     // A query starts fetching as the render that mounts it commits: none asked by then is none asked.
     const runConfig = vi.spyOn(api, 'runConfig');
     renderWithQuery(<InboxView items={[pm]} selectedId="pm" onSelect={() => {}} />);
-    expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'PM session' })).toBeInTheDocument();
     expect(runConfig).not.toHaveBeenCalled();
   });
 
@@ -351,7 +351,7 @@ describe('inbox', () => {
     const calls = stubApi({ 'POST /api/inbox/to/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[timedOut]} selectedId="to" onSelect={() => {}} />);
     expect(screen.getByText(/Step code of workflow Pipeline ended without an outcome/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open session' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Coder session' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     const answers = () => calls.filter((c) => c.method === 'POST' && c.path === '/api/inbox/to/answer');
     await waitFor(() => expect(answers()[0]?.body).toEqual({ choice: 'stop' }));
@@ -814,7 +814,7 @@ describe('inbox', () => {
     stubApi({ 'GET /api/tickets/t1': ticket(1, { attempts: [attempt], sessions: [] }), 'GET /api/inbox': { items: [], total: 0 } });
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     renderWithQuery(<InboxView items={[blocked]} selectedId="b" onSelect={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Open PR' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'PR #12' }));
     expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/12', '_blank', 'noopener,noreferrer');
     expect(screen.getByRole('button', { name: /Merge again/ })).toBeInTheDocument();
     open.mockRestore();

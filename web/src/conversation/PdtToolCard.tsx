@@ -6,14 +6,14 @@ import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Inbox, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
 } from 'lucide-react';
-import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, Spinner, ToolCard } from '@ui';
+import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, EmptyState, Link, Spinner, ToolCard } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { DecideRow } from '../api/gen/DecideRow';
 import { DECISION_LABEL, decisionDetails } from '../common/DecideRows';
 import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
-import { plural } from '../common/text';
+import { capitalize, plural } from '../common/text';
 import { LabelChips } from '../common/LabelChips';
 import { priorityLabel } from '../common/PriorityIcon';
 import { StageBadge } from '../common/StageBadge';
@@ -95,7 +95,7 @@ function callState(call: PdtCall): { aside: ReactNode; error: string | null } | 
 }
 
 function Failure({ text }: { text: string | null }) {
-  return text ? <p className="py-2 text-xs break-words text-failed">{text}</p> : null;
+  return text ? <EmptyState size="inline" tone="error" className="py-2">{text}</EmptyState> : null;
 }
 
 function TicketRow({ t }: { t: CreatedTicket }) {
@@ -122,7 +122,7 @@ export function CreateTicketsCard({ calls }: { calls: PdtCall[] }) {
   const n = tickets.length;
   const heading = n === 0
     ? pending?.status === 'running' ? 'Creating a ticket…' : "Didn't create a ticket"
-    : `${proposals ? 'Proposed' : 'Created'} ${n === 1 ? 'a ticket' : `${n} tickets`}`;
+    : `${proposals ? 'Proposed' : 'Created'} ${plural(n, 'ticket')}`;
   return (
     <Card icon={<Plus />} label={heading} heading={heading} aside={state?.aside}>
       {tickets.map((t, i) => <TicketRow key={t.key ?? i} t={t} />)}
@@ -173,7 +173,7 @@ function EditTicketCard({ call }: { call: PdtCall }) {
   return (
     <Card icon={<Pencil />} label={`${verb} ${e.key}`} heading={<>{verb} <Key value={e.key} /></>} aside={state?.aside}>
       {e.changes.map((c) => <ChangeRow key={c.field} c={c} />)}
-      {e.files > 0 && <div className="py-2 text-xs text-muted-foreground">Attached {e.files === 1 ? 'a file' : `${e.files} files`}</div>}
+      {e.files > 0 && <div className="py-2 text-xs text-muted-foreground">Attached {plural(e.files, 'file')}</div>}
       {state?.error && <Failure text={state.error} />}
     </Card>
   );
@@ -248,9 +248,7 @@ function WorkflowRunCard({ call }: { call: PdtCall }) {
         <div className="flex items-center gap-2 py-2 text-xs">
           {r.error && <span className="min-w-0 flex-1 truncate text-failed" title={r.error}>{r.error}</span>}
           <span className="flex-1" />
-          <a href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`} className="relative touch-hit text-link underline-offset-2 hover:underline">
-            Open the run
-          </a>
+          <Link href={`/workflows/${encodeURIComponent(r.workflowId)}/runs/${encodeURIComponent(r.id)}`}>Open the run</Link>
         </div>
       )}
       {state?.error && <Failure text={state.error} />}
@@ -331,7 +329,7 @@ function StopTicketCard({ call }: { call: PdtCall }) {
     >
       {done && (stopped.length > 0 || t.branchNote) && (
         <div className="flex flex-col gap-0.5 py-2 text-xs text-muted-foreground">
-          {stopped.length > 0 && <span>{stopped.join(', ').replace(/^./, (c) => c.toUpperCase())}</span>}
+          {stopped.length > 0 && <span>{capitalize(stopped.join(', '))}</span>}
           {t.branchNote && <span>{t.branchNote}</span>}
         </div>
       )}
@@ -423,7 +421,7 @@ function DocumentCard({ call }: { call: PdtCall }) {
   const diff = name === 'doc_edit' && call.status === 'done' ? diffOf(call.output) : null;
   const stats = diff ? diffStats(diff) : null;
   const title = d.id && call.status === 'done'
-    ? <a href={routePath({ view: 'documents', doc: d.id })} className="relative touch-hit font-medium text-foreground underline-offset-2 hover:underline">{d.title}</a>
+    ? <Link href={routePath({ view: 'documents', doc: d.id })} tone="quiet" className="font-medium text-foreground">{d.title}</Link>
     : <span className="font-medium text-foreground">{d.title}</span>;
   const links = d.tickets.length + d.projects.length > 0;
   return (

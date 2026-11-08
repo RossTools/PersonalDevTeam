@@ -89,7 +89,8 @@ export function Dialog({
         {headerActions && <div className="flex min-w-0 flex-1 items-center gap-2">{headerActions}</div>}
       </DialogHeader>
       <div className="min-h-0 overflow-auto">{children}</div>
-      {footer && <DialogFooter>{footer}</DialogFooter>}
+      {/* A footer of key hints alone (KeyHints) goes with them on touch screens. */}
+      {footer && <DialogFooter className="pointer-coarse:has-[>[data-slot=key-hints]:only-child]:hidden">{footer}</DialogFooter>}
     </DialogPrimitive>
   );
   if (!trigger) return modal;
