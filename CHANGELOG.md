@@ -3,6 +3,32 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.6.3 (2026-11-08)
+
+### Changed
+
+- Approval cards now show what every one of PDT's asking tools would do: the issue, bug report, comment, document edit, issue link, command or file with secrets, in full, and a ticket's whole new description. A ticket named by id shows its key and title, and a call without a preview shows its arguments open, in the conversation and in the Inbox.
+- Ticket keys look the same everywhere, and in an Inbox item's header, the PM's batch of decisions and the document import dialog they open the ticket and show its card on hover. A ticket's stage and labels look the same in conversation cards, the Inbox and the hover card.
+- Links to the PDT website now show a preview picture when shared, each docs page has its own summary in search results, a missing page shows a proper "page not found" with links back, and the troubleshooting and contributing pages have shorter addresses (the old ones still work).
+- The docs now have a page on Todos, explain **Make ticket…** in a chat, list workflow steps by the groups **Add node** shows, and match the Updates troubleshooting to what the **Version** row says.
+- A workflow's Runs tab leaves out the runs that ended with "Nothing to do", so the runs that did something are easy to find. Turn on "Show “Nothing to do” runs" above the list to see them.
+
+### Fixed
+
+- When PDT itself fails (its database or the keychain) while importing or linking a Jira issue, signing in to Google or reading a Google document, it now says so in plain words instead of showing the database's or keychain's own text or blaming Jira or Google. A Google sign-in PDT can't read from the keychain no longer tells you to remove PDT's access in your Google account.
+- The reason you give when you deny an agent's call in the Inbox now reaches the agent, as it already did from the conversation.
+- Google sign-in is harder to misuse: going back to a PDT that isn't on this computer takes typing its address, signing an account in as a different Google account stops agents acting as the old one, and PDT no longer folds an OAuth client's other Google permissions into its own.
+- A PM on Codex, Devin or Bypass can move a ticket from outside PDT onto the board again where the project lets the PM act: it asks for your Allow instead of failing. An approval says when its call holds a secret's value, **Always allow in this session** now covers one project only, and an Allow given after the agent stopped waiting no longer runs a tool the agent has lost since.
+- An agent other than the PM can stop another ticket's work only when it names that ticket by its exact key, as for edits, and the ticket's timeline now says which agent stopped it instead of always naming the PM.
+- An image written as `//site/picture.png` in a ticket, document or conversation now waits for **Load image** like any other image from another site. A sheet exported as CSV puts a `'` before text that starts with `=`, `+`, `-` or `@`, so opening the file in Excel never runs it as a formula.
+- Updates are now downloaded only over https and unpacked into a private folder of their own, and release tags with unusual characters are ignored. Pull request comments, reviews and files are read page by page only from your forge's own address, so the sign-in token is never sent anywhere else.
+- Opening a ticket with linked issues no longer reloads every ticket list, and renaming, linking or removing a document no longer reads open documents again from Google Drive or another provider. A provider search is no longer repeated when the window regains focus.
+- The website's screenshots show the current app, including the Inbox's recommended answers, and the landing page now says to log in to Claude Code by running `claude` and typing `/login`, as the docs do.
+- A reset PM conversation now shows the PM's own introduction and "Ask the PM…" prompt, like a new one, instead of a generic agent prompt with PDT's data folder.
+- When PDT's host stops answering, sections that can't load and failed actions now say "Can't reach PDT: it isn't answering." instead of the browser's "Failed to fetch".
+- **Import a document → Local** now finds docs and sheets in subfolders of the documents folder too, and says what it lists: `.md` and `.xlsx` files, with a `.csv` dropped below to become a sheet.
+- The Inbox no longer asks for a run configuration on items without a branch to run, such as the PM's questions, which logged an error on every load.
+
 ## 0.6.2 (2026-11-04)
 
 ### Added

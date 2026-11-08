@@ -4,7 +4,7 @@ members = ["crates/*", "desktop/src-tauri"]
 default-members = ["crates/pdt-core", "crates/pdt-git", "crates/pdt-store", "crates/pdt-api", "crates/pdt-agents", "crates/pdtd", "crates/pdt-tailscale", "crates/pdt-forge", "crates/pdt-github", "crates/pdt-update", "crates/pdt-host", "crates/pdt-int-discord", "crates/pdt-int-jira", "crates/pdt-int-buildkite", "crates/pdt-int-arr", "crates/pdt-int-scryer", "crates/pdt-int-plex", "crates/pdt-int-gitlab", "crates/pdt-int-google", "crates/pdt-sheet"]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.6.3"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
