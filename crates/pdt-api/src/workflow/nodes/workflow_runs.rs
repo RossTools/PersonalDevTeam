@@ -3,7 +3,8 @@
 //! closes it by itself once a later attempt of the run passes; `github.workflow.rerun` re-runs a run's failed jobs.
 //! The template "Report failed workflow runs" puts them after the `github.workflow.failed` trigger.
 
-use super::release::{RepoOf, check_repo, repo_for_step};
+use super::forge_call::ci_call;
+use super::repo_of::{RepoOf, check_repo, repo_for_step};
 use crate::log_err::LogErr;
 use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, repo_missing, spec,
@@ -48,23 +49,14 @@ fn check_run_id(v: &Option<Value>) -> Result<(), String> {
     }
 }
 
-async fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, pdt_forge::ForgeError> + Send + 'static,
-) -> Result<T, String> {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|e| format!("the GitHub task failed: {e}"))?
-        .map_err(|e| format!("GitHub: {e}"))
-}
-
 /// The run as it stands now, through `actions`.
 async fn read_run(
     actions: &Arc<dyn pdt_forge::CiProvider>,
     repo: &str,
     id: &str,
 ) -> Result<Option<WorkflowRun>, String> {
-    let (a, r, i) = (actions.clone(), repo.to_string(), id.to_string());
-    blocking(move || a.workflow_run(&r, &i)).await
+    let (r, i) = (repo.to_string(), id.to_string());
+    ci_call(actions, move |a| a.workflow_run(&r, &i)).await
 }
 
 // ---- github.workflow.watch ----
@@ -138,14 +130,6 @@ fn started_by(event: &str) -> String {
         "" => "GitHub".into(),
         other => format!("`{other}`"),
     }
-}
-
-/// The failed jobs as a Markdown list (the workflow alone when it names none).
-fn job_list(run: &WorkflowRun, jobs: &[String]) -> String {
-    if jobs.is_empty() {
-        return format!("- {}", run.run.name);
-    }
-    jobs.iter().map(|j| format!("- {j}")).collect::<Vec<_>>().join("\n")
 }
 
 /// Text for inside a Markdown link's brackets: a run's title is its commit's or pull request's (outside input), and a
@@ -312,10 +296,11 @@ impl NodeKind for GithubWorkflowWatch {
                 let jobs = cx.step.output.get("failedJobs").and_then(Value::as_str).map(String::from);
                 return Ok(wait(&title, progress(jobs)));
             }
-            let (a, r, ci) = (actions.clone(), of.repo.clone(), run.run.clone());
+            let (r, ci) = (of.repo.clone(), run.run.clone());
             // Which jobs failed is only for the message: a failed lookup leaves them out.
-            let jobs = blocking(move || pdt_forge::ci::failed_job_names(a.as_ref(), &r, &ci)).await.unwrap_or_default();
-            let jobs = job_list(&run, &jobs);
+            let failed_jobs =
+                ci_call(&actions, move |a| pdt_forge::ci::failed_job_names(a, &r, &ci)).await.unwrap_or_default();
+            let jobs = pdt_core::pr::CiRun { failed_jobs, ..run.run.clone() }.failed_jobs_markdown();
             let text = item_text(&run, &jobs, can_rerun);
             let mut choice_list = vec![];
             if can_rerun {
@@ -421,8 +406,8 @@ impl NodeKind for GithubWorkflowRerun {
             let Some(run) = read_run(&actions, &of.repo, &id).await? else {
                 return Ok(Outcome::Next { port: "none".into(), output: json!({"runId": id, "quiet": true}) });
             };
-            let (a, r, ci, failed_only) = (actions.clone(), of.repo.clone(), run.run.clone(), !c.all_jobs);
-            blocking(move || a.retry(&r, &ci, failed_only)).await?;
+            let (r, ci, failed_only) = (of.repo.clone(), run.run.clone(), !c.all_jobs);
+            ci_call(&actions, move |a| a.retry(&r, &ci, failed_only)).await?;
             Ok(Outcome::next(
                 "out",
                 GithubWorkflowRerunOutput { run_id: run.run.id, attempt: run.run.attempt, url: run.run.url },
@@ -457,7 +442,8 @@ mod tests {
         let mut run =
             ci.workflow_run("77", 2, ".github/workflows/release.yml", "v1.2.0", "schedule", CiState::Failed, "t");
         run.title = "Release v1.2.0".into();
-        let jobs = job_list(&run, &["build (macos)".into(), "publish".into()]);
+        run.run.failed_jobs = vec!["build (macos)".into(), "publish".into()];
+        let jobs = run.run.failed_jobs_markdown();
         let text = item_text(&run, &jobs, true);
         for part in [
             "[Release v1.2.0](https://ci.example/github_actions/runs/77) (attempt 2)",
@@ -465,14 +451,13 @@ mod tests {
             "Branch: `v1.2.0`",
             "Started by its schedule",
             "Version: `v1.2.0`",
-            "- build (macos)\n- publish",
+            "- release: build (macos)\n- release: publish",
             "**Re-run failed jobs**",
             "goes away by itself",
         ] {
             assert!(text.contains(part), "{part:?} in {text}");
         }
         assert!(!item_text(&run, &jobs, false).contains("**Re-run failed jobs**"));
-        assert_eq!(job_list(&run, &[]), "- release");
         run.title = "Fix [ci] (again)\nmore".into();
         assert!(item_text(&run, &jobs, true).starts_with(r"[Fix \[ci\] (again) more](https://ci.example/"));
         assert_eq!(started_by("workflow_dispatch"), "hand (Run workflow)");

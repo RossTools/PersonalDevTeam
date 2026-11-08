@@ -311,7 +311,8 @@ query (`useAllWatches`) for the board's and backlog's eyes, the PM list's and th
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
 gates. The engine (pdt-api `workflow/engine/`) matches new events to enabled workflows, starts runs, and advances
-their steps; node kinds live in `workflow/nodes/` or in an integration's crate. While writes fail (a full disk), the
+their steps; node kinds live in `workflow/nodes/` (one kind per file, the forge and CI calls through
+`forge_call.rs`, whose errors name the forge) or in an integration's crate. While writes fail (a full disk), the
 engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
 works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
 runs, each once by its run key. Agent steps start a session with a

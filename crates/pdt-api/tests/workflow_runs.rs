@@ -182,7 +182,7 @@ async fn failed_scheduled_and_manual_runs_each_raise_one_item() {
         "[Release v1.2.0](https://ci.example/github_actions/runs/11)",
         "Started by its schedule",
         "Version: `v1.2.0`",
-        "- bundle (macos-latest)\n- publish",
+        "- release: bundle (macos-latest)\n- release: publish",
     ] {
         assert!(text.contains(part), "{part:?} in {text}");
     }

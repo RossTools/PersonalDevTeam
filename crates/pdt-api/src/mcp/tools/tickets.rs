@@ -169,250 +169,261 @@ pub(super) fn defs() -> Vec<Tool> {
 }
 
 pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
-    let st = cx.st;
     match name {
-        "create_ticket" => {
-            let a: CreateTicket = args(a)?;
-            let project = crate::pm::project_id(st, &a.project).await?;
-            confirmable(cx, name, &pdt_core::pm::AskTarget::Project(project.clone())).await?;
-            let parent = match a.parent.as_deref() {
-                Some(p) => Some(resolve_ticket(st, p, Some(&project)).await?),
-                None => None,
-            };
-            let pm = crate::pm::is_pm_session(st, cx.session).await;
-            // A session reading outside input makes external tickets, as Drafts only (PDT-201).
-            let triaging = crate::untrusted::triaging(st, cx.session).await;
-            let agentic = a.labels.iter().flatten().any(|l| l.trim().eq_ignore_ascii_case(AGENTIC_LABEL));
-            if triaging && (a.stage.is_some_and(|s| s != TicketStage::Draft) || agentic) {
-                return Err(format!(
-                    "this session triages input from outside PDT, so its tickets are Drafts without the \
-                     {AGENTIC_LABEL} label: the user decides when they go ahead. Leave out stage and that label."
-                ));
-            }
-            let source = match (triaging, pm) {
-                (true, _) => TicketSource::External,
-                (false, true) => TicketSource::Pm,
-                (false, false) => TicketSource::Agent,
-            };
-            let input = pdt_core::ticket::NewTicket {
-                title: a.title,
-                description: a.description,
-                stage: Some(a.stage.unwrap_or(pdt_core::ticket::TicketStage::Draft)),
-                priority: a.priority,
-                labels: a.labels,
-                areas: checked_areas(st, &project, a.areas).await?,
-                before: None,
-                after: None,
-                parent,
-                blocked_by_previous: None,
-            };
-            let mut valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
-            // An agent's ticket waits for the user as a proposal (PDT-366).
-            let proposed = pdt_core::ticket_proposal::proposes(source, false)
-                && crate::workflow::nodes::ticket_proposal::proposals_on(st).await;
-            if proposed {
-                pdt_core::ticket_proposal::hold(&mut valid);
-            }
-            let reason = a.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
-            let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
-            // Every issue is read before the ticket is made: one that can't be stops it.
-            let external = super::issue_links::recognize_all(st, &project, &a.external).await?;
-            let id = uuid::Uuid::now_v7().to_string();
-            let by_agent = agent_by(st, cx.session).await;
-            let t = st
-                .store
-                .create_ticket_made(
-                    &id,
-                    &project,
-                    &valid,
-                    by_agent.clone(),
-                    pdt_store::Made { reason, proposal: proposed, ..Default::default() },
-                    now_ms(),
-                )
-                .await
-                .map_err(|e| api(e.into()))?;
-            let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;
-            // The ticket is made: a link that fails now (another ticket took the issue meanwhile) is reported.
-            let mut not_linked = vec![];
-            for f in &external {
-                if let Err(e) = super::issue_links::link(st, &id, f, None, by_agent.clone()).await {
-                    not_linked.push(e);
-                }
-            }
-            let by = actor_name(cx, pm);
-            // `created` lets the session edit it later as its own (PDT-162).
-            let note = match reason {
-                Some(r) => format!("Created by {by}. Why: {r}"),
-                None => format!("Created by {by}."),
-            };
-            record_agent_note(cx, &t.summary.id, &note, json!({"created": true})).await;
-            if triaging {
-                crate::untrusted::record_triage(st, cx.session, &t.summary.id).await;
-            }
-            let mut out = json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
-                                 "attachments": crate::ticket_attachments::attached_json(st, &attached)});
-            if !external.is_empty() {
-                let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
-                out["issues"] = json!(t.summary.external.iter().map(|l| &l.key).collect::<Vec<_>>());
-                out["links"] = json!(t.web_links.iter().map(|l| &l.url).collect::<Vec<_>>());
-                if !not_linked.is_empty() {
-                    out["notLinked"] = json!(not_linked);
-                }
-            }
-            if proposed {
-                out["proposal"] = json!(true);
-                out["note"] = json!(pdt_core::ticket_proposal::created_note(&t.summary.key));
-            }
-            Ok(out)
-        }
-        "edit_ticket" => {
-            let raw = a.clone();
-            let a: EditTicket = args(a)?;
-            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
-            let current = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
-            let pm = crate::pm::is_pm_session(st, cx.session).await;
-            if !pm {
-                let rewrites = a.title.as_deref().is_some_and(|t| t.trim() != current.summary.title)
-                    || a.description.as_deref().is_some_and(|d| d.trim() != current.description.trim());
-                let edit = pdt_core::ticket::AgentEdit {
-                    given: &a.ticket,
-                    key: &current.summary.key,
-                    stage: current.summary.stage,
-                    own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
-                    created: st.store.created_by_session(&id, &cx.session.id).await.map_err(store)?,
-                    rewrites,
-                };
-                pdt_core::ticket::agent_may_edit(&edit)?;
-            }
-            confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
-            let project = Some(current.summary.project_id.clone());
-            let parent = match a.parent.as_deref().map(str::trim) {
-                Some("") => Some(String::new()),
-                Some(p) => Some(resolve_ticket(st, p, project.as_deref()).await?),
-                None => None,
-            };
-            let patch = pdt_core::ticket::TicketPatch {
-                title: a.title,
-                description: a.description,
-                stage: a.stage,
-                priority: a.priority,
-                labels: a.labels,
-                areas: checked_areas(st, &current.summary.project_id, a.areas).await?,
-                parent,
-                ..Default::default()
-            };
-            let valid = patch.validate().map_err(|e| api(e.into()))?;
-            let unchanged = valid == Default::default();
-            if unchanged && a.files.is_empty() {
-                return Err("give at least one field to change, or files to attach".into());
-            }
-            let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
-            if unchanged {
-                let by = agent_by(st, cx.session).await;
-                let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
-                return Ok(json!({"updated": true, "key": current.summary.key, "title": current.summary.title,
-                                 "attachments": crate::ticket_attachments::attached_json(st, &attached)}));
-            }
-            let since = now_ms();
-            let mut by = agent_by(st, cx.session).await;
-            // Letting an external ticket in (PDT-201): only the PM, with the user's yes to this very call (PDT always
-            // asks it, even where the project lets the PM act). Anyone else is refused by the store.
-            if pm && crate::untrusted::lets_in(&current.summary, &valid) {
-                by.confirmed = cx.confirmed || st.grants.take(&cx.session.id, name, &raw);
-            }
-            let t = st
-                .store
-                .patch_ticket_by(&id, &valid, &by, since)
-                .await
-                .map_err(|e| api(e.into()))?
-                .ok_or("that ticket no longer exists")?;
-            match valid.stage {
-                Some(stage) if stage.is_closed() => {
-                    crate::start::close_attempt(st, &id, stage, since, &by, None).await.map_err(api)?;
-                }
-                // Back before work: the ticket's work stops (PDT-159).
-                Some(stage) => crate::stop::after_move(st, &id, stage, since, &by).await,
-                None => {}
-            }
-            let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
-            let changes = changes(&current, &t);
-            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
-                      "parent": t.summary.parent.map(|p| p.key), "changes": changes,
-                      "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
-        }
-        "link_tickets" | "unlink_tickets" => {
-            let a: LinkTickets = args(a)?;
-            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
-            let project = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.project_id);
-            let other = resolve_ticket(st, &a.other, project.as_deref()).await?;
-            confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
-            let (from, to, kind) = match a.kind {
-                LinkAs::Blocks => (&id, &other, pdt_core::ticket::LinkKind::Blocks),
-                LinkAs::BlockedBy => (&other, &id, pdt_core::ticket::LinkKind::Blocks),
-                LinkAs::Relates => (&id, &other, pdt_core::ticket::LinkKind::Relates),
-            };
-            let linked = name == "link_tickets";
-            let by = agent_by(st, cx.session).await;
-            let done = match linked {
-                true => st.store.add_link_by(from, to, kind, by, now_ms()).await,
-                false => st.store.remove_link_by(from, to, kind, by, now_ms()).await,
-            };
-            done.map_err(|e| match e {
-                pdt_store::TicketError::NotFound("link") => "there is no such link between them".to_string(),
-                e => api(e.into()),
-            })?
-            .ok_or("that ticket no longer exists")?;
-            let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
-            let links: Vec<Value> = t
-                .links
-                .iter()
-                .map(|l| {
-                    let kind = match (l.kind, l.direction) {
-                        (pdt_core::ticket::LinkKind::Relates, _) => "relates",
-                        (_, pdt_core::ticket::LinkDirection::Outgoing) => "blocks",
-                        (_, pdt_core::ticket::LinkDirection::Incoming) => "blockedBy",
-                    };
-                    json!({"kind": kind, "key": l.key, "title": l.title, "stage": l.stage})
-                })
-                .collect();
-            Ok(json!({if linked { "linked" } else { "unlinked" }: true, "key": t.summary.key, "links": links}))
-        }
-        "stop_ticket" => {
-            let a: StopTicket = args(a)?;
-            let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
-            let pm = crate::pm::is_pm_session(st, cx.session).await;
-            // Anyone but the PM stops its own ticket, or another only by its exact key, as `edit_ticket` (PDT-540).
-            if !pm {
-                let current =
-                    st.store.get_ticket_summary(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
-                pdt_core::ticket::agent_may_edit(&pdt_core::ticket::AgentEdit {
-                    given: &a.ticket,
-                    key: &current.key,
-                    stage: current.stage,
-                    own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
-                    created: false,
-                    rewrites: false,
-                })?;
-            }
-            confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
-            let req = crate::stop::StopRequest {
-                stage: a.stage,
-                remove_worktree: a.remove_worktree,
-                delete_branch: a.delete_branch,
-            };
-            let by = agent_by(st, cx.session).await;
-            let task = tokio::spawn({
-                let (st, id) = (st.clone(), id.clone());
-                async move { crate::stop::stop_ticket(&st, &id, &req, by).await }
-            });
-            let r = task.await.map_err(|e| e.to_string())?.map_err(api)?;
-            record_agent_change(cx, &id, &format!("Work stopped by {}.", actor_name(cx, pm))).await;
-            Ok(json!({"stopped": true, "key": r.key, "stage": r.stage, "abandonedAttempt": r.abandoned,
-                      "runsCancelled": r.runs_cancelled, "sessionsStopped": r.sessions_stopped,
-                      "worktreeRemoved": r.worktree_removed, "branchNote": r.branch_note}))
-        }
+        "create_ticket" => create_ticket(cx, name, a).await,
+        "edit_ticket" => edit_ticket(cx, name, a).await,
+        "link_tickets" | "unlink_tickets" => link_tickets(cx, name, a).await,
+        "stop_ticket" => stop_ticket(cx, name, a).await,
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+/// Creates a ticket, as a proposal when the project holds agents' tickets for the user.
+async fn create_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
+    let st = cx.st;
+    let a: CreateTicket = args(a)?;
+    let project = crate::pm::project_id(st, &a.project).await?;
+    confirmable(cx, name, &pdt_core::pm::AskTarget::Project(project.clone())).await?;
+    let parent = match a.parent.as_deref() {
+        Some(p) => Some(resolve_ticket(st, p, Some(&project)).await?),
+        None => None,
+    };
+    let pm = crate::pm::is_pm_session(st, cx.session).await;
+    // A session reading outside input makes external tickets, as Drafts only (PDT-201).
+    let triaging = crate::untrusted::triaging(st, cx.session).await;
+    let agentic = a.labels.iter().flatten().any(|l| l.trim().eq_ignore_ascii_case(AGENTIC_LABEL));
+    if triaging && (a.stage.is_some_and(|s| s != TicketStage::Draft) || agentic) {
+        return Err(format!(
+            "this session triages input from outside PDT, so its tickets are Drafts without the \
+             {AGENTIC_LABEL} label: the user decides when they go ahead. Leave out stage and that label."
+        ));
+    }
+    let source = match (triaging, pm) {
+        (true, _) => TicketSource::External,
+        (false, true) => TicketSource::Pm,
+        (false, false) => TicketSource::Agent,
+    };
+    let input = pdt_core::ticket::NewTicket {
+        title: a.title,
+        description: a.description,
+        stage: Some(a.stage.unwrap_or(pdt_core::ticket::TicketStage::Draft)),
+        priority: a.priority,
+        labels: a.labels,
+        areas: checked_areas(st, &project, a.areas).await?,
+        before: None,
+        after: None,
+        parent,
+        blocked_by_previous: None,
+    };
+    let mut valid = pdt_core::ticket::ValidNewTicket { source, ..input.validate().map_err(|e| api(e.into()))? };
+    // An agent's ticket waits for the user as a proposal (PDT-366).
+    let proposed = pdt_core::ticket_proposal::proposes(source, false)
+        && crate::workflow::nodes::ticket_proposal::proposals_on(st).await;
+    if proposed {
+        pdt_core::ticket_proposal::hold(&mut valid);
+    }
+    let reason = a.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+    let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
+    // Every issue is read before the ticket is made: one that can't be stops it.
+    let external = super::issue_links::recognize_all(st, &project, &a.external).await?;
+    let id = uuid::Uuid::now_v7().to_string();
+    let by_agent = agent_by(st, cx.session).await;
+    let t = st
+        .store
+        .create_ticket_made(
+            &id,
+            &project,
+            &valid,
+            by_agent.clone(),
+            pdt_store::Made { reason, proposal: proposed, ..Default::default() },
+            now_ms(),
+        )
+        .await
+        .map_err(|e| api(e.into()))?;
+    let attached = crate::ticket_attachments::attach_read(st, &id, read, &by_agent).await?;
+    // The ticket is made: a link that fails now (another ticket took the issue meanwhile) is reported.
+    let mut not_linked = vec![];
+    for f in &external {
+        if let Err(e) = super::issue_links::link(st, &id, f, None, by_agent.clone()).await {
+            not_linked.push(e);
+        }
+    }
+    let by = actor_name(cx, pm);
+    // `created` lets the session edit it later as its own (PDT-162).
+    let note = match reason {
+        Some(r) => format!("Created by {by}. Why: {r}"),
+        None => format!("Created by {by}."),
+    };
+    record_agent_note(cx, &t.summary.id, &note, json!({"created": true})).await;
+    if triaging {
+        crate::untrusted::record_triage(st, cx.session, &t.summary.id).await;
+    }
+    let mut out = json!({"created": true, "key": t.summary.key, "id": t.summary.id, "stage": t.summary.stage,
+                         "attachments": crate::ticket_attachments::attached_json(st, &attached)});
+    if !external.is_empty() {
+        let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+        out["issues"] = json!(t.summary.external.iter().map(|l| &l.key).collect::<Vec<_>>());
+        out["links"] = json!(t.web_links.iter().map(|l| &l.url).collect::<Vec<_>>());
+        if !not_linked.is_empty() {
+            out["notLinked"] = json!(not_linked);
+        }
+    }
+    if proposed {
+        out["proposal"] = json!(true);
+        out["note"] = json!(pdt_core::ticket_proposal::created_note(&t.summary.key));
+    }
+    Ok(out)
+}
+
+/// Edits a ticket: its fields, its parent, files to attach.
+async fn edit_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
+    let st = cx.st;
+    let raw = a.clone();
+    let a: EditTicket = args(a)?;
+    let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+    let current = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+    let pm = crate::pm::is_pm_session(st, cx.session).await;
+    if !pm {
+        let rewrites = a.title.as_deref().is_some_and(|t| t.trim() != current.summary.title)
+            || a.description.as_deref().is_some_and(|d| d.trim() != current.description.trim());
+        let edit = pdt_core::ticket::AgentEdit {
+            given: &a.ticket,
+            key: &current.summary.key,
+            stage: current.summary.stage,
+            own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
+            created: st.store.created_by_session(&id, &cx.session.id).await.map_err(store)?,
+            rewrites,
+        };
+        pdt_core::ticket::agent_may_edit(&edit)?;
+    }
+    confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
+    let project = Some(current.summary.project_id.clone());
+    let parent = match a.parent.as_deref().map(str::trim) {
+        Some("") => Some(String::new()),
+        Some(p) => Some(resolve_ticket(st, p, project.as_deref()).await?),
+        None => None,
+    };
+    let patch = pdt_core::ticket::TicketPatch {
+        title: a.title,
+        description: a.description,
+        stage: a.stage,
+        priority: a.priority,
+        labels: a.labels,
+        areas: checked_areas(st, &current.summary.project_id, a.areas).await?,
+        parent,
+        ..Default::default()
+    };
+    let valid = patch.validate().map_err(|e| api(e.into()))?;
+    let unchanged = valid == Default::default();
+    if unchanged && a.files.is_empty() {
+        return Err("give at least one field to change, or files to attach".into());
+    }
+    let read = crate::ticket_attachments::read_files(st, cx.session, &a.files).await?;
+    if unchanged {
+        let by = agent_by(st, cx.session).await;
+        let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
+        return Ok(json!({"updated": true, "key": current.summary.key, "title": current.summary.title,
+                         "attachments": crate::ticket_attachments::attached_json(st, &attached)}));
+    }
+    let since = now_ms();
+    let mut by = agent_by(st, cx.session).await;
+    // Letting an external ticket in (PDT-201): only the PM, with the user's yes to this very call (PDT always
+    // asks it, even where the project lets the PM act). Anyone else is refused by the store.
+    if pm && crate::untrusted::lets_in(&current.summary, &valid) {
+        by.confirmed = cx.confirmed || st.grants.take(&cx.session.id, name, &raw);
+    }
+    let t = st
+        .store
+        .patch_ticket_by(&id, &valid, &by, since)
+        .await
+        .map_err(|e| api(e.into()))?
+        .ok_or("that ticket no longer exists")?;
+    match valid.stage {
+        Some(stage) if stage.is_closed() => {
+            crate::start::close_attempt(st, &id, stage, since, &by, None).await.map_err(api)?;
+        }
+        // Back before work: the ticket's work stops (PDT-159).
+        Some(stage) => crate::stop::after_move(st, &id, stage, since, &by).await,
+        None => {}
+    }
+    let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
+    let changes = changes(&current, &t);
+    Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
+              "parent": t.summary.parent.map(|p| p.key), "changes": changes,
+              "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
+}
+
+/// Links two tickets, or (`unlink_tickets`) removes the link.
+async fn link_tickets(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
+    let st = cx.st;
+    let a: LinkTickets = args(a)?;
+    let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+    let project = st.store.get_ticket(&id).await.map_err(store)?.map(|t| t.summary.project_id);
+    let other = resolve_ticket(st, &a.other, project.as_deref()).await?;
+    confirmable(cx, name, &pdt_core::pm::AskTarget::Ticket(id.clone())).await?;
+    let (from, to, kind) = match a.kind {
+        LinkAs::Blocks => (&id, &other, pdt_core::ticket::LinkKind::Blocks),
+        LinkAs::BlockedBy => (&other, &id, pdt_core::ticket::LinkKind::Blocks),
+        LinkAs::Relates => (&id, &other, pdt_core::ticket::LinkKind::Relates),
+    };
+    let linked = name == "link_tickets";
+    let by = agent_by(st, cx.session).await;
+    let done = match linked {
+        true => st.store.add_link_by(from, to, kind, by, now_ms()).await,
+        false => st.store.remove_link_by(from, to, kind, by, now_ms()).await,
+    };
+    done.map_err(|e| match e {
+        pdt_store::TicketError::NotFound("link") => "there is no such link between them".to_string(),
+        e => api(e.into()),
+    })?
+    .ok_or("that ticket no longer exists")?;
+    let t = st.store.get_ticket(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+    let links: Vec<Value> = t
+        .links
+        .iter()
+        .map(|l| {
+            let kind = match (l.kind, l.direction) {
+                (pdt_core::ticket::LinkKind::Relates, _) => "relates",
+                (_, pdt_core::ticket::LinkDirection::Outgoing) => "blocks",
+                (_, pdt_core::ticket::LinkDirection::Incoming) => "blockedBy",
+            };
+            json!({"kind": kind, "key": l.key, "title": l.title, "stage": l.stage})
+        })
+        .collect();
+    Ok(json!({if linked { "linked" } else { "unlinked" }: true, "key": t.summary.key, "links": links}))
+}
+
+/// Stops a ticket's work.
+async fn stop_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
+    let st = cx.st;
+    let a: StopTicket = args(a)?;
+    let id = resolve_ticket(st, &a.ticket, Some(&cx.session.project_id)).await?;
+    let pm = crate::pm::is_pm_session(st, cx.session).await;
+    // Anyone but the PM stops its own ticket, or another only by its exact key, as `edit_ticket` (PDT-540).
+    if !pm {
+        let current = st.store.get_ticket_summary(&id).await.map_err(store)?.ok_or("that ticket no longer exists")?;
+        pdt_core::ticket::agent_may_edit(&pdt_core::ticket::AgentEdit {
+            given: &a.ticket,
+            key: &current.key,
+            stage: current.stage,
+            own: session_ticket(st, cx.session).await.as_deref() == Some(id.as_str()),
+            created: false,
+            rewrites: false,
+        })?;
+    }
+    confirmable(cx, name, &AskTarget::Ticket(id.clone())).await?;
+    let req =
+        crate::stop::StopRequest { stage: a.stage, remove_worktree: a.remove_worktree, delete_branch: a.delete_branch };
+    let by = agent_by(st, cx.session).await;
+    let task = tokio::spawn({
+        let (st, id) = (st.clone(), id.clone());
+        async move { crate::stop::stop_ticket(&st, &id, &req, by).await }
+    });
+    let r = task.await.map_err(|e| e.to_string())?.map_err(api)?;
+    record_agent_change(cx, &id, &format!("Work stopped by {}.", actor_name(cx, pm))).await;
+    Ok(json!({"stopped": true, "key": r.key, "stage": r.stage, "abandonedAttempt": r.abandoned,
+              "runsCancelled": r.runs_cancelled, "sessionsStopped": r.sessions_stopped,
+              "worktreeRemoved": r.worktree_removed, "branchNote": r.branch_note}))
 }
 
 /// What an edit changed, field by field, for the conversation's card (`from` → `to`; a description only says it

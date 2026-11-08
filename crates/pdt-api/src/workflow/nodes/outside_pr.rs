@@ -25,10 +25,7 @@ async fn gh<T: Send + 'static>(
     f: impl FnOnce(&dyn Forge) -> Result<T, ForgeError> + Send + 'static,
 ) -> Result<T, String> {
     let api: Arc<dyn Forge> = crate::forge::forge_for(cx.st, &ForgeKind::GITHUB, cx.run.project_id.as_deref()).await?;
-    tokio::task::spawn_blocking(move || f(api.as_ref()))
-        .await
-        .map_err(|e| format!("the GitHub task failed: {e}"))?
-        .map_err(|e| format!("GitHub: {e}"))
+    super::forge_call::forge_call(&api, f).await
 }
 
 fn templated(s: &str) -> bool {

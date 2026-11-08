@@ -471,7 +471,7 @@ pub struct BriefNote {
 /// A ticket in flight in words: its branch, PR, CI, merge queue and who has it ("branch `x`; PR #4 open, CI
 /// failed; Coder working").
 pub fn ticket_state(t: &crate::ticket::TicketSummary) -> String {
-    use crate::pr::{CiState, Mergeable, PrState};
+    use crate::pr::{Mergeable, PrState};
     use crate::ticket::TicketAgentState;
     let mut parts: Vec<String> = vec![];
     match (&t.attempt, &t.parts) {
@@ -492,14 +492,7 @@ pub fn ticket_state(t: &crate::ticket::TicketSummary) -> String {
         };
         let mut p = format!("PR #{} {state}", pr.number);
         if let Some(ci) = &pr.ci {
-            let c = match ci.state {
-                CiState::Passed => "passed",
-                CiState::Failed => "failed",
-                CiState::Running => "running",
-                CiState::Queued => "queued",
-                CiState::Cancelled => "cancelled",
-            };
-            p.push_str(&format!(", CI {c}"));
+            p.push_str(&format!(", CI {}", ci.state.name()));
         }
         if pr.mergeable == Mergeable::Conflicting {
             p.push_str(", conflicts with its base");
