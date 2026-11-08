@@ -189,6 +189,8 @@ jobs:
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
       - run: scripts/check-action-pins.sh
+      - run: scripts/check-labels.test.sh
+      - run: scripts/check-labels.sh
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}

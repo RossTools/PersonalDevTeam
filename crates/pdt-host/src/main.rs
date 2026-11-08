@@ -150,6 +150,9 @@ const REPLACE: &str = "--replace";
 /// install folder (`<data dir>/app` when none is given) and registers that.
 const APPIMAGE: &str = "--appimage";
 
+/// Passed by the install script, which asks about lingering itself (Linux).
+const NO_LINGER_HINT: &str = "--no-linger-hint";
+
 /// Registers pdt-host to start at login (Windows: a copy in the data folder; macOS: the bundle's; Linux: the install
 /// folder's, as a systemd user service).
 fn install(args: &[String]) -> anyhow::Result<()> {
@@ -181,7 +184,7 @@ fn install(args: &[String]) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") && !args.iter().any(|a| a == NO_LINGER_HINT) {
         println!(
             "{} is registered as the systemd user service {}. To start it at boot without logging in, run: \
              loginctl enable-linger \"$USER\"",

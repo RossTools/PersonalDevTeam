@@ -1,0 +1,53 @@
+# The repository's GitHub labels: the one list of them, reviewed like code. Add, rename or remove a label here in
+# the same PR that starts or stops using it, then make GitHub match (docs/SDLC.md "Labels").
+# `scripts/check-labels.sh` checks that every label .github names is listed here; `--live` compares the list
+# with GitHub's (maintainers, needs `gh`). One `- name:` line per label, then its `color` and `description`.
+
+# Pull requests: what CI runs.
+- name: windows
+  color: 0078D4
+  description: Run the Windows checks on this PR
+- name: macos
+  color: 5319e7
+  description: Run the macOS checks on this PR (otherwise only in the merge queue)
+- name: no-changelog
+  color: ededed
+  description: Needs no changelog fragment (only docs, CI or tests change)
+- name: dependencies
+  color: 0366d6
+  description: Dependency updates (Dependabot)
+
+# Issues: triage.
+- name: from-pdt
+  color: ededed
+  description: Filed from the app with Report a bug
+- name: agentic
+  color: 5319e7
+  description: Agent can work it without a human approval gate
+- name: bug
+  color: d73a4a
+  description: Something isn't working
+- name: enhancement
+  color: a2eeef
+  description: New feature or request
+- name: documentation
+  color: 0075ca
+  description: Improvements or additions to documentation
+- name: duplicate
+  color: cfd3d7
+  description: This issue or pull request already exists
+- name: good first issue
+  color: 7057ff
+  description: Good for newcomers
+- name: help wanted
+  color: 008672
+  description: Extra attention is needed
+- name: invalid
+  color: e4e669
+  description: This doesn't seem right
+- name: question
+  color: d876e3
+  description: Further information is requested
+- name: wontfix
+  color: ffffff
+  description: This will not be worked on
