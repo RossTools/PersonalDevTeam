@@ -4,8 +4,7 @@ import {
   CircleAlert, CircleCheck, CircleHelp, CircleX, Clock, FileCheck, FilePlus, GitBranch, Hand, HardDrive, KeyRound, LogIn, MessageSquare,
   Plug, RotateCw, ShieldQuestion, SquareTerminal, type LucideProps,
 } from 'lucide-react';
-import { Badge, type BadgeTone } from '@ui';
-import { cn } from '@ui/lib/utils';
+import { Badge, IconTile, type BadgeTone } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxKind } from '../api/gen/InboxKind';
 import { itemLabel, shownKind } from './model';
@@ -41,20 +40,13 @@ function kindStyle(item: InboxItem): { icon: ComponentType<LucideProps>; tone: T
   return k;
 }
 
-const soft: Record<Tone, string> = {
-  accent: 'bg-accent text-link',
-  running: 'bg-running-soft text-running',
-  waiting: 'bg-waiting-soft text-waiting',
-  failed: 'bg-failed-soft text-failed',
-};
-
 /** The kind's icon in its colour, on a small square (a list row's leading icon). */
 export function KindIcon({ item, className }: { item: InboxItem; className?: string }) {
   const { icon: Icon, tone } = kindStyle(item);
   return (
-    <span aria-hidden className={cn('grid size-4.5 shrink-0 place-items-center rounded-sm', soft[tone], className)}>
-      <Icon className="size-3" />
-    </span>
+    <IconTile aria-hidden size="sm" tone={tone} className={className}>
+      <Icon />
+    </IconTile>
   );
 }
 
@@ -62,7 +54,7 @@ export function KindIcon({ item, className }: { item: InboxItem; className?: str
 export function KindChip({ item }: { item: InboxItem }) {
   const { icon: Icon, tone } = kindStyle(item);
   return (
-    <Badge tone={tone} className="rounded-full font-semibold">
+    <Badge tone={tone} pill>
       <Icon aria-hidden />
       {itemLabel(item)}
     </Badge>

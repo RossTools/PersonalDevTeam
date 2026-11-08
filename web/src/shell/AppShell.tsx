@@ -18,11 +18,8 @@ import { useFileFind } from '../palette/useFileFind';
 import { useMetaK } from '../palette/useMetaK';
 import { AddProjectDialog } from '../projects/AddProjectDialog';
 import type { AddProjectMode } from '../projects/AddProjectForm';
-import { SetupPage } from '../setup/SetupPage';
 import { choiceFor, newSession, type Choice } from '../sessions/newSession';
-import { ProjectPage } from '../projects/ProjectPage';
-import { FileViewer, FolderList, FolderTree, useFolderView, type FolderViewState } from '../files/FolderView';
-import { HostSettingsPage } from '../host/HostSettingsPage';
+import { useFolderView, type FolderViewState } from '../files/useFolderView';
 import { sectionLabel } from '../common/SettingsScreens';
 import { HOST_SECTION_LABELS, PROJECT_SECTION_LABELS } from '../common/settingsSections';
 import { SettingsNav } from './SettingsNav';
@@ -65,7 +62,7 @@ import { pmUnread, usePmSummary, type PmSelection } from '../pm/usePm';
 import { NotesList } from '../notes/NotesList';
 import { useNotesFilters } from '../notes/useNotes';
 import { DocumentsList, useDocumentsFilters } from '../documents/DocumentsList';
-import { ImportDocumentDialog, NewDocumentDialog } from '../documents/DocumentDialogs';
+import { ImportDocumentDialog, NewDocumentDialog } from '../documents/LazyDocumentDialogs';
 import type { Whose } from '../notes/model';
 import { useInbox } from '../inbox/useInbox';
 import { triageTitle } from '../inbox/model';
@@ -87,8 +84,9 @@ import { invalidateWorktrees, worktreesQuery } from '../common/worktrees';
 import { isWebUrl } from '../common/webUrl';
 import { PhoneTopBar, TopBarActionsContext, TopBarEditContext, type TopBarActions, type TopBarEdit } from './PhoneTopBar';
 import {
-  BottomPanel, ChangesView, CreateIssueDialog, DocumentPage, InboxView, NewTicketDialog, NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem,
-  PmView, RunView, ScreenSuspense, SessionView, StartDialog, TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
+  BottomPanel, ChangesView, CreateIssueDialog, DocumentPage, FileViewer, FolderList, FolderTree, HostSettingsPage, InboxView, NewTicketDialog,
+  NewWorkflowDialog, NoteScreen, PersonaPage, PhoneInboxItem, PmView, ProjectPage, RunView, ScreenSuspense, SessionView, SetupPage, StartDialog,
+  TicketView, TicketsView, WorkflowsView, WorkspaceMergedBanner,
 } from './screens';
 import { workspaceKeys } from '../workspaces/queries';
 import { invalidateSessions } from '../sessions/queries';
@@ -686,10 +684,10 @@ export function AppShell() {
       onOpen={(t) => { setWorkflowTarget(t); setSheetOpen(false); }}
       onNew={() => { setSheetOpen(false); setCreatingWorkflow({}); }} />
   ) : view === 'files' ? (
-    phone ? <FolderList state={folder} dir="" /> : (
+    phone ? <ScreenSuspense><FolderList state={folder} dir="" /></ScreenSuspense> : (
       <>
         <ListHeading>{label}</ListHeading>
-        <FolderTree state={folder} />
+        <ScreenSuspense><FolderTree state={folder} /></ScreenSuspense>
       </>
     )
   ) : (
@@ -960,13 +958,13 @@ export function AppShell() {
             <ViewScopeContext.Provider value={tabPanelOf ? tabScope(tabPanelOf) : `view:${view}`}>
             <ErrorBoundary resetKey={loc} onBack={() => go(viewRoute('inbox'))}>
             {setupShown ? (
-              <SetupPage
+              <ScreenSuspense><SetupPage
                 onAddProject={(mode) => { setAddMode(mode ?? 'path'); setAddingProject(true); }}
                 onBoard={() => go({ view: 'tickets', board: true, ticket: null })}
                 onPm={() => setView('pm')}
                 onHostSettings={(section) => go({ view: 'settings', page: { kind: 'host', section } })}
                 onDismissed={() => go(viewRoute(defaultView))}
-              />
+              /></ScreenSuspense>
             ) : phone && view === 'sessions' && !phoneList && overviewOpen ? (
               <TabOverview ws={ws} onClose={() => setOverviewOpen(false)} onRename={setRenamingTabId} />
             ) : phoneList && view === 'inbox' ? (
@@ -1027,15 +1025,15 @@ export function AppShell() {
             ) : view === 'workflows' ? (
               <ScreenSuspense><WorkflowsView target={workflowTarget} onOpen={setWorkflowTarget} projects={ws.projects} projectInView={currentProject?.id ?? null} creating={creatingWorkflow} onCreate={setCreatingWorkflow} /></ScreenSuspense>
             ) : view === 'files' ? (
-              phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} readOnly={phone} />
+              <ScreenSuspense>{phone && filesDir !== null ? <div className="flex-1 overflow-auto px-1"><FolderList state={folder} dir={filesDir} /></div> : <FileViewer state={folder} readOnly={phone} />}</ScreenSuspense>
             ) : view === 'settings' ? (
-              settingsPage.kind === 'project' ? (
+              <ScreenSuspense>{settingsPage.kind === 'project' ? (
                 settingsProject ? <ProjectPage key={settingsProject.id} project={settingsProject} onRemoved={() => (phone ? go(viewRoute('settings'), { replace: true }) : showProjectSettings(null))}
                   drill={phone} section={section} onSection={showSection}
                   onKeyChange={(key) => go({ view: 'settings', page: { kind: 'project', key, section } }, { replace: true })} />
                   : ws.projectsLoaded ? <EmptyState>No project has the key {settingsPage.key}.</EmptyState> : <Skeleton lines={8} className="p-4" />
               ) : settingsPage.kind === 'host' || settingsPage.kind === 'index' ? <HostSettingsPage drill={phone} section={section} onSection={showSection} />
-                : settingsPageScreen(settingsPage, settingsContext)
+                : settingsPageScreen(settingsPage, settingsContext)}</ScreenSuspense>
             ) : ws.tab?.ticketId ? (
               <ScreenSuspense><TicketView key={ws.tab.ticketId} ticketId={ws.tab.ticketId} mergedBanner={ws.tab.ticketId !== mergedTicketId} onDeleted={refreshWorkspaces} /></ScreenSuspense>
             ) : ws.tab?.worktreeId ? (

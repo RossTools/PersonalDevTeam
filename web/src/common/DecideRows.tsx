@@ -1,7 +1,7 @@
 // The PM's batch of Inbox decisions (PDT-475): one row per item with its ticket, the decision and why; the user
 // unticks the rows they don't want before Allow, in the Inbox or on the PM conversation's card (PDT-502).
 import { Fragment, useState, type ReactNode } from 'react';
-import { Checkbox, Chip } from '@ui';
+import { CheckTable, Chip, type CheckTableColumn } from '@ui';
 import type { DecideChoice } from '../api/gen/DecideChoice';
 import type { DecideRow } from '../api/gen/DecideRow';
 import { PRIORITY_LABEL } from './PriorityIcon';
@@ -26,6 +26,22 @@ function details(r: DecideRow): ReactNode[] {
   return out.map((d, n) => <Fragment key={n}>{n > 0 && ' · '}{d}</Fragment>);
 }
 
+const COLUMNS: CheckTableColumn<DecideRow>[] = [
+  { id: 'ticket', header: 'Ticket', cell: (r) => <><TicketPill ticketKey={r.ticketKey} /> {r.ticketTitle}</> },
+  {
+    id: 'decision',
+    header: 'Decision',
+    cell: (r) => (
+      <>
+        {DECISION_LABEL[r.decision]}
+        {details(r).length > 0 && <div className="text-xs text-muted-foreground">{details(r)}</div>}
+        {r.note && <div className="mt-1 text-xs sm:hidden">{r.note}</div>}
+      </>
+    ),
+  },
+  { id: 'note', header: 'Note', wide: true, cell: (r) => r.note ?? '' },
+];
+
 export function DecideRows({ rows, kept, onToggle, disabled }: {
   rows: DecideRow[];
   /** Whether row `n` is ticked. */
@@ -34,36 +50,8 @@ export function DecideRows({ rows, kept, onToggle, disabled }: {
   disabled?: boolean;
 }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-card">
-      <table className="w-full text-sm" aria-label="Decisions">
-        <thead>
-          <tr className="text-left text-xs text-muted-foreground">
-            <th className="w-8 px-3 py-2 font-medium"><span className="sr-only">Keep</span></th>
-            <th className="px-3 py-2 font-medium">Ticket</th>
-            <th className="px-3 py-2 font-medium">Decision</th>
-            <th className="px-3 py-2 font-medium max-sm:hidden">Note</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, n) => (
-            <tr key={r.itemId} className={kept(n) ? 'border-t border-border' : 'border-t border-border text-muted-foreground line-through'}>
-              <td className="px-3 py-2 align-top">
-                <Checkbox aria-label={`Keep ${r.ticketKey}`} className="justify-center pointer-coarse:min-w-control-touch" checked={kept(n)} disabled={disabled} onChange={(on) => onToggle(n, on)} />
-              </td>
-              <td className="px-3 py-2 align-top">
-                <TicketPill ticketKey={r.ticketKey} /> {r.ticketTitle}
-              </td>
-              <td className="px-3 py-2 align-top">
-                {DECISION_LABEL[r.decision]}
-                {details(r).length > 0 && <div className="text-xs text-muted-foreground">{details(r)}</div>}
-                {r.note && <div className="mt-1 text-xs sm:hidden">{r.note}</div>}
-              </td>
-              <td className="px-3 py-2 align-top max-sm:hidden">{r.note ?? ''}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <CheckTable aria-label="Decisions" rows={rows} rowKey={(r) => r.itemId} columns={COLUMNS} checked={kept} onCheck={onToggle}
+      checkLabel={(r) => `Keep ${r.ticketKey}`} disabled={disabled} />
   );
 }
 

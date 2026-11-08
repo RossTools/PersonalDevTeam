@@ -14,7 +14,7 @@ import { usePmOpenConversations } from '../pm/usePm';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
 import { useOpenSession } from '../common/open';
-import { LinkDocumentDialog } from './DocumentDialogs';
+import { LinkDocumentDialog } from './LazyDocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
 import { documentKeys, openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
 import { POLL } from '../common/poll';

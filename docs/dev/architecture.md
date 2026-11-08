@@ -41,7 +41,9 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   WebSockets for terminals and conversation events and an SSE stream for notifications. It reloads itself when pdtd
   reports a new build: a production build names its id in index.html's `web-build` meta, health's `webBuild` reports
   the same id, and the page asks again whenever it becomes visible (`useReloadOnNewBuild`). While a draft or a dialog
-  holds the reload back, a banner offers it.
+  holds the reload back, a banner offers it. The first paint loads only the shell: screens and dialogs most visits
+  never open load on first use (`web/src/shell/screens.tsx`, the `Lazy*` wrappers), and `pnpm --dir web build` fails
+  when the first paint's JavaScript grows past its gzip budget (`web/scripts/first-paint.mjs`).
 - **Agents** (Claude Code, Codex, Devin, ACP agents) are child processes of pdtd. They report activity through hooks
   (`pdtd hook …`, which posts to the pdtd that launched them) and call PDT through pdt-mcp.
 - **Remote access** is `tailscale serve` in front of pdtd (pdt-api `remote.rs`, `crates/pdt-tailscale`); requests from
@@ -650,7 +652,7 @@ own file, and the central list takes at most one line, so tickets built side by 
 | A built-in workflow | Its own module in pdt-api `workflow/builtins/` | Its `mod` line, its id constant and its line in `BUILTINS` (or the integration's list) in `builtins/mod.rs` |
 | A background loop | pdt-api `background.rs` (`start_background`) | |
 | A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
-| A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, and one entry in `web/src/shell/settingsPages.tsx` |
+| A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, its lazy line in `web/src/shell/screens.tsx`, and one entry in `web/src/shell/settingsPages.tsx` |
 
 **Web queries.** Each area keeps its query keys, shared queries and invalidation in one module: `<area>/queries.ts`
 (`projectKeys`/`useProjects`, `sessionKeys`/`sessionsQuery`, `runKeys`/`runsQuery`, `workspaceKeys`, `hostKeys`/
