@@ -5,10 +5,11 @@
 //! the thresholds.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::inbox::InboxItem;
 use pdt_core::project::{Project, ProjectKind};
@@ -565,7 +566,7 @@ async fn project_storage(st: &AppState, p: &Project) -> Result<ProjectStorage, A
 /// `GET /api/storage?project=`: every project's worktrees with their sizes as last measured, and the disks.
 pub(crate) async fn view(
     State(st): State<AppState>,
-    Query(q): Query<ProjectQuery>,
+    ApiQuery(q): ApiQuery<ProjectQuery>,
 ) -> Result<Json<StorageView>, ApiError> {
     let (low_disk_gb, critical_disk_gb) = thresholds(&st).await;
     let mut projects = vec![];
@@ -719,7 +720,7 @@ async fn remove(st: &AppState, id: &str, r: &mut CleanAllResult) -> Result<(), A
 /// `POST /api/storage/clean-finished?project=`: cleans the build output of every finished ticket's worktree.
 pub(crate) async fn clean_finished(
     State(st): State<AppState>,
-    Query(q): Query<ProjectQuery>,
+    ApiQuery(q): ApiQuery<ProjectQuery>,
 ) -> Result<Json<CleanAllResult>, ApiError> {
     let f = Finished { project: q.project, ..Default::default() };
     Ok(Json(clean_finished_now(&st, &f, now_ms()).await?))

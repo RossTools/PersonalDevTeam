@@ -3,10 +3,11 @@
 //! from the session's folder.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::AppState;
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::ImageFile;
@@ -122,7 +123,7 @@ pub(crate) struct FilesQuery {
 pub(crate) async fn files(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FilesQuery>,
+    ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<Json<Vec<String>>, ApiError> {
     let session = st.session(&id).await?;
     let cwd = PathBuf::from(&session.cwd);

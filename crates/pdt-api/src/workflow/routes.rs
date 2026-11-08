@@ -4,10 +4,11 @@
 use super::catalog::{KindSpec, PortSpec};
 use super::engine::{self, DryEvent, DryRun};
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::{ApiPath, ApiQuery};
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::workflow::api::{
     Author, Connection, LogEvent, Run, RunDetail, RunStatus, Scope, Source, VersionStatus, Workflow, WorkflowDetail,
@@ -76,7 +77,7 @@ pub(crate) struct ListQuery {
 
 pub(crate) async fn list(
     State(st): State<AppState>,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> Result<Json<Vec<Workflow>>, ApiError> {
     let reg = st.registry();
     let all = st.store.list_workflows(q.project.as_deref()).await?;
@@ -212,7 +213,7 @@ async fn proposal(st: &AppState, id: &str, v: u32) -> Result<WorkflowDoc, ApiErr
 /// `POST /api/workflows/{id}/versions/{v}/accept`: the proposal becomes the current version.
 pub(crate) async fn accept(
     State(st): State<AppState>,
-    Path((id, v)): Path<(String, u32)>,
+    ApiPath((id, v)): ApiPath<(String, u32)>,
 ) -> Result<Json<WorkflowDetail>, ApiError> {
     let doc = proposal(&st, &id, v).await?;
     checked(&st, &doc)?;
@@ -228,7 +229,7 @@ pub(crate) async fn accept(
 /// `POST /api/workflows/{id}/versions/{v}/discard`: sets the proposal aside.
 pub(crate) async fn discard(
     State(st): State<AppState>,
-    Path((id, v)): Path<(String, u32)>,
+    ApiPath((id, v)): ApiPath<(String, u32)>,
 ) -> Result<Json<WorkflowDetail>, ApiError> {
     proposal(&st, &id, v).await?;
     st.store.discard_workflow_version(&id, v).await?;
@@ -289,7 +290,7 @@ pub(crate) async fn versions(
 
 pub(crate) async fn version(
     State(st): State<AppState>,
-    Path((id, v)): Path<(String, u32)>,
+    ApiPath((id, v)): ApiPath<(String, u32)>,
 ) -> Result<Json<WorkflowVersion>, ApiError> {
     load(&st, &id).await?;
     let mut meta =
@@ -308,7 +309,7 @@ pub(crate) struct DiffQuery {
 pub(crate) async fn version_diff(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<DiffQuery>,
+    ApiQuery(q): ApiQuery<DiffQuery>,
 ) -> Result<Json<DocDiff>, ApiError> {
     let w = load(&st, &id).await?;
     let to = q.to.unwrap_or(w.version);
@@ -473,7 +474,7 @@ pub(crate) struct RunsQuery {
 
 pub(crate) async fn list_runs(
     State(st): State<AppState>,
-    Query(q): Query<RunsQuery>,
+    ApiQuery(q): ApiQuery<RunsQuery>,
 ) -> Result<Json<Vec<Run>>, ApiError> {
     let status = match q.status.as_deref() {
         Some(s) => Some(RunStatus::parse(s).ok_or_else(|| ApiError::invalid(format!("no run status is called {s}")))?),
@@ -570,7 +571,7 @@ pub(crate) struct EventsQuery {
 /// `GET /api/events`: newest first, or oldest first after `after` (to follow the log).
 pub(crate) async fn list_events(
     State(st): State<AppState>,
-    Query(q): Query<EventsQuery>,
+    ApiQuery(q): ApiQuery<EventsQuery>,
 ) -> Result<Json<Vec<LogEvent>>, ApiError> {
     let f = pdt_store::EventFilter {
         newest_first: q.after.is_none(),

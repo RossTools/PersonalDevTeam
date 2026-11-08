@@ -1,8 +1,9 @@
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::project::Project;
 use pdt_core::worktree::{NewWorktree, WORKTREES_DIR, Worktree, worktree_path};
@@ -130,7 +131,7 @@ pub(crate) struct RemoveQuery {
 pub(crate) async fn remove(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<RemoveQuery>,
+    ApiQuery(q): ApiQuery<RemoveQuery>,
 ) -> Result<StatusCode, ApiError> {
     remove_worktree(&st, &id, q.force, q.delete_branch).await?;
     Ok(StatusCode::NO_CONTENT)

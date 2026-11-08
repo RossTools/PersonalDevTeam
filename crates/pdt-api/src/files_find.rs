@@ -3,10 +3,11 @@
 //! so typing doesn't run `git ls-files` on every keystroke.
 
 use crate::error::ApiError;
+use crate::extract::ApiQuery;
 use crate::files::{FilesQuery, resolve};
 use crate::routes::AppState;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use pdt_core::conversation::composer::rank_paths;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -67,7 +68,7 @@ static LISTS: LazyLock<FileLists> = LazyLock::new(FileLists::default);
 pub(crate) async fn find(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FindQuery>,
+    ApiQuery(q): ApiQuery<FindQuery>,
 ) -> Result<Json<Vec<String>>, ApiError> {
     let fq = FilesQuery { worktree_id: q.worktree_id, path: String::new() };
     let (checkout, _, plain) = resolve(&st, &id, &fq).await?;

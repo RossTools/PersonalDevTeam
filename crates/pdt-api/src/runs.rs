@@ -48,7 +48,7 @@ pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, S
 pub(crate) async fn list(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    axum::extract::Query(q): axum::extract::Query<crate::sessions::RecentQuery>,
+    crate::extract::ApiQuery(q): crate::extract::ApiQuery<crate::sessions::RecentQuery>,
 ) -> Result<Json<Vec<Run>>, ApiError> {
     st.project(&id).await?;
     Ok(Json(match q.ended {
@@ -429,7 +429,7 @@ pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiEr
 pub(crate) async fn pty(
     State(st): State<AppState>,
     Path((id, step)): Path<(String, String)>,
-    axum::extract::Query(params): axum::extract::Query<crate::pty_ws::PtyParams>,
+    crate::extract::ApiQuery(params): crate::extract::ApiQuery<crate::pty_ws::PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     load(&st, &id).await?;
