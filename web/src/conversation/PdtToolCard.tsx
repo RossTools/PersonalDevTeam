@@ -1,12 +1,12 @@
 // PDT's own tool calls in a conversation as cards (PDT-382): what the agent created, changed, linked, sent, ran or
 // watched, instead of a folded "Used N tools" line.
-import { useContext, useEffect, useRef, type ReactNode, type Ref } from 'react';
+import { useContext, useEffect, useRef, type ComponentProps, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
 } from 'lucide-react';
-import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, EmptyState, Link, Spinner } from '@ui';
+import { Badge, Button, Chip, Disclosure, DiffStat, diffStats, EmptyState, Link, Spinner, ToolCard } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { focusLost } from '../common/focusLost';
@@ -75,34 +75,9 @@ export function TicketPills({ keys }: { keys: string[] }) {
   );
 }
 
-/** The frame every card shares: an icon and a heading, something on the right, then its rows. */
-function Card({ icon, heading, aside, children, label, ref }: {
-  icon: ReactNode;
-  heading: ReactNode;
-  aside?: ReactNode;
-  children?: ReactNode;
-  /** The card's accessible name (the heading's text). */
-  label: string;
-  /** Given, the card can take focus (from a button of its own that went away). */
-  ref?: Ref<HTMLElement>;
-}) {
-  return (
-    <section
-      ref={ref}
-      tabIndex={ref ? -1 : undefined}
-      aria-label={label}
-      data-slot="pdt-card"
-      className="rounded-lg border border-border bg-card text-sm shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <header className={cn('flex min-h-9 items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground', children && 'border-b border-border')}>
-        <span aria-hidden className="grid size-4 shrink-0 place-items-center text-link [&>svg]:size-3.5">{icon}</span>
-        <span className="flex min-w-0 flex-wrap items-center gap-1.5">{heading}</span>
-        <span className="flex-1" />
-        {aside}
-      </header>
-      {children && <div className="flex flex-col divide-y divide-border px-3">{children}</div>}
-    </section>
-  );
+/** The frame every card shares (`ToolCard`), named by `label`. */
+function Card({ label, ...rest }: Omit<ComponentProps<typeof ToolCard>, 'aria-label'> & { label: string }) {
+  return <ToolCard aria-label={label} {...rest} />;
 }
 
 /** What a call that hasn't (or didn't) run shows instead of its result. */
@@ -288,7 +263,7 @@ function WatchCard({ call }: { call: PdtCall }) {
     onSettled: () => invalidateWatches(qc),
   });
   // Stop watching hides itself: the card keeps the focus it had (PDT-547).
-  const card = useRef<HTMLElement>(null);
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (stop.isSuccess && focusLost()) card.current?.focus({ preventScroll: true });
   }, [stop.isSuccess]);

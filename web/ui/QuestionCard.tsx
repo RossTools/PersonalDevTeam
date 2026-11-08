@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { Check } from 'lucide-react';
 import { Badge } from './Badge';
 import { Textarea } from './Textarea';
 import { cn } from './lib/utils';
@@ -9,10 +10,14 @@ export interface QuestionChoice {
   description?: ReactNode;
 }
 
-/** A question's answer: a choice's label, or (`other` not null) the user's own words. */
+/**
+ * A question's answer: a choice's label, or (`other` not null) the user's own words. With `multiple`, `choices` holds
+ * every choice ticked and `other` adds to them.
+ */
 export interface QuestionAnswer {
   choice: string | null;
   other: string | null;
+  choices?: string[];
 }
 
 export const NO_ANSWER: QuestionAnswer = { choice: null, other: null };
@@ -31,7 +36,14 @@ const option = cn(
   'focus-within:ring-2 focus-within:ring-ring pointer-coarse:min-h-control-touch',
 );
 
-function Radio({ on }: { on: boolean }) {
+function Radio({ on, square = false }: { on: boolean; square?: boolean }) {
+  if (square) {
+    return (
+      <span aria-hidden className={cn('mt-0.5 grid size-4 place-items-center rounded-sm border-[1.5px]', on ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground')}>
+        {on && <Check className="size-3" strokeWidth={3} />}
+      </span>
+    );
+  }
   return (
     <span aria-hidden className={cn('mt-0.5 grid size-4 place-items-center rounded-full border-[1.5px]', on ? 'border-primary' : 'border-muted-foreground')}>
       {on && <span className="size-2 rounded-full bg-primary" />}
@@ -51,9 +63,10 @@ function Num({ n, show }: { n: number; show: boolean }) {
  * number key when `numbers`, its description under the label) and a last "Something else…" option to type an own
  * answer. A question without choices is a text box. `recommended` names the choice the asker recommends: it carries a
  * "Recommended" badge and `why`. Leave `question` out when the page already shows it (its title). The parent keeps the
- * answer and handles the number keys (`otherInputId` finds the text box).
+ * answer and handles the number keys (`otherInputId` finds the text box). `multiple` makes the choices checkboxes
+ * (several may be ticked, and own words add to them).
  */
-export function QuestionCard({ id, index, total, question, label, choices, recommended, why, value, onChange, numbers = false, disabled, className }: {
+export function QuestionCard({ id, index, total, question, label, choices, recommended, why, value, onChange, multiple = false, onSubmit, numbers = false, disabled, className }: {
   id: string;
   /** 0-based. */
   index: number;
@@ -68,6 +81,10 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
   why?: ReactNode;
   value: QuestionAnswer;
   onChange: (a: QuestionAnswer) => void;
+  /** Several choices may be ticked (`value.choices`). */
+  multiple?: boolean;
+  /** Enter in the own-words box. */
+  onSubmit?: () => void;
   /** Shows each option's number key (1–9). */
   numbers?: boolean;
   disabled?: boolean;
@@ -78,6 +95,7 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
   const count = choices.length + 1;
   // Up/Down move between the options, as in any radio group.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (multiple) return;
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     const radios = [...(group.current?.querySelectorAll<HTMLElement>('[role=radio]') ?? [])];
     const at = radios.indexOf(document.activeElement as HTMLElement);
@@ -101,10 +119,13 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
             value={value.other ?? ''} onChange={(e) => onChange({ choice: null, other: e.target.value })} />
         </div>
       ) : (
-        <div ref={group} role="radiogroup" aria-label={label} onKeyDown={onKeyDown} className="flex flex-col gap-1.5 px-3.5 pt-2 pb-3.5">
+        <div ref={group} role={multiple ? 'group' : 'radiogroup'} aria-label={label} onKeyDown={onKeyDown} className="flex flex-col gap-1.5 px-3.5 pt-2 pb-3.5">
           {choices.map((c, n) => {
-            const on = !otherOn && value.choice === c.label;
-            const pick = () => onChange({ choice: c.label, other: null });
+            const ticked = value.choices ?? [];
+            const on = multiple ? ticked.includes(c.label) : !otherOn && value.choice === c.label;
+            const pick = () => multiple
+              ? onChange({ ...value, choices: on ? ticked.filter((l) => l !== c.label) : [...ticked, c.label] })
+              : onChange({ choice: c.label, other: null });
             const rec = recommended === c.label;
             const about = c.description || (rec && why) ? `${id}-c${n}-about` : undefined;
             // The card picks it too, but a link in its description stays a link.
@@ -117,15 +138,15 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
                   on ? 'border-primary bg-accent' : 'border-border bg-background hover:border-muted-foreground')}>
                 <button
                   type="button"
-                  role="radio"
+                  role={multiple ? 'checkbox' : 'radio'}
                   aria-checked={on}
                   aria-describedby={about}
-                  tabIndex={on || (n === 0 && !otherOn && !choices.some((x) => x.label === value.choice)) ? 0 : -1}
+                  tabIndex={multiple || on || (n === 0 && !otherOn && !choices.some((x) => x.label === value.choice)) ? 0 : -1}
                   disabled={disabled}
                   onClick={pick}
                   className={cn(option, 'border-0 focus-within:ring-0')}
                 >
-                  <Radio on={on} />
+                  <Radio on={on} square={multiple} />
                   <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-semibold break-words">{c.label}</span>
                     {rec && <Badge tone="accent">Recommended</Badge>}
@@ -144,18 +165,22 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
           <div className={cn(option, otherOn ? 'border-primary bg-accent' : 'border-border bg-background hover:border-muted-foreground')}>
             <button
               type="button"
-              role="radio"
+              role={multiple ? 'checkbox' : 'radio'}
               aria-checked={otherOn}
               aria-label="Something else"
-              tabIndex={otherOn ? 0 : -1}
+              tabIndex={multiple || otherOn ? 0 : -1}
               disabled={disabled}
               onClick={() => {
-                onChange({ choice: value.choice, other: value.other ?? '' });
+                if (multiple && otherOn) {
+                  onChange({ ...value, other: null });
+                  return;
+                }
+                onChange({ ...value, other: value.other ?? '' });
                 document.getElementById(otherInputId(id))?.focus();
               }}
-              className="rounded-full outline-none"
+              className={cn('outline-none', multiple ? 'rounded-sm' : 'rounded-full')}
             >
-              <Radio on={otherOn} />
+              <Radio on={otherOn} square={multiple} />
             </button>
             <input
               id={otherInputId(id)}
@@ -163,8 +188,14 @@ export function QuestionCard({ id, index, total, question, label, choices, recom
               placeholder="Something else… (type your own answer)"
               disabled={disabled}
               value={value.other ?? ''}
-              onFocus={() => !otherOn && onChange({ choice: value.choice, other: '' })}
-              onChange={(e) => onChange({ choice: value.choice, other: e.target.value })}
+              onFocus={() => !otherOn && onChange({ ...value, other: '' })}
+              onChange={(e) => onChange({ ...value, other: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing && onSubmit) {
+                  e.preventDefault();
+                  onSubmit();
+                }
+              }}
               className="min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
             <Num n={count} show={numbers && count <= 9} />

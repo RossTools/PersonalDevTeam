@@ -8,7 +8,7 @@ import type { SearchFile } from '../api/gen/SearchFile';
 import type { SearchLine } from '../api/gen/SearchLine';
 import type { Place } from '../common/PlacePicker';
 import { useDebounced } from '../common/useDebounced';
-import type { FolderViewState } from './FolderView';
+import type { FolderViewState } from './useFolderView';
 import { fileKeys } from './queries';
 
 /**

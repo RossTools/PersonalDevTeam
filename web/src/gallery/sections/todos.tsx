@@ -1,8 +1,10 @@
 import { useRef, useState, type ReactNode } from 'react';
-import { Button, Calendar } from '@ui';
+import { Button } from '@ui';
+import { Calendar } from '@ui/Calendar';
 import type { Project } from '../../api/gen/Project';
 import type { Todo } from '../../api/gen/Todo';
-import { applyDuePatch, DuePicker, type DuePanel, type DueValue } from '../../todos/DuePicker';
+import { DuePicker } from '../../todos/DuePicker';
+import { applyDuePatch, type DuePanel, type DueValue } from '../../todos/due';
 import { addDays, dueGroup, localDay } from '../../todos/model';
 import { QuickAdd } from '../../todos/QuickAdd';
 import { TodoRow } from '../../todos/TodoRow';

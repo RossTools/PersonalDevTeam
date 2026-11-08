@@ -3,6 +3,7 @@ import { FolderGit2, GitBranch, Inbox, Tag } from 'lucide-react';
 import { Button } from '@ui/Button';
 import { StatusDot, type Status } from '@ui/StatusDot';
 import { Badge } from '@ui/Badge';
+import { IconTile } from '@ui/IconTile';
 import { Chip } from '@ui/Chip';
 import { OverlapBadge } from '@ui/OverlapBadge';
 import { WatchMark } from '@ui/WatchMark';
@@ -104,6 +105,16 @@ function render() {
           <Badge tone="solid" size="sm" count={120} aria-label="120 need you" />
           <Badge size="sm" count={7} aria-label="7 in the column" />
           <Badge tone="accent" count={250} aria-label="250 new" />
+          <Badge tone="accent" pill><Inbox aria-hidden /> Question</Badge>
+        </Row>
+
+        <Row label="IconTile">
+          <IconTile aria-hidden size="sm" tone="accent"><Inbox /></IconTile>
+          <IconTile aria-hidden size="sm" tone="waiting"><Tag /></IconTile>
+          <IconTile aria-hidden size="sm" tone="failed"><GitBranch /></IconTile>
+          <IconTile aria-hidden size="sm" tone="running"><FolderGit2 /></IconTile>
+          <IconTile><FolderGit2 aria-label="Folder" /></IconTile>
+          <IconTile tone="accent"><Inbox aria-label="Inbox" /></IconTile>
         </Row>
 
         <Row label="OverlapBadge">
