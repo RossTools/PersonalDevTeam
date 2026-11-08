@@ -313,7 +313,9 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     ]);
     expect(r.errors).toEqual(['ALP-7: gone']);
     // Before it ran: the rows, no outcomes. Without the request: the call's items, as the PM named them.
-    expect(inboxDecided(decideInput, undefined, asked).rows.every((x) => x.outcome === null)).toBe(true);
+    const before = inboxDecided(decideInput, undefined, asked);
+    expect(before.rows.every((x) => x.outcome === null)).toBe(true);
+    expect([before.read, r.read]).toEqual([false, true]);
     const own = inboxDecided(decideInput, JSON.stringify(decideResult));
     expect(own.rows.map((x) => [x.row.ticketKey, x.row.decision, x.outcome?.kind])).toEqual([
       ['ALP-1', 'accept_todo', 'decided'], ['alp-2', 'duplicate', 'unticked'], ['ALP-3', 'reject', 'failed'],
@@ -343,6 +345,11 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     const denied = screen.getByRole('group', { name: "Didn't decide the Inbox items" });
     expect(denied).toHaveTextContent('Proposal 3');
     expect(denied).toHaveTextContent('The user denied this inbox_decide call');
+    // Answered, but its result isn't readable (allowed later from the Inbox, or no output): no count of 0.
+    rerender(<PdtToolCard call={{ tool: 'mcp__pdt__inbox_decide', input: decideInput, status: 'done', rows: asked }} />);
+    const unread = screen.getByRole('group', { name: 'Decided the Inbox items' });
+    expect(unread).toHaveTextContent('Proposal 1');
+    expect(unread).not.toHaveTextContent('Done');
   });
 
   it('save_note and delete_note: the title (body folded), its project and pinned', async () => {

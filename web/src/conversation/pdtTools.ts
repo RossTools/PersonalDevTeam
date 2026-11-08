@@ -507,16 +507,17 @@ function rowOfItem(d: Record<string, unknown>, decision: DecideChoice): DecideRo
 /**
  * An `inbox_decide` call's rows with what became of each: the rows its request asked (`asked`, which name each ticket
  * with its title), else the call's items, and pdt-mcp's `decided`, `unticked` and `failed` once it ran. `errors`: the
- * failures that name no row.
+ * failures that name no row. `read`: whether the call's result could be read (it can't when the call was answered
+ * outside the conversation, or the agent passed on no output), so the rows' outcomes are known.
  */
-export function inboxDecided(input: unknown, output?: string, asked?: DecideRow[] | null): { rows: DecidedRow[]; errors: string[] } {
+export function inboxDecided(input: unknown, output?: string, asked?: DecideRow[] | null): { rows: DecidedRow[]; errors: string[]; read: boolean } {
   const items = isRecord(input) && Array.isArray(input.items) ? input.items.filter(isRecord) : [];
   const base = asked ?? items.flatMap((d) => {
     const c = choice(d.decision);
     return c ? [rowOfItem(d, c)] : [];
   });
   const r = resultOf(output);
-  if (!r) return { rows: base.map((row) => ({ row, outcome: null })), errors: [] };
+  if (!r) return { rows: base.map((row) => ({ row, outcome: null })), errors: [], read: false };
   const decided = (Array.isArray(r.decided) ? r.decided : []).filter(isRecord);
   const failed = (Array.isArray(r.failed) ? r.failed : []).filter(isRecord);
   const unticked = strings(r.unticked);
@@ -547,5 +548,6 @@ export function inboxDecided(input: unknown, output?: string, asked?: DecideRow[
   return {
     rows: rows.filter((x) => x.outcome || asked),
     errors: failed.filter((f) => !used.has(f)).map((f) => [nonBlank(f.ticket), nonBlank(f.error) ?? 'Failed'].filter(Boolean).join(': ')),
+    read: true,
   };
 }
