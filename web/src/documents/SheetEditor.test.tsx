@@ -69,6 +69,8 @@ vi.mock('./useDocumentEvents', async (importOriginal) => ({
 const b64 = (...bytes: number[]) => btoa(String.fromCharCode(...bytes));
 const send = (e: DocEvent) => act(() => fake.onEvent!(e));
 const model = (i = -1) => fake.models.at(i)!;
+/** Lets whatever an event started (a send, then a reload) finish, so a check that nothing reloaded means it. */
+const settle = () => act(() => new Promise((r) => setTimeout(r, 0)));
 
 let sheetSeq = 4;
 let sheet: ReturnType<typeof vi.spyOn>;
@@ -100,6 +102,8 @@ describe('SheetEditor live updates', () => {
     // Seq 5 again (or an older one): already applied, nothing changes.
     send({ type: 'diffs', seq: 5, from: 'agent', data: b64(9) });
     send({ type: 'diffs', seq: 3, from: 'agent', data: b64(9) });
+    await settle();
+    expect(fake.models).toHaveLength(1);
     expect(model().applied).toEqual([[1, 2]]);
     expect(sheet).toHaveBeenCalledTimes(1);
   });
@@ -111,8 +115,12 @@ describe('SheetEditor live updates', () => {
     await waitFor(() => expect(diffs).toHaveBeenCalledWith('d1', expect.any(String), 4, new Uint8Array([7, 7, 7])));
     // Its own edit, as change 5: not applied twice. The next one is.
     send({ type: 'diffs', seq: 5, from: 'me', data: b64(7) });
+    await settle();
+    expect(fake.models).toHaveLength(1);
     expect(model().applied).toEqual([]);
     send({ type: 'diffs', seq: 6, from: 'agent', data: b64(3) });
+    await settle();
+    expect(fake.models).toHaveLength(1);
     expect(model().applied).toEqual([[3]]);
     expect(sheet).toHaveBeenCalledTimes(1);
   });
@@ -140,6 +148,7 @@ describe('SheetEditor live updates', () => {
   it('reloads on a newer reload, ignores an older one, and catches up on reconnect', async () => {
     await open();
     send({ type: 'reload', seq: 4 });
+    await settle();
     expect(sheet).toHaveBeenCalledTimes(1);
     sheetSeq = 6;
     send({ type: 'reload', seq: 6 });
