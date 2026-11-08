@@ -445,7 +445,7 @@ pub const REFRESH_EARLY_MS: i64 = 5 * 60 * 1000;
 impl OAuthTokens {
     /// Due for a refresh (or past use, when it can't be refreshed).
     pub fn due(&self, now: i64) -> bool {
-        self.expires_at.is_some_and(|e| e - REFRESH_EARLY_MS <= now)
+        self.expires_at.is_some_and(|e| e.saturating_sub(REFRESH_EARLY_MS) <= now)
     }
 
     /// Usable now: not failed, and not expired.
@@ -458,7 +458,7 @@ impl OAuthTokens {
         OAuthTokens {
             access_token: r.access_token.clone(),
             refresh_token: r.refresh_token.clone().or_else(|| self.refresh_token.clone()),
-            expires_at: r.expires_in.map(|s| now + s * 1000),
+            expires_at: r.expires_in.map(|s| now.saturating_add(s.saturating_mul(1000))),
             scope: r.scope.clone().or_else(|| self.scope.clone()),
             failed: None,
             ..self.clone()
@@ -668,5 +668,9 @@ mod tests {
         let failed = OAuthTokens { failed: Some("revoked".into()), ..n };
         assert!(!failed.usable(0));
         assert!(OAuthTokens::default().usable(i64::MAX), "no expiry given");
+        let far = |s: i64| t.updated(&TokenResponse { expires_in: Some(s), ..Default::default() }, 1000);
+        assert_eq!(far(i64::MAX).expires_at, Some(i64::MAX), "a huge lifetime saturates");
+        assert_eq!(far(i64::MIN).expires_at, Some(i64::MIN + 1000));
+        assert!(far(i64::MIN).due(0) && !far(i64::MAX).due(0));
     }
 }

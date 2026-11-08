@@ -906,7 +906,7 @@ impl ClaudeMapper {
         }
         out.push(self.usage_event());
         if info.get("status").and_then(Value::as_str) == Some("rejected") {
-            let until = info.get("resetsAt").and_then(Value::as_i64).map(|s| s * 1000);
+            let until = info.get("resetsAt").and_then(Value::as_i64).map(|s| s.saturating_mul(1000));
             let text = "Claude's usage limit is reached. Nothing is sent to it until you send again.".to_string();
             out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until }));
         }
@@ -1275,6 +1275,10 @@ mod tests {
         m.on_line(&line.to_string());
         assert_eq!(m.rate_limits["five_hour"].resets_at, Some(i64::MAX));
         assert_eq!(m.rate_limits["seven_day"].resets_at, Some(i64::MIN));
+        let rejected =
+            json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": i64::MAX}});
+        let ev = events(&ClaudeMapper::new().on_line(&rejected.to_string()));
+        assert!(ev.iter().any(|(_, e)| matches!(e, AgentEvent::Notice { until: Some(i64::MAX), .. })), "{ev:?}");
     }
 
     #[test]
