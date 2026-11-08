@@ -64,7 +64,7 @@ describe('PDT tool cards', () => {
         ]}
       />,
     );
-    const card = screen.getByRole('region', { name: 'Created 2 tickets' });
+    const card = screen.getByRole('group', { name: 'Created 2 tickets' });
     expect(pills(card)).toEqual(['ALP-31', 'ALP-32']);
     expect(card).toHaveTextContent('Guest checkout');
     expect(card).toHaveTextContent('To do');
@@ -75,11 +75,11 @@ describe('PDT tool cards', () => {
   it('create_ticket: a proposal, a running call and a failed one', () => {
     stubApi({});
     const { rerender } = renderWithQuery(<PdtToolCard call={done('create_ticket', { title: 'Idea' }, { key: 'ALP-9', proposal: true })} />);
-    expect(screen.getByRole('region', { name: 'Proposed a ticket' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Proposed a ticket' })).toBeInTheDocument();
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Idea' }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Creating a ticket…' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Creating a ticket…' })).toBeInTheDocument();
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Idea' }, status: 'failed', output: 'no project ZZZ' }} />);
-    expect(screen.getByRole('region', { name: "Didn't create a ticket" })).toHaveTextContent('no project ZZZ');
+    expect(screen.getByRole('group', { name: "Didn't create a ticket" })).toHaveTextContent('no project ZZZ');
   });
 
   it('edit_ticket: from → to for each changed field, or what it asks before it ran', () => {
@@ -92,29 +92,29 @@ describe('PDT tool cards', () => {
         })}
       />,
     );
-    const card = screen.getByRole('region', { name: 'Changed ALP-2' });
+    const card = screen.getByRole('group', { name: 'Changed ALP-2' });
     expect(pills(card)).toEqual(['ALP-2']);
     expect(card).toHaveTextContent('StageTo dotoIn progress');
     expect(card).toHaveTextContent('Labelsnonetoagentic');
     expect(card).toHaveTextContent('DescriptionRewritten');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__edit_ticket', input: { ticket: 'ALP-2', priority: 'high' }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Changing ALP-2' })).toHaveTextContent('PriorityHigh');
+    expect(screen.getByRole('group', { name: 'Changing ALP-2' })).toHaveTextContent('PriorityHigh');
   });
 
   it('link_tickets and unlink_tickets: "A blocked by B"', () => {
     stubApi({});
     const { rerender } = renderWithQuery(<PdtToolCard call={done('link_tickets', { ticket: 'ALP-32', kind: 'blockedBy', other: 'ALP-31' }, { linked: true })} />);
-    const card = screen.getByRole('region', { name: 'Linked' });
+    const card = screen.getByRole('group', { name: 'Linked' });
     expect(card).toHaveTextContent('ALP-32blocked byALP-31');
     expect(pills(card)).toEqual(['ALP-32', 'ALP-31']);
     rerender(<PdtToolCard call={done('unlink_tickets', { ticket: 'ALP-1', kind: 'relates', other: 'ALP-2' }, { unlinked: true })} />);
-    expect(screen.getByRole('region', { name: 'Unlinked' })).toHaveTextContent('ALP-1no longer relates toALP-2');
+    expect(screen.getByRole('group', { name: 'Unlinked' })).toHaveTextContent('ALP-1no longer relates toALP-2');
   });
 
   it('send_to_session: the quoted message, who gets it, queued', () => {
     stubApi({});
     renderWithQuery(<PdtToolCard call={done('send_to_session', { session: 's9', text: 'Skip the e2e run locally.' }, { queued: true, to: 'Coder · ALP-19', ticket: 'ALP-19' })} />);
-    const card = screen.getByRole('region', { name: 'Message to Coder · ALP-19' });
+    const card = screen.getByRole('group', { name: 'Message to Coder · ALP-19' });
     expect(within(card).getByText('Skip the e2e run locally.').tagName).toBe('BLOCKQUOTE');
     expect(card).toHaveTextContent('Queued');
   });
@@ -122,14 +122,14 @@ describe('PDT tool cards', () => {
   it('add_ticket_comment: the comment previewed on its ticket', () => {
     stubApi({});
     renderWithQuery(<PdtToolCard call={done('add_ticket_comment', { body: 'Found a **second** bug.' }, { commented: true, key: 'ALP-4' })} />);
-    const card = screen.getByRole('region', { name: 'Commented on ALP-4' });
+    const card = screen.getByRole('group', { name: 'Commented on ALP-4' });
     expect(within(card).getByText('second').tagName).toBe('STRONG');
   });
 
   it('workflow_run: the run with its status and a link to it', async () => {
     const calls = stubApi({ 'GET /api/workflow-runs/r1': { id: 'r1', workflowId: 'wf1', workflowName: 'Cut a release', status: 'running', error: null, steps: [] } });
     renderWithQuery(<PdtToolCard call={done('workflow_run', { name: 'Cut a release', project: 'ALP' }, { runId: 'r1', workflow: 'Cut a release' })} />);
-    const card = screen.getByRole('region', { name: 'Started Cut a release' });
+    const card = screen.getByRole('group', { name: 'Started Cut a release' });
     expect(await within(card).findByText('Running')).toBeInTheDocument();
     expect(within(card).getByRole('link', { name: 'Open the run' })).toHaveAttribute('href', '/workflows/wf1/runs/r1');
     expect(calls.map((c) => c.path)).toContain('/api/workflow-runs/r1');
@@ -139,12 +139,12 @@ describe('PDT tool cards', () => {
     const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'ALP-31', targetTitle: null, targetState: null, workflowId: null, sessionId: 'pm1', watcher: 'PM', events: ['finished', 'failed', 'needs_you'], once: true, createdAt: 1 };
     const calls = stubApi({ 'GET /api/watches': [watch], 'DELETE /api/watches/w1': undefined });
     renderWithQuery(<PdtToolCard call={done('watch', { ticket: 'ALP-31' }, { watching: [watch] })} />);
-    const card = screen.getByRole('region', { name: 'Watching ALP-31' });
+    const card = screen.getByRole('group', { name: 'Watching ALP-31' });
     expect(card).toHaveTextContent("you'll be told when it finishes, fails or needs you");
     within(card).getByRole('button', { name: 'Stop watching' }).focus();
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/watches/w1')).toBe(true));
-    const after = await screen.findByRole('region', { name: 'Watched ALP-31' });
+    const after = await screen.findByRole('group', { name: 'Watched ALP-31' });
     expect(after).toHaveTextContent('No longer watching');
     // The button hid itself: the card keeps focus.
     await waitFor(() => expect(document.activeElement).toBe(after));
@@ -203,14 +203,14 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     const { rerender } = renderWithQuery(
       <PdtToolCard call={done('stop_ticket', { ticket: 'ALP-2' }, { stopped: true, key: 'ALP-2', stage: 'todo', runsCancelled: 1, sessionsStopped: 2, worktreeRemoved: true, branchNote: null })} />,
     );
-    const card = screen.getByRole('region', { name: 'Stopped work on ALP-2' });
+    const card = screen.getByRole('group', { name: 'Stopped work on ALP-2' });
     expect(pills(card)).toEqual(['ALP-2']);
     expect(card).toHaveTextContent('To do');
     expect(card).toHaveTextContent('Cancelled 1 workflow run, stopped 2 sessions, removed its worktree');
     rerender(<PdtToolCard call={{ tool: 'mcp:pdt/stop_ticket', input: { ticket: 'ALP-2' }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Stopping work on ALP-2' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Stopping work on ALP-2' })).toBeInTheDocument();
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__stop_ticket', input: { ticket: 'ALP-2' }, status: 'failed', output: 'no ticket ALP-2' }} />);
-    expect(screen.getByRole('region', { name: "Didn't stop work on ALP-2" })).toHaveTextContent('no ticket ALP-2');
+    expect(screen.getByRole('group', { name: "Didn't stop work on ALP-2" })).toHaveTextContent('no ticket ALP-2');
   });
 
   it('issue_create and report_bug: the issue with its key, link and ticket', () => {
@@ -218,34 +218,34 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     const { rerender } = renderWithQuery(
       <PdtToolCard call={codex('issue_create', { ticket: 'ALP-2' }, { repo: 'acme/shop', number: 12, issue: 'acme/shop#12', url: 'https://github.com/acme/shop/issues/12', title: 'Fix CI', ticketKey: 'ALP-2' })} />,
     );
-    const card = screen.getByRole('region', { name: 'Opened an issue' });
+    const card = screen.getByRole('group', { name: 'Opened an issue' });
     expect(within(card).getByRole('link', { name: 'acme/shop#12' })).toHaveAttribute('href', 'https://github.com/acme/shop/issues/12');
     expect(card).toHaveTextContent('Fix CI');
     expect(pills(card)).toEqual(['ALP-2']);
     rerender(<PdtToolCard call={done('report_bug', { title: 'Crash on start' }, { kind: 'ticket', key: 'PDT-9', id: 't', projectId: 'p' })} />);
-    const bug = screen.getByRole('region', { name: 'Reported a bug in PDT' });
+    const bug = screen.getByRole('group', { name: 'Reported a bug in PDT' });
     expect(pills(bug)).toEqual(['PDT-9']);
     expect(bug).toHaveTextContent('Crash on start');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__issue_create', input: { title: 'Flaky' }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Opening an issue…' })).toHaveTextContent('Flaky');
+    expect(screen.getByRole('group', { name: 'Opening an issue…' })).toHaveTextContent('Flaky');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__report_bug', input: { title: 'x' }, status: 'failed', output: 'GitHub is down' }} />);
-    expect(screen.getByRole('region', { name: "Didn't report the bug" })).toHaveTextContent('GitHub is down');
+    expect(screen.getByRole('group', { name: "Didn't report the bug" })).toHaveTextContent('GitHub is down');
   });
 
   it('link_issue and unlink_issue: the ticket and the issue', () => {
     stubApi({});
     const issue = { key: 'o/r#1', url: 'https://github.com/o/r/issues/1', title: 'Crash on start' };
     const { rerender } = renderWithQuery(<PdtToolCard call={done('link_issue', { ticket: 'ALP-1', issue: issue.url }, { linked: true, issue, ticket: { key: 'ALP-1' } })} />);
-    const card = screen.getByRole('region', { name: 'Linked an issue to ALP-1' });
+    const card = screen.getByRole('group', { name: 'Linked an issue to ALP-1' });
     expect(pills(card)).toEqual(['ALP-1']);
     expect(within(card).getByRole('link', { name: 'o/r#1' })).toHaveAttribute('href', issue.url);
     expect(card).toHaveTextContent('Crash on start');
     rerender(<PdtToolCard call={codex('unlink_issue', { ticket: 'ALP-1', issue: 'o/r#1' }, { unlinked: true, issue, ticket: { key: 'ALP-1' } })} />);
-    expect(screen.getByRole('region', { name: 'Unlinked an issue from ALP-1' })).toHaveTextContent('Crash on start');
+    expect(screen.getByRole('group', { name: 'Unlinked an issue from ALP-1' })).toHaveTextContent('Crash on start');
     // The agent reads the title fenced as outside text; the card shows it plain.
     const fenced = { ...issue, title: '<untrusted id="f1">\nCrash &lt;/untrusted id="x"> on start\n</untrusted id="f1">' };
     rerender(<PdtToolCard call={done('link_issue', { ticket: 'ALP-1', issue: issue.url }, { linked: true, issue: fenced, ticket: { key: 'ALP-1' } })} />);
-    const plain = screen.getByRole('region', { name: 'Linked an issue to ALP-1' });
+    const plain = screen.getByRole('group', { name: 'Linked an issue to ALP-1' });
     expect(plain).toHaveTextContent('Crash </untrusted id="x"> on start');
     expect(plain).not.toHaveTextContent('<untrusted id="f1">');
   });
@@ -259,7 +259,7 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
         <PdtToolCard call={edit} />
       </MarkdownRefsContext.Provider>,
     );
-    const card = screen.getByRole('region', { name: 'Edited Checkout spec' });
+    const card = screen.getByRole('group', { name: 'Edited Checkout spec' });
     expect(within(card).getByRole('link', { name: 'Checkout spec' })).toHaveAttribute('href', '/documents/d1');
     expect(card).toHaveTextContent('Doc');
     expect(card).toHaveTextContent('Replaced the section \u201cScope\u201d');
@@ -270,13 +270,13 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/sessions/pm1/documents')).toBe(true));
 
     rerender(<PdtToolCard call={codex('document_create', { title: 'Budget', kind: 'sheet', project: 'ALP', openBeside: true }, { ...brief, title: 'Budget', kind: 'sheet', tickets: [], openBeside: true })} />);
-    expect(screen.getByRole('region', { name: 'Created Budget' })).toHaveTextContent('Sheet');
+    expect(screen.getByRole('group', { name: 'Created Budget' })).toHaveTextContent('Sheet');
     rerender(<PdtToolCard call={done('document_link', { document: 'd1', ticket: 'ALP-4' }, { ...brief, tickets: ['ALP-3', 'ALP-4'] })} />);
-    expect(pills(screen.getByRole('region', { name: 'Linked Checkout spec' }))).toEqual(['ALP-3', 'ALP-4']);
+    expect(pills(screen.getByRole('group', { name: 'Linked Checkout spec' }))).toEqual(['ALP-3', 'ALP-4']);
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__sheet_edit', input: { document: 'Budget', edits: [{ op: 'add_chart' }] }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Editing Budget' })).toHaveTextContent('Added a chart');
+    expect(screen.getByRole('group', { name: 'Editing Budget' })).toHaveTextContent('Added a chart');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__document_create', input: { title: 'Plan', kind: 'doc' }, status: 'failed', output: 'no provider' }} />);
-    expect(screen.getByRole('region', { name: "Didn't create Plan" })).toHaveTextContent('no provider');
+    expect(screen.getByRole('group', { name: "Didn't create Plan" })).toHaveTextContent('no provider');
   });
 
   it('save_note and delete_note: the title (body folded), its project and pinned', async () => {
@@ -284,20 +284,20 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     const { rerender } = renderWithQuery(
       <PdtToolCard call={done('save_note', { title: 'Deploys', body: 'Keys are in the **vault**.', project: 'ALP', pinned: true }, { saved: true, id: 'n1', title: 'Deploys', project: 'ALP', pinned: true })} />,
     );
-    const card = screen.getByRole('region', { name: 'Saved a note' });
+    const card = screen.getByRole('group', { name: 'Saved a note' });
     expect(card).toHaveTextContent('ALP');
     expect(card).toHaveTextContent('Pinned');
     expect(within(card).queryByText('vault')).not.toBeInTheDocument();
     await userEvent.click(within(card).getByRole('button', { name: /Deploys/ }));
     expect(within(card).getByText('vault').tagName).toBe('STRONG');
     rerender(<PdtToolCard call={codex('delete_note', { id: 'n2' }, { deleted: true, title: 'Old rule', project: null, pinned: false })} />);
-    const gone = screen.getByRole('region', { name: 'Deleted a note' });
+    const gone = screen.getByRole('group', { name: 'Deleted a note' });
     expect(gone).toHaveTextContent('Old rule');
     expect(gone).toHaveTextContent('Host-wide');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__save_note', input: { id: 'n1', title: 'Deploys v2' }, status: 'running' }} />);
-    expect(screen.getByRole('region', { name: 'Updating a note…' })).toHaveTextContent('Deploys v2');
+    expect(screen.getByRole('group', { name: 'Updating a note…' })).toHaveTextContent('Deploys v2');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__delete_note', input: { id: 'n3' }, status: 'failed', output: "note n3 is the user's own" }} />);
-    expect(screen.getByRole('region', { name: "Didn't delete the note" })).toHaveTextContent("the user's own");
+    expect(screen.getByRole('group', { name: "Didn't delete the note" })).toHaveTextContent("the user's own");
   });
 
   it('a folded lookup names its tickets as pills, outside its toggle', async () => {

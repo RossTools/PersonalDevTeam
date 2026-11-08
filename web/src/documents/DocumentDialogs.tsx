@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Cloud, HardDrive } from 'lucide-react';
 import {
-  Alert, Badge, Button, CommandList, Dialog, DialogActions, DropZone, EmptyState, Field, Input, Kbd, Link, MenuButton,
+  Alert, Badge, Button, CommandList, Dialog, DialogActions, DropZone, EmptyState, Field, IconTile, Input, Kbd, Link, MenuButton,
   RelativeTime, SectionLabel, SegmentedControl, Select, SourceCard, Spinner, toast, useFileDrop, type CommandItem,
   type FileDrag,
 } from '@ui';
@@ -237,7 +237,7 @@ export function ImportDocumentDialog({ projectId = null, ticket, onClose, onImpo
     return {
       id: f.reference,
       label: f.title,
-      icon: <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted"><KindIcon kind={f.kind} /></span>,
+      icon: <IconTile><KindIcon kind={f.kind} /></IconTile>,
       description: f.modified !== null
         ? <>{KIND_LABEL[f.kind]} · edited <RelativeTime time={f.modified} /></>
         : KIND_LABEL[f.kind],

@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { answerText, NO_ANSWER, QuestionCard, type QuestionAnswer } from './QuestionCard';
 
 function Card({ choices = ['Attach a PDF', 'Text is enough'], numbers = true }: { choices?: string[]; numbers?: boolean }) {
@@ -16,7 +16,33 @@ function Card({ choices = ['Attach a PDF', 'Text is enough'], numbers = true }: 
   );
 }
 
+function Several({ onSubmit }: { onSubmit?: () => void }) {
+  const [value, setValue] = useState<QuestionAnswer>(NO_ANSWER);
+  return (
+    <>
+      <QuestionCard id="m" index={0} total={1} label="What to cache?" multiple onSubmit={onSubmit}
+        choices={[{ label: 'Tickets' }, { label: 'Runs' }]} value={value} onChange={setValue} />
+      <output>{[...(value.choices ?? []), ...(value.other ? [value.other] : [])].join(', ')}</output>
+    </>
+  );
+}
+
 describe('QuestionCard', () => {
+  it('with multiple, ticks several choices and adds own words to them; Enter there submits', async () => {
+    const onSubmit = vi.fn();
+    render(<Several onSubmit={onSubmit} />);
+    expect(screen.getByRole('group', { name: 'What to cache?' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tickets' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Runs' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Something else' }));
+    await userEvent.type(screen.getByRole('textbox', { name: 'Something else for question 1' }), 'Notes{Enter}');
+    expect(screen.getByRole('status')).toHaveTextContent('Tickets, Runs, Notes');
+    expect(onSubmit).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Tickets' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Something else' }));
+    expect(screen.getByRole('status')).toHaveTextContent(/^Runs$/);
+  });
+
   it('shows "1 / 2", the choices as radio options with their keys and descriptions, and Something else', () => {
     render(<Card />);
     const card = screen.getByRole('region', { name: 'Question 1 of 2' });

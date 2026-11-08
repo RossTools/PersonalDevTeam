@@ -37,7 +37,8 @@ until you press **Send answers**. Pick another choice (or press its number), or 
 your own. **Send answers** says how many you've answered. A request for a secret (a
 token, a password) has a masked field, and the value goes straight to PDT's secret store, never the agent (see
 [Secrets](../your-machine/secrets.md)). A question an agent asks in its conversation is listed here too, titled with
-the question: answering it here or in the conversation answers both.
+the question, and shows the same cards: answering it here or in the conversation answers both. Where the agent lets you
+pick several choices, they are tick boxes, and what you write under **Something else…** is added to them.
 
 ### Approvals
 

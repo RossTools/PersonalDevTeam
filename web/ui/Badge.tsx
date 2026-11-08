@@ -31,6 +31,7 @@ function truncatingText(children: ReactNode): ReactNode[] {
  * `count` renders a round number badge (capped at `max`, 99 by default) instead of `children`. `tone="solid"` is the
  * accent-filled count of things waiting on the user (the rail's Needs you); `size="sm"` (16px) sits on an icon or in a
  * nav row.
+ * `pill` rounds it and sets it bold (a kind over an item: "? Question").
  * A label is never wider than its container: its text truncates, so give a long one a `title` with the full text.
  */
 export function Badge({
@@ -38,11 +39,13 @@ export function Badge({
   count,
   max = 99,
   size = 'md',
+  pill = false,
   children,
   className,
   ...rest
 }: Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & {
   tone?: BadgeTone;
+  pill?: boolean;
   count?: number;
   max?: number;
   size?: 'sm' | 'md';
@@ -50,7 +53,7 @@ export function Badge({
 }) {
   const isCount = count !== undefined;
   return (
-    <BadgePrimitive variant={tone} shape={isCount ? 'count' : 'label'} size={size} className={cn(!isCount && 'max-w-full min-w-0 justify-start', className)} {...rest}>
+    <BadgePrimitive variant={tone} shape={isCount ? 'count' : 'label'} size={size} className={cn(!isCount && 'max-w-full min-w-0 justify-start', pill && 'rounded-full font-semibold', className)} {...rest}>
       {isCount ? (count > max ? `${max}+` : count) : truncatingText(children)}
     </BadgePrimitive>
   );

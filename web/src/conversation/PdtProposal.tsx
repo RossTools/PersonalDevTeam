@@ -3,7 +3,7 @@
 // leaves out is what a prompt-injected call could hide.
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge, Chip } from '@ui';
+import { Badge, Chip, PreviewBox } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { LabelChips } from '../common/LabelChips';
@@ -21,7 +21,7 @@ import { documentKeys } from '../documents/queries';
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 function Box({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col gap-1.5 rounded-md border border-border bg-surface-2 p-2.5">{children}</div>;
+  return <PreviewBox className="flex flex-col gap-1.5">{children}</PreviewBox>;
 }
 
 /** Text the call carries, whole and as written (not rendered: Markdown could hide some of it). */

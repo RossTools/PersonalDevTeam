@@ -75,7 +75,11 @@
   muted text), never a column of buttons. A card to pick is
   a `ChoiceCard` (`selection="current"` for the card of what's on screen), one of a few options in a form a
   `ChoiceCardGroup`. The small uppercase label over a group is a `SectionLabel`, a side list's group heading a
-  `ListHeading` (its ＋ button in `trailing`). A count is a `Badge count` (`tone="solid"` for what waits on the user,
+  `ListHeading` (its ＋ button in `trailing`). What an agent's tool did, in a conversation, is a `ToolCard` (a
+  `group`, never a `section`: a conversation holds many); what a request carries, inset in a card, a `PreviewBox`; an
+  icon on a tinted square (a list row's kind) an `IconTile`; a kind over an item a `Badge pill`. Rows to keep or drop
+  before an action are a `CheckTable`. An agent's question, wherever it shows, is a `QuestionCard` (`multiple` for
+  several picks). A count is a `Badge count` (`tone="solid"` for what waits on the user,
   `size="sm"` on an icon or in a chip). A phone screen's big bottom buttons are `Button size="lg"` (48px,
   `h-control-lg`); a touch-sized control written by hand is `h-control-touch`/`size-control-touch`, never `h-11`.
 - **Touch.** Long press opens the same menu as right-click (`MenuTrigger trigger="contextMenu"`). Drag data is
