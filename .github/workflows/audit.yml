@@ -38,7 +38,7 @@ jobs:
           SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
         run: |
           name="cargo-deny-$VERSION-x86_64-unknown-linux-musl"
-          curl -fsSL -o cargo-deny.tar.gz "https://github.com/EmbarkStudios/cargo-deny/releases/download/$VERSION/$name.tar.gz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o cargo-deny.tar.gz "https://github.com/EmbarkStudios/cargo-deny/releases/download/$VERSION/$name.tar.gz"
           echo "$SHA256  cargo-deny.tar.gz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/cargo-deny"
           tar -xzf cargo-deny.tar.gz -C "$RUNNER_TEMP/cargo-deny" --strip-components=1 "$name/cargo-deny"
