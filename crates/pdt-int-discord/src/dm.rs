@@ -212,7 +212,13 @@ async fn link(st: AppState, want: Want) {
     loop {
         tokio::select! {
             r = rx.recv() => match r {
-                None => return,
+                // The Gateway task ended without saying why (it panicked): not connected any more.
+                None => {
+                    let why = "the Discord Gateway connection stopped unexpectedly".to_string();
+                    pdt_api::sdk::connections::report(&st, &name, Some(&why)).await;
+                    set_status(Some(&name), "failed", Some(why));
+                    return;
+                }
                 Some(Report::Connected) => {
                     pdt_api::sdk::connections::report(&st, &name, None).await;
                     set_status(Some(&name), "connected", None);

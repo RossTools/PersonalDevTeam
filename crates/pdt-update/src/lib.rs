@@ -205,7 +205,9 @@ struct ApiMessage {
 /// else `x-ratelimit-reset` (Unix seconds).
 fn reset_of(h: &reqwest::header::HeaderMap, now_ms: i64) -> Option<i64> {
     let num = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<i64>().ok());
-    num("retry-after").map(|s| now_ms + s * 1000).or_else(|| num("x-ratelimit-reset").map(|s| s * 1000))
+    num("retry-after")
+        .map(|s| now_ms.saturating_add(s.saturating_mul(1000)))
+        .or_else(|| num("x-ratelimit-reset").map(|s| s.saturating_mul(1000)))
 }
 
 async fn check(res: reqwest::Response) -> Result<reqwest::Response, UpdateError> {
@@ -716,6 +718,19 @@ pub async fn fetch_verified(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_rate_limits_reset_saturates() {
+        let h = |name: &'static str, v: &str| {
+            let mut m = reqwest::header::HeaderMap::new();
+            m.insert(name, v.parse().unwrap());
+            m
+        };
+        assert_eq!(reset_of(&h("retry-after", "60"), 1_000), Some(61_000));
+        assert_eq!(reset_of(&h("x-ratelimit-reset", "1700000000"), 0), Some(1_700_000_000_000));
+        assert_eq!(reset_of(&h("retry-after", &i64::MAX.to_string()), 1_000), Some(i64::MAX));
+        assert_eq!(reset_of(&h("x-ratelimit-reset", &i64::MIN.to_string()), 0), Some(i64::MIN));
+    }
 
     #[test]
     fn downloads_from_github_follow_only_https() {
