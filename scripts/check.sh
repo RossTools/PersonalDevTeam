@@ -9,7 +9,8 @@
 #
 # Groups, in the order they run (cheap ones first, so a slip fails fast):
 #   changelog  the changelog fragments and version (scripts/changelog.sh check, scripts/version.sh check) and the
-#              scripts' own tests, and that third-party actions are pinned to a commit (check-action-pins.sh)
+#              scripts' own tests, that third-party actions are pinned to a commit (check-action-pins.sh) and that
+#              the labels .github uses are listed (check-labels.sh)
 #   site       the user docs check (pnpm --filter site check-docs), the website's tests and build
 #   lint       version, cargo fmt --check, clippy (and pdtd without its integration features)
 #   web        web typecheck, unused exports and files (knip), tests, build
@@ -56,6 +57,8 @@ check_changelog() {
   step scripts/release-sign.test.sh
   step scripts/notarize-macos.test.sh
   step scripts/check-action-pins.sh
+  step scripts/check-labels.test.sh
+  step scripts/check-labels.sh
 }
 
 check_site() {
