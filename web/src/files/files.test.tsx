@@ -5,7 +5,8 @@ import { toast } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
-import { FileViewer, FolderList, FolderTree, useFolderView } from './FolderView';
+import { FileViewer, FolderList, FolderTree } from './FolderView';
+import { useFolderView } from './useFolderView';
 
 vi.mock('./CodeViewer', () => ({
   CodeViewer: ({ name, text, onChange }: { name: string; text: string; onChange?: (t: string) => void }) =>

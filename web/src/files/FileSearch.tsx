@@ -8,7 +8,7 @@ import type { SearchFile } from '../api/gen/SearchFile';
 import type { SearchLine } from '../api/gen/SearchLine';
 import type { Place } from '../common/PlacePicker';
 import { useDebounced } from '../common/useDebounced';
-import type { FolderViewState } from './FolderView';
+import type { FolderViewState } from './useFolderView';
 
 /**
  * Search inside the checkout's files (`git grep`: ignored and binary files are left out). With nothing typed it shows

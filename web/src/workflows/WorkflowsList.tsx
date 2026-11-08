@@ -1,7 +1,7 @@
 // The Workflows view's list column: New workflow, Import and Export (PDT-155), and the workflows by
 // where they apply; templates are in the New workflow gallery (PDT-229). On a phone there is no New workflow or Import
 // (workflows are view-only there, PDT-120).
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { Badge, Button, EmptyState, List, ListHeading, ListRow, StatusDot } from '@ui';
@@ -10,12 +10,14 @@ import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
 import type { Workflow } from '../api/gen/Workflow';
 import { ExportDialog } from './ExportDialog';
-import { ImportDialog } from './ImportDialog';
 import { scopeLabel } from './scope';
 import type { WorkflowTab } from './WorkflowPage';
 import { workflowKeys } from './queries';
 import { POLL } from '../common/poll';
 import { LoadError } from '../common/QueryStatus';
+
+// Import is loaded the first time it opens, not with the app.
+const ImportDialog = lazy(() => import('./ImportDialog').then((m) => ({ default: m.ImportDialog })));
 
 /** What the Workflows view shows: a workflow (on a tab, a run of it), a template, or nothing yet. */
 export type WorkflowTarget = { kind: 'workflow'; id: string; tab?: WorkflowTab; runId?: string } | { kind: 'template'; id: string } | null;
@@ -49,7 +51,7 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
           </div>
         </div>
       )}
-      {moving === 'import' && <ImportDialog projects={projects} onClose={() => setMoving(null)} onImported={(id) => onOpen({ kind: 'workflow', id })} />}
+      {moving === 'import' && <Suspense fallback={null}><ImportDialog projects={projects} onClose={() => setMoving(null)} onImported={(id) => onOpen({ kind: 'workflow', id })} /></Suspense>}
       {moving === 'export' && <ExportDialog workflows={groups.flatMap((g) => g.items)} onClose={() => setMoving(null)} />}
       <LoadError what="Workflows" error={workflows.error} className="mx-3" />
       {groups.map((g) => (

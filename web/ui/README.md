@@ -8,8 +8,9 @@
   `pnpm dlx shadcn@latest add <name> -y -o -c web < /dev/null` (without those it can hang on an overwrite prompt) and then edited to fit. Ours to change. **Features never import these.**
 - `lib/` — helpers for the primitives (`cn` in `lib/utils`).
 - `<Name>.tsx` — the public components (our API), built on the primitives. `index.ts` exports them; features import
-  everything from `@ui`. The one exception is `FlowGraph` (React Flow, for the workflow builder): features import it
-  as `@ui/FlowGraph` so it and its styles load only with the builder's lazy chunk. Only web/ui imports `@xyflow/react`.
+  everything from `@ui`. The exceptions are `FlowGraph` (React Flow, for the workflow builder) and `Calendar` (with
+  its date library, for the due-date picker): features import them as `@ui/FlowGraph` and `@ui/Calendar` so they load
+  only with their lazy chunks. Only web/ui imports `@xyflow/react`.
 - `<Name>.test.tsx` — a test per public component.
 - Gallery sections: `web/src/gallery/sections/<group>.tsx` (see "Gallery").
 

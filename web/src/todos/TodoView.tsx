@@ -11,7 +11,7 @@ import type { TodoPatch } from '../api/gen/TodoPatch';
 import { EndOfText } from '../common/EndOfText';
 import { MarkdownEditor, type MarkdownEditorHandle } from '../common/LazyMarkdownEditor';
 import type { SaveState } from '../notes/useNoteDraft';
-import { DuePicker } from './DuePicker';
+import { DuePicker } from './LazyDuePicker';
 import { dueState, formatDay, repeatText } from './model';
 import { useTodoDraft } from './useTodoDraft';
 

@@ -1,11 +1,6 @@
 import type { ReactNode } from 'react';
-import { McpServersPage } from '../mcp/McpServersPage';
-import { NotificationSettingsPage } from '../notifications/NotificationSettingsPage';
-import { AllConnectionsPage } from '../plugins/AllConnectionsPage';
-import { PluginPage } from '../plugins/PluginPage';
-import { PluginsPage } from '../plugins/PluginsPage';
-import { SecretsPage } from '../secrets/SecretsPage';
 import { routePath, type SettingsPage } from './route';
+import { AllConnectionsPage, McpServersPage, NotificationSettingsPage, PluginPage, PluginsPage, SecretsPage } from './screens';
 import { navigate } from './router';
 
 /** The Settings pages of their own (not a project's sections or this host's): every kind but these three. */
