@@ -14,7 +14,8 @@ The tray icon is a separate, optional app. Closing it leaves PDT running; stoppi
 
 ## The tray app
 
-On macOS, Windows and a Linux desktop, PDT has an icon in the menu bar or system tray. Its menu has:
+On macOS, Windows and a Linux desktop with the AppImage, PDT has an icon in the menu bar or system tray (the Linux
+tarball and the one-line install on Linux have none). Its menu has:
 
 - **Open**: opens PDT in your browser (on Windows, left-clicking the icon does the same).
 - **Check for updates**: checks now and offers to install what it finds.
@@ -136,7 +137,7 @@ nightly build until a newer stable release comes out.
 Uninstalling keeps your data. To remove that too, see [Your data](your-data.md#remove-everything).
 
 **macOS**: stop PDT and remove it from your login items, then quit the tray icon and move **Personal Dev Team** to
-the Bin:
+the Bin (and **Personal Dev Team.app.previous** beside it, the version before the last update, if it's there):
 
 ```sh
 "/Applications/Personal Dev Team.app/Contents/MacOS/pdt-host" uninstall
@@ -151,11 +152,19 @@ If you installed with the one-line command, the app is in the **Applications** f
 **Windows**: uninstall **Personal Dev Team** in **Settings › Apps › Installed apps**. That also stops PDT and removes
 it from startup.
 
-**Linux**: remove the service, then delete the folder you installed into:
+**Linux**: remove the service, then delete the folder you installed into and the version before the last update
+beside it:
 
 ```sh
 ~/.local/opt/pdt/pdt-host uninstall
-rm -r ~/.local/opt/pdt
+rm -rf ~/.local/opt/pdt ~/.local/opt/pdt.previous
 ```
 
-For the AppImage, run `pdt-host uninstall` from the `app` folder in PDT's data folder, then delete the AppImage.
+For the AppImage, run `pdt-host uninstall` from the `app` folder in PDT's data folder, then delete the AppImage and
+the `.previous` copy beside it, if there is one.
+
+If you turned on lingering only for PDT, turn it off again:
+
+```sh
+loginctl disable-linger "$USER"
+```
