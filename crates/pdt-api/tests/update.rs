@@ -1150,8 +1150,7 @@ async fn a_check_says_which_update_is_available() {
 #[tokio::test]
 async fn a_check_that_cannot_reach_github_says_so() {
     let tmp = tempfile::tempdir().unwrap();
-    // A port nothing listens on: bound, then closed.
-    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap().port();
+    let closed = crate::port_blocks::closed();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = pdt_api::AppState::with_platform(store, data(tmp.path()), pdt_api::isolated_platform(tmp.path()));
     state.update = Arc::new(pdt_api::UpdateService::new(&format!("http://127.0.0.1:{closed}"), "o/r", true, "0.1.0"));

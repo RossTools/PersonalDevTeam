@@ -1083,7 +1083,8 @@ async fn the_pm_stops_a_tickets_work_after_asking_and_its_links_hold_auto_start_
     assert!(said.contains("\"key\": \"PX-2\""), "{said}");
     let said = ask(&env, &id, r#"mcp: link_tickets {"ticket": "PX-2", "kind": "blockedBy", "other": "PX-1"}"#).await;
     assert!(said.starts_with("mcp link_tickets:"), "{said}");
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    // The delay is over (without waiting it out): PX-2 could start now, but for its link.
+    settings(json!({"pmActs": true, "autoStart": "todo", "maxRunningAttempts": 5, "startDelaySeconds": 0})).await;
     for _ in 0..3 {
         common::pick_up(&env.state).await;
     }

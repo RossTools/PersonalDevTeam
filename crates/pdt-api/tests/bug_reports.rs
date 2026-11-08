@@ -205,7 +205,7 @@ async fn the_github_login_files_the_issue_before_the_token_and_neither_means_the
 #[tokio::test]
 async fn an_unreachable_github_asks_to_try_again() {
     let tmp = tempfile::tempdir().unwrap();
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = crate::port_blocks::closed();
     let store = pdt_store::Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
     state.update =

@@ -12,6 +12,7 @@
 //! - 30000–30249: pdt-host's fake pdtd (`tests/supervise.rs`)
 //! - 30500–30999: pdtd's own test daemons (`tests/common`)
 //! - 31000–31099: pdt-agents' terminal tests (`tests/pty.rs`, a server a process tree holds)
+//! - 31100–31199: ports nothing listens on ([`closed`]), for a server that can't be reached
 
 use std::sync::Mutex;
 
@@ -36,4 +37,11 @@ pub fn claim(first: u16, blocks: u16, size: u16) -> u16 {
         }
     }
     panic!("all {blocks} port blocks from {first} are in use");
+}
+
+/// A port no test ever listens on, held for this process: connecting to it is refused. A port bound and then dropped
+/// is not: another test process can take it in between.
+#[allow(dead_code)]
+pub fn closed() -> u16 {
+    claim(31100, 100, 1)
 }
