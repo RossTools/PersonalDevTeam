@@ -48,12 +48,18 @@ org can open it).
   static file: its address is the OAuth clients' registered redirect URI.
 - `public/install.sh` (macOS and Linux) and `public/install.ps1` (Windows) are the one-line install scripts, served
   from the site's root (`curl -fsSL https://pdt.dev/install.sh | sh`, `irm https://pdt.dev/install.ps1 | iex`). They
-  pick the release from GitHub's API, check it against its `SHA256SUMS` and install it as the user docs' install page
-  says by hand. `src/install.test.mjs` runs install.sh against a fake GitHub API with stubbed `uname`, `pdt-host` and
+  pick the release, check it against its `SHA256SUMS` and install it as the user docs' install page says by hand.
+  Without `GITHUB_TOKEN` they spend none of an IP's 60 anonymous API calls an hour on a stable release (its tag is
+  where github.com's `releases/latest` redirects, its files download by name from `releases/download/<tag>/`, the file
+  for the system picked from SHA256SUMS) and one on a nightly (the list of releases); with a token everything goes
+  through the API, as a private fork needs. `src/install.test.mjs` runs install.sh against a fake GitHub (API and
+  downloads) with stubbed `uname`, `pdt-host` and
   `loginctl` in a temp HOME; CI's `site` job also runs shellcheck and PSScriptAnalyzer on them. Their names (product,
   repository, port) are brand names: a pdt-core test checks them. `src/components/InstallBox.astro` shows the command
   (landing and Features pages): a tab per system, the visitor's picked by `src/install.mjs`, with a copy button, and
-  the page's "Download for …" buttons follow the visitor's system.
+  the page's "Download for …" buttons follow the visitor's system. They link straight to the newest stable release's
+  file (`downloadUrl` in `src/links.mjs`: `releases/latest/download/<asset>`, which works because no asset name
+  carries the version); the nav's Download goes to the releases page.
 - The "PDT is built by PDT" numbers and the version on the landing page are counted from git at build time
   (`src/stats.mjs`; a shallow clone falls back to fixed numbers).
 

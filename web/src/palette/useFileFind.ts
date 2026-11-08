@@ -2,6 +2,7 @@ import { keepPreviousData, useQueries } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useDebounced } from '../common/useDebounced';
 import { MIN_FILE_QUERY, type FileCheckout, type FoundFile } from './paletteItems';
+import { fileKeys } from '../files/queries';
 
 /** Files listed at most, across checkouts. */
 const MAX_FOUND = 20;
@@ -25,7 +26,7 @@ export function useFileFind(checkouts: FileCheckout[], query: string, enabled: b
   const asking = enabled && typed.length >= MIN_FILE_QUERY && q.length >= MIN_FILE_QUERY;
   const results = useQueries({
     queries: checkouts.map((c) => ({
-      queryKey: ['files', 'find', c.projectId, c.worktreeId, q],
+      queryKey: fileKeys.find(c.projectId, c.worktreeId, q),
       queryFn: ({ signal }: { signal: AbortSignal }) => api.findFiles(c.projectId, c.worktreeId, q, signal),
       enabled: asking,
       placeholderData: keepPreviousData,

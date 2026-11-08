@@ -1,5 +1,7 @@
 // Workflows: their query keys, and what a write to one marks stale.
-import type { QueryClient } from '@tanstack/react-query';
+import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { api } from '../api/client';
+import { POLL } from '../common/poll';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 
 export const workflowKeys = {
@@ -11,13 +13,27 @@ export const workflowKeys = {
   /** Every workflow's runs (`runs(id)` one workflow's). */
   allRuns: ['workflow-runs'] as const,
   runs: (id: string) => ['workflow-runs', id] as const,
+  /** A workflow's runs list, with or without the quiet ones. */
+  runList: (id: string, quiet: boolean) => ['workflow-runs', id, { quiet }] as const,
   run: (runId: string) => ['workflow-run', runId] as const,
   templates: ['workflow-templates'] as const,
   template: (id: string) => ['workflow-template', id] as const,
   catalog: ['workflow-catalog'] as const,
   check: (text: string) => ['workflow-check', text] as const,
   export: (ids: string[]) => ['workflow-export', ids] as const,
+  /** The host's recent events, for a dry run's payload. */
+  recentEvents: ['events', 'recent'] as const,
 };
+
+/** A workflow run, followed every 2 s while it runs or waits (the run's page and a conversation's card share it). */
+export function useWorkflowRun(runId: string | null) {
+  return useQuery({
+    queryKey: workflowKeys.run(runId ?? ''),
+    queryFn: () => api.getWorkflowRun(runId!),
+    enabled: !!runId,
+    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.live : false),
+  });
+}
 
 /**
  * The Settings sections that show a built-in workflow: whether it is on and whether it is customized (Settings →

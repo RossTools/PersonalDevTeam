@@ -184,14 +184,16 @@ export function PdtProposal({ tool, input }: { tool: string; input: unknown }) {
         </Box>
       );
     }
-    case 'add_ticket_comment':
+    case 'add_ticket_comment': {
+      const files = strings(a.files).length;
       return (
         <Box>
           <Line>On <TicketRef value={ticket} none="this session's ticket" /></Line>
           <Text>{body ?? ''}</Text>
-          {strings(a.files).length > 0 && <Line>Attaches {strings(a.files).length === 1 ? 'a file' : `${strings(a.files).length} files`}</Line>}
+          {files > 0 && <Line>Attaches {plural(files, 'file')}</Line>}
         </Box>
       );
+    }
     case 'workflow_run': {
       const name = nonBlank(a.name) ?? nonBlank(a.id) ?? 'A workflow';
       const given = isRecord(a.input) ? Object.entries(a.input) : [];

@@ -23,7 +23,14 @@ How PDT's own tests are run and what they must never touch. Before pushing, run 
   drop the `export` from a name only its own file uses. It skips `web/ui/primitives` (shadcn's sources). Helpers: `stubApi` and `renderWithQuery` in `web/src/test-utils.tsx`; a test that touches the
   file system needs `// @vitest-environment node`. `web/src/test-setup.ts` sets how long `findBy*` and `waitFor` wait
   (10 s on CI, 5 s locally); don't pass a shorter `timeout`. After every test it undoes `vi.stubGlobal` and `vi.spyOn`
-  and clears local and session storage, so stub and spy in `beforeEach`, not `beforeAll`.
+  and clears local and session storage, so stub and spy in `beforeEach`, not `beforeAll`. It also puts back real
+  timers and resets the state modules keep for the page (drafts, the router's history, the theme chosen,
+  and so on): a module that keeps state of its own gets a reset there. A property `vi.stubGlobal` can't reach
+  (`navigator.clipboard`, `document.fonts`) is set with `stubProperty` / `stubClipboard` (`test-utils.tsx`), which put
+  it back when the test ends, failed or not.
+- **Nothing happened (web):** don't sleep and then check that a request wasn't made. Spy on the `api` client
+  method when the call would come from an effect (a render has run its effects by the time it returns), wait for a
+  query's state (`qc.getQueryState`), or do something that does happen and check it was the only one.
 - **Site:** `pnpm --filter site test` (link rewriting, and the user docs' check for internal references).
 - **Desktop:** `cargo test -p pdt-desktop` needs `pnpm --dir web build` first; plain `cargo test` skips that crate.
 - **Core logic is test-first.** Rules live in pdt-core as pure functions, so most of them are unit tests there; the

@@ -1,19 +1,9 @@
 import { act, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMutation } from '@tanstack/react-query';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { toast } from '@ui/Toaster';
 import { renderWithQuery } from '../test-utils';
-
-beforeAll(() => {
-  Element.prototype.setPointerCapture ??= () => {};
-  Element.prototype.releasePointerCapture ??= () => {};
-  window.matchMedia ??= ((query: string) => ({
-    matches: false, media: query, onchange: null,
-    addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-});
 
 afterEach(() => act(() => { toast.dismiss(); }));
 

@@ -3,14 +3,14 @@
 // the one shown are PDT's (every device sees them); the panel's width and whether it is collapsed are this browser's,
 // per conversation. On a phone the panel is a pane of its own beside the conversation's.
 import { lazy, Suspense, useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ExternalLink, FileStack, PanelRightClose, Plus, X } from 'lucide-react';
 import { ContextMenu, IconButton, SegmentedControl, Skeleton, dragData, parseDragData, tabIndexOf, tabListKeyDown, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { DocumentsBeside } from '../api/gen/DocumentsBeside';
 import { runAction } from '../common/useAction';
-import { usePm } from '../pm/usePm';
+import { usePmOpenConversations } from '../pm/usePm';
 import { routePath } from '../shell/route';
 import { navigate } from '../shell/router';
 import { useOpenSession } from '../common/open';
@@ -18,6 +18,7 @@ import { LinkDocumentDialog } from './DocumentDialogs';
 import { KindIcon } from './LinkedDocuments';
 import { documentKeys, openDocument, providerLabel, useDocument, useDocumentProviders } from './queries';
 import { POLL } from '../common/poll';
+import { ticketQuery } from '../tickets/queries';
 
 // The document's editors and the Markdown libraries load when a document is first shown beside a conversation.
 const DocumentBody = lazy(() => import('./DocumentBody').then((m) => ({ default: m.DocumentBody })));
@@ -26,14 +27,12 @@ const BESIDE_WIDTH = { default: 440, min: 280, max: 960 };
 const STEP = 16;
 const DRAG_KIND = 'beside';
 
-export const besideKey = (sessionId: string) => [...documentKeys.besides, sessionId] as const;
-
 /**
  * The documents open beside a conversation, polled (an agent may open one at any time). Off (`enabled` false) for a
  * terminal: only a conversation has documents beside it.
  */
 function useDocumentsBeside(sessionId: string, enabled = true) {
-  return useQuery({ queryKey: besideKey(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL.live, enabled });
+  return useQuery({ queryKey: documentKeys.beside(sessionId), queryFn: () => api.documentsBeside(sessionId), refetchInterval: POLL.live, enabled });
 }
 
 interface PanelPrefs { width: number; collapsed: boolean }
@@ -69,7 +68,7 @@ function usePanelPrefs(sessionId: string): [PanelPrefs, (p: Partial<PanelPrefs>)
 /** The tabs' actions, applied at once on screen and then by PDT. */
 function useTabs(sessionId: string, data: DocumentsBeside | undefined) {
   const qc = useQueryClient();
-  const key = besideKey(sessionId);
+  const key = documentKeys.beside(sessionId);
   const settle = (b: DocumentsBeside) => qc.setQueryData(key, b);
   const local = (f: (b: DocumentsBeside) => DocumentsBeside) => {
     const now = qc.getQueryData<DocumentsBeside>(key) ?? data;
@@ -175,7 +174,7 @@ export function useOpenBesidePicker(sessionId: string, enabled = true): { entry:
       title="Open a document beside the conversation"
       exclude={beside.data?.tabs.map((t) => t.document.id) ?? []}
       onPick={async (d) => {
-        qc.setQueryData(besideKey(sessionId), await api.openBeside(sessionId, d.id));
+        qc.setQueryData(documentKeys.beside(sessionId), await api.openBeside(sessionId, d.id));
         setOpen(false);
       }}
       onClose={() => setOpen(false)}
@@ -341,21 +340,16 @@ export interface BesideTarget {
 export function useBesideTargets(ticketIds: string[]) {
   const qc = useQueryClient();
   const openSession = useOpenSession();
-  const pm = usePm();
-  const tickets = useQuery({
-    queryKey: ['documents', 'beside-targets', ticketIds],
-    queryFn: () => Promise.all(ticketIds.map((id) => api.getTicket(id))),
-    enabled: ticketIds.length > 0,
-    staleTime: 10_000,
-  });
+  const pm = usePmOpenConversations();
+  const tickets = useQueries({ queries: ticketIds.map(ticketQuery) });
   const targets: BesideTarget[] = [
-    ...(tickets.data ?? []).flatMap((t) => t.sessions
+    ...tickets.flatMap((q) => q.data ?? []).flatMap((t) => t.sessions
       .filter((s) => s.mode === 'conversation' && s.status !== 'finished')
       .map((s) => ({ sessionId: s.id, projectId: t.projectId, label: `${t.key} · ${s.persona ?? s.title}`, pm: false }))),
-    ...(pm.data?.sessions ?? []).filter((s) => s.open).map((s) => ({ sessionId: s.session.id, projectId: s.session.projectId, label: `PM · ${s.title}`, pm: true })),
+    ...(pm.data ?? []).map((s) => ({ sessionId: s.id, projectId: s.projectId, label: `PM · ${s.title}`, pm: true })),
   ];
   const open = (t: BesideTarget, documentId: string) => void runAction(async () => {
-    qc.setQueryData(besideKey(t.sessionId), await api.openBeside(t.sessionId, documentId));
+    qc.setQueryData(documentKeys.beside(t.sessionId), await api.openBeside(t.sessionId, documentId));
     if (t.pm) navigate(routePath({ view: 'pm', pm: t.sessionId }));
     else openSession({ id: t.sessionId, projectId: t.projectId });
   });

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@ui';
 import type { Project } from '../api/gen/Project';
 import type { Session } from '../api/gen/Session';
-import { githubLinks, renderWithQuery, Reply, stubApi } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { SessionView } from './SessionView';
 
 vi.mock('../terminal/TerminalView', () => ({
@@ -133,7 +133,7 @@ describe('SessionView actions', () => {
   it('copies the path and says so', async () => {
     stubApi({});
     const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     renderWithQuery(<SessionView session={session({ cwd: '/r/sub' })} onRemoved={() => {}} />);
     await choose('Copy path');
     expect(writeText).toHaveBeenCalledWith('/r/sub');

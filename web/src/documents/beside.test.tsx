@@ -9,7 +9,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { OpenSessionContext } from '../common/open';
 import { TicketDocuments } from '../tickets/TicketDocuments';
 import { ticket } from '../tickets/fixtures';
-import { DocumentsBesideLayout, besideKey } from './BesidePanel';
+import { DocumentsBesideLayout } from './BesidePanel';
 import { DocumentBody, changedCells } from './DocumentBody';
 import { documentKeys } from './queries';
 
@@ -95,10 +95,10 @@ describe('documents beside a conversation', () => {
     });
     localStorage.setItem('pdt.beside.s1', JSON.stringify({ width: 500, collapsed: true }));
     const { qc } = renderWithQuery(<DocumentsBesideLayout sessionId="s1" phone={false}><Chat /></DocumentsBesideLayout>);
-    await waitFor(() => expect(qc.getQueryData(besideKey('s1'))).toBeDefined());
+    await waitFor(() => expect(qc.getQueryData(documentKeys.beside('s1'))).toBeDefined());
     expect(screen.queryByRole('complementary', { name: 'Documents beside the conversation' })).not.toBeInTheDocument();
     now = { ...besideOf([one], 'd1'), tabs: besideOf([one], 'd1').tabs.map((t) => ({ ...t, by: 'agent' })) };
-    await act(() => qc.invalidateQueries({ queryKey: besideKey('s1') }));
+    await act(() => qc.invalidateQueries({ queryKey: documentKeys.beside('s1') }));
     expect(await screen.findByText('Drafted by the PM.')).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: 'Documents beside the conversation' })).toHaveStyle({ width: '500px' });
   });

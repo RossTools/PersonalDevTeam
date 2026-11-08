@@ -1,5 +1,5 @@
-// public/install.sh against a fake release: GitHub's API is a local HTTP server answering from a map (PDT_INSTALL_API),
-// HOME is a temp folder, and uname, getconf, loginctl, systemctl, open and codesign are stubs on PATH (codesign passes
+// public/install.sh against a fake release: GitHub's API (PDT_INSTALL_API) and github.com's release downloads
+// (PDT_INSTALL_WEB) are a local HTTP server answering from a map, HOME is a temp folder, and uname, getconf, loginctl, systemctl, open and codesign are stubs on PATH (codesign passes
 // unless $HOME/codesign.fail holds its message; systemctl has a user instance unless `systemd: false`). The Linux
 // tarball's pdt-host is a stub that records how it was called (and fails when $HOME/host.fail exists), so nothing is
 // registered for real, and no running PDT is looked for on 7420.
@@ -24,12 +24,23 @@ function stub(dir, name, body) {
   chmodSync(join(dir, name), 0o755);
 }
 
-// The fake API: path and query → body. Each test's paths are under its own /<n>/.
+// The fake GitHub: path and query → body, `{ redirect }` (a 302 there) or `{ status }`. Each test's paths are under
+// its own /<n>/: the API's under /<n>/repos, github.com's under /<n>/web. `requests` lists every path asked for.
 const routes = new Map();
+const requests = [];
 const server = createServer((req, res) => {
-  const body = routes.get(req.url);
-  res.writeHead(body === undefined ? 404 : 200);
-  res.end(body ?? '{"message":"Not Found"}');
+  requests.push(req.url);
+  const route = routes.get(req.url);
+  if (route?.redirect) {
+    res.writeHead(302, { Location: route.redirect });
+    res.end();
+  } else if (route?.status) {
+    res.writeHead(route.status);
+    res.end('{"message":"API rate limit exceeded"}');
+  } else {
+    res.writeHead(route === undefined ? 404 : 200);
+    res.end(route ?? '{"message":"Not Found"}');
+  }
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 after(() => server.close());
@@ -63,16 +74,19 @@ function releaseKey() {
 }
 
 /** Publishes a release with `files` (name → contents) and SHA256SUMS (from `sums`, or computed), as GitHub's API would
- * list it: `latest`, and `tags/<tag>`. With `signedBy` (a `releaseKey()`), SHA256SUMS.sig too, signed for `signedTag`
+ * list it (`latest`, and `tags/<tag>`) and github.com would serve it (releases/latest redirecting to its tag when
+ * `latest`, and each file under releases/download/<tag>/). With `signedBy` (a `releaseKey()`), SHA256SUMS.sig too, signed for `signedTag`
  * (default `tag`). */
 function publish(t, tag, files, { sums, pretty = true, latest = true, signedBy, signedTag = tag } = {}) {
   const rel = `${t.api}/repos/${REPO}/releases`;
+  const web = `${t.api}/web/${REPO}/releases`;
   const all = { ...files };
   all.SHA256SUMS = sums ?? Object.entries(files).map(([n, b]) => `${createHash('sha256').update(b).digest('hex')}  ${n}\n`).join('');
   if (signedBy) all['SHA256SUMS.sig'] = signedBy.sig(signedTag, all.SHA256SUMS);
   const assets = Object.entries(all).map(([name, body]) => {
     const id = assetIds++;
     routes.set(`${rel}/assets/${id}`, body);
+    routes.set(`${web}/download/${tag}/${name}`, body);
     return {
       url: `https://api.github.com/repos/${REPO}/releases/assets/${id}`,
       id,
@@ -83,8 +97,14 @@ function publish(t, tag, files, { sums, pretty = true, latest = true, signedBy, 
   });
   const json = JSON.stringify({ url: `https://api.github.com/repos/${REPO}/releases/1`, tag_name: tag, name: tag, assets }, null, pretty ? 2 : 0);
   routes.set(`${rel}/tags/${tag}`, json);
-  if (latest) routes.set(`${rel}/latest`, json);
+  if (latest) {
+    routes.set(`${rel}/latest`, json);
+    routes.set(`${web}/latest`, { redirect: `http://127.0.0.1:${server.address().port}${web}/tag/${tag}` });
+  }
 }
+
+/** The paths of `t`'s API requests (not github.com's). */
+const apiCalls = (t) => requests.filter((p) => p.startsWith(`${t.api}/repos/`));
 
 /** A gzipped tar of `entries` (path → contents; executable when the path ends in pdt-host). */
 function tarball(t, entries) {
@@ -111,7 +131,8 @@ function run(t, args = [], extraEnv = {}, { running = false } = {}) {
   const local = `http://127.0.0.1:${port}${running ? `${t.api}/pdt` : '/no-pdt-running'}`;
   if (running) routes.set(`${t.api}/pdt/api/health`, '{"name":"Personal Dev Team","version":"0.3.0"}');
   const env = { PATH: `${t.bin}:${process.env.PATH}`, HOME: t.home, USER: 'tester',
-    PDT_INSTALL_API: `http://127.0.0.1:${port}${t.api}`, PDT_INSTALL_LOCAL: local,
+    PDT_INSTALL_API: `http://127.0.0.1:${port}${t.api}`, PDT_INSTALL_WEB: `http://127.0.0.1:${port}${t.api}/web`,
+    PDT_INSTALL_LOCAL: local,
     PDT_INSTALL_SYSTEM_APPS: join(t.root, 'system-apps'), ...extraEnv };
   const child = spawn('sh', [script, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '';
@@ -240,14 +261,78 @@ test('a release without SHA256SUMS aborts', { skip }, async (ctx) => {
   const t = setup();
   ctx.after(t.cleanup);
   publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
-  const latest = `${t.api}/repos/${REPO}/releases/latest`;
-  const json = JSON.parse(routes.get(latest));
-  json.assets = json.assets.filter((a) => a.name !== 'SHA256SUMS');
-  routes.set(latest, JSON.stringify(json));
+  routes.delete(`${t.api}/web/${REPO}/releases/download/v0.3.0/SHA256SUMS`);
   const r = await run(t, ['--yes']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /no SHA256SUMS/);
   assert.ok(!existsSync(join(t.home, '.local/opt/pdt')));
+
+  // With a token, the release's asset list says so.
+  const k = setup();
+  ctx.after(k.cleanup);
+  publish(k, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(k) });
+  const latest = `${k.api}/repos/${REPO}/releases/latest`;
+  const json = JSON.parse(routes.get(latest));
+  json.assets = json.assets.filter((a) => a.name !== 'SHA256SUMS');
+  routes.set(latest, JSON.stringify(json));
+  const rk = await run(k, ['--yes'], { GITHUB_TOKEN: 'token' });
+  assert.notEqual(rk.status, 0);
+  assert.match(rk.stderr, /no SHA256SUMS/);
+  assert.ok(!existsSync(join(k.home, '.local/opt/pdt')));
+});
+
+test('without a token, a stable install calls no API and a nightly one calls it once', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  const r = await run(t, ['--yes']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(apiCalls(t), []);
+  assert.ok(requests.includes(`${t.api}/web/${REPO}/releases/download/v0.3.0/pdt-linux-x86_64.tar.gz`));
+
+  const v = setup();
+  ctx.after(v.cleanup);
+  publish(v, 'v0.2.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(v) }, { latest: false });
+  assert.equal((await run(v, ['--yes', '--version', '0.2.0'])).status, 0);
+  assert.deepEqual(apiCalls(v), []);
+
+  const n = setup();
+  ctx.after(n.cleanup);
+  publish(n, 'v0.3.1-nightly.20261030', { 'pdt-linux-x86_64.tar.gz': linuxTarball(n) }, { latest: false });
+  routes.set(`${n.api}/repos/${REPO}/releases?per_page=30`, JSON.stringify([{ tag_name: 'v0.3.1-nightly.20261030' }]));
+  assert.equal((await run(n, ['--yes', '--channel', 'nightly'])).status, 0);
+  assert.deepEqual(apiCalls(n), [`${n.api}/repos/${REPO}/releases?per_page=30`]);
+});
+
+test('with a token, the release and its files come through the API', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  for (const key of [...routes.keys()]) if (key.startsWith(`${t.api}/web/`)) routes.delete(key);
+  const r = await run(t, ['--yes'], { GITHUB_TOKEN: 'token' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /v0\.3\.0 is installed/);
+  assert.ok(apiCalls(t).some((p) => p.includes('/releases/assets/')));
+});
+
+test('a failed download says why', { skip }, async (ctx) => {
+  const cases = [
+    [{ status: 403 }, /could not download pdt-linux-x86_64\.tar\.gz of v0\.3\.0\. .*rate limit may be used up.*GITHUB_TOKEN/],
+    [{ status: 500 }, /could not download pdt-linux-x86_64\.tar\.gz of v0\.3\.0\. GitHub answered HTTP 500/],
+    [undefined, /release v0\.3\.0 has no download for this system \(pdt-linux-x86_64\.tar\.gz\)/],
+  ];
+  for (const [answer, message] of cases) {
+    const t = setup();
+    ctx.after(t.cleanup);
+    publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+    const file = `${t.api}/web/${REPO}/releases/download/v0.3.0/pdt-linux-x86_64.tar.gz`;
+    if (answer) routes.set(file, answer);
+    else routes.delete(file);
+    const r = await run(t, ['--yes']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, message);
+    assert.ok(!existsSync(join(t.home, '.local/opt/pdt')));
+  }
 });
 
 test('with a pinned key, only a release whose SHA256SUMS it signed is installed', { skip }, async (ctx) => {

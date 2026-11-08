@@ -1,7 +1,7 @@
 // PDT's own tool calls in a conversation as cards (PDT-382): what the agent created, changed, linked, sent, ran or
 // watched, instead of a folded "Used N tools" line.
 import { useContext, useEffect, useRef, type ReactNode, type Ref } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight, Bug, CircleDot, CircleStop, Eye, FileText, GitFork, Link2, Mail, MessageSquare, PanelRight, Pencil, Pin, Play, Plus, Sheet,
   StickyNote, Trash2,
@@ -19,7 +19,6 @@ import { stageLabel } from '../common/StageStepper';
 import { TicketPill } from '../common/TicketPill';
 import { actionError, useAction } from '../common/useAction';
 import { MarkdownRefsContext } from '../common/markdownRefs';
-import { besideKey } from '../documents/BesidePanel';
 import { routePath } from '../shell/route';
 import { RUN_STATUS } from '../workflows/runs';
 import {
@@ -44,8 +43,9 @@ import {
   type FieldChange,
 } from './pdtTools';
 import { isTicketKey } from '../tickets/model';
-import { workflowKeys } from '../workflows/queries';
-import { POLL } from '../common/poll';
+import { useWorkflowRun } from '../workflows/queries';
+import { documentKeys } from '../documents/queries';
+import { invalidateWatches, useSessionWatches } from '../common/Watch';
 
 /** A PDT tool call as the card needs it (a `tool_call` event's fields). */
 export interface PdtCall {
@@ -253,12 +253,7 @@ function CommentCard({ call }: { call: PdtCall }) {
 function WorkflowRunCard({ call }: { call: PdtCall }) {
   const w = workflowRun(call.input, call.output);
   const state = callState(call);
-  const run = useQuery({
-    queryKey: workflowKeys.run(w.runId ?? ''),
-    queryFn: () => api.getWorkflowRun(w.runId!),
-    enabled: !!w.runId,
-    refetchInterval: (q) => (q.state.data && ['running', 'waiting'].includes(q.state.data.status) ? POLL.steady : false),
-  });
+  const run = useWorkflowRun(w.runId ?? null);
   const r = run.data;
   const verb = call.status === 'done' ? 'Started' : call.status === 'running' ? 'Starting' : "Didn't start";
   return (
@@ -286,15 +281,11 @@ function WatchCard({ call }: { call: PdtCall }) {
   const w = watchOf(call.input, call.output);
   const session = (resultOf(call.output)?.watching as { sessionId?: string }[] | undefined)?.[0]?.sessionId ?? null;
   const state = callState(call);
-  const list = useQuery({
-    queryKey: ['watches', { session }],
-    queryFn: () => api.watches.list({ session: session! }),
-    enabled: !!w.id && !!session,
-  });
+  const list = useSessionWatches(w.id ? session : null);
   const stop = useMutation({
     meta: { errorShown: true },
     mutationFn: () => api.watches.remove(w.id!),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['watches'] }),
+    onSettled: () => invalidateWatches(qc),
   });
   // Stop watching hides itself: the card keeps the focus it had (PDT-547).
   const card = useRef<HTMLElement>(null);
@@ -422,7 +413,7 @@ function OpenBeside({ documentId }: { documentId: string }) {
   const qc = useQueryClient();
   const sessionId = useContext(MarkdownRefsContext)?.sessionId ?? null;
   const [open, pending] = useAction(async () => {
-    qc.setQueryData(besideKey(sessionId!), await api.openBeside(sessionId!, documentId));
+    qc.setQueryData(documentKeys.beside(sessionId!), await api.openBeside(sessionId!, documentId));
   });
   if (!sessionId) return null;
   return (

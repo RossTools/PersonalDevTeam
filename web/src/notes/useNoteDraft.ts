@@ -7,6 +7,7 @@ import { actionError } from '../common/useAction';
 import { useRefreshPm } from '../pm/usePm';
 import { titleFor, type Whose } from './model';
 import { useNote } from './useNotes';
+import { pmKeys } from '../pm/queries';
 
 /** How long typing has to stop before the note saves. */
 export const AUTOSAVE_MS = 800;
@@ -112,7 +113,7 @@ export function useNoteDraft(initialId: string | null, newNote: NewNoteOptions) 
       }
       baseline.current = { title, body };
       sent.current = { title: n.title, body: n.body };
-      qc.setQueryData(['pm-notes', 'one', n.id], n);
+      qc.setQueryData(pmKeys.note(n.id), n);
       if (mounted.current) {
         if (!id) {
           setNoteId(n.id);

@@ -15,13 +15,32 @@ import { listText } from './text';
 /** A watched target: a ticket's id or a workflow run's. */
 export type WatchOf = { ticket: string } | { run: string };
 
-const watchesKey = (of: WatchOf) => ['watches', of] as const;
-/** Every query of watches: a change refreshes a target's list and the all-watches one alike. */
-const ALL_WATCH_QUERIES = ['watches'] as const;
+export const watchKeys = {
+  /** Every query of watches: a change refreshes a target's list, a session's and the all-watches one alike. */
+  all: ['watches'] as const,
+  of: (of: WatchOf) => ['watches', of] as const,
+  session: (session: string | null) => ['watches', { session }] as const,
+  every: ['watches', 'all'] as const,
+};
+
+/** After a watch starts or stops: every list of them. */
+export function invalidateWatches(qc: QueryClient) {
+  return qc.invalidateQueries({ queryKey: watchKeys.all });
+}
 
 export function useWatches(of: WatchOf) {
   // Polled with the rest of the UI: a PM's watch can start or end at any time.
-  return useQuery({ queryKey: watchesKey(of), queryFn: () => api.watches.list(of), refetchInterval: POLL.live });
+  return useQuery({ queryKey: watchKeys.of(of), queryFn: () => api.watches.list(of), refetchInterval: POLL.live });
+}
+
+/** A session's watches (a conversation's watch card), polled: the PM may stop one at any time. Off without one. */
+export function useSessionWatches(session: string | null) {
+  return useQuery({
+    queryKey: watchKeys.session(session),
+    queryFn: () => api.watches.list({ session: session! }),
+    enabled: !!session,
+    refetchInterval: POLL.live,
+  });
 }
 
 /**
@@ -29,7 +48,7 @@ export function useWatches(of: WatchOf) {
  * a board makes one request per poll.
  */
 export function useAllWatches() {
-  return useQuery({ queryKey: ['watches', 'all'], queryFn: () => api.watches.list({}), refetchInterval: POLL.live });
+  return useQuery({ queryKey: watchKeys.every, queryFn: () => api.watches.list({}), refetchInterval: POLL.live });
 }
 
 /** "Watched by you and PM “Docs”". */
@@ -41,7 +60,7 @@ function watchedByText(watches: Pick<WatchInfo, 'watcher'>[]): string {
 /** Stops a watch and refreshes every list of them. */
 export async function stopWatch(qc: QueryClient, id: string) {
   await api.watches.remove(id);
-  await qc.invalidateQueries({ queryKey: ALL_WATCH_QUERIES });
+  await invalidateWatches(qc);
 }
 
 /** An eye on a ticket's card or row when anything watches it (the user or a PM), naming who on hover. */
@@ -60,7 +79,7 @@ function ownWatch(watches: WatchInfo[] | undefined): WatchInfo | null {
 async function toggle(qc: QueryClient, of: WatchOf, own: WatchInfo | null) {
   if (own) await api.watches.remove(own.id);
   else await api.watches.create(of);
-  await qc.invalidateQueries({ queryKey: ALL_WATCH_QUERIES });
+  await invalidateWatches(qc);
 }
 
 /** Watch / Stop watching, for a menu (the phone's ⋯). */

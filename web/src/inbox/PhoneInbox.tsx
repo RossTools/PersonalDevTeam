@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Button, Dialog, DialogActions, DiffStat, EmptyState, Sheet, Skeleton, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
@@ -17,6 +16,7 @@ import { useProjectForge } from '../tickets/queries';
 import { UpdateView } from './InboxView';
 import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
+import { useReadItemNotifications } from '../notifications/queries';
 import { useItemView } from './itemView';
 import { useChangeSize, useItemAttempt } from './itemAttempt';
 import { ItemHeader, Why } from './ItemLayout';
@@ -133,9 +133,10 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
 
   // Opening an item reads its notifications.
   const readId = item && !item.id.startsWith('session:') ? item.id : null;
+  const { mutate: readItem } = useReadItemNotifications();
   useEffect(() => {
-    if (readId) void api.readNotifications({ inboxItemId: readId }).catch(() => {});
-  }, [readId]);
+    if (readId) readItem(readId);
+  }, [readId, readItem]);
   // An item answered elsewhere, or one answered here when another has come in since: show the first one left.
   const gone = !updateId && !item && !loading && live.length > 0;
   const firstLeft = gone ? step(live, null, 1) : null;

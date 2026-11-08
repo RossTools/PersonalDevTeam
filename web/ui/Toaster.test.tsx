@@ -1,24 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Toaster, toast } from './Toaster';
-
-beforeAll(() => {
-  // jsdom lacks pointer capture; Sonner calls it when a toast is pressed (swipe to dismiss).
-  Element.prototype.setPointerCapture ??= () => {};
-  Element.prototype.releasePointerCapture ??= () => {};
-  // jsdom has no matchMedia; Sonner reads it for the system theme.
-  window.matchMedia ??= ((query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    dispatchEvent: () => false,
-  })) as unknown as typeof window.matchMedia;
-});
 
 afterEach(() => act(() => { toast.dismiss(); }));
 

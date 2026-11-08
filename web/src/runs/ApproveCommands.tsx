@@ -1,9 +1,9 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, CodeCard, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
-import { runKeys } from './queries';
+import { invalidateCommands, runKeys } from './queries';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
@@ -31,9 +31,9 @@ function untrustedCommands(e: unknown): { projectId: string; commands: ConfigCom
   return d?.projectId && d.commands?.length ? { projectId: d.projectId, commands: d.commands } : null;
 }
 
-/** Runs `attempt`. When it needs commands the user hasn't approved, shows them and, once the user approves them, tries
- * again; declining resolves to null without an error. */
-export async function withApproval<T>(confirm: Confirm, attempt: () => Promise<T>): Promise<T | null> {
+/** Runs `attempt`. When it needs commands the user hasn't approved, shows them and, once the user approves them (which
+ * refreshes the project's commands), tries again; declining resolves to null without an error. */
+export async function withApproval<T>(confirm: Confirm, qc: QueryClient, attempt: () => Promise<T>): Promise<T | null> {
   try {
     return await attempt();
   } catch (e) {
@@ -55,6 +55,7 @@ export async function withApproval<T>(confirm: Confirm, attempt: () => Promise<T
     });
     if (!ok) return null;
     await api.trustCommands(waiting.projectId, waiting.commands.map((c) => c.fingerprint));
+    void invalidateCommands(qc, waiting.projectId);
     return attempt();
   }
 }
@@ -66,7 +67,7 @@ export function ConfigCommands({ projectId }: { projectId: string }) {
   const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null) });
   const [approve, approving] = useAction(async (fingerprints: string[]) => {
     await api.trustCommands(projectId, fingerprints);
-    await qc.invalidateQueries({ queryKey: runKeys.commands(projectId) });
+    await invalidateCommands(qc, projectId);
   }, { success: 'Approved' });
   if (list.isPending) return <Skeleton lines={2} label="Loading the commands" />;
   if (list.isError) return <Alert tone="error">{list.error.message}</Alert>;

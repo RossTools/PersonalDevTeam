@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api } from '../api/client';
 import type { AttemptSummary } from '../api/gen/AttemptSummary';
 import type { Ticket } from '../api/gen/Ticket';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
@@ -138,6 +139,8 @@ describe('ticket attempt', () => {
 
   it('checks for a merge once when it opens on an active attempt', async () => {
     const calls = stub(active);
+    // The check starts from an effect, which a render runs before it returns.
+    const check = vi.spyOn(api, 'checkMerge');
     const { rerender } = view();
     await screen.findByRole('region', { name: 'Attempt' });
     await waitFor(() => expect(count(calls, 'POST', '/api/tickets/t1/check-merge')).toBe(1));
@@ -148,16 +151,16 @@ describe('ticket attempt', () => {
         </OpenSessionContext.Provider>
       </StartTicketContext.Provider>,
     );
-    await new Promise((r) => setTimeout(r, 50));
-    expect(count(calls, 'POST', '/api/tickets/t1/check-merge')).toBe(1);
+    expect(check).toHaveBeenCalledOnce();
   });
 
   it('does not check for a merge without an active attempt', async () => {
-    const calls = stub(ticket(1, { stage: 'ready' }));
+    stub(ticket(1, { stage: 'ready' }));
+    const check = vi.spyOn(api, 'checkMerge');
     view();
+    // Shown with its ticket loaded: the effect has run.
     await screen.findByRole('button', { name: 'Start' });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(count(calls, 'POST', '/api/tickets/t1/check-merge')).toBe(0);
+    expect(check).not.toHaveBeenCalled();
   });
 });
 

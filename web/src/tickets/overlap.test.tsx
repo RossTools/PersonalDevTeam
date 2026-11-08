@@ -9,7 +9,6 @@ import type { TicketOverlap } from '../api/gen/TicketOverlap';
 import { toast } from '@ui';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { OpenTicketContext, StartTicketContext } from './actions';
-import { resetClearToasts } from './clearToStart';
 import { event, page, params, project, summary, ticket } from './fixtures';
 import { DEFAULT_FILTERS, eventTitle, isDefaultFilter, READY_TO_START, toQuery } from './model';
 import { NewTicketDialog } from './NewTicketDialog';
@@ -24,7 +23,6 @@ const sizes = [['clientWidth', 900], ['clientHeight', 600], ['offsetWidth', 900]
 beforeEach(() => {
   for (const [prop, value] of sizes) vi.spyOn(HTMLElement.prototype, prop, 'get').mockImplementation(() => value);
   localStorage.clear();
-  resetClearToasts();
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
 afterEach(() => {
@@ -135,8 +133,8 @@ describe('backlog', () => {
     // A fresh mount (another view, a reload of the page's state) in the same session does not toast again.
     const info = vi.spyOn(toast, 'info');
     renderWithQuery(<Backlog />);
+    // The toast is an effect of the render that shows the row: it has run.
     await screen.findByRole('row', { name: /ALP-5 / });
-    await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(info).not.toHaveBeenCalled();
     info.mockRestore();
   });
