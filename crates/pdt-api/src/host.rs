@@ -91,7 +91,7 @@ impl AppState {
     /// Settings → Agents, else the one on the PATH.
     pub async fn agent_platform(&self) -> Platform {
         match self.store.get_host_settings().await {
-            Ok(s) => with_program_settings(&self.platform, &self.host_env, &s, self.home_dir.as_deref()),
+            Ok(s) => with_program_settings(&self.platform, &self.host_env, &s, self.home_dir.get().as_deref()),
             Err(e) => {
                 tracing::warn!(error = %e, "could not read the host settings; agents launch from the PATH");
                 self.platform.clone()
@@ -184,7 +184,7 @@ pub struct AcpAgentView {
 pub(crate) async fn acp_agent_views(st: &AppState, s: &HostSettings) -> Vec<AcpAgentView> {
     let defs = pdt_core::acp_agent::all(&s.acp_agents);
     let search = st.platform.login_path.clone();
-    let home = st.home_dir.clone();
+    let home = st.home_dir.get();
     let data_dir = st.data_dir.clone();
     let env_program = st.host_env.acp_program.clone();
     let s = s.clone();

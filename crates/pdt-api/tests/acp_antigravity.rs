@@ -77,7 +77,7 @@ async fn antigravity_installs_verified_signs_in_and_runs_a_conversation() {
     let mut state = common::app_state(store, tmp.path());
     state.platform.login_path = None;
     // Never the real ~/.gemini.
-    state.home_dir = Some(tmp.path().join("home"));
+    state.home_dir.set(Some(tmp.path().join("home")));
     state.conversations.notice_quiet = Duration::ZERO;
     let app = router(state.clone(), None);
 

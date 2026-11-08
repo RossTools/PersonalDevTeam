@@ -94,7 +94,7 @@ pub struct Export {
 pub struct LocalProvider {
     store: Store,
     data_dir: PathBuf,
-    home: Option<PathBuf>,
+    home: crate::routes::HomeDir,
     files: Arc<Files>,
 }
 
@@ -763,7 +763,7 @@ fn ms_of(t: SystemTime) -> Option<i64> {
 }
 
 impl LocalProvider {
-    pub fn new(store: Store, data_dir: PathBuf, home: Option<PathBuf>) -> Self {
+    pub fn new(store: Store, data_dir: PathBuf, home: crate::routes::HomeDir) -> Self {
         Self { store, data_dir, home, files: Default::default() }
     }
 
@@ -868,11 +868,12 @@ impl LocalProvider {
     /// The folders local documents can be in: the host's and each project's.
     async fn folders(&self) -> ProviderResult<Vec<PathBuf>> {
         let host = self.store.get_host_settings().await.map_err(failed)?.documents_dir;
-        let mut out = vec![documents_folder(None, host.as_deref(), &self.data_dir, self.home.as_deref())];
+        let home = self.home.get();
+        let mut out = vec![documents_folder(None, host.as_deref(), &self.data_dir, home.as_deref())];
         for p in self.store.list_projects().await.map_err(failed)? {
             let own = self.store.project_document_settings(&p.id).await.map_err(failed)?.folder;
             if own.is_some() {
-                let f = documents_folder(own.as_deref(), None, &self.data_dir, self.home.as_deref());
+                let f = documents_folder(own.as_deref(), None, &self.data_dir, home.as_deref());
                 if !out.contains(&f) {
                     out.push(f);
                 }

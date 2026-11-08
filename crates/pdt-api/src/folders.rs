@@ -86,7 +86,7 @@ pub struct NewFolder {
 }
 
 fn home(st: &AppState) -> Option<String> {
-    st.home_dir.as_ref().and_then(|h| host_path::normalize(&h.to_string_lossy(), STYLE))
+    st.home_dir.get().and_then(|h| host_path::normalize(&h.to_string_lossy(), STYLE))
 }
 
 /// The absolute folder `input` names (`~` expanded; empty is the home folder).

@@ -110,7 +110,7 @@ async fn a_conversation_gets_no_api_key_under_the_subscription() {
     st.platform.login_path = None;
     st.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     st.platform.codex_home = Some(tmp.path().join("codex-home"));
-    st.home_dir = Some(tmp.path().to_path_buf());
+    st.home_dir.set(Some(tmp.path().to_path_buf()));
     let app = router(st.clone(), None);
     let (s, p) = call(&app, "POST", "/api/projects", Some(json!({"name": "P", "repoPath": repo}))).await;
     assert_eq!(s, 201, "{p}");

@@ -122,7 +122,7 @@ pub use loops::poll_pass;
 pub use notifications::{Notifier, run_notifier, sync as sync_notifications};
 pub use overlap::refresh_overlaps;
 pub use remote::{RemoteStatus, RemoteWatch, apply_remote_access, run_remote_watch};
-pub use routes::{AppState, Health, router};
+pub use routes::{AppState, Health, HomeDir, router};
 pub use run_manager::{log_path as run_log_path, resume_runs, sweep_gone_runs};
 pub use scheduler::{run_pickup_watch, watch_pickup};
 pub use sessions::{ResumePlan, plan_resume_interrupted, resume_interrupted};

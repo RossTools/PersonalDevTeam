@@ -51,7 +51,7 @@ pub(crate) async fn work_folder(st: &AppState, own: &str) -> Result<String, ApiE
         None => None,
     };
     let checkouts = projects.iter().map(|p| std::path::Path::new(&p.repo_path));
-    let dir = pm::work_folder(checkouts, projects_dir.as_deref()).or_else(|| st.home_dir.clone());
+    let dir = pm::work_folder(checkouts, projects_dir.as_deref()).or_else(|| st.home_dir.get());
     Ok(dir.map_or_else(|| own.to_string(), |d| d.to_string_lossy().into_owned()))
 }
 

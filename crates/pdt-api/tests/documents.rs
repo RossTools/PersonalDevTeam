@@ -43,7 +43,7 @@ async fn setup() -> Env {
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
-    state.home_dir = Some(tmp.path().join("home"));
+    state.home_dir.set(Some(tmp.path().join("home")));
     state.conversations.notice_quiet = Duration::ZERO;
     let fake = Arc::new(FakeProvider::new("fake", "Fake"));
     let other = Arc::new(FakeProvider::new("other", "Other"));

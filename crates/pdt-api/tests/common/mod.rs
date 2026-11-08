@@ -115,10 +115,10 @@ pub fn fake_agent() -> String {
 /// machine's `claude`, `codex` or `devin`: a test that wants an agent sets `st.platform.claude_program` (etc.) to a
 /// fake such as [`fake_agent`].
 pub fn app_state(store: pdt_store::Store, dir: &std::path::Path) -> pdt_api::AppState {
-    let mut st = pdt_api::AppState::with_platform(store, dir.join("data"), pdt_api::isolated_platform(dir));
+    let st = pdt_api::AppState::with_platform(store, dir.join("data"), pdt_api::isolated_platform(dir));
     let home = dir.join("home");
     std::fs::create_dir_all(&home).unwrap();
-    st.home_dir = Some(home);
+    st.home_dir.set(Some(home));
     st
 }
 

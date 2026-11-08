@@ -103,7 +103,7 @@ pub(crate) async fn folder(st: &AppState, project: Option<&str>) -> Result<std::
         Some(p) => st.store.project_document_settings(p).await?.folder,
         None => None,
     };
-    Ok(documents_folder(own.as_deref(), host.as_deref(), &st.data_dir, st.home_dir.as_deref()))
+    Ok(documents_folder(own.as_deref(), host.as_deref(), &st.data_dir, st.home_dir.get().as_deref()))
 }
 
 /// The document providers this host has, and where new documents go.

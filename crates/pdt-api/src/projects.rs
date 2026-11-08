@@ -130,7 +130,7 @@ pub(crate) async fn create(
     }
     // `~/…` (what the folder picker writes) is the home folder; anything else goes to git as typed.
     let path = match v.repo_path.starts_with('~') {
-        true => pdt_core::project::resolve_folder(&v.repo_path, st.home_dir.as_deref())
+        true => pdt_core::project::resolve_folder(&v.repo_path, st.home_dir.get().as_deref())
             .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
         false => PathBuf::from(&v.repo_path),
     };
@@ -178,7 +178,7 @@ pub(crate) fn needs_repo(p: &Project, what: &str) -> Result<(), ApiError> {
 
 /// The folder new clones go in: the host setting (with `~` expanded), else `~/work`.
 pub(crate) fn projects_dir(st: &AppState, setting: Option<&str>) -> Option<PathBuf> {
-    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), st.home_dir.as_deref()).ok()
+    pdt_core::project::resolve_folder(setting.unwrap_or("~/work"), st.home_dir.get().as_deref()).ok()
 }
 
 /// Makes sure the folder a clone goes in exists. A missing folder is created only when its own parent exists, so a
@@ -214,7 +214,7 @@ pub(crate) async fn clone(
     let key = input.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
     let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
     let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => pdt_core::project::resolve_folder(d, st.home_dir.as_deref())
+        Some(d) => pdt_core::project::resolve_folder(d, st.home_dir.get().as_deref())
             .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
         None => {
             let setting = st.store.get_host_settings().await?.projects_dir;

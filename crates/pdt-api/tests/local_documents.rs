@@ -25,8 +25,8 @@ struct Env {
 async fn setup() -> Env {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
-    let mut state = common::app_state(store, tmp.path());
-    state.home_dir = Some(tmp.path().join("home"));
+    let state = common::app_state(store, tmp.path());
+    state.home_dir.set(Some(tmp.path().join("home")));
     let app = router(state.clone(), None);
     Env { app, state, tmp }
 }
@@ -459,4 +459,23 @@ async fn files_from_the_computer_become_local_documents() {
     assert_eq!(s, StatusCode::BAD_REQUEST);
     let (s, _, _) = call_raw(&env.app, "POST", "/api/documents/upload?name=Bad.xlsx", b"nope".to_vec()).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+}
+
+/// The local provider resolves `~` in the documents folder with the state's home, the one a test sets after making
+/// the state, not the machine's.
+#[tokio::test]
+async fn the_local_provider_finds_files_in_the_home_the_state_has() {
+    let env = setup().await;
+    let (s, h) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"documentsDir": "~/Notes"}))).await;
+    assert_eq!(s, StatusCode::OK, "{h}");
+    let notes = env.tmp.path().join("home").join("Notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::write(notes.join("Field notes.md"), "# Notes\n").unwrap();
+    let (_, files) = call(&env.app, "GET", "/api/documents/providers/local/files?q=field", None).await;
+    assert_eq!(files.as_array().unwrap().len(), 1, "{files}");
+    let reference = notes.join("Field notes.md").to_string_lossy().into_owned();
+    let (s, d) =
+        call(&env.app, "POST", "/api/documents/import", Some(json!({"provider": "local", "reference": reference})))
+            .await;
+    assert_eq!((s, &d["title"]), (StatusCode::CREATED, &json!("Field notes")), "{d}");
 }

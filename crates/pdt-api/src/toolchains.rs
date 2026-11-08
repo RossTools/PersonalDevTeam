@@ -327,7 +327,7 @@ pub(crate) async fn post_sign_in(
     };
     let s = st.store.get_host_settings().await?;
     // Reading the installed agent's record and searching the PATH touch the disk: on the blocking pool.
-    let (data_dir, home, search) = (st.data_dir.clone(), st.home_dir.clone(), st.platform.login_path.clone());
+    let (data_dir, home, search) = (st.data_dir.clone(), st.home_dir.get(), st.platform.login_path.clone());
     let env_program = st.host_env.acp_program.clone();
     let (def, program, cwd) = tokio::task::spawn_blocking(move || {
         let def = launch_def(&data_dir, home.as_deref(), &s, def, env_program.as_deref());
