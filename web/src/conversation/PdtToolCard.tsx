@@ -526,8 +526,9 @@ function InboxDecideCard({ call }: { call: PdtCall }) {
   const state = callState(call);
   const done = call.status === 'done';
   const n = r.rows.filter((x) => x.outcome?.kind === 'decided').length;
+  // A result it can't read says nothing of how many were decided: no count, rather than a count of 0.
   const heading = done
-    ? `Decided ${n === 1 ? 'an Inbox item' : `${n} Inbox items`}`
+    ? !r.read ? 'Decided the Inbox items' : `Decided ${n === 1 ? 'an Inbox item' : `${n} Inbox items`}`
     : call.status === 'running' ? 'Deciding Inbox items…' : "Didn't decide the Inbox items";
   return (
     <Card icon={<Inbox />} label={heading} heading={heading} aside={state?.aside}>
