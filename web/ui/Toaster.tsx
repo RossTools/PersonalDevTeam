@@ -2,9 +2,13 @@ import type { ReactNode } from 'react';
 import { toast as sonner } from 'sonner';
 import { Toaster as ToasterPrimitive } from './primitives/sonner';
 
-/** Render once (in AppShell). Toasts float above everything (`--pdt-z-toast`) and never move the layout. */
+/**
+ * Render once (in AppShell). Toasts float above everything (`--pdt-z-toast`) and never move the layout. On a desktop
+ * they sit high enough to clear the bars fixed at the bottom of a view (an Inbox item's action bar, a conversation's
+ * composer), so a toast never covers Deny or Send; phones keep Sonner's own offset.
+ */
 export function Toaster() {
-  return <ToasterPrimitive position="bottom-right" closeButton />;
+  return <ToasterPrimitive position="bottom-right" closeButton offset={{ bottom: '8rem', right: '1.5rem' }} />;
 }
 
 export interface ToastOptions {
