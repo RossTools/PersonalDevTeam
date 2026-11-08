@@ -17,6 +17,7 @@ import { ALL, HOST_WIDE, ticketDescription, titleFor, TITLE_MAX, wordCount, type
 import { useProjects } from '../projects/queries';
 import { useNoteDraft, type SaveState } from './useNoteDraft';
 import { plural } from '../common/text';
+import { pmKeys } from '../pm/queries';
 
 type Mode = 'write' | 'read';
 
@@ -149,7 +150,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   const patch = async (p: { project?: string; pinned?: boolean }) => {
     if (!noteId) return;
     const n = await api.patchPmNote(noteId, p);
-    qc.setQueryData(['pm-notes', 'one', n.id], n);
+    qc.setQueryData(pmKeys.note(n.id), n);
     await refresh();
   };
   const [setProject] = useAction(async (p: string | null) => {

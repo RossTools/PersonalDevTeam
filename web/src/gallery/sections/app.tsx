@@ -12,6 +12,7 @@ import { Composer } from '../../common/Composer';
 import { InlineRename } from '../../common/InlineRename';
 import { PlacePicker, type Place } from '../../common/PlacePicker';
 import { useAction } from '../../common/useAction';
+import { worktreeKeys } from '../../common/worktrees';
 import { badgedSvg, type AttentionLevel } from '../../notifications/attention';
 import { SectionLabel } from '@ui/SectionLabel';
 
@@ -52,8 +53,8 @@ const wt = (id: string, projectId: string, branch: string): Worktree =>
 /** A query cache seeded with static worktrees, so PlacePicker needs no daemon. */
 const seeded = (() => {
   const qc = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
-  qc.setQueryData(['worktrees', 'p1'], [wt('w1', 'p1', 'phase-3c-1-ui'), wt('w2', 'p1', 'fix/terminal-links')]);
-  qc.setQueryData(['worktrees', 'p2'], [wt('w3', 'p2', 'feature')]);
+  qc.setQueryData(worktreeKeys.project('p1'), [wt('w1', 'p1', 'phase-3c-1-ui'), wt('w2', 'p1', 'fix/terminal-links')]);
+  qc.setQueryData(worktreeKeys.project('p2'), [wt('w3', 'p2', 'feature')]);
   return qc;
 })();
 

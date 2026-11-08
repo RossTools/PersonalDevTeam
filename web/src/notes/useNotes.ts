@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../api/client';
 import { ALL, type Whose } from './model';
 import { POLL } from '../common/poll';
+import { pmKeys } from '../pm/queries';
 
 /** The list's choices, kept by the shell so the list and a new note agree: whose, the scope and the search. */
 export interface NotesFilters {
@@ -27,7 +28,7 @@ export function useNotesFilters(): NotesFilters {
  */
 export function useNotesList(whose: Whose, q: string, limit: number) {
   return useQuery({
-    queryKey: ['pm-notes', whose, q, limit],
+    queryKey: pmKeys.notesList(whose, q, limit),
     queryFn: () => api.pmNotes({ q: q.trim() || undefined, kind: whose, limit }),
     refetchInterval: POLL.live,
     placeholderData: keepPreviousData,
@@ -37,7 +38,7 @@ export function useNotesList(whose: Whose, q: string, limit: number) {
 /** One note (null once it is gone), polled. Disabled for a note not created yet. */
 export function useNote(id: string | null) {
   return useQuery({
-    queryKey: ['pm-notes', 'one', id],
+    queryKey: pmKeys.note(id),
     queryFn: () => api.pmNote(id!).catch((e: unknown) => {
       if (e instanceof ApiError && e.status === 404) return null;
       throw e;

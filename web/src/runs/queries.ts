@@ -25,3 +25,8 @@ export const runsQuery = (projectId: string) => ({
 export function invalidateRuns(qc: QueryClient, projectId?: string) {
   return qc.invalidateQueries({ queryKey: projectId ? runKeys.project(projectId) : runKeys.all });
 }
+
+/** After the user approves commands: the project's list of them (Settings shows which wait on approval). */
+export function invalidateCommands(qc: QueryClient, projectId: string) {
+  return qc.invalidateQueries({ queryKey: runKeys.commands(projectId) });
+}

@@ -11,6 +11,9 @@ import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from '../..
 import { ToolCallRow } from '@ui/ToolCallRow';
 import { PdtProposal } from '../../conversation/PdtProposal';
 import { ticketKeys } from '../../tickets/queries';
+import { sessionKeys } from '../../sessions/queries';
+import { workflowKeys } from '../../workflows/queries';
+import { watchKeys } from '../../common/Watch';
 import { ticket } from '../../tickets/fixtures';
 import { SectionLabel } from '@ui/SectionLabel';
 
@@ -51,9 +54,9 @@ function Seeded({ children }: { children: ReactNode }) {
       agent: { persona: 'Coder', state: 'stalled', sessionId: 's', busy: false, runId: 'r', background: [] },
     }));
     qc.setQueryData(ticketKeys.card('SHOP-31'), ticket(31, { key: 'SHOP-31', title: 'Guest checkout: email-only orders', stage: 'todo', priority: 'high', labels: ['agentic'] }));
-    for (const f of ['e2e/cart.spec.ts', 'src/checkout/session.ts']) qc.setQueryData(['session-file', 'gallery', f], true);
-    qc.setQueryData(['workflow-run', 'r1'], { id: 'r1', workflowId: 'wf1', workflowName: 'Cut a release', status: 'running', error: null, steps: [] });
-    qc.setQueryData(['watches', { session: 'pm' }], [watch]);
+    for (const f of ['e2e/cart.spec.ts', 'src/checkout/session.ts']) qc.setQueryData(sessionKeys.file('gallery', f), true);
+    qc.setQueryData(workflowKeys.run('r1'), { id: 'r1', workflowId: 'wf1', workflowName: 'Cut a release', status: 'running', error: null, steps: [] });
+    qc.setQueryData(watchKeys.session('pm'), [watch]);
     return true;
   });
   return (

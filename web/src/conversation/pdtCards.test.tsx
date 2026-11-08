@@ -1,9 +1,11 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { ToolCallRow } from '@ui';
 import { MarkdownRefsContext } from '../common/markdownRefs';
+import { POLL } from '../common/poll';
+import { watchKeys } from '../common/Watch';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
 import { PdtProposal } from './PdtProposal';
 import { documentOf, editsText, filedIssue, isCardTool, issueKeyOf, issueLink, noteOf, pdtApprovalTitle, pdtTool, resultOf, stoppedTicket, watchEventsText } from './pdtTools';
@@ -148,6 +150,19 @@ describe('PDT tool cards', () => {
     expect(after).toHaveTextContent('No longer watching');
     // The button hid itself: the card keeps focus.
     await waitFor(() => expect(document.activeElement).toBe(after));
+  });
+
+  it('watch: follows the watch, so it stops saying Watching once the PM unwatches', async () => {
+    const watch = { id: 'w1', target: 'ticket', targetId: 't31', targetLabel: 'ALP-31', targetTitle: null, targetState: null, workflowId: null, sessionId: 'pm1', watcher: 'PM', events: [], once: true, createdAt: 1 };
+    let watching = [watch];
+    stubApi({ 'GET /api/watches': () => watching });
+    const { qc } = renderWithQuery(<PdtToolCard call={done('watch', { ticket: 'ALP-31' }, { watching: [watch] })} />);
+    await waitFor(() => expect(qc.getQueryData(watchKeys.session('pm1'))).toEqual([watch]));
+    // Polled with the rest of the UI.
+    expect(qc.getQueryCache().find({ queryKey: watchKeys.session('pm1') })?.observers[0]?.options.refetchInterval).toBe(POLL.live);
+    watching = [];
+    await act(() => qc.refetchQueries({ queryKey: watchKeys.session('pm1') }));
+    expect(await screen.findByRole('region', { name: 'Watched ALP-31' })).toHaveTextContent('No longer watching');
   });
 });
 

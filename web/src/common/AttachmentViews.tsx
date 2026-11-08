@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { Alert, Button, Dialog } from '@ui';
+import { ticketKeys } from '../tickets/queries';
 
 /** A ticket attachment's URL (`/api/tickets/<ticket>/attachments/<id>`), as Markdown links to it: its ids, or null. */
 export function attachmentRef(href: string | undefined): { ticketId: string; id: string } | null {
@@ -40,7 +41,7 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
 /** A text file's content, fetched as plain text. */
 function TextViewer({ src }: { src: string }) {
   const q = useQuery({
-    queryKey: ['attachmentText', src],
+    queryKey: ticketKeys.attachmentText(src),
     queryFn: async () => {
       const res = await fetch(src);
       if (!res.ok) throw new Error(res.status === 404 ? 'This file is no longer attached.' : `HTTP ${res.status}`);

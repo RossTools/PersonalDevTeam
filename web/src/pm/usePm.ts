@@ -8,10 +8,11 @@ import type { RotateReason } from '../api/gen/RotateReason';
 import { runAction } from '../common/useAction';
 import { usePlugins } from '../plugins/queries';
 import { POLL } from '../common/poll';
+import { pmKeys } from './queries';
 
 /** The PM's conversations, polled with the rest of the UI (PDT-81). */
 export function usePm() {
-  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: POLL.live });
+  return useQuery({ queryKey: pmKeys.pm, queryFn: api.pm, refetchInterval: POLL.live });
 }
 
 /** A PM conversation as the shell reads it (the rail's dot, the phone's title): nothing that changes while it works. */
@@ -31,12 +32,27 @@ const selectSummary = (pm: PmState) => ({ current: pm.current?.id ?? null, conve
  * marks are, so a turn running doesn't re-render the whole app (PDT-454).
  */
 export function usePmSummary() {
-  return useQuery({ queryKey: ['pm'], queryFn: api.pm, refetchInterval: POLL.live, select: selectSummary });
+  return useQuery({ queryKey: pmKeys.pm, queryFn: api.pm, refetchInterval: POLL.live, select: selectSummary });
+}
+
+/** A PM conversation that is open, as a picker lists it. */
+interface PmOpenConversation {
+  id: string;
+  projectId: string;
+  title: string;
+}
+
+const selectOpen = (pm: PmState): PmOpenConversation[] =>
+  openConversations(pm.sessions).map((s) => ({ id: s.session.id, projectId: s.session.projectId, title: s.title }));
+
+/** The PM's open conversations, from the same poll: the same array while their ids and titles are. */
+export function usePmOpenConversations() {
+  return useQuery({ queryKey: pmKeys.pm, queryFn: api.pm, refetchInterval: POLL.live, select: selectOpen });
 }
 
 export function useRefreshPm() {
   const qc = useQueryClient();
-  return () => Promise.all([qc.invalidateQueries({ queryKey: ['pm'] }), qc.invalidateQueries({ queryKey: ['pm-notes'] })]);
+  return () => Promise.all([qc.invalidateQueries({ queryKey: pmKeys.pm }), qc.invalidateQueries({ queryKey: pmKeys.notes })]);
 }
 
 /**

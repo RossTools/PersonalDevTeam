@@ -93,7 +93,7 @@ function FolderDialog({
   const [hidden, setHidden] = useState(false);
   const [selection, setSelection] = useState<FolderPickerSelection | null>(null);
   const q = useQuery({
-    queryKey: [...hostKeys.folders, target.path, target.nearest, hidden],
+    queryKey: hostKeys.folder(target.path, target.nearest, hidden),
     queryFn: () => api.listFolders({ path: target.path, hidden, nearest: target.nearest }),
     placeholderData: keepPreviousData,
     retry: false,

@@ -10,6 +10,7 @@ import { finishMerged, patchTicket } from '../tickets/actions';
 import { invalidateTickets } from '../tickets/queries';
 import { invalidateWorktrees } from '../common/worktrees';
 import { plural } from '../common/text';
+import { mergePreviewKey } from './queries';
 
 const styleKey = (projectId: string) => `pdt.review.mergeStyle.${projectId}`;
 
@@ -92,7 +93,7 @@ const pdtHolds = (p: MergePreview) => !!p.pr && !p.pr.local && !p.pr.queue && !p
 export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; attemptId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const preview = useQuery({ queryKey: ['merge-preview', attemptId], queryFn: () => api.mergePreview(attemptId), staleTime: 0, gcTime: 0 });
+  const preview = useQuery({ queryKey: mergePreviewKey(attemptId), queryFn: () => api.mergePreview(attemptId), staleTime: 0, gcTime: 0 });
   const [removeWorktree, setRemoveWorktree] = useState(true);
   const [finishOnMerge, setFinishOnMerge] = useState(true);
   const [deleteBranch, setDeleteBranch] = useState(false);

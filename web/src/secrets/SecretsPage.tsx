@@ -10,8 +10,7 @@ import type { Secret } from '../api/gen/Secret';
 import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
-
-const secretsKey = ['secrets'] as const;
+import { secretKeys, useSecrets } from './queries';
 
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
 const MIN_VALUE = 6;
@@ -31,7 +30,7 @@ function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => voi
       ? api.patchSecret(secret.id, { description, projects: projectIds, personas: personaIds, ...(value ? { value } : {}) })
       : api.createSecret({ name: name.trim(), description, projects: projectIds, personas: personaIds, value }),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: secretsKey });
+      void qc.invalidateQueries({ queryKey: secretKeys.all });
       onClose();
     },
   });
@@ -70,7 +69,7 @@ function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => voi
 
 /** A secret's uses, newest first. */
 function Uses({ id }: { id: string }) {
-  const uses = useQuery({ queryKey: ['secret-uses', id], queryFn: () => api.secretUses(id) });
+  const uses = useQuery({ queryKey: secretKeys.uses(id), queryFn: () => api.secretUses(id) });
   if (uses.isLoading) return <Skeleton label="Loading uses" className="h-8" />;
   if (uses.error) return <Alert tone="error">{uses.error.message}</Alert>;
   const list = uses.data ?? [];
@@ -114,7 +113,7 @@ function Row({ s, names, onEdit, onDelete }: {
 
 /** Where this machine keeps secret values. */
 function StoreNote() {
-  const store = useQuery({ queryKey: [...secretsKey, 'store'], queryFn: api.secretStore });
+  const store = useQuery({ queryKey: secretKeys.store, queryFn: api.secretStore });
   if (!store.data) return null;
   if (store.data.backend === 'file') {
     return (
@@ -135,12 +134,12 @@ function StoreNote() {
 }
 
 export function SecretsPage() {
-  const list = useQuery({ queryKey: secretsKey, queryFn: api.listSecrets });
+  const list = useSecrets();
   const { projects, personas } = useScopeOptions();
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
   const remove = useConfirmDelete({
     remove: (s: Secret) => api.deleteSecret(s.id),
-    invalidate: [secretsKey],
+    invalidate: [secretKeys.all],
     confirm: (s) => ({
       title: `Delete ${s.name}?`,
       body: 'Agents and workflows that use it fail until you add one with the same name. Its value is removed from the keychain, and its uses are forgotten.',

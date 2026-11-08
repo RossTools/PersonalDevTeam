@@ -48,7 +48,7 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
   });
   // Restarting counts toward the host's run limit, so it asks before stopping another run, like starting does.
   const [restart, restarting] = useAction(async () => {
-    try { await withStopConfirm(confirm, (stopRunId) => api.restartRun(run.id, stopRunId)); } finally { void refresh(); }
+    try { await withStopConfirm(confirm, qc, (stopRunId) => api.restartRun(run.id, stopRunId)); } finally { void refresh(); }
   });
   const [reset, resetting] = useAction(async () => { await api.resetRunData(run.id); void refresh(); }, { success: 'Data reset' });
   const [remove, removing] = useAction(async () => {

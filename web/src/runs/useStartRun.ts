@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useConfirm, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { NewRun } from '../api/gen/NewRun';
@@ -12,8 +12,8 @@ type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 /** Runs `attempt`. At the host's run limit it asks (the confirm dialog, with the server's message) before stopping the
  * oldest active run and trying again with that run's id; a command the user hasn't approved is shown for them to
  * approve first (`withApproval`). Declining either resolves to null without an error. */
-export async function withStopConfirm<T>(confirm: Confirm, attempt: (stopRunId?: string) => Promise<T>): Promise<T | null> {
-  const approved = (stopRunId?: string) => withApproval(confirm, () => attempt(stopRunId));
+export async function withStopConfirm<T>(confirm: Confirm, qc: QueryClient, attempt: (stopRunId?: string) => Promise<T>): Promise<T | null> {
+  const approved = (stopRunId?: string) => withApproval(confirm, qc, () => attempt(stopRunId));
   try {
     return await approved();
   } catch (e) {
@@ -37,7 +37,7 @@ export function useStartRun(projectId: string, onStarted: (runId: string) => voi
   return useMutation({
     meta: { errorShown: true },
     mutationFn: (r: NewRun): Promise<Run | null> =>
-      withStopConfirm(confirm, (stopRunId) => api.startRun(projectId, stopRunId ? { ...r, stopRunId } : r)),
+      withStopConfirm(confirm, qc, (stopRunId) => api.startRun(projectId, stopRunId ? { ...r, stopRunId } : r)),
     onSuccess: (run) => {
       void invalidateRuns(qc, projectId);
       invalidateWorktrees(qc, projectId);

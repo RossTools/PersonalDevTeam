@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PmState } from '../api/gen/PmState';
 import type { Session } from '../api/gen/Session';
-import { usePmSummary } from '../pm/usePm';
+import { usePmOpenConversations, usePmSummary } from '../pm/usePm';
+import { pmKeys } from '../pm/queries';
 import { renderWithQuery, stubApi } from '../test-utils';
 import { useWorkspaces, type WorkspacesApi } from '../workspaces/useWorkspaces';
 
@@ -47,6 +48,25 @@ describe('usePmSummary', () => {
     state = pmState(session('c1', { activity: 'idle', unseen: true }), 3);
     await act(() => qc.refetchQueries({ queryKey: ['pm'] }));
     await waitFor(() => expect(seen.at(-1)).toEqual({ current: 'c1', conversations: [{ id: 'c1', title: 'Plans', unread: true }] }));
+  });
+});
+
+describe('usePmOpenConversations', () => {
+  it('keeps its data while a turn runs (a picker of conversations doesn\'t re-render on every poll)', async () => {
+    let state = pmState(session('c1'), 1);
+    stubApi({ 'GET /api/pm': () => state });
+    const seen: unknown[] = [];
+    function Probe() {
+      const data = usePmOpenConversations().data;
+      if (data) seen.push(data);
+      return null;
+    }
+    const { qc } = renderWithQuery(<Probe />);
+    await waitFor(() => expect(seen.at(-1)).toEqual([{ id: 'c1', projectId: 'host', title: 'Plans' }]));
+    const first = seen.at(-1);
+    state = pmState(session('c1', { attentionAt: 7, activity: 'idle', unseen: true }), 2);
+    await act(() => qc.refetchQueries({ queryKey: pmKeys.pm }));
+    expect(seen.at(-1)).toBe(first);
   });
 });
 
