@@ -7,11 +7,12 @@ use super::{
     send_message,
 };
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::{AdapterError, OpenSpec};
@@ -42,7 +43,7 @@ pub(crate) struct EventsQuery {
 pub(crate) async fn events(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<EventsQuery>,
+    ApiQuery(q): ApiQuery<EventsQuery>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     let session = conversation_session(&st, &id).await?;

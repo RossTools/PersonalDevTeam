@@ -3,10 +3,11 @@
 //! OS. Like every route it is owner-only (the identity guard); it reads only what the daemon's user can already read.
 
 use crate::error::{ApiError, codes};
+use crate::extract::ApiQuery;
 use crate::routes::AppState;
 use axum::Json;
+use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use pdt_core::host_path::{self, Crumb, PathStyle};
 use serde::{Deserialize, Serialize};
@@ -200,7 +201,7 @@ fn entry(
 
 pub(crate) async fn list(
     State(st): State<AppState>,
-    Query(q): Query<FoldersQuery>,
+    ApiQuery(q): ApiQuery<FoldersQuery>,
 ) -> Result<Json<FolderListing>, ApiError> {
     let home = home(&st);
     let mut path = resolve(&q.path, home.as_deref())?;

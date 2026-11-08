@@ -2,10 +2,11 @@
 //! `list_todos` tool. Checking off a repeating todo (PDT-141) makes the next one.
 
 use crate::error::{ApiError, OrNotFound};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::todo::{self, NewTodo, Todo, TodoPatch};
 use pdt_store::TodoFilter;
@@ -43,7 +44,10 @@ pub(crate) struct ListQuery {
 }
 
 /// `GET /api/todos?project=&done=`.
-pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Result<Json<Vec<Todo>>, ApiError> {
+pub(crate) async fn list(
+    State(st): State<AppState>,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> Result<Json<Vec<Todo>>, ApiError> {
     let f = filter(&st, q.project.as_deref(), q.done).await?;
     Ok(Json(st.store.list_todos(&f).await?))
 }
@@ -209,7 +213,7 @@ pub(crate) struct DeleteQuery {
 pub(crate) async fn delete(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<DeleteQuery>,
+    ApiQuery(q): ApiQuery<DeleteQuery>,
 ) -> Result<StatusCode, ApiError> {
     let stop = match q.series.as_deref().unwrap_or("only") {
         "only" => false,

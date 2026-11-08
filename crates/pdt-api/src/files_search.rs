@@ -3,10 +3,11 @@
 //! never holds a worker for long.
 
 use crate::error::ApiError;
+use crate::extract::ApiQuery;
 use crate::files::{FilesQuery, resolve};
 use crate::routes::AppState;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use serde::{Deserialize, Serialize};
 use std::path::Path as FsPath;
 use std::time::Duration;
@@ -120,7 +121,7 @@ fn search_in(checkout: &FsPath, q: SearchQuery, plain: bool, timeout: Duration) 
 pub(crate) async fn search(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<SearchQuery>,
+    ApiQuery(q): ApiQuery<SearchQuery>,
 ) -> Result<Json<SearchResult>, ApiError> {
     let fq = FilesQuery { worktree_id: q.worktree_id.clone(), path: String::new() };
     let (checkout, _, plain) = resolve(&st, &id, &fq).await?;

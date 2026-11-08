@@ -3,13 +3,14 @@
 //! attempt's pull request on the project's forge).
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::forge::ProjectForge;
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
@@ -140,7 +141,7 @@ fn side_text(bytes: Option<Vec<u8>>) -> (Option<String>, bool, bool) {
 pub(crate) async fn file(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<FileQuery>,
+    ApiQuery(q): ApiQuery<FileQuery>,
 ) -> Result<Json<FileSides>, ApiError> {
     let (wt, project, attempt) = load(&st, &id).await?;
     let (base, fallback) = base_of(&wt, &project, attempt.as_ref());

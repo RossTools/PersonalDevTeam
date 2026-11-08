@@ -3,6 +3,7 @@
 //! CI of attempts, built-in workflows and templates).
 
 pub use crate::error::{ApiError, OrNotFound, codes};
+pub use crate::extract::{ApiJson, ApiPath, ApiQuery};
 pub use crate::integrations::action::{Action, ActionCx, AnyAction, ConnectionFace, NodeFace, ToolFace, Via};
 pub use crate::integrations::{
     Imported, Integration, NotificationChannel, Poller, Registry, Service, Tool, WebSources, tool_info,
