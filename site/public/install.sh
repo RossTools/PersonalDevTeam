@@ -153,6 +153,13 @@ pdt_install() {
 			die "$product is installed in $dest, which needs admin rights to replace. It updates itself (Settings > This host > Updates); to reinstall, move it to the Bin first."
 	fi
 
+	# Checked before downloading: the install goes in beside $dest, so its folder (or the nearest one that exists) must
+	# be writable.
+	parent="$(dirname "$dest")"
+	while [ ! -e "$parent" ]; do parent="$(dirname "$parent")"; done
+	[ -d "$parent" ] && [ -w "$parent" ] ||
+		die "$product installs into $dest, but you can't write to $parent. Make it yours (or writable) and run this again. Nothing was installed."
+
 	tmp="$(mktemp -d)"
 	# Removes only the folder made above.
 	trap 'rm -rf "$tmp"' EXIT
@@ -255,15 +262,25 @@ install_linux() {
 	rm -rf "$dest.old"
 	say "Installed in $dest. Registering it as a systemd user service..."
 	if [ -n "$force" ]; then set -- --replace; else set --; fi
+	finish="\"$dest/$slug-host\" install $*"
+	# Without a desktop, linger (below) asks about lingering, so pdt-host doesn't say it too.
+	if ! desktop; then set -- "$@" --no-linger-hint; fi
 	if ! "$dest/$slug-host" install "$@"; then
-		die "$product is in $dest, but registering it as a systemd user service failed (above). Once that is fixed, finish the install with: \"$dest/$slug-host\" install $*"
+		die "$product is in $dest, but registering it as a systemd user service failed (above). Once that is fixed, finish the install with: $finish"
 	fi
 	linger
+	if desktop; then
+		say "The one-line install has no tray icon. For one, install the AppImage instead: $site/docs/getting-started/install/#install-by-hand"
+	fi
+}
+
+desktop() {
+	[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]
 }
 
 # A user service stops at logout; on a machine without a desktop session, offer to keep it running from boot.
 linger() {
-	if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then return 0; fi
+	if desktop; then return 0; fi
 	command -v loginctl >/dev/null 2>&1 || return 0
 	user="${USER:-$(id -un)}"
 	if loginctl show-user "$user" --property=Linger 2>/dev/null | grep -q '=yes'; then return 0; fi

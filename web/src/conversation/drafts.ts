@@ -48,3 +48,9 @@ export function saveImageDrafts(sessionId: string, list: ImageDraft[]) {
   if (list.length) images.set(sessionId, list);
   else images.delete(sessionId);
 }
+
+/** Forgets every draft the page holds (tests; sessionStorage is cleared with the rest of storage). */
+export function resetDrafts() {
+  memory.clear();
+  images.clear();
+}

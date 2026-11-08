@@ -39,14 +39,14 @@ describe('IconRail', () => {
 
   it('shows tooltips only while collapsed', async () => {
     const { unmount } = render(<IconRail active="sessions" onSelect={() => {}} />);
+    // A keyboard focus opens a tooltip at once (no hover delay): one missing after the focus is not coming.
     await userEvent.tab();
-    expect(await screen.findByRole('tooltip')).toHaveAttribute('data-placement', 'right');
+    expect(screen.getByRole('tooltip')).toHaveAttribute('data-placement', 'right');
     unmount();
     localStorage.setItem(RAIL_EXPANDED_KEY, 'true');
     render(<IconRail active="sessions" onSelect={() => {}} />);
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Project manager' })).toHaveFocus();
-    await new Promise((r) => setTimeout(r, 50));
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

@@ -24,6 +24,7 @@ curl -fsSL https://pdt.dev/install.sh | sh
   machine without a desktop it offers to keep PDT running after you log out and start it at boot. Linux needs a
   systemd user session: on WSL, turn systemd on first (`systemd=true` under `[boot]` in `/etc/wsl.conf`, then
   `wsl --shutdown`).
+  It has no tray icon: for one on a Linux desktop, [install the AppImage by hand](#install-by-hand).
 
 **Windows**, in PowerShell:
 

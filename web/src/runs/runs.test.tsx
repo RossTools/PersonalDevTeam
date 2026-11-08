@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Run } from '../api/gen/Run';
 import { toast } from '@ui';
-import { githubLinks, renderWithQuery, Reply, stubApi } from '../test-utils';
+import { githubLinks, renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { OpenSessionContext } from '../common/open';
 import { ProjectSettingsPanel } from './ProjectSettingsPanel';
 import { RunBranchForm } from './RunBranchForm';
@@ -118,7 +118,7 @@ describe('RunView', () => {
   it('copies the URL from its menu', async () => {
     stubApi({});
     const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    stubClipboard({ writeText });
     renderWithQuery(<RunView run={run({})} onRemoved={() => {}} />);
     await runMenu('Copy URL');
     expect(writeText).toHaveBeenCalledWith('https://box.t.ts.net:8401/');

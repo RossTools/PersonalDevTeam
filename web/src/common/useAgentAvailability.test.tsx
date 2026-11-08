@@ -41,8 +41,9 @@ describe('agent availability', () => {
 
   it('offers every agent when the checks fail', async () => {
     stubApi({ 'GET /api/host/checks': new Reply(500, { code: 'x', message: 'x' }) });
-    renderWithQuery(<Probe />);
-    await new Promise((r) => setTimeout(r, 20));
+    const { qc } = renderWithQuery(<Probe />);
+    // Every agent is offered while the checks load too: wait for them to have failed.
+    await waitFor(() => expect(qc.getQueryState(['host-checks'])?.status).toBe('error'));
     expect(screen.getAllByRole('listitem').map((l) => l.textContent)).toEqual(['claude', 'codex', 'devin']);
   });
 
