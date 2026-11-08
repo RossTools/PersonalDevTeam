@@ -2,7 +2,6 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 import { documentKeys, invalidateDocuments } from '../documents/queries';
-import { besideKey } from '../documents/BesidePanel';
 import { invalidateTickets, ticketKeys } from '../tickets/queries';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import { invalidateProjects, projectKeys } from '../projects/queries';
@@ -63,7 +62,7 @@ describe('invalidation', () => {
 
   it("a document write refreshes the lists, the panels beside sessions and its document, never what a provider reads", () => {
     const keys = [
-      documentKeys.list({ project: 'p1' }), besideKey('s1'), documentKeys.one('d1'),
+      documentKeys.list({ project: 'p1' }), documentKeys.beside('s1'), documentKeys.one('d1'),
       documentKeys.one('d2'), documentKeys.content('d1'), documentKeys.version('d1'), documentKeys.comments('d1'),
       documentKeys.charts('d1'), documentKeys.providers(null), documentKeys.providerFiles('drive', 'plan'),
     ];

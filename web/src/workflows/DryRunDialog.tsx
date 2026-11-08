@@ -10,6 +10,7 @@ import { GraphView } from './GraphView';
 import { deref, kindOf, triggerTypes, type Catalog } from './model';
 import { RUN_STATUS, dryRunSteps, pathOf } from './runs';
 import { StepList } from './StepList';
+import { workflowKeys } from './queries';
 
 type Schema = Record<string, unknown>;
 
@@ -50,7 +51,7 @@ export function DryRunDialog({ open, onOpenChange, doc, workflowId, catalog }: {
   const [payload, setPayload] = useState<string | null>(null);
   const [eventId, setEventId] = useState<string | null>(null);
   const events = useQuery({
-    queryKey: ['events', 'recent'],
+    queryKey: workflowKeys.recentEvents,
     queryFn: () => api.listLogEvents({ limit: 200 }),
     enabled: open && source === 'recent',
   });

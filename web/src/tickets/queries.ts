@@ -19,7 +19,13 @@ export const ticketKeys = {
   /** A ticket's hover card, by key (under `lists`, so a write refreshes it). */
   card: (key: string) => ['tickets', 'card', key.toUpperCase()] as const,
   one: (id: string) => ['ticket', id] as const,
+  /** A ticket's timeline: every page (`timeline`) and the peek's last few (`recentEvents`) under it. */
   events: (id: string) => ['ticketEvents', id] as const,
+  timeline: (id: string) => ['ticketEvents', id, 'all'] as const,
+  recentEvents: (id: string, n: number | undefined) => ['ticketEvents', id, 'recent', n] as const,
+  attachments: (id: string) => ['ticketAttachments', id] as const,
+  /** An attached text file's content, by its URL (it never changes: a new file is a new attachment). */
+  attachmentText: (src: string) => ['attachmentText', src] as const,
   labels: (projectId: string) => ['labels', projectId] as const,
   areas: (projectId: string) => ['areas', projectId] as const,
   forge: (projectId: string) => ['forge', projectId] as const,
@@ -84,13 +90,15 @@ export function useTicketId(ref: string | null): { id: string | null; missing: b
   return { id: q.data ?? null, missing: (q.isSuccess && q.data === null) || q.isError };
 }
 
+/** The query for one ticket, polled (`useQueries` over several shares it with `useTicket`). */
+export const ticketQuery = (id: string) => ({
+  queryKey: ticketKeys.one(id),
+  queryFn: () => api.getTicket(id),
+  refetchInterval: POLL.live,
+});
+
 export function useTicket(id: string | null) {
-  return useQuery({
-    queryKey: ticketKeys.one(id ?? ''),
-    queryFn: () => api.getTicket(id!),
-    enabled: !!id,
-    refetchInterval: POLL.live,
-  });
+  return useQuery({ ...ticketQuery(id ?? ''), enabled: !!id });
 }
 
 export function useLabels(projectId: string | null) {

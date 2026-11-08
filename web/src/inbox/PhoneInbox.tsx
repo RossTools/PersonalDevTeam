@@ -1,11 +1,9 @@
 // The Inbox on a phone (PDT-117): the list with Needs you | Updates and Review all, and one item per screen
 // with its decision fixed at the bottom, in the thumb's reach.
 import { useEffect, useRef, useState, type TouchEvent } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { ChevronDown } from 'lucide-react';
 import { Button, Dialog, EmptyState, Sheet, Skeleton, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
-import { api } from '../api/client';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
@@ -18,10 +16,11 @@ import { useProjectForge, useTicket } from '../tickets/queries';
 import { UpdateView } from './InboxView';
 import { after, changeRequestLabel, dismissable, inboxTargets, merges, selectedUpdate, step } from './model';
 import { useAnswer } from './useAnswer';
+import { useReadItemNotifications } from '../notifications/queries';
 import { useItemView } from './itemView';
 import { ItemHeader, Why } from './ItemLayout';
 import { capitalize, plural } from '../common/text';
-import { changesKey } from '../review/queries';
+import { useChanges } from '../review/queries';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
 const openChangeRequest = (item: InboxItem) => item.changeRequest && openExternal(item.changeRequest.url);
@@ -136,9 +135,10 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
 
   // Opening an item reads its notifications.
   const readId = item && !item.id.startsWith('session:') ? item.id : null;
+  const { mutate: readItem } = useReadItemNotifications();
   useEffect(() => {
-    if (readId) void api.readNotifications({ inboxItemId: readId }).catch(() => {});
-  }, [readId]);
+    if (readId) readItem(readId);
+  }, [readId, readItem]);
   // An item answered elsewhere, or one answered here when another has come in since: show the first one left.
   const gone = !updateId && !item && !loading && live.length > 0;
   const firstLeft = gone ? step(live, null, 1) : null;
@@ -261,7 +261,7 @@ export function MergeConfirm({ item, choice, busy, onCancel, onConfirm }: {
   const t = ticket.data;
   const attempt = t?.attempts.find((x) => x.id === item.attemptId) ?? t?.attempts.find((x) => x.state === 'active');
   const worktreeId = attempt?.worktreeId ?? null;
-  const changes = useQuery({ queryKey: changesKey(worktreeId ?? ''), queryFn: () => api.getChanges(worktreeId!), enabled: !!worktreeId });
+  const changes = useChanges(worktreeId);
   const files = changes.data?.files ?? [];
   const added = files.reduce((n, f) => n + f.added, 0);
   const removed = files.reduce((n, f) => n + f.removed, 0);
