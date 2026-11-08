@@ -58,7 +58,8 @@ The board no longer jumps back to the top when a ticket moves.
 
 A PR that only changes docs, CI or tests needs no fragment, but the `no-changelog` label instead; labels are added by
 a maintainer, so put `[no-changelog]` in the PR's description instead. A maintainer also adds `windows` (paths,
-processes, the file system) or `macos` to run those platforms' checks on your PR.
+processes, the file system) or `macos` to run those platforms' checks on your PR. `.github/labels.yml` lists every
+label ([docs/SDLC.md "Labels"](docs/SDLC.md#labels)).
 
 ## CI on your pull request
 

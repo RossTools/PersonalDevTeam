@@ -7,7 +7,7 @@ import type { PullRequestStatus } from '../api/gen/PullRequestStatus';
 import { OpenTicketContext, OpenChangesContext } from '../common/open';
 import { ticket } from '../tickets/fixtures';
 import { TicketTabsContext } from '../workspaces/ticketTabs';
-import { renderWithQuery, stubApi, type Call } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
 import { structuredQuestion, structuredQuestionItem } from './fixtures';
@@ -659,6 +659,46 @@ describe('inbox', () => {
     stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[approval]} selectedId={approval.id} onSelect={() => {}} />);
     expect(screen.getByLabelText('All arguments')).toHaveTextContent('"body": "Ship it"');
+  });
+
+  const bashApproval = item('approval:sess:r3', {
+    kind: 'approval', group: 'approval', sessionId: 'sess', runId: null, stepId: null, title: 'ls',
+    body: { requestId: 'r3', tool: 'Bash', input: { command: 'ls' } },
+    choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+  });
+
+  it('answers an approval in its session and moves on to the next item', async () => {
+    const calls = stubApi({ 'POST /api/sessions/sess/requests/r3': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const onSelect = vi.fn();
+    renderWithQuery(<InboxView items={[bashApproval, gate]} selectedId={bashApproval.id} onSelect={onSelect} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Allow once/ }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r3')?.body).toEqual({ answer: { type: 'approve', always: false } }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith('g'));
+  });
+
+  it('says so when an approval was answered elsewhere or expired, and stays on it', async () => {
+    const calls = stubApi({
+      'POST /api/sessions/sess/requests/r3': new Reply(409, { code: 'request_closed', message: 'closed' }),
+      'GET /api/inbox': { items: [], total: 0 },
+    });
+    const onSelect = vi.fn();
+    renderWithQuery(<InboxView items={[bashApproval, gate]} selectedId={bashApproval.id} onSelect={onSelect} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Deny/ }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r3')?.body).toEqual({ answer: { type: 'deny' } }));
+    expect(await screen.findByText('That request was already answered or has expired.')).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('says so when someone already answered an item, and stays on it', async () => {
+    stubApi({
+      'POST /api/inbox/g/answer': new Reply(409, { code: 'conflict', message: 'Someone already answered this.' }),
+      'GET /api/inbox': { items: [], total: 0 },
+    });
+    const onSelect = vi.fn();
+    renderWithQuery(<InboxView items={[gate, stalled]} selectedId="g" onSelect={onSelect} />);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(await screen.findByText('Someone already answered this.')).toBeInTheDocument();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {
