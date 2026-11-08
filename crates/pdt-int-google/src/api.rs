@@ -107,7 +107,11 @@ impl<'a> Session<'a> {
             oauth::OauthError::Offline(m) => offline(&m),
             oauth::OauthError::Failed(m) => ProviderError::Failed(format!("Google's sign-in failed: {m}")),
         })?;
-        self.tokens.put(&self.account.token_key(), &t.access_token, now + t.expires_in * 1000);
+        self.tokens.put(
+            &self.account.token_key(),
+            &t.access_token,
+            now.saturating_add(t.expires_in.saturating_mul(1000)),
+        );
         Ok(t.access_token)
     }
 
@@ -246,6 +250,18 @@ pub(crate) mod tests {
         let auth = |i: usize| sent[i].headers.iter().find(|(k, _)| *k == "authorization").unwrap().1.clone();
         assert_eq!((auth(1), auth(2), auth(4)), ("Bearer t1".into(), "Bearer t1".into(), "Bearer t2".into()));
         assert!(sent[0].body.as_deref().unwrap().contains("refresh_token=rtoken"));
+    }
+
+    #[test]
+    fn a_huge_token_lifetime_keeps_the_token_without_overflowing() {
+        let r = Recorded::new();
+        let body = format!(r#"{{"access_token":"t1","expires_in":{}}}"#, i64::MAX);
+        r.ok("POST", oauth::TOKEN_URL, &body).ok("GET", "https://x/a", "{}").ok("GET", "https://x/a", "{}");
+        let (a, tokens) = (account(), Tokens::default());
+        let s = Session::new(&r, &a, &tokens);
+        s.get("https://x/a").unwrap();
+        s.get("https://x/a").unwrap();
+        assert_eq!(r.sent().len(), 3, "one sign-in, kept");
     }
 
     #[test]

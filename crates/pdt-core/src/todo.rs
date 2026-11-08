@@ -189,6 +189,10 @@ pub fn done_at(was: Option<i64>, done: bool, now: i64) -> Option<i64> {
     if done { Some(was.unwrap_or(now)) } else { None }
 }
 
+/// The years a due day can be in: four digits, and far from chrono's last day, which a recurrence's next day would
+/// pass.
+const YEARS: std::ops::RangeInclusive<i32> = 1..=9999;
+
 /// A due day the client sent (`YYYY-MM-DD`; `""` for none), or why not.
 pub fn valid_due_on(s: &str) -> Result<Option<String>, String> {
     let s = s.trim();
@@ -196,7 +200,7 @@ pub fn valid_due_on(s: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        Ok(d) if s.len() == 10 => Ok(Some(d.format("%Y-%m-%d").to_string())),
+        Ok(d) if s.len() == 10 && YEARS.contains(&d.year()) => Ok(Some(d.format("%Y-%m-%d").to_string())),
         _ => Err(format!("{s:?} is not a date (YYYY-MM-DD)")),
     }
 }
@@ -300,9 +304,9 @@ fn following(rule: &RepeatRule, anchor: NaiveDate, after: NaiveDate) -> NaiveDat
 
 /// The next todo's due day (`YYYY-MM-DD`) when one due on `due_on` is checked off on `today` (the user's local day).
 /// From the due date the series keeps its schedule, but skips days that have already passed: the next one is never
-/// due today or earlier. From when it's done, it counts from `today`. None when `due_on` isn't a date.
+/// due today or earlier. From when it's done, it counts from `today`. None when `due_on` isn't a date in [`YEARS`].
 pub fn next_due_on(r: &Recurrence, due_on: &str, today: NaiveDate) -> Option<String> {
-    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok()?;
+    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok().filter(|d| YEARS.contains(&d.year()))?;
     let next = match r.from {
         RepeatFrom::Due => following(&r.rule, due, due.max(today)),
         RepeatFrom::Done => following(&r.rule, today, today),
@@ -379,7 +383,8 @@ mod tests {
     fn due_dates_and_times_are_validated() {
         assert_eq!(valid_due_on(" 2026-10-23 "), Ok(Some("2026-10-23".into())));
         assert_eq!(valid_due_on(""), Ok(None), "clears it");
-        for bad in ["2026-02-30", "2026-1-5", "23/10/2026", "tomorrow", "2026-10-23T10:00"] {
+        for bad in ["2026-02-30", "2026-1-5", "23/10/2026", "tomorrow", "2026-10-23T10:00", "0000-01-01", "-999-01-01"]
+        {
             assert!(valid_due_on(bad).is_err(), "{bad}");
         }
         assert_eq!(valid_due_time("09:30"), Ok(Some("09:30".into())));
@@ -509,6 +514,15 @@ mod tests {
         // Done on Wednesday 2026-10-28: its week counts as the first, so the Monday after next.
         assert_eq!(done(fortnightly, "2026-10-26", "2026-10-28"), "2026-11-09");
         assert_eq!(next_due_on(&rec(RepeatRule::Weekday, RepeatFrom::Done), "nope", day("2026-10-28")), None);
+    }
+
+    #[test]
+    fn a_due_day_outside_four_digit_years_has_no_next_one() {
+        let last = NaiveDate::MAX.format("%Y-%m-%d").to_string();
+        for rule in [RepeatRule::Weekday, RepeatRule::Day { interval: 1 }, RepeatRule::Month { day: 1 }] {
+            assert_eq!(next_due_on(&rec(rule.clone(), RepeatFrom::Due), &last, day("2026-10-28")), None, "{last}");
+            assert!(next(rule, "9999-12-31", "2026-10-28").starts_with("+10000-01-0"), "into year 10000, no panic");
+        }
     }
 
     #[test]

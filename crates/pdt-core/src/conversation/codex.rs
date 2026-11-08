@@ -529,7 +529,7 @@ impl CodexMapper {
                     let window = RateLimitWindow {
                         name: name.clone(),
                         utilization: w.get("usedPercent").and_then(Value::as_f64).unwrap_or(0.0) / 100.0,
-                        resets_at: w.get("resetsAt").and_then(Value::as_i64).map(|s| s * 1000),
+                        resets_at: w.get("resetsAt").and_then(Value::as_i64).map(|s| s.saturating_mul(1000)),
                     };
                     self.rate_limits.insert(name, window);
                 }
@@ -1043,6 +1043,15 @@ mod tests {
             AgentEvent::Turn { phase: TurnPhase::Ended, status: Some(TurnStatus::Completed), .. }
         ));
         assert!(m.turn().is_none());
+    }
+
+    #[test]
+    fn a_far_off_rate_limit_reset_saturates() {
+        let mut m = CodexMapper::new();
+        let p =
+            json!({"rateLimits": {"primary": {"windowDurationMins": 300, "usedPercent": 10.0, "resetsAt": i64::MAX}}});
+        m.on_notification("account/rateLimits/updated", &p);
+        assert_eq!(m.rate_limits["five_hour"].resets_at, Some(i64::MAX));
     }
 
     #[test]
