@@ -428,6 +428,63 @@ describe('documents', () => {
     expect(pick.mock.calls[0][0].account).toBe('c1');
   });
 
+  // What Drive's search can't find (drive.file: only files PDT made or opened), under the files it did find.
+  const foundFile = { reference: 'r1', title: 'Roadmap', kind: 'doc', url: null, version: null, modified: null, documentId: null, ticketIds: [] };
+
+  it('under the files found, says what the search misses and that the picker has the rest', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [foundFile],
+      'GET /api/drive/accounts': [account({ picker: true })],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('Only files PDT opened appear here. Browse the drive for the rest.')).toBeInTheDocument();
+  });
+
+  it('under the files found, says only what the search misses when no account opens the picker', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [foundFile],
+      'GET /api/drive/accounts': [account({})],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('Roadmap')).toBeInTheDocument();
+    expect(await screen.findByText('Only files PDT opened appear here.')).toBeInTheDocument();
+    expect(screen.queryByText(/for the rest/)).toBeNull();
+  });
+
+  it('a provider without a search note adds no line under its files', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: { ...textPicker, searchNote: null } }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': [foundFile],
+      'GET /api/drive/accounts': [account({})],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText('Roadmap')).toBeInTheDocument();
+    expect(screen.queryByText(/appear here|for the rest/)).toBeNull();
+  });
+
+  it('a search the provider fails says why, in place of the files', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'drive', label: 'Drive', capabilities: all, picker: textPicker }], default: 'drive' },
+      'GET /api/documents/providers/drive/files': new Reply(429, { code: 'rate_limited', message: 'Drive is busy, try again soon' }),
+      'GET /api/drive/accounts': [account({ picker: true })],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText(/Drive is busy, try again soon/)).toBeInTheDocument();
+    expect(screen.queryByText('Only files PDT opened appear here.')).toBeNull();
+  });
+
+  it('the local folder says what it lists, and that a .csv is dropped below', async () => {
+    stubApi({
+      'GET /api/documents/providers': { ...providers, providers: [{ id: 'local', label: 'Local', capabilities: all, picker: null }], default: 'local' },
+      'GET /api/documents/providers/local/files': [],
+    });
+    renderWithQuery(<ImportDocumentDialog onClose={() => {}} onImported={() => {}} />);
+    expect(await screen.findByText(/Docs \(\.md\) and sheets \(\.xlsx\) in the folder and its subfolders/)).toBeInTheDocument();
+    expect(screen.getByText('/data/documents')).toBeInTheDocument();
+  });
+
   it('the provider block names the account, and with several the browse button is a menu of them', async () => {
     const pick = vi.fn().mockResolvedValue([]);
     vi.spyOn(pickerModules, 'load').mockResolvedValue({ pick });
