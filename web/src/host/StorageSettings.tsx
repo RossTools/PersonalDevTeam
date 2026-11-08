@@ -17,6 +17,8 @@ import { TicketKey } from '../common/TicketKey';
 import { CleanButton, DiskBadge, RemoveButton, sizeText, useCleanFinished, useStorage } from '../projects/worktreeStorage';
 import { formatBytes, plural } from '../common/text';
 import { LoadError } from '../common/QueryStatus';
+import { invalidateStorage } from '../projects/queries';
+import { ticketKeys } from '../tickets/queries';
 
 function gb(text: string): number {
   if (!/^\d+$/.test(text)) throw new Error('a whole number of GB (0 turns it off)');
@@ -46,7 +48,7 @@ function CleanupInputs({ v, put }: { v: BuiltinSettingsView; put: PutInputs }) {
   // The thresholds also set the disks' levels on this page.
   const save = async (values: Record<string, unknown>) => {
     await put(values);
-    void qc.invalidateQueries({ queryKey: ['storage'] });
+    void invalidateStorage(qc);
   };
   const num = (id: string) => String(typeof v.values[id] === 'number' ? v.values[id] : '');
   return (
@@ -74,8 +76,8 @@ function PausedBanner({ reason }: { reason: string }) {
   const qc = useQueryClient();
   const [resume, resuming] = useAction(async () => {
     await api.resumePickup();
-    void qc.invalidateQueries({ queryKey: ['storage'] });
-    void qc.invalidateQueries({ queryKey: ['tickets'] });
+    void invalidateStorage(qc);
+    void qc.invalidateQueries({ queryKey: ticketKeys.lists });
   });
   return (
     <Banner tone="failed" actions={<Button size="sm" variant="secondary" pending={resuming} onClick={() => void resume()}>Resume pickup</Button>}>
@@ -130,7 +132,7 @@ function ProjectWorktrees({ p }: { p: ProjectStorage }) {
 export function Storage() {
   const qc = useQueryClient();
   const storage = useStorage();
-  const settle = () => void qc.invalidateQueries({ queryKey: ['storage'] });
+  const settle = () => void invalidateStorage(qc);
   const [cleanAll, cleaning] = useCleanFinished();
   const [refresh, refreshing] = useAction(async () => {
     await api.refreshStorage();

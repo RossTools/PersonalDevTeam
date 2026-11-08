@@ -22,6 +22,7 @@ import { CodeViewer } from './LazyCodeViewer';
 import { FileSearch } from './FileSearch';
 import { sessionsQuery } from '../sessions/queries';
 import type { FolderViewState } from './useFolderView';
+import { fileKeys } from './queries';
 
 // The conflict diff is CodeMirror's merge view: loaded only when it is shown.
 const CodeDiff = lazy(() => import('../review/CodeDiff').then((m) => ({ default: m.CodeDiff })));
@@ -51,7 +52,7 @@ const toNode = (e: FileEntry): FileNode => ({
 /** One folder's entries, as a query (one per folder, cached by place and path). */
 function useFolder(place: Place, path: string) {
   return useQuery({
-    queryKey: ['files', place.projectId, place.worktreeId, path],
+    queryKey: fileKeys.folder(place.projectId, place.worktreeId, path),
     queryFn: () => api.listFiles(place.projectId, place.worktreeId, path),
   });
 }
@@ -106,8 +107,8 @@ function useFileOps(state: FolderViewState, place: Place) {
   const confirm = useConfirm();
   const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
   const refresh = () => {
-    void qc.invalidateQueries({ queryKey: ['files', place.projectId, place.worktreeId] });
-    void qc.invalidateQueries({ queryKey: ['file', place.projectId, place.worktreeId] });
+    void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
+    void qc.invalidateQueries({ queryKey: fileKeys.contents(place.projectId, place.worktreeId) });
   };
   const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
   const create = async (path: string) => {
@@ -229,7 +230,7 @@ function FolderEntries({ state, place, dir }: { state: FolderViewState; place: P
 export function FileViewer({ state, readOnly = false }: { state: FolderViewState; readOnly?: boolean }) {
   const place = state.place;
   const q = useQuery({
-    queryKey: ['file', place?.projectId, place?.worktreeId, state.file],
+    queryKey: fileKeys.content(place?.projectId ?? '', place?.worktreeId ?? null, state.file),
     queryFn: () => api.fileContent(place!.projectId, place!.worktreeId, state.file!),
     enabled: !!place && !!state.file,
   });
@@ -279,7 +280,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   // Saving was refused: the file changed on disk. `disk` is what is there now (null: deleted), once fetched.
   const [conflict, setConflict] = useState<{ disk?: FileContent | null; diff: boolean } | null>(null);
   const dirty = !!edit && edit.text !== edit.base.text;
-  const fileKey = ['file', place.projectId, place.worktreeId, f.path];
+  const fileKey = fileKeys.content(place.projectId, place.worktreeId, f.path);
   const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
   const { setUnsaved } = state;
   useEffect(() => {
@@ -309,7 +310,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
       api.saveFile(place.projectId, { ...wt, path: f.path, text, ...(baseHash ? { baseHash } : {}) }),
     onSuccess: (saved, { text }) => {
       qc.setQueryData(fileKey, saved);
-      void qc.invalidateQueries({ queryKey: ['files', place.projectId, place.worktreeId] });
+      void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
       setConflict(null);
       // Typing during the save keeps the newer text unsaved.
       setEdit((e) => (e && saved.text !== null ? { ...e, base: { ...saved, text: saved.text }, text: e.text === text ? saved.text : e.text } : e));

@@ -19,6 +19,7 @@ import { useProjects } from '../projects/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../host/queries';
 import { POLL } from '../common/poll';
 import { QueryStatus } from '../common/QueryStatus';
+import { forgeLoginKey, useForgeLogin } from '../plugins/queries';
 
 export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent' | 'permissions';
 export const STEPS: StepId[] = ['agents', 'github', 'project', 'defaultAgent', 'permissions'];
@@ -344,15 +345,11 @@ function ProgramPathForm({ onSaved }: { onSaved: () => void }) {
 
 function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
   const qc = useQueryClient();
-  const login = useQuery({
-    queryKey: ['forge-login', 'github'],
-    queryFn: () => api.forgeLogin('github'),
-    refetchInterval: (q) => (q.state.data?.pending ? POLL.live : false),
-  });
+  const login = useForgeLogin('github');
   const device = useMutation({
     meta: { errorShown: true },
     mutationFn: () => api.forgeLoginDevice('github', {}),
-    onSuccess: (v) => qc.setQueryData(['forge-login', 'github'], v),
+    onSuccess: (v) => qc.setQueryData(forgeLoginKey('github'), v),
   });
   const skip = useMutation({
     meta: { errorShown: true },
@@ -399,7 +396,7 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
 function ProjectStep({ onAddProject, onHostSettings, ...step }: StepProps & SetupPageProps) {
   const projects = useProjects();
   const host = useHostSettings();
-  const github = useQuery({ queryKey: ['forge-login', 'github'], queryFn: () => api.forgeLogin('github') });
+  const github = useForgeLogin('github');
   const first = projects.data?.[0];
   const summary = first ? `${first.name}${first.repoPath ? ` · ${first.repoPath}` : ''}` : 'A folder with a git repo. PDT makes a worktree for each ticket.';
   return (

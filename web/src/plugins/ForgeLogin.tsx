@@ -1,11 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Input, Link, Section, SettingsRow, Skeleton, absoluteTime, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { ForgeAccountView } from '../api/gen/ForgeAccountView';
 import type { ForgeLoginView } from '../api/gen/ForgeLoginView';
 import type { ForgeTokenCheck } from '../api/gen/ForgeTokenCheck';
-import { POLL } from '../common/poll';
+import { forgeLoginKey, useForgeLogin } from './queries';
 
 /**
  * A forge's logins, on its plugin page (Settings › Plugins › GitHub; PDT-177, PDT-228, PDT-244): one account per host
@@ -14,14 +14,8 @@ import { POLL } from '../common/poll';
  */
 export function ForgeLogin({ kind, label }: { kind: string; label: string }) {
   const qc = useQueryClient();
-  const key = ['forge-login', kind];
-  const view = useQuery({
-    queryKey: key,
-    queryFn: () => api.forgeLogin(kind),
-    // While a code waits to be entered, look often: PDT signs in as soon as the forge says so.
-    refetchInterval: (q) => (q.state.data?.pending ? POLL.live : false),
-  });
-  const set = (v: ForgeLoginView) => qc.setQueryData(key, v);
+  const view = useForgeLogin(kind);
+  const set = (v: ForgeLoginView) => qc.setQueryData(forgeLoginKey(kind), v);
   const [token, setToken] = useState('');
   const [apiUrl, setApiUrl] = useState<string | null>(null);
   const [clientId, setClientId] = useState('');

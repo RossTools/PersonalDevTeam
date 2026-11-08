@@ -13,6 +13,7 @@ export const hostKeys = {
   health: ['health'] as const,
   bugReportPreview: ['bug-report-preview'] as const,
   folders: ['host-folders'] as const,
+  folder: (path: string, nearest: boolean, hidden: boolean) => ['host-folders', path, nearest, hidden] as const,
   agentCapabilities: (agent: AgentKind) => ['agent-capabilities', agent] as const,
 };
 

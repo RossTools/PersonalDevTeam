@@ -9,6 +9,7 @@ import type { SearchLine } from '../api/gen/SearchLine';
 import type { Place } from '../common/PlacePicker';
 import { useDebounced } from '../common/useDebounced';
 import type { FolderViewState } from './useFolderView';
+import { fileKeys } from './queries';
 
 /**
  * Search inside the checkout's files (`git grep`: ignored and binary files are left out). With nothing typed it shows
@@ -21,7 +22,7 @@ export function FileSearch({ state, place, children }: { state: FolderViewState;
   const searching = asked.q !== '';
   // A new search cancels the one in flight: the query's signal aborts once its key is left.
   const r = useQuery({
-    queryKey: ['fileSearch', place.projectId, place.worktreeId, asked],
+    queryKey: fileKeys.search(place.projectId, place.worktreeId, asked),
     queryFn: ({ signal }) => api.searchFiles(place.projectId, place.worktreeId, asked, signal),
     enabled: searching,
     placeholderData: keepPreviousData,

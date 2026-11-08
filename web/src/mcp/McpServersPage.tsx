@@ -18,6 +18,7 @@ import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
 import { connectionsKey } from '../connections/queries';
+import { useSecrets } from '../secrets/queries';
 
 const mcpServersKey = ['mcp-servers'] as const;
 
@@ -97,7 +98,7 @@ function McpServerDialog({ server, onClose }: { server?: McpServerView; onClose:
   const qc = useQueryClient();
   const c = server?.connection;
   const config = c?.config ?? {};
-  const secrets = useQuery({ queryKey: ['secrets'], queryFn: api.listSecrets });
+  const secrets = useSecrets();
   const { projectOptions, personaOptions } = useScopeOptions();
   const [name, setName] = useState(c?.name ?? '');
   const [transport, setTransport] = useState<string>(server?.transport ?? 'stdio');

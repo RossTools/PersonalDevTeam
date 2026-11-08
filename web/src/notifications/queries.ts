@@ -8,6 +8,8 @@ import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import { streamPoll } from '../common/poll';
 import { inboxKey } from '../inbox/useInbox';
 
+/** Every query of notifications (the Updates, the rules). */
+export const NOTIFICATIONS = ['notifications'] as const;
 const UPDATES = ['notifications', 'updates'];
 
 /**
@@ -21,7 +23,7 @@ export function useUpdates() {
 function useRefreshNotifications() {
   const qc = useQueryClient();
   return () => Promise.all([
-    qc.invalidateQueries({ queryKey: ['notifications'] }),
+    qc.invalidateQueries({ queryKey: NOTIFICATIONS }),
     qc.invalidateQueries({ queryKey: inboxKey }),
   ]);
 }
@@ -31,6 +33,16 @@ export function useReadNotification() {
   return useMutation({
     mutationFn: (id: string) => api.readNotification(id),
     onError: (e) => toast.error(`Couldn't mark the update read: ${actionError(e)}`),
+    onSettled: () => void refresh(),
+  });
+}
+
+/** Reads an Inbox item's notifications when it is opened (quietly: the next poll tries again). */
+export function useReadItemNotifications() {
+  const refresh = useRefreshNotifications();
+  return useMutation({
+    meta: { errorShown: true },
+    mutationFn: (inboxItemId: string) => api.readNotifications({ inboxItemId }),
     onSettled: () => void refresh(),
   });
 }

@@ -8,6 +8,7 @@ import { desktopNotificationsOn, holdLeadership, showDesktop } from './desktop';
 import { presentation, shownKey } from './model';
 import { inboxKey } from '../inbox/useInbox';
 import { setStreamOpen } from '../common/poll';
+import { NOTIFICATIONS } from './queries';
 
 const STREAM_PATH = '/api/notifications/stream';
 
@@ -38,7 +39,7 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
     const source = new EventSource(STREAM_PATH);
     const refresh = () => {
       void qc.invalidateQueries({ queryKey: inboxKey });
-      void qc.invalidateQueries({ queryKey: ['notifications'] });
+      void qc.invalidateQueries({ queryKey: NOTIFICATIONS });
     };
     // While it is connected the stream brings every change, so the Updates poll slows down (`streamPoll`); when it
     // connects or drops, a refetch catches up and picks the new interval.

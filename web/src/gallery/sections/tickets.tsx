@@ -29,6 +29,8 @@ import { BoardCard, LaneHeader } from '../../tickets/Board';
 import { ConfirmProvider } from '@ui/Confirm';
 import { StartDialog } from '../../tickets/StartDialog';
 import { PrDetails } from '../../tickets/PullRequest';
+import { ticketKeys } from '../../tickets/queries';
+import { projectKeys } from '../../projects/queries';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -431,9 +433,9 @@ function StartDemo() {
   const [open, setOpen] = useState<FullTicket | null>(null);
   const qc = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } }), []);
   const show = (t: FullTicket) => {
-    qc.setQueryData(['ticket', t.id], t);
-    qc.setQueryData(['projects'], [galleryProject]);
-    qc.setQueryData(['areas', galleryProject.id], {
+    qc.setQueryData(ticketKeys.one(t.id), t);
+    qc.setQueryData(projectKeys.all, [galleryProject]);
+    qc.setQueryData(ticketKeys.areas(galleryProject.id), {
       areas: [{ name: 'migrations', paths: ['crates/pdt-store/migrations/**'], exclusive: true }, { name: 'web/ui', paths: ['web/ui/**'], exclusive: false }],
       error: null,
     });

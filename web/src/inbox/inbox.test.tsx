@@ -215,6 +215,14 @@ describe('inbox', () => {
     expect(runConfig).not.toHaveBeenCalled();
   });
 
+  it('reads an item\'s notifications when it opens, and refreshes the Updates at once', async () => {
+    const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const { qc } = renderWithQuery(<InboxView items={[gate]} selectedId="g" onSelect={() => {}} />);
+    qc.setQueryData(['notifications', 'updates'], { items: [], unreadUpdates: 1 });
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/notifications/read-all')?.body).toEqual({ inboxItemId: 'g' }));
+    await waitFor(() => expect(qc.getQueryState(['notifications', 'updates'])?.isInvalidated).toBe(true));
+  });
+
   it('answers a gate with Enter and moves on', async () => {
     const calls = stubApi({ 'POST /api/inbox/g/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();
