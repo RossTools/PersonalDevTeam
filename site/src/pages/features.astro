@@ -14,7 +14,7 @@ import pmShot from '../assets/screens/pm.webp';
 import inboxShot from '../assets/screens/inbox.webp';
 import phoneShot from '../assets/screens/phone.webp';
 import secretsShot from '../assets/screens/secrets.webp';
-import { siteLinks, STABLE_PORT } from '../links.mjs';
+import { downloadUrl, siteLinks, STABLE_PORT } from '../links.mjs';
 
 const links = siteLinks(import.meta.env.BASE_URL);
 // The runs-locally diagram, for screen readers: the boxes say the same.
@@ -250,7 +250,7 @@ const areas = [
 			<p class="lead">Free and open source. Bring your own agents.</p>
 			<InstallBox id="install" />
 			<div class="cta">
-				<a class="btn primary" href={links.download} data-download-label>Download PDT</a>
+				<a class="btn primary" href={downloadUrl('mac')} data-download-label>Download PDT</a>
 				<a class="btn ghost" href={links.doc('getting-started/what-is-pdt')}>Get started</a>
 			</div>
 		</div>
