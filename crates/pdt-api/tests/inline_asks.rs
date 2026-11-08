@@ -6,9 +6,10 @@ use crate::common;
 
 use axum::http::StatusCode;
 use common::pm::*;
+use common::wait::{still_after, wait_until};
 use common::{call, call_as_ui};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Makes the PM run on `agent` in `mode`.
 async fn pm_on(env: &Env, agent: &str, mode: &str) {
@@ -29,15 +30,12 @@ async fn pm_without(env: &Env, agent: &str, mode: &str, dropped: &[&str]) {
 
 /// The conversation's open request: its event.
 async fn open_card(env: &Env, session: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("an open request", async || {
         let all = events(env, session).await;
-        if let Some(e) = all.iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open") {
-            return e["event"].clone();
-        }
-        assert!(Instant::now() < deadline, "no open request");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let open = all.iter().find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open");
+        open.map(|e| e["event"].clone()).ok_or(all)
+    })
+    .await
 }
 
 /// The request's event as it is now.
@@ -60,14 +58,11 @@ async fn answer(env: &Env, session: &str, request: &str, a: Value) {
 
 /// What the agent said after its first `n` things that starts with `prefix`.
 async fn said_after(env: &Env, session: &str, n: usize, prefix: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        if let Some(m) = agent_says(env, session).await[n..].iter().find(|m| m.starts_with(prefix)) {
-            return m.clone();
-        }
-        assert!(Instant::now() < deadline, "the agent never said {prefix}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    wait_until(&format!("the agent to say {prefix}"), async || {
+        let said = agent_says(env, session).await;
+        said[n..].iter().find(|m| m.starts_with(prefix)).cloned().ok_or(said)
+    })
+    .await
 }
 
 /// The PM on `agent` in `mode` creates a ticket after the user's Allow in the conversation, hears a Deny, and its
@@ -219,23 +214,18 @@ async fn a_terminal_call_waits_on_its_inbox_item() {
             v["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
         })
     };
-    let waiting_item = || async {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        loop {
-            let found = inbox(&env).await.into_iter().find(|i| i["kind"] == "confirm" && i["sessionId"] == id.as_str());
-            if let Some(i) = found {
-                return i["id"].as_str().unwrap().to_string();
-            }
-            assert!(Instant::now() < deadline, "no Inbox item");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
+    let waiting_item = || {
+        wait_until("an Inbox item", async || {
+            let all = inbox(&env).await;
+            let found = all.iter().find(|i| i["kind"] == "confirm" && i["sessionId"] == id.as_str());
+            found.map(|i| i["id"].as_str().unwrap().to_string()).ok_or(all)
+        })
     };
 
     // Deny: the waiting call hears it.
     let call_ = run(1);
     let item = waiting_item().await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(!call_.is_finished(), "the call waits for the answer");
+    still_after("the call ending before the answer", Duration::from_millis(200), async || call_.is_finished()).await;
     let (s, v) = call_as_ui(
         &env.app,
         "POST",
@@ -266,29 +256,22 @@ async fn a_terminal_call_waits_on_its_inbox_item() {
 /// Waits for what the agent said after its first `n` things that starts with `prefix`, moving the workflows (and the
 /// outbox's messages) on meanwhile.
 async fn told_after(env: &Env, session: &str, n: usize, prefix: &str) -> String {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until(&format!("the agent to say {prefix}"), async || {
         pdt_api::run_workflows(&env.state).await;
-        if let Some(m) = agent_says(env, session).await[n..].iter().find(|m| m.starts_with(prefix)) {
-            return m.clone();
-        }
-        assert!(Instant::now() < deadline, "the agent never said {prefix}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        let said = agent_says(env, session).await;
+        said[n..].iter().find(|m| m.starts_with(prefix)).cloned().ok_or(said)
+    })
+    .await
 }
 
 /// Waits until the session's last turn has ended, and what that sets off has run.
 async fn turn_over(env: &Env, session: &str) {
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the turn to end", async || {
         let all = events(env, session).await;
         let last = all.iter().rev().find(|e| e["event"]["kind"] == "turn");
-        if last.is_some_and(|e| e["event"]["phase"] == "ended") {
-            break;
-        }
-        assert!(Instant::now() < deadline, "the turn never ended");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        last.is_some_and(|e| e["event"]["phase"] == "ended")
+    })
+    .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
@@ -675,12 +658,11 @@ async fn every_core_asking_tool_asks() {
     .await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
     let proposed = v["key"].as_str().unwrap().to_string();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !inbox(&env).await.iter().any(|i| i["kind"] == "ticket_proposal") {
-        assert!(Instant::now() < deadline, "no ticket proposal");
+    wait_until("a ticket proposal", async || {
         pdt_api::run_workflows(&env.state).await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        inbox(&env).await.iter().any(|i| i["kind"] == "ticket_proposal")
+    })
+    .await;
 
     let calls: Vec<(&str, Value)> = vec![
         ("create_ticket", json!({"project": "PX", "title": "Asked"})),
@@ -708,23 +690,21 @@ async fn every_core_asking_tool_asks() {
         let n = agent_says(&env, &id).await.len();
         send(&env, &id, &format!("mcp: {tool} {args}")).await;
         // Its card, unless the call came back without asking.
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let req = loop {
+        let req = wait_until(&format!("{tool}'s card"), async || {
             let all = events(&env, &id).await;
             let open = all.iter().find(|e| {
                 e["event"]["kind"] == "request"
                     && e["event"]["state"] == "open"
                     && !answered.iter().any(|a| e["event"]["id"] == a.as_str())
             });
-            if let Some(e) = open {
-                break e["event"].clone();
+            if open.is_none() {
+                let said = agent_says(&env, &id).await;
+                let back = said[n..].iter().find(|m| m.starts_with(&format!("mcp {tool}")));
+                assert!(back.is_none(), "{tool} came back without asking: {back:?}");
             }
-            let said = agent_says(&env, &id).await;
-            let back = said[n..].iter().find(|m| m.starts_with(&format!("mcp {tool}")));
-            assert!(back.is_none(), "{tool} came back without asking: {back:?}");
-            assert!(Instant::now() < deadline, "{tool} opened no card");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        };
+            open.map(|e| e["event"].clone())
+        })
+        .await;
         let rid = req["id"].as_str().unwrap().to_string();
         assert_eq!(req["tool"], format!("mcp__pdt__{tool}"), "{tool} asked: {req}");
         answer(&env, &id, &rid, json!({"type": "deny", "message": "Not this one"})).await;

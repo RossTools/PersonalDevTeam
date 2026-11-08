@@ -279,7 +279,7 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
     };
     let settings = st.store.get_host_settings().await?;
     let projects_dir =
-        crate::projects::projects_dir(settings.projects_dir.as_deref()).map(|p| p.to_string_lossy().into_owned());
+        crate::projects::projects_dir(st, settings.projects_dir.as_deref()).map(|p| p.to_string_lossy().into_owned());
     let programs = program_views(st).await;
     let acp_agents = acp_agent_views(st, &settings).await;
     Ok(HostSettingsView {

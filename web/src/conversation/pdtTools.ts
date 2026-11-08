@@ -1,5 +1,7 @@
 import { isRecord, nonBlank } from '../common/guards';
 import { isTicketKey } from '../tickets/model';
+import type { DecideChoice } from '../api/gen/DecideChoice';
+import type { DecideRow } from '../api/gen/DecideRow';
 // PDT's own tools in a conversation (PDT-382): which calls show as cards instead of folding into "Used N tools", and
 // what each card reads from the call's input and result.
 
@@ -33,6 +35,8 @@ const CARD_TOOLS = new Set([
   'document_link',
   'save_note',
   'delete_note',
+  // PDT-579: the PM's decisions on the Inbox, kept once answered.
+  'inbox_decide',
 ]);
 
 /** A call that shows as a card of its own (never folded with the turn's other tools). */
@@ -464,4 +468,86 @@ export function pdtApprovalTitle(tool: string, input: unknown): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * A call's arguments as one string, its keys sorted: a request and its tool call carry the same arguments, maybe in
+ * another key order.
+ */
+export function inputKey(input: unknown): string {
+  const sorted = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(sorted) : isRecord(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v;
+  return JSON.stringify(sorted(input)) ?? '';
+}
+
+/** What became of one of `inbox_decide`'s rows. */
+type DecideOutcome = { kind: 'decided'; stage: string | null } | { kind: 'unticked' } | { kind: 'failed'; error: string };
+
+/** One of `inbox_decide`'s rows and what became of it (null before it ran, or when its result doesn't say). */
+export interface DecidedRow {
+  row: DecideRow;
+  outcome: DecideOutcome | null;
+}
+
+const CHOICES: readonly string[] = ['accept_todo', 'accept_backlog', 'duplicate', 'reject'] satisfies DecideChoice[];
+const choice = (v: unknown): DecideChoice | null => (typeof v === 'string' && CHOICES.includes(v) ? (v as DecideChoice) : null);
+const sameKey = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase();
+
+/** A row from the call's own item, for a call whose request isn't in the conversation: its ticket as the PM named it. */
+function rowOfItem(d: Record<string, unknown>, decision: DecideChoice): DecideRow {
+  const item = nonBlank(d.item) ?? '?';
+  return {
+    itemId: item, ticketId: '', ticketKey: item, ticketTitle: '', decision, agentic: d.agentic === true,
+    ...(nonBlank(d.title) ? { title: d.title as string } : {}),
+    ...(nonBlank(d.priority) ? { priority: d.priority as DecideRow['priority'] } : {}),
+    ...(Array.isArray(d.labels) ? { labels: strings(d.labels) } : {}),
+    ...(nonBlank(d.duplicateOf) ? { duplicateOf: d.duplicateOf as string } : {}),
+    ...(nonBlank(d.note) ? { note: d.note as string } : {}),
+  };
+}
+
+/**
+ * An `inbox_decide` call's rows with what became of each: the rows its request asked (`asked`, which name each ticket
+ * with its title), else the call's items, and pdt-mcp's `decided`, `unticked` and `failed` once it ran. `errors`: the
+ * failures that name no row.
+ */
+export function inboxDecided(input: unknown, output?: string, asked?: DecideRow[] | null): { rows: DecidedRow[]; errors: string[] } {
+  const items = isRecord(input) && Array.isArray(input.items) ? input.items.filter(isRecord) : [];
+  const base = asked ?? items.flatMap((d) => {
+    const c = choice(d.decision);
+    return c ? [rowOfItem(d, c)] : [];
+  });
+  const r = resultOf(output);
+  if (!r) return { rows: base.map((row) => ({ row, outcome: null })), errors: [] };
+  const decided = (Array.isArray(r.decided) ? r.decided : []).filter(isRecord);
+  const failed = (Array.isArray(r.failed) ? r.failed : []).filter(isRecord);
+  const unticked = strings(r.unticked);
+  const used = new Set<Record<string, unknown>>();
+  const outcomeOf = (key: string): DecideOutcome | null => {
+    const d = decided.find((x) => typeof x.ticket === 'string' && sameKey(x.ticket, key));
+    if (d) {
+      used.add(d);
+      return { kind: 'decided', stage: nonBlank(d.stage) };
+    }
+    if (unticked.some((k) => sameKey(k, key))) return { kind: 'unticked' };
+    const f = failed.find((x) => typeof x.ticket === 'string' && sameKey(x.ticket, key));
+    if (f) {
+      used.add(f);
+      return { kind: 'failed', error: nonBlank(f.error) ?? 'Failed' };
+    }
+    return null;
+  };
+  const rows = base.map((row) => ({ row, outcome: outcomeOf(row.ticketKey) }));
+  // A row named by its item's id (no request to name its ticket): the result's own rows stand in for the ones it misses.
+  for (const d of decided) {
+    const c = choice(d.decision);
+    if (!used.has(d) && c && typeof d.ticket === 'string') {
+      rows.push({ row: rowOfItem({ item: d.ticket }, c), outcome: { kind: 'decided', stage: nonBlank(d.stage) } });
+      used.add(d);
+    }
+  }
+  return {
+    rows: rows.filter((x) => x.outcome || asked),
+    errors: failed.filter((f) => !used.has(f)).map((f) => [nonBlank(f.ticket), nonBlank(f.error) ?? 'Failed'].filter(Boolean).join(': ')),
+  };
 }

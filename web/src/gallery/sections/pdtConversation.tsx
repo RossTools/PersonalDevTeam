@@ -120,7 +120,7 @@ export const section = {
             onAnswer={async (a, kept) => void toast.info(`Answer: ${JSON.stringify(a)}${kept ? `, rows ${kept.join(', ')}` : ''}`)}
           />
         </Demo>
-        <Demo label="PDT tool cards · created, changed, linked, message, comment, workflow run, watch, running, failed">
+        <Demo label="PDT tool cards · created, changed, linked, message, comment, workflow run, watch, Inbox decisions, running, failed">
           <div className="flex flex-col gap-3">
             <CreateTicketsCard calls={[
               done('create_ticket', { title: 'Guest checkout: email-only orders', stage: 'todo', labels: ['agentic'] }, { key: 'SHOP-31', stage: 'todo' }),
@@ -132,6 +132,16 @@ export const section = {
             <PdtToolCard call={done('add_ticket_comment', { ticket: 'SHOP-19', body: 'The e2e run needs Chrome, which the sandbox lacks: **CI runs it**.' }, { commented: true, key: 'SHOP-19' })} />
             <PdtToolCard call={done('workflow_run', { name: 'Cut a release', project: 'SHOP' }, { runId: 'r1', workflow: 'Cut a release' })} />
             <PdtToolCard call={done('watch', { ticket: 'SHOP-31' }, { watching: [watch] })} />
+            <PdtToolCard call={{
+              ...done('inbox_decide', { items: [] }, {
+                decided: [{ ticket: 'SHOP-41', decision: 'accept_todo', stage: 'todo' }], failed: [{ ticket: 'SHOP-43', error: 'it was already decided' }], unticked: ['SHOP-42'],
+              }),
+              rows: [
+                { itemId: 'i1', ticketId: 't1', ticketKey: 'SHOP-41', ticketTitle: 'Flaky checkout test', decision: 'accept_todo', agentic: true, priority: 'high' },
+                { itemId: 'i2', ticketId: 't2', ticketKey: 'SHOP-42', ticketTitle: 'Same flaky test', decision: 'duplicate', agentic: false, duplicateOf: 'SHOP-41' },
+                { itemId: 'i3', ticketId: 't3', ticketKey: 'SHOP-43', ticketTitle: 'Rename everything', decision: 'reject', agentic: false, note: 'Not worth the churn.' },
+              ],
+            }} />
             <PdtToolCard call={{ tool: 'mcp__pdt__create_ticket', input: { title: 'Discount codes' }, status: 'running' }} />
             <PdtToolCard call={{ tool: 'mcp__pdt__link_tickets', input: { ticket: 'SHOP-1', kind: 'blocks', other: 'SHOP-1' }, status: 'failed', output: 'a ticket cannot block itself' }} />
           </div>

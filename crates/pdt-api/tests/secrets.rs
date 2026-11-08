@@ -10,7 +10,7 @@ use common::{call, git};
 use pdt_api::{AppState, router};
 use pdt_store::Store;
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const VALUE: &str = "npm_Zq8wX2-very-secret";
@@ -114,19 +114,18 @@ async fn say_answering(env: &Env, session: &str, text: &str, answer: &str) -> St
     let (s, v) =
         call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": text}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let request = loop {
+    let request = wait_until("a permission request", async || {
         let open = events(env, session)
             .await
             .into_iter()
             .find(|e| e["event"]["kind"] == "request" && e["event"]["state"] == "open")
             .map(|e| e["event"]["id"].as_str().unwrap().to_string());
-        if let Some(id) = open {
-            break id;
+        match open {
+            Some(id) => Ok(id),
+            None => Err(agent_says(env, session).await),
         }
-        assert!(Instant::now() < deadline, "no permission request: {:?}", agent_says(env, session).await);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+    })
+    .await;
     let (s, v) = call(
         &env.app,
         "POST",
@@ -437,16 +436,12 @@ async fn run_workflow_with(env: &Env, doc: Value, input: Value) -> Value {
     let (s, r) = call(&env.app, "POST", &format!("/api/workflows/{wf}/run"), Some(json!({"input": input}))).await;
     assert_eq!(s, StatusCode::OK, "{r}");
     let id = r["runId"].as_str().unwrap().to_string();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
+    wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await;
-        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
-            return r;
-        }
-        assert!(Instant::now() < deadline, "the run never ended: {r}");
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+        if matches!(r["status"].as_str(), Some("running" | "waiting")) { Err(r) } else { Ok(r) }
+    })
+    .await
 }
 
 fn step(r: &Value, node: &str) -> Value {
@@ -528,16 +523,12 @@ async fn a_workflow_request_authenticates_with_a_secret_and_stores_none() {
     )
     .await;
     let id = r["runId"].as_str().unwrap().to_string();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let r = loop {
+    let r = wait_until("the run to end", async || {
         pdt_api::run_workflows(&env.state).await;
         let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{id}"), None).await;
-        if !matches!(r["status"].as_str(), Some("running" | "waiting")) {
-            break r;
-        }
-        assert!(Instant::now() < deadline);
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
+        if matches!(r["status"].as_str(), Some("running" | "waiting")) { Err(r) } else { Ok(r) }
+    })
+    .await;
     assert_eq!(r["status"], "failed", "{r:#}");
     assert!(step(&r, "call")["error"].as_str().unwrap().contains("may not be used here"), "{r:#}");
 

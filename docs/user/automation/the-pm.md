@@ -115,7 +115,9 @@ always waits for you, whatever the PM's agent and the project's setting, and the
 once you answer.
 
 Each row you allow is decided exactly as if you had clicked it in the Inbox. The ticket's activity shows it as yours,
-**proposed by PM**. The rows you untick stay in the Inbox for you to decide. Only the PM can propose these decisions:
+**proposed by PM**. The rows you untick stay in the Inbox for you to decide. Once you answer, the PM's conversation
+keeps the table as a record: each row with where its ticket went, the rows you unticked struck through, and any that
+couldn't be decided with the reason. Only the PM can propose these decisions:
 the agents working on tickets aren't given a way to decide proposals, theirs or anyone else's.
 
 ## Watch a ticket or run

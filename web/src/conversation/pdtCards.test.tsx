@@ -8,7 +8,7 @@ import { POLL } from '../common/poll';
 import { watchKeys } from '../common/Watch';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
 import { PdtProposal } from './PdtProposal';
-import { documentOf, editsText, filedIssue, isCardTool, issueKeyOf, issueLink, noteOf, pdtApprovalTitle, pdtTool, resultOf, stoppedTicket, watchEventsText } from './pdtTools';
+import { documentOf, editsText, filedIssue, inboxDecided, inputKey, isCardTool, issueKeyOf, issueLink, noteOf, pdtApprovalTitle, pdtTool, resultOf, stoppedTicket, watchEventsText } from './pdtTools';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -292,6 +292,57 @@ describe('PDT tool cards: stopping work, issues, documents and notes', () => {
     expect(screen.getByRole('group', { name: 'Editing Budget' })).toHaveTextContent('Added a chart');
     rerender(<PdtToolCard call={{ tool: 'mcp__pdt__document_create', input: { title: 'Plan', kind: 'doc' }, status: 'failed', output: 'no provider' }} />);
     expect(screen.getByRole('group', { name: "Didn't create Plan" })).toHaveTextContent('no provider');
+  });
+
+  const row = (n: number, decision: 'accept_todo' | 'accept_backlog' | 'duplicate' | 'reject', more = {}) =>
+    ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `ALP-${n}`, ticketTitle: `Proposal ${n}`, decision, agentic: false, ...more });
+  const decideInput = { items: [
+    { item: 'ALP-1', decision: 'accept_todo', agentic: true }, { item: 'alp-2', decision: 'duplicate', duplicateOf: 'ALP-9' },
+    { item: 'ALP-3', decision: 'reject', note: 'Out of scope' },
+  ] };
+  const decideResult = { decided: [{ ticket: 'ALP-1', decision: 'accept_todo', stage: 'todo' }], failed: [{ ticket: 'ALP-3', error: 'already decided' }, { error: 'ALP-7: gone' }], unticked: ['ALP-2'] };
+
+  it("inbox_decide: reads each row's outcome, from the request's rows or the call's items", () => {
+    expect(inputKey({ b: [{ y: 1, x: 2 }], a: 1 })).toBe(inputKey({ a: 1, b: [{ x: 2, y: 1 }] }));
+    const asked = [row(1, 'accept_todo', { agentic: true }), row(2, 'duplicate', { duplicateOf: 'ALP-9' }), row(3, 'reject', { note: 'Out of scope' })];
+    const r = inboxDecided(decideInput, JSON.stringify(decideResult), asked);
+    expect(r.rows.map((x) => [x.row.ticketKey, x.row.ticketTitle, x.outcome])).toEqual([
+      ['ALP-1', 'Proposal 1', { kind: 'decided', stage: 'todo' }],
+      ['ALP-2', 'Proposal 2', { kind: 'unticked' }],
+      ['ALP-3', 'Proposal 3', { kind: 'failed', error: 'already decided' }],
+    ]);
+    expect(r.errors).toEqual(['ALP-7: gone']);
+    // Before it ran: the rows, no outcomes. Without the request: the call's items, as the PM named them.
+    expect(inboxDecided(decideInput, undefined, asked).rows.every((x) => x.outcome === null)).toBe(true);
+    const own = inboxDecided(decideInput, JSON.stringify(decideResult));
+    expect(own.rows.map((x) => [x.row.ticketKey, x.row.decision, x.outcome?.kind])).toEqual([
+      ['ALP-1', 'accept_todo', 'decided'], ['alp-2', 'duplicate', 'unticked'], ['ALP-3', 'reject', 'failed'],
+    ]);
+    // An item named by its id: the result's own row stands in for it.
+    expect(inboxDecided({ items: [{ item: '01a1-item', decision: 'accept_backlog' }] }, JSON.stringify({ decided: [{ ticket: 'ALP-5', decision: 'accept_backlog', stage: 'ready' }], failed: [] }))
+      .rows.map((x) => [x.row.ticketKey, x.outcome])).toEqual([['ALP-5', { kind: 'decided', stage: 'ready' }]]);
+  });
+
+  it('inbox_decide: each row with its decision and what became of it, unticked ones struck through', () => {
+    stubApi({});
+    const asked = [row(1, 'accept_todo', { agentic: true }), row(2, 'duplicate', { duplicateOf: 'ALP-9' }), row(3, 'reject', { note: 'Out of scope' })];
+    const { rerender } = renderWithQuery(<PdtToolCard call={{ ...done('inbox_decide', decideInput, decideResult), rows: asked }} />);
+    const card = screen.getByRole('group', { name: 'Decided an Inbox item' });
+    expect(pills(card)).toEqual(['ALP-1', 'ALP-2', 'ALP-9', 'ALP-3']);
+    expect(card).toHaveTextContent('Proposal 1Accept to Todo · agentic');
+    expect(card).toHaveTextContent('To do');
+    expect(card).toHaveTextContent('Unticked');
+    expect(within(card).getByText('Proposal 2')).toHaveClass('line-through');
+    expect(card).toHaveTextContent('Out of scope');
+    expect(card).toHaveTextContent('already decided');
+    expect(card).toHaveTextContent('ALP-7: gone');
+    // Asking: the request's own card has the rows. Denied: what was proposed, and why it didn't run.
+    rerender(<PdtToolCard call={{ tool: 'mcp__pdt__inbox_decide', input: decideInput, status: 'running', rows: asked }} />);
+    expect(screen.getByRole('group', { name: 'Deciding Inbox items…' })).not.toHaveTextContent('Proposal 1');
+    rerender(<PdtToolCard call={{ tool: 'mcp:pdt/inbox_decide', input: decideInput, status: 'failed', output: 'The user denied this inbox_decide call, so nothing changed.', rows: asked }} />);
+    const denied = screen.getByRole('group', { name: "Didn't decide the Inbox items" });
+    expect(denied).toHaveTextContent('Proposal 3');
+    expect(denied).toHaveTextContent('The user denied this inbox_decide call');
   });
 
   it('save_note and delete_note: the title (body folded), its project and pinned', async () => {

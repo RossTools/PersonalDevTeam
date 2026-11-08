@@ -251,8 +251,10 @@ async fn a_refused_forge_login_fires_once() {
 #[tokio::test]
 async fn a_todo_coming_due_fires_once() {
     let env = setup(vec![]).await;
-    let yesterday = jiff::Zoned::now().date().yesterday().unwrap().to_string();
-    let tomorrow = jiff::Zoned::now().date().tomorrow().unwrap().to_string();
+    // A week either side of today, so a run across midnight sees the same: one overdue, one not yet due.
+    let today = jiff::Zoned::now().date();
+    let yesterday = today.checked_sub(jiff::Span::new().days(7)).unwrap().to_string();
+    let tomorrow = today.checked_add(jiff::Span::new().days(7)).unwrap().to_string();
     let add = |body: Value| async {
         let (s, t) = call(&env.app, "POST", "/api/todos", Some(body)).await;
         assert_eq!(s, StatusCode::CREATED, "{t}");
