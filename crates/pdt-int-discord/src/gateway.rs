@@ -128,6 +128,15 @@ pub async fn run(url: String, token: String, reports: mpsc::Sender<Report>) {
     }
 }
 
+/// How often to beat (ms), from the Hello: Discord's `heartbeat_interval` when it is 1 s to 10 min, else Discord's
+/// usual 41.25 s (`0` would panic the interval, a huge one overflow the first beat's instant).
+fn heartbeat_every(hello: &Value) -> u64 {
+    hello["d"]["heartbeat_interval"]
+        .as_u64()
+        .filter(|n| hello["op"] == 10 && (1_000..=600_000).contains(n))
+        .unwrap_or(41_250)
+}
+
 /// One connection: Hello, identify or resume, then heartbeats and dispatches until it ends.
 async fn session(
     url: &str,
@@ -146,7 +155,7 @@ async fn session(
         Ok(Some(Ok(Message::Text(t)))) => serde_json::from_str::<Value>(&t).unwrap_or(Value::Null),
         _ => return again("Discord's Gateway said no hello".into()),
     };
-    let every = hello["d"]["heartbeat_interval"].as_u64().filter(|_| hello["op"] == 10).unwrap_or(41_250);
+    let every = heartbeat_every(&hello);
     let first = match resume.as_ref() {
         Some(r) => resume_payload(token, r),
         None => identify(token),
@@ -270,6 +279,16 @@ mod tests {
         assert_eq!(close_fatal(1001), None);
         assert!(close_resumable(4000) && close_resumable(1006));
         assert!(!close_resumable(4007) && !close_resumable(4009));
+    }
+
+    #[test]
+    fn the_heartbeat_interval_is_kept_in_range() {
+        let hello = |n: Value| json!({"op": 10, "d": {"heartbeat_interval": n}});
+        assert_eq!(heartbeat_every(&hello(json!(45_000))), 45_000);
+        assert_eq!(heartbeat_every(&hello(json!(0))), 41_250);
+        assert_eq!(heartbeat_every(&hello(json!(u64::MAX))), 41_250);
+        assert_eq!(heartbeat_every(&hello(json!(-5))), 41_250);
+        assert_eq!(heartbeat_every(&json!({"op": 0, "d": {"heartbeat_interval": 45_000}})), 41_250);
     }
 
     #[test]

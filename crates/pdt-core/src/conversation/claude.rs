@@ -899,14 +899,14 @@ impl ClaudeMapper {
                 let window = RateLimitWindow {
                     name: name.clone(),
                     utilization: w.get("utilization").and_then(Value::as_f64).unwrap_or(0.0),
-                    resets_at: w.get("resetsAt").and_then(Value::as_i64).map(|s| s * 1000),
+                    resets_at: w.get("resetsAt").and_then(Value::as_i64).map(|s| s.saturating_mul(1000)),
                 };
                 self.rate_limits.insert(name.clone(), window);
             }
         }
         out.push(self.usage_event());
         if info.get("status").and_then(Value::as_str) == Some("rejected") {
-            let until = info.get("resetsAt").and_then(Value::as_i64).map(|s| s * 1000);
+            let until = info.get("resetsAt").and_then(Value::as_i64).map(|s| s.saturating_mul(1000));
             let text = "Claude's usage limit is reached. Nothing is sent to it until you send again.".to_string();
             out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until }));
         }
@@ -1263,6 +1263,22 @@ mod tests {
         let (line, _) = m.answer(id, &Answer::Approve { always: true }).unwrap();
         assert_eq!(line["response"]["response"]["behavior"], "allow");
         assert!(line["response"]["response"].get("updatedPermissions").is_none());
+    }
+
+    #[test]
+    fn a_far_off_rate_limit_reset_saturates() {
+        let mut m = ClaudeMapper::new();
+        let line = json!({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+            "five_hour": {"utilization": 0.5, "resetsAt": i64::MAX},
+            "seven_day": {"utilization": 0.1, "resetsAt": i64::MIN},
+        }}});
+        m.on_line(&line.to_string());
+        assert_eq!(m.rate_limits["five_hour"].resets_at, Some(i64::MAX));
+        assert_eq!(m.rate_limits["seven_day"].resets_at, Some(i64::MIN));
+        let rejected =
+            json!({"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": i64::MAX}});
+        let ev = events(&ClaudeMapper::new().on_line(&rejected.to_string()));
+        assert!(ev.iter().any(|(_, e)| matches!(e, AgentEvent::Notice { until: Some(i64::MAX), .. })), "{ev:?}");
     }
 
     #[test]
