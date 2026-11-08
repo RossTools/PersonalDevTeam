@@ -133,8 +133,36 @@ test('installs the Linux tarball, registers it and turns on lingering', { skip }
   assert.match(r.stdout, /v0\.3\.0 is installed/);
   assert.match(r.stdout, /127\.0\.0\.1:7420|no-pdt-running/);
   assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
-  assert.equal(read(join(t.home, 'host.log')), 'install\n');
+  assert.equal(read(join(t.home, 'host.log')), 'install --no-linger-hint\n');
   assert.match(read(join(t.home, 'loginctl.log')), /enable-linger tester/);
+});
+
+test('on a Linux desktop, pdt-host gives the linger hint and the script points at the AppImage for a tray icon', { skip }, async (ctx) => {
+  const t = setup();
+  ctx.after(t.cleanup);
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  const r = await run(t, [], { WAYLAND_DISPLAY: 'wayland-0' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(join(t.home, 'host.log')), 'install\n');
+  assert.equal(read(join(t.home, 'loginctl.log')), '');
+  assert.match(r.stdout, /no tray icon\. For one, install the AppImage/);
+});
+
+test('a folder it cannot write to is refused before downloading', { skip: skip || (process.getuid?.() === 0 && 'root writes anywhere') }, async (ctx) => {
+  const t = setup();
+  const local = join(t.home, '.local');
+  mkdirSync(local);
+  chmodSync(local, 0o555);
+  ctx.after(() => {
+    chmodSync(local, 0o755);
+    t.cleanup();
+  });
+  publish(t, 'v0.3.0', { 'pdt-linux-x86_64.tar.gz': linuxTarball(t) });
+  const r = await run(t, ['--yes']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /you can't write to .*\/home\/\.local\. .*Nothing was installed/);
+  assert.doesNotMatch(r.stdout, /Downloading/);
+  assert.equal(read(join(t.home, 'host.log')), '');
 });
 
 test('picks the aarch64 tarball, from compact JSON', { skip }, async (ctx) => {
@@ -308,7 +336,7 @@ test('a running install is left alone unless --force', { skip }, async (ctx) => 
 
   const f = await run(t, ['--yes', '--force'], {}, { running: true });
   assert.equal(f.status, 0, f.stderr);
-  assert.equal(read(join(t.home, 'host.log')), 'install --replace\n');
+  assert.equal(read(join(t.home, 'host.log')), 'install --replace --no-linger-hint\n');
   assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
 });
 
@@ -344,7 +372,7 @@ test('files left without a login registration are installed again', { skip }, as
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /isn't set up to start at login/);
   assert.match(r.stdout, /v0\.3\.0 is installed/);
-  assert.equal(read(join(t.home, 'host.log')), 'install\n');
+  assert.equal(read(join(t.home, 'host.log')), 'install --no-linger-hint\n');
   assert.ok(existsSync(join(t.home, '.local/opt/pdt/pdtd')));
 
   // macOS: the app kept after `pdt-host uninstall` is replaced and opened.
@@ -393,7 +421,7 @@ test('a failed registration says how to finish, and the next run installs again'
   assert.equal(again.status, 0, again.stderr);
   assert.doesNotMatch(again.stdout, /already installed/);
   assert.match(again.stdout, /v0\.3\.0 is installed/);
-  assert.equal(read(join(t.home, 'host.log')), 'install\ninstall --replace\ninstall\n');
+  assert.equal(read(join(t.home, 'host.log')), 'install --no-linger-hint\ninstall --replace --no-linger-hint\ninstall --no-linger-hint\n');
 });
 
 test('bad options are refused', { skip }, async (ctx) => {
