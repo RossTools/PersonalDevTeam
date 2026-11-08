@@ -7,6 +7,7 @@ import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
+import type { DecideRow } from '../api/gen/DecideRow';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
@@ -19,7 +20,7 @@ import type { Streams } from './model';
 import { DecideCard } from './DecideCard';
 import { CreateTicketsCard, PdtToolCard, TicketPills, type PdtCall } from './PdtToolCard';
 import { pdtApproval } from './PdtProposal';
-import { isCardTool, lookedUp } from './pdtTools';
+import { inputKey, isCardTool, lookedUp } from './pdtTools';
 import { approvalTitle, clock, inputText, planOf, questionsOf, summarizeTools, toolVerb } from './tools';
 
 type Ev<K extends AgentEvent['kind']> = Extract<AgentEvent, { kind: K }>;
@@ -81,8 +82,10 @@ interface ListContext {
   onContinue?: () => Promise<unknown>;
   agent: AgentKind;
   imageUrl?: (attachmentId: string) => string;
+  /** The rows each request with rows asked (`inbox_decide`), by its arguments (`inputKey`): its call's card shows them. */
+  askedRows: Map<string, DecideRow[]>;
 }
-const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude' });
+const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude', askedRows: new Map() });
 
 /** PDT's attachment ids are UUIDs; anything else is the agent's own note ("image/png") with nothing to show. */
 const isAttachment = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
@@ -142,15 +145,18 @@ function WorkingRow({ rows }: { rows: ConversationEvent[] }) {
 }
 
 /** A PDT tool call as its card wants it, with its streamed output. */
-function pdtCall(node: RowNode, streams: Streams): PdtCall {
+function pdtCall(node: RowNode, streams: Streams, askedRows?: ListContext['askedRows']): PdtCall {
   const ev = node.row.event as Ev<'tool_call'>;
-  return { tool: ev.tool, input: ev.input, status: ev.status, output: (node.row.itemId && streams[node.row.itemId]?.output) || ev.output };
+  const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
+  const rows = askedRows?.size ? askedRows.get(inputKey(ev.input)) : undefined;
+  return { tool: ev.tool, input: ev.input, status: ev.status, output, ...(rows ? { rows } : {}) };
 }
 
 function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   const ev = node.row.event as Ev<'tool_call'>;
+  const { askedRows } = useContext(ListCtx);
   // PDT's own actions show as cards (PDT-382); in a sub-agent, as rows like the rest.
-  if (isCardTool(ev.tool) && !ev.parentId) return <PdtToolCard call={pdtCall(node, streams)} />;
+  if (isCardTool(ev.tool) && !ev.parentId) return <PdtToolCard call={pdtCall(node, streams, askedRows)} />;
   const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
   // A lookup names the tickets it read as pills (PDT-503).
   const read = ev.status === 'done' ? lookedUp([{ tool: ev.tool, input: ev.input, output }]) : null;
@@ -472,8 +478,8 @@ function findLast(rows: ConversationEvent[], f: (r: ConversationEvent) => boolea
   return undefined;
 }
 
-/** `next`, or `prev` when it holds the same diffs (so the context, and every row reading it, stays put). */
-function sameDiffs(prev: Map<string, string>, next: Map<string, string>): Map<string, string> {
+/** `next`, or `prev` when it holds the same entries (so the context, and every row reading it, stays put). */
+function sameMap<V>(prev: Map<string, V>, next: Map<string, V>): Map<string, V> {
   if (prev.size !== next.size) return next;
   for (const [k, v] of next) if (prev.get(k) !== v) return next;
   return prev;
@@ -518,7 +524,7 @@ export function MessageList({
   const turnDiffs = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of rows) if (r.event.kind === 'turn_diff' && r.turnId && r.event.diff) m.set(r.turnId, r.event.diff);
-    diffs.current = sameDiffs(diffs.current, m);
+    diffs.current = sameMap(diffs.current, m);
     return diffs.current;
   }, [rows]);
   // Continue: the conversation's last turn was cut off and nothing has happened since.
@@ -527,9 +533,16 @@ export function MessageList({
     const cut = last?.event.kind === 'turn' && last.event.phase === 'ended' && last.event.status === 'interrupted';
     return cut && !turnRunning && pending.length === 0 ? last.itemId ?? null : null;
   }, [rows, turnRunning, pending.length]);
+  const asked = useRef(new Map<string, DecideRow[]>());
+  const askedRows = useMemo(() => {
+    const m = new Map<string, DecideRow[]>();
+    for (const r of rows) if (r.event.kind === 'request' && r.event.rows) m.set(inputKey(r.event.input), r.event.rows);
+    asked.current = sameMap(asked.current, m);
+    return asked.current;
+  }, [rows]);
   const ctx = useMemo<ListContext>(
-    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl }),
-    [turnDiffs, continueTurn, continueLatest, agent, imageUrl],
+    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl, askedRows }),
+    [turnDiffs, continueTurn, continueLatest, agent, imageUrl, askedRows],
   );
 
   const toBottom = useCallback(() => {

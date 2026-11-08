@@ -541,6 +541,29 @@ describe('ConversationView', () => {
     await waitFor(() => expect(answers()).toContainEqual({ answer: { type: 'deny' } }));
   });
 
+  it('keeps the PM’s decisions once answered: the call’s card lists each row with what became of it (PDT-579)', () => {
+    stubApi({ 'GET /api/agents/claude/capabilities': caps });
+    renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+    const row = (n: number) => ({ itemId: `i${n}`, ticketId: `t${n}`, ticketKey: `PDT-${n}`, ticketTitle: `Proposal ${n}`, decision: 'accept_todo' as const, agentic: false });
+    const input = { items: [{ item: 'PDT-1', decision: 'accept_todo' }, { item: 'PDT-2', decision: 'accept_todo' }] };
+    act(() => {
+      server().open();
+      server().send({ type: 'event', event: ev(1, { kind: 'tool_call', id: 'c1', tool: 'mcp__pdt__inbox_decide', title: 'inbox_decide', input, status: 'done',
+        output: JSON.stringify({ decided: [{ ticket: 'PDT-1', decision: 'accept_todo', stage: 'todo' }], failed: [], unticked: ['PDT-2'] }) }) });
+      // The request carries the same arguments, in another key order.
+      server().send({ type: 'event', event: ev(2, { kind: 'request', id: 'pdt-ask-1', requestKind: 'approval', tool: 'mcp__pdt__inbox_decide',
+        title: 'Decide Inbox items', input: { items: input.items.map(({ decision, item }) => ({ decision, item })) }, canAlways: false, state: 'answered',
+        answer: { type: 'approve', always: false }, rows: [row(1), row(2)] }) });
+      server().send({ type: 'state', state: idle });
+      server().send({ type: 'ready' });
+    });
+    const card = screen.getByRole('group', { name: 'Decided an Inbox item' });
+    expect(card).toHaveTextContent('Proposal 1');
+    expect(card).toHaveTextContent('To do');
+    expect(within(card).getByText('Proposal 2')).toHaveClass('line-through');
+    expect(screen.queryByRole('region', { name: 'Make these 2 decisions?' })).toBeNull();
+  });
+
   it('pins a bar over the composer while a request is open; Review jumps to its card', async () => {
     stubApi({ 'GET /api/agents/claude/capabilities': caps });
     renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
