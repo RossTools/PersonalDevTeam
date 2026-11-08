@@ -361,7 +361,7 @@ download_failed() {
 	die "could not download $1 of $tag. $why"
 }
 
-# The newest stable release's tag, from where github.com's releases/latest redirects (…/releases/tag/<tag>). Fails
+# The newest stable release's tag, from where github.com's releases/latest redirects (.../releases/tag/<tag>). Fails
 # when it doesn't redirect to a tag (no release yet, or no answer).
 latest_tag() {
 	to="$(curl -fsS -o /dev/null -w '%{redirect_url}' "$web/$repo/releases/latest")" || return 1

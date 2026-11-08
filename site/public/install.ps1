@@ -73,7 +73,7 @@ function Test-ReleaseSignature([string]$key, [string]$tag, [byte[]]$sums, [byte[
     }
 }
 
-# The newest stable release's tag, from where github.com's releases/latest ($url) redirects (…/releases/tag/<tag>).
+# The newest stable release's tag, from where github.com's releases/latest ($url) redirects (.../releases/tag/<tag>).
 # $null when it doesn't redirect to a tag (no release yet, or no answer).
 function Get-LatestTag([string]$url) {
     try {
