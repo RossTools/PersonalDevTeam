@@ -4,9 +4,10 @@
 //! (`{"type":"resize","cols","rows"}`).
 
 use crate::error::{ApiError, codes};
+use crate::extract::ApiQuery;
 use crate::routes::AppState;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::response::Response;
 use futures_util::{SinkExt, StreamExt};
 use pdt_agents::{Attachment, PtyEvent};
@@ -32,7 +33,7 @@ const CLOSE_LAGGED: u16 = 4000;
 pub(crate) async fn connect(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(params): Query<PtyParams>,
+    ApiQuery(params): ApiQuery<PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
     st.session(&id).await?;

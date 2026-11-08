@@ -10,9 +10,10 @@
 //! user signs in again.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
 use pdt_core::inbox::{InboxGroup, InboxItem, InboxKind};
@@ -479,7 +480,7 @@ fn account_of(raw: &Value) -> Option<String> {
 }
 
 /// `GET /api/mcp-oauth/callback`: the browser back from the service; PDT trades the code for tokens.
-pub(crate) async fn callback(State(st): State<AppState>, Query(q): Query<CallbackQuery>) -> Response {
+pub(crate) async fn callback(State(st): State<AppState>, ApiQuery(q): ApiQuery<CallbackQuery>) -> Response {
     if let Some(e) = q.error {
         let why = q.error_description.unwrap_or(e);
         return page(false, &format!("The service didn't sign PDT in: {why}. Try again from Settings → MCP servers."));

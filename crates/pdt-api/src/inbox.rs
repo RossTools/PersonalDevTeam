@@ -2,10 +2,11 @@
 //! limits) plus the open permission requests of live conversations (approvals), most urgent first.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::conversation::{AgentEvent, RequestKind, RequestState};
 use pdt_core::inbox::{
@@ -23,7 +24,10 @@ pub(crate) struct ListQuery {
 }
 
 /// `GET /api/inbox?project=`.
-pub(crate) async fn list(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Result<Json<InboxList>, ApiError> {
+pub(crate) async fn list(
+    State(st): State<AppState>,
+    ApiQuery(q): ApiQuery<ListQuery>,
+) -> Result<Json<InboxList>, ApiError> {
     let mut items = st.store.open_inbox_items(q.project.as_deref()).await?;
     items.extend(approvals(&st, q.project.as_deref()).await?);
     items.extend(sessions_waiting(&st, q.project.as_deref()).await?);
@@ -268,7 +272,7 @@ pub(crate) async fn proposals(st: &AppState, project: Option<&str>) -> Result<Ve
 async fn answer_proposal(st: &AppState, id: &str, choice: Option<&str>) -> Result<Json<Value>, ApiError> {
     use crate::workflow::routes;
     let (workflow, version) = inbox::parse_proposal_id(id).or_404("inbox item")?;
-    let path = Path((workflow.to_string(), version));
+    let path = crate::extract::ApiPath((workflow.to_string(), version));
     let Json(d) = match choice {
         Some(inbox::ACCEPT) => routes::accept(State(st.clone()), path).await?,
         Some(inbox::DISCARD) => routes::discard(State(st.clone()), path).await?,

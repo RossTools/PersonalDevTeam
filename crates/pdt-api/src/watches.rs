@@ -10,10 +10,11 @@
 //! The PM's tools `watch`, `unwatch` and `list_watches` run [`watch`], [`unwatch`] and [`infos`].
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::notification::{NewNotification, NotificationKind, NotificationTarget};
 use pdt_core::pm::Rotation;
@@ -189,7 +190,7 @@ pub(crate) struct ListQuery {
 /// `GET /api/watches?ticket=&run=&session=`: a ticket's or run's watches, a conversation's, or every one.
 pub(crate) async fn list(
     State(st): State<AppState>,
-    Query(q): Query<ListQuery>,
+    ApiQuery(q): ApiQuery<ListQuery>,
 ) -> Result<Json<Vec<WatchInfo>>, ApiError> {
     let watches = if q.ticket.is_some() || q.run.is_some() {
         let (target, id) = target_of(&st, q.ticket.as_deref(), q.run.as_deref()).await?;

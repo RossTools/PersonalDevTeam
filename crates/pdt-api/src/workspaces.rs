@@ -1,10 +1,11 @@
 //! Workspace and tab routes.
 
 use crate::error::{ApiError, OrNotFound, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_core::workspace::{
     NewWorkspace, OpenTab, Tab, TabItem, TabPatch, TabPlacement, Workspace, WorkspacePatch, valid_workspace_name,
@@ -65,7 +66,7 @@ pub(crate) struct RemoveQuery {
 pub(crate) async fn remove(
     State(st): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<RemoveQuery>,
+    ApiQuery(q): ApiQuery<RemoveQuery>,
 ) -> Result<StatusCode, ApiError> {
     match st.store.delete_workspace(&id, q.close_tabs).await? {
         DeleteWorkspace::Deleted => Ok(StatusCode::NO_CONTENT),

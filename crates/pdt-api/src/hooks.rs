@@ -4,11 +4,12 @@
 //! the tailnet with no user identity), never over Funnel; the secret is what lets them in.
 
 use crate::error::{ApiError, codes};
+use crate::extract::ApiQuery;
 use crate::routes::{AppState, now_ms};
 use crate::workflow::nodes::webhook::WEBHOOK_CONNECTION;
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Method, StatusCode};
 use hmac::{Hmac, KeyInit, Mac};
 use pdt_core::workflow::api::NewLogEvent;
@@ -121,7 +122,7 @@ fn delivery(headers: &HeaderMap) -> Option<String> {
 pub(crate) async fn receive(
     State(st): State<AppState>,
     Path(name): Path<String>,
-    Query(query): Query<BTreeMap<String, String>>,
+    ApiQuery(query): ApiQuery<BTreeMap<String, String>>,
     method: Method,
     headers: HeaderMap,
     body: Bytes,

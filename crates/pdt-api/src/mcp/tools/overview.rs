@@ -113,7 +113,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 limit: Some(a.limit.unwrap_or(20).clamp(1, 100)),
                 ..Default::default()
             };
-            let Json(page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+            let Json(page) = crate::tickets::list(State(st.clone()), crate::extract::ApiQuery(q)).await.map_err(api)?;
             let tickets: Vec<Value> = page
                 .items
                 .iter()
@@ -205,7 +205,7 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
         })
         .collect();
     let Json(inbox) =
-        crate::inbox::list(State(st.clone()), axum::extract::Query(Default::default())).await.map_err(api)?;
+        crate::inbox::list(State(st.clone()), crate::extract::ApiQuery(Default::default())).await.map_err(api)?;
     let inbox: Vec<Value> = inbox
         .items
         .iter()
@@ -243,7 +243,7 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
             limit: Some(100),
             ..Default::default()
         };
-        let Json(mut page) = crate::tickets::list(State(st.clone()), Ok(axum::extract::Query(q))).await.map_err(api)?;
+        let Json(mut page) = crate::tickets::list(State(st.clone()), crate::extract::ApiQuery(q)).await.map_err(api)?;
         // In the order auto-start takes them (PDT-218): To do before Ready, each in the project's order.
         page.items.sort_by_key(|t| t.stage != pdt_core::ticket::TicketStage::Todo);
         auto_starting.extend(page.items.iter().filter_map(|t| {
