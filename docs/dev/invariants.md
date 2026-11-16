@@ -52,7 +52,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `link_issue`), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
   payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
-  reviews are outside text whatever their role on the repository (they relay others' text). A sub-workflow's run
+  reviews are outside text whatever their role on the repository (they relay others' text). Fenced trigger text in a
+  step's agent text is cut to a budget (`fence::BUDGET`, halved while the field is over `fence::PROMPT_MAX`;
+  `engine::fence_input`), so outside text alone can never push a message over `conversation::MAX_MESSAGE`: only the
+  fenced parts are cut, with a note after the block. A sub-workflow's run
   inherits its `workflow.call` chain's first run (`untrusted::origin`, `StepCx::origin`): when that run's trigger
   carries outside text, all of the child's `{{trigger…}}` is fenced (`fence::ALL`), its sessions are locked down and
   outsiders' text is refused as in the caller; the triage cap counts a workflow whose calls reach an agent step

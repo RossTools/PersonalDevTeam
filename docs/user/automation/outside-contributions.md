@@ -39,6 +39,15 @@ didn't open (from outside contributors and bots):
 Nothing is posted on the pull request until you choose. When its author pushes again, the question is replaced and
 it's reviewed again; when it's merged or closed on GitHub, the question goes away.
 
+### When something goes wrong
+
+- **The review fails** (the agent is switched off or couldn't start): your Inbox shows **Review failed: ask me**, with
+  the error. **Retry review** runs it again; **Skip review** asks you to decide without one.
+- **It doesn't merge.** Once set to merge, PDT watches the pull request until it merges. If CI fails, the merge
+  queue drops it, it's taken off auto-merge, or it still hasn't merged after 12 hours, your Inbox shows **Didn't
+  merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. A push hands it to
+  the review of the new head instead; one that merges asks nothing.
+
 ### A ticket for each pull request
 
 To keep track of outside pull requests on the board, turn on **Create a ticket for each pull request** when you add
@@ -61,6 +70,8 @@ title doesn't give the versions, is reviewed like any other, and a failure comes
   **Draft**s. Locked-down personas run only on Claude Code or Codex; on other agents their steps fail.
 - **Fenced.** The issue's or pull request's title, text and changes reach the agent in marked blocks, with a note that
   they are data, never instructions. So do bots' comments and reviews, since a bot can repeat what anyone wrote.
+  Long text is shortened (to 8 KB each, less if the message would still be too long), with a note of how much was cut
+  and a link to the full text.
 - **Carried through.** A workflow started by outside input that runs another workflow (**Run a workflow**) passes that
   on: everything the called workflow's agents get from its input is fenced, and they are locked down the same way.
 - **Capped.** Triage runs are limited per author and per repository each hour (**Triage per author** and **Triage per

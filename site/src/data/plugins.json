@@ -99,7 +99,7 @@
           "title": "Read a workflow's latest run"
         },
         {
-          "description": "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` and `failedJobs`. Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a number).",
+          "description": "Reads a pull request by its head branch or its number and leaves by its state: `open`, `merged`, `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` and `failedJobs`; an open one says whether it is set to merge (`mergeSet`) and how (`mergeNote`). Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, `merged` for a number).",
           "id": "github.change_request",
           "title": "Read a GitHub pull request"
         },

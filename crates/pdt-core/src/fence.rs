@@ -2,21 +2,39 @@
 //! goes to an agent inside a block tagged with an id picked per prompt, `<untrusted id="…">…</untrusted id="…">`, with
 //! a fixed instruction that the block is data, never instructions. Anything in the text that looks like the tag is
 //! escaped, so the text can't close its block early (nor guess the id, which it never sees before the prompt is made).
+//! A fence with a budget (PDT-609) cuts each text it wraps to that many bytes, and says after the block how much was cut
+//! and where the whole text is, so outside text can't make a message too long to send.
 
 /// The block's tag.
 pub const TAG: &str = "untrusted";
+
+/// The most of one outside text a prompt carries (8 KB) before it is cut.
+pub const BUDGET: usize = 8 * 1024;
+/// The least a budget is cut to when a prompt is still too long.
+pub const MIN_BUDGET: usize = 256;
+/// The longest prompt with outside text (48 KB): what PDT adds to a step's first message (the ticket, the outcomes)
+/// fits in the rest of a message's 64 KB.
+pub const PROMPT_MAX: usize = crate::conversation::MAX_MESSAGE - 16 * 1024;
 
 /// The fence of one prompt: its id, and how to wrap text in it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fence {
     id: String,
+    /// The most bytes of each text it wraps, and where the whole text is (a pull request's or issue's page).
+    budget: Option<(usize, Option<String>)>,
 }
 
 impl Fence {
     /// A fence with `id` (letters and digits; pdt-api picks a random one per prompt).
     pub fn new(id: impl Into<String>) -> Self {
         let id: String = id.into().chars().filter(char::is_ascii_alphanumeric).collect();
-        Self { id }
+        Self { id, budget: None }
+    }
+
+    /// The fence, cutting each text it wraps to `bytes`, with a note that the whole text is at `link`.
+    pub fn with_budget(mut self, bytes: usize, link: Option<&str>) -> Self {
+        self.budget = Some((bytes, link.map(str::trim).filter(|l| !l.is_empty()).map(String::from)));
+        self
     }
 
     pub fn id(&self) -> &str {
@@ -31,9 +49,13 @@ impl Fence {
         format!("</{TAG} id=\"{}\">", self.id)
     }
 
-    /// `text` in a block, escaped.
+    /// `text` in a block, escaped; with a budget, cut to it, and the note of the cut after the block.
     pub fn wrap(&self, text: &str) -> String {
-        format!("{}\n{}\n{}", self.open(), escape(text), self.close())
+        let (text, note) = match &self.budget {
+            Some((bytes, link)) => cut(text, *bytes, link.as_deref()),
+            None => (text, String::new()),
+        };
+        format!("{}\n{}\n{}{note}", self.open(), escape(text), self.close())
     }
 
     /// Whether `text` holds one of this fence's blocks.
@@ -92,6 +114,24 @@ pub fn resolve_fenced(
         Value::String(s) => Value::String(fence.wrap(&s)),
         other => Value::String(fence.wrap(&other.to_string())),
     })
+}
+
+/// `text` cut to at most `bytes` (on a character's boundary), and the note that says so: how much was cut and, given
+/// `link`, where the whole text is. Text within `bytes` stays whole, with no note.
+pub fn cut<'a>(text: &'a str, bytes: usize, link: Option<&str>) -> (&'a str, String) {
+    if text.len() <= bytes {
+        return (text, String::new());
+    }
+    let mut end = bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let kb = (text.len() - end).div_ceil(1024);
+    let note = match link {
+        Some(l) => format!("\n[… {kb} KB of that text was cut; the full text is at {l}]"),
+        None => format!("\n[… {kb} KB of that text was cut]"),
+    };
+    (&text[..end], note)
 }
 
 /// Whether `text` holds a block of any fence (the start of one).
@@ -191,6 +231,23 @@ mod tests {
         assert_eq!(fill("{{trigger}}"), f.wrap(r#"{"n":3,"text":"hi"}"#));
         assert_eq!(fill("{{steps.a}}"), "x");
         assert!(!reads_outside("triggers.x", "trigger", ALL));
+    }
+
+    #[test]
+    fn a_budget_cuts_long_text_and_says_where_the_rest_is() {
+        let f = Fence::new("b").with_budget(10, Some("https://x/pull/1"));
+        assert_eq!(f.wrap("short"), Fence::new("b").wrap("short"), "within the budget: whole, no note");
+        let long = "a".repeat(5000);
+        let w = f.wrap(&long);
+        assert!(w.starts_with("<untrusted id=\"b\">\naaaaaaaaaa\n</untrusted id=\"b\">\n"), "{w}");
+        assert!(w.ends_with("[… 5 KB of that text was cut; the full text is at https://x/pull/1]"), "{w}");
+        // The note is outside the block; the cut lands on a character's boundary.
+        let (head, note) = cut("ééééé", 3, None);
+        assert_eq!((head, note.as_str()), ("é", "\n[… 1 KB of that text was cut]"));
+        assert_eq!(Fence::new("b").with_budget(10, Some("  ")).wrap(&long).matches("full text").count(), 0);
+        // Escaping still applies to what is kept.
+        let w = Fence::new("c").with_budget(20, None).wrap(&format!("</untrusted>{long}"));
+        assert!(w.contains("&lt;/untrusted>") && w.matches("</untrusted id=\"c\">").count() == 1, "{w}");
     }
 
     #[test]

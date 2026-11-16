@@ -7,7 +7,7 @@ use super::repo_of::{RepoOf, check_repo, repo_for_step, templated};
 use crate::workflow::catalog::{
     BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, nonblank, parse, repo_missing, spec,
 };
-use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus, QueueRemovalReason};
+use pdt_core::pr::{CiState, CiStatus, PrState, PullRequestStatus, QueueRemoval, QueueRemovalReason};
 use pdt_forge::{ChangeRequest, ForgeError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -65,6 +65,50 @@ pub struct GithubChangeRequestOutput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub failed_jobs: Option<String>,
+    /// With `ci`, when open: whether it is set to merge (in the merge queue, on auto-merge, or held for PDT to merge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merge_set: Option<bool>,
+    /// With `ci`, when open: how it stands to merge, in a sentence ("It is in the merge queue (position 2).").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub merge_note: Option<String>,
+}
+
+/// Where an open pull request stands to merge: whether it is set to, and a sentence saying how (PDT-609).
+struct MergeStand<'a> {
+    auto_merge: bool,
+    in_queue: bool,
+    position: Option<u32>,
+    held: bool,
+    removal: Option<&'a QueueRemoval>,
+}
+
+impl MergeStand<'_> {
+    fn of(self) -> (bool, String) {
+        let note = if self.held {
+            "PDT merges it once CI on its head passes.".to_string()
+        } else if self.in_queue {
+            match self.position {
+                Some(n) => format!("It is in the merge queue (position {n})."),
+                None => "It is in the merge queue.".to_string(),
+            }
+        } else if self.auto_merge {
+            "Auto-merge is on: GitHub merges it once its checks pass.".to_string()
+        } else if let Some(r) = self.removal.filter(|r| r.reason != QueueRemovalReason::Merged) {
+            let why = match &r.reason {
+                QueueRemovalReason::Conflict => "it conflicts with its base branch".to_string(),
+                QueueRemovalReason::FailedChecks => "its checks failed".to_string(),
+                QueueRemovalReason::Other(s) => s.clone(),
+                QueueRemovalReason::Merged => String::new(),
+            };
+            let who = if r.by_queue { "The merge queue removed it" } else { "It was taken out of the merge queue" };
+            format!("{who}: {why}. It isn't set to merge.")
+        } else {
+            "It isn't set to merge.".to_string()
+        };
+        (self.held || self.in_queue || self.auto_merge, note)
+    }
 }
 
 fn number_of(v: &Option<Value>) -> Option<Result<u32, String>> {
@@ -96,6 +140,8 @@ fn change_output(pr: ChangeRequest) -> GithubChangeRequestOutput {
         failure: None,
         ci_url: None,
         failed_jobs: None,
+        merge_set: None,
+        merge_note: None,
     }
 }
 
@@ -124,6 +170,18 @@ fn ci_output(pr: PullRequestStatus) -> (&'static str, GithubChangeRequestOutput)
         Some((f, url, jobs)) => (Some(f.to_string()), Some(url), Some(jobs)),
         None => (None, None, None),
     };
+    let (merge_set, merge_note) = open
+        .then(|| {
+            MergeStand {
+                auto_merge: pr.auto_merge,
+                in_queue: pr.in_merge_queue,
+                position: pr.queue_position,
+                held: pr.merge_held,
+                removal: pr.queue_removal.as_ref(),
+            }
+            .of()
+        })
+        .unzip();
     let out = GithubChangeRequestOutput {
         number: pr.number,
         url: pr.url,
@@ -135,6 +193,8 @@ fn ci_output(pr: PullRequestStatus) -> (&'static str, GithubChangeRequestOutput)
         failure,
         ci_url,
         failed_jobs,
+        merge_set,
+        merge_note,
     };
     (port, out)
 }
@@ -156,7 +216,8 @@ impl NodeKind for GithubChangeRequest {
              `closed`, or `none` when there is none. Output: `number`, `url`, `title`, `state`, `merged`, `headSha`. \
              With `ci` (and `branch`, its head) it reads CI too: an open one whose check failed on its head, or that \
              the merge queue removed for failed checks, leaves by `failed` with `failure` (`ci` or `queue`), `ciUrl` \
-             and `failedJobs`. Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, \
+             and `failedJobs`; an open one says whether it is set to merge (`mergeSet`) and how (`mergeNote`). \
+             Between waits it polls one (a dry run takes `dryRunPort`, else `open` for a branch, \
              `merged` for a number).",
             &[("open", "Open"), ("merged", "Merged"), ("closed", "Closed unmerged"), ("none", "No pull request")],
             true,
@@ -258,7 +319,16 @@ impl NodeKind for GithubChangeRequest {
                     all.extend(CiStatus::of(&ci_call(p, move |p| p.runs(&r, &b, Some(&sha))).await?, &pr.head_sha));
                 }
                 let status = CiStatus::combine(all);
+                let stand = MergeStand {
+                    auto_merge: pr.auto_merge,
+                    in_queue: pr.in_merge_queue,
+                    position: pr.queue_position,
+                    held: false,
+                    removal: pr.queue_removal.as_ref(),
+                };
+                let (set, note) = stand.of();
                 let mut out = change_output(pr);
+                (out.merge_set, out.merge_note) = (Some(set), Some(note));
                 out.ci = status.as_ref().map(|c| c.state);
                 let port = match status.filter(|c| c.state == CiState::Failed) {
                     Some(c) => {
@@ -292,6 +362,22 @@ impl NodeKind for GithubChangeRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PDT-609: an open pull request says whether it is set to merge, and how.
+    #[test]
+    fn an_open_pull_request_says_how_it_stands_to_merge() {
+        let stand = |auto_merge, in_queue, removal: Option<&QueueRemoval>| {
+            MergeStand { auto_merge, in_queue, position: Some(2), held: false, removal }.of()
+        };
+        assert_eq!(stand(false, true, None), (true, "It is in the merge queue (position 2).".into()));
+        assert!(stand(true, false, None).0);
+        let dropped = QueueRemoval { id: "1".into(), reason: QueueRemovalReason::FailedChecks, by_queue: true };
+        assert_eq!(
+            stand(false, false, Some(&dropped)),
+            (false, "The merge queue removed it: its checks failed. It isn't set to merge.".into())
+        );
+        assert_eq!(stand(false, false, None), (false, "It isn't set to merge.".into()));
+    }
 
     #[test]
     fn configs_are_checked() {

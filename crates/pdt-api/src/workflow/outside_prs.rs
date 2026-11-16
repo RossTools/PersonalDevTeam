@@ -3,7 +3,9 @@
 //! locked-down PR Reviewer from the diff the forge gives (never checked out), and waits in the Inbox for the user:
 //! Approve & merge, Request changes or Close. Nothing is posted on the pull request until the user chooses. A push to
 //! it reviews it again. With `tickets` on (PDT-333; off by default), each one also gets an external ticket, which
-//! holds the review and follows the pull request when it is closed or merged.
+//! holds the review and follows the pull request when it is closed or merged. A review that fails asks the user to
+//! retry it (PDT-609), and one set to merge is watched until it merges: a merge queue that drops it, failed CI or a
+//! long wait asks "Didn't merge".
 
 use super::doc_build::node;
 use super::templates::{doc as parse_doc, params as parse_params};
@@ -21,6 +23,8 @@ pub const TICKETS: &str = "tickets";
 /// How often a pull request waiting to merge reads its CI, and for how long (12 hours).
 const CI_POLL_MS: u64 = 2 * 60_000;
 const CI_POLLS: u32 = 360;
+/// How often one set to merge is read until it merges, and for how long before the user is asked (12 hours).
+const WATCH_POLLS: u32 = 360;
 
 pub fn params() -> Vec<TemplateParam> {
     parse_params(json!([
@@ -66,11 +70,17 @@ const DECIDE: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})**
 Approve & merge sets it to merge once CI passes. Request changes posts your note (or the review's feedback) on it \
 as a review; it is reviewed again when its author pushes. Close closes it, with your note as a comment.";
 
-/// The Inbox question when it didn't merge (CI failed, or GitHub refused).
+/// The Inbox question when it didn't merge (CI failed, GitHub refused, the merge queue dropped it, or it waited too
+/// long), from a read of the pull request just before asking (`why`).
 const BLOCKED: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})** by {{trigger.author}} didn't \
-merge: {{trigger.title}}\n\nCI on its head: {{steps.check_ci.ci}} {{steps.check_ci.ciUrl}}\n\
-{{steps.check_ci.failedJobs}}\n\n{{steps.merge.reason}}\n\n{{steps.review.summary}}\n\nApprove & merge tries \
-again once CI passes. Request changes posts your note on it as a review. Close closes it.";
+merge: {{trigger.title}}\n\nCI on its head: {{steps.why.ci}} {{steps.why.ciUrl}}\n\
+{{steps.why.failedJobs}}\n\n{{steps.why.mergeNote}} {{steps.merge.reason}}\n\n{{steps.review.summary}}\n\n\
+Approve & merge tries again once CI passes. Request changes posts your note on it as a review. Close closes it.";
+
+/// The Inbox question when the review itself failed (its session didn't start, or its prompt couldn't be sent).
+const REVIEW_FAILED: &str = "The review of **[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})** by \
+{{trigger.author}} failed: {{steps.review.error}}\n\n{{trigger.title}}\n\nRetry review runs the review again. \
+Skip review asks you to decide without one. Nothing is posted on the pull request either way.";
 
 fn pr() -> Value {
     json!({"repo": "{{trigger.repo}}", "number": "{{trigger.number}}"})
@@ -98,15 +108,17 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
     let moot = json!({"type": "github.pull_request.pushed", "also": ["github.pull_request.closed"],
                       "where": same_pr});
     let ticket = if tickets { "{{steps.ticket.ticketId}}" } else { "" };
-    let gate = |id: &str, x: i32, y: i32, title: &str, question: &str| {
-        let mut config = json!({
-            "question": question, "choices": ["approve_merge", "request_changes", "close"], "event": moot});
+    let gate_of = |id: &str, x: i32, y: i32, title: &str, question: &str, choices: Value| {
+        let mut config = json!({"question": question, "choices": choices, "event": moot});
         if tickets {
             config["ticket"] = json!(ticket);
         }
         let mut n = node(id, "gate", x, y, title, config);
         n["maxVisits"] = json!(10);
         n
+    };
+    let gate = |id: &str, x: i32, y: i32, title: &str, question: &str| {
+        gate_of(id, x, y, title, question, json!(["approve_merge", "request_changes", "close"]))
     };
     let request = |id: &str, x: i32, y: i32, after: &str, fallback: &str| {
         let mut n = node(
@@ -244,13 +256,75 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             {"left": "{{steps.merge.code}}", "op": "eq", "right": "head_moved"}]}),
         ),
         end("gone", 1580, -260, "Merged or closed meanwhile", true),
+        // Set to merge: watched until it merges. Dropped by the merge queue, failed CI, taken off auto-merge or not merged
+        // in time asks the user; merged ends quietly; a push hands it to the push's run.
+        {
+            let mut n = node("watch_wait", "wait", 2360, -100, "Wait for the merge", json!({"ms": CI_POLL_MS}));
+            n["maxVisits"] = json!(WATCH_POLLS);
+            n
+        },
+        {
+            let mut n = node(
+                "watch",
+                "github.change_request",
+                2620,
+                -100,
+                "Merged yet?",
+                json!({
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "branch": "{{trigger.headBranch}}",
+                "ci": true, "dryRunPort": "merged"}),
+            );
+            n["maxVisits"] = json!(WATCH_POLLS);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
+        {
+            let mut n = node(
+                "still_set",
+                "condition",
+                2880,
+                -100,
+                "Still set to merge?",
+                json!({"conditions": [
+                {"left": "{{steps.watch.mergeSet}}", "op": "truthy"},
+                {"left": "{{steps.watch.headSha}}", "op": "eq", "right": "{{trigger.headSha}}"}]}),
+            );
+            n["maxVisits"] = json!(WATCH_POLLS);
+            n
+        },
+        node(
+            "watch_head",
+            "condition",
+            2880,
+            -230,
+            "Still the head approved?",
+            json!({"conditions": [
+            {"left": "{{steps.watch.headSha}}", "op": "eq", "right": "{{trigger.headSha}}"}]}),
+        ),
+        end("merged", 2880, 20, "Merged", false),
+        // What the user is asked about, read just before asking.
+        {
+            let mut n = node(
+                "why",
+                "github.change_request",
+                1840,
+                -360,
+                "Where it stands",
+                json!({
+                "repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "branch": "{{trigger.headBranch}}",
+                "ci": true, "dryRunPort": "failed"}),
+            );
+            n["maxVisits"] = json!(10);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
         gate("blocked", 2100, -360, "Didn't merge: ask me", BLOCKED),
         request(
             "blocked_request",
             2360,
             -480,
             "blocked",
-            "This pull request can't merge yet: {{steps.merge.reason}} {{steps.check_ci.ciUrl}}",
+            "This pull request can't merge yet: {{steps.merge.reason}} {{steps.why.ciUrl}}",
         ),
         end("blocked_requested", 2620, -480, "Changes requested", false),
         close("blocked_close", 2360, -360, "blocked"),
@@ -269,6 +343,14 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
                 {"id": "changes", "description": "it needs changes first (data: feedback, for its author)"},
                 {"id": "close", "description": "it should not go in"},
             ]}),
+        ),
+        gate_of(
+            "review_failed",
+            1320,
+            400,
+            "Review failed: ask me",
+            REVIEW_FAILED,
+            json!(["retry_review", "skip_review"]),
         ),
         node(
             "note",
@@ -365,22 +447,46 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "check_ci", "port": "open", "to": "same_head"}),
         json!({"from": "same_head", "port": "true", "to": "passed"}),
         json!({"from": "same_head", "port": "false", "to": "superseded"}),
-        json!({"from": "check_ci", "port": "failed", "to": "blocked"}),
+        json!({"from": "check_ci", "port": "failed", "to": "why"}),
         json!({"from": "check_ci", "port": "merged", "to": "gone"}),
         json!({"from": "check_ci", "port": "closed", "to": "gone"}),
         json!({"from": "check_ci", "port": "none", "to": "gone"}),
         json!({"from": "passed", "port": "true", "to": "merge"}),
         json!({"from": "passed", "port": "false", "to": "wait_ci"}),
-        json!({"from": "merge", "port": "queued", "to": "merging"}),
+        json!({"from": "merge", "port": "queued", "to": "watch_wait"}),
         json!({"from": "merge", "port": "merged", "to": "merging"}),
         json!({"from": "merge", "port": "refused", "to": "moved"}),
         json!({"from": "moved", "port": "true", "to": "superseded"}),
-        json!({"from": "moved", "port": "false", "to": "blocked"}),
+        json!({"from": "moved", "port": "false", "to": "why"}),
+        json!({"from": "watch_wait", "port": "done", "to": "watch"}),
+        // Not merged in time (its loop limit): ask.
+        json!({"from": "watch_wait", "port": "error", "to": "why"}),
+        json!({"from": "watch", "port": "merged", "to": "merged"}),
+        json!({"from": "watch", "port": "closed", "to": "gone"}),
+        json!({"from": "watch", "port": "none", "to": "gone"}),
+        json!({"from": "watch", "port": "failed", "to": "why"}),
+        json!({"from": "watch", "port": "open", "to": "still_set"}),
+        json!({"from": "still_set", "port": "true", "to": "watch_wait"}),
+        json!({"from": "still_set", "port": "false", "to": "watch_head"}),
+        json!({"from": "watch_head", "port": "true", "to": "why"}),
+        json!({"from": "watch_head", "port": "false", "to": "superseded"}),
+        json!({"from": "why", "port": "open", "to": "blocked"}),
+        json!({"from": "why", "port": "failed", "to": "blocked"}),
+        json!({"from": "why", "port": "merged", "to": "merged"}),
+        json!({"from": "why", "port": "closed", "to": "gone"}),
+        json!({"from": "why", "port": "none", "to": "gone"}),
         json!({"from": "review", "port": "merge", "to": "note"}),
         json!({"from": "review", "port": "changes", "to": "note"}),
         json!({"from": "review", "port": "close", "to": "note"}),
         json!({"from": "review", "port": "timeout", "to": "ci_now"}),
         json!({"from": "review", "port": "stopped", "to": "ci_now"}),
+        // The review failed (its session didn't start, its prompt couldn't be sent): never silently.
+        json!({"from": "review", "port": "error", "to": "review_failed"}),
+        json!({"from": "review_failed", "port": "retry_review", "to": "review"}),
+        json!({"from": "review_failed", "port": "skip_review", "to": "ci_now"}),
+        json!({"from": "review_failed", "port": "event", "to": "superseded"}),
+        json!({"from": "review_failed", "port": "unanswered", "to": "unanswered"}),
+        json!({"from": "review_failed", "port": "timeout", "to": "unanswered"}),
         json!({"from": "note", "to": "ci_now"}),
         json!({"from": "ci_now", "port": "open", "to": "decide"}),
         json!({"from": "ci_now", "port": "failed", "to": "decide"}),
@@ -443,22 +549,24 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
          the locked-down PR Reviewer from the diff GitHub gives (it never checks the code out or runs it), the review \
          goes on the ticket, and your Inbox asks: Approve & merge (once CI passes), Request changes (posted on the pull \
          request as a review; a push reviews it again) or Close (the ticket goes to Won't do). Nothing is posted on the \
-         pull request until you choose, and nothing is pushed to its branch. One merged or closed on GitHub finishes \
-         its ticket to match."
+         pull request until you choose, and nothing is pushed to its branch. A review that fails asks you to retry it. \
+         One set to merge is watched until it merges: if the merge queue drops it, CI fails or it hasn't merged in 12 \
+         hours, your Inbox asks again. One merged or closed on GitHub finishes its ticket to match."
     } else {
         "For each pull request PDT didn't open (an outsider's or a bot's): Dependabot's patch and minor updates merge \
          once CI passes, with nothing in your Inbox unless it fails. Every other one is reviewed by the locked-down PR \
          Reviewer from the diff GitHub gives (it never checks the code out or runs it), and your Inbox asks, with the \
          review: Approve & merge (once CI passes), Request changes (posted on the pull request as a review; a push \
          reviews it again) or Close. Nothing is posted on the pull request until you choose, and nothing is pushed to \
-         its branch."
+         its branch. A review that fails asks you to retry it. One set to merge is watched until it merges: if the \
+         merge queue drops it, CI fails or it hasn't merged in 12 hours, your Inbox asks again."
     };
     parse_doc(json!({
         "name": "Review outside pull requests",
         "description": description,
         "nodes": nodes,
         "edges": edges,
-        "settings": {"maxSteps": 4 * CI_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
+        "settings": {"maxSteps": 4 * CI_POLLS + 3 * WATCH_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
     }))
 }
 
@@ -585,6 +693,34 @@ mod tests {
     fn merges_and_posts_come_only_from_the_users_choice_or_the_dependabot_rule() {
         for d in [fill(&values(false)).unwrap(), fill(&values(true)).unwrap()] {
             merges_and_posts_are_gated(&d);
+        }
+    }
+
+    /// PDT-609: a review that fails asks the user (Retry review), and a merge that is only queued is watched: the
+    /// merge queue dropping it, failed CI, it leaving auto-merge or a long wait asks "Didn't merge".
+    #[test]
+    fn a_failed_review_and_a_queued_merge_never_end_silently() {
+        for tickets in [false, true] {
+            let d = fill(&values(tickets)).unwrap();
+            let next = |n: &str, p: &str| d.next(n, p).into_iter().map(String::from).collect::<Vec<_>>();
+            assert_eq!(next("review", "error"), ["review_failed"]);
+            assert_eq!(d.node("review_failed").unwrap().kind, "gate");
+            assert_eq!(next("review_failed", "retry_review"), ["review"]);
+            assert_eq!(next("review_failed", "skip_review"), ["ci_now"]);
+            assert_eq!(next("merge", "queued"), ["watch_wait"]);
+            assert_eq!(next("watch_wait", "done"), ["watch"]);
+            assert_eq!(next("watch_wait", "error"), ["why"], "not merged in time");
+            assert_eq!(next("watch", "failed"), ["why"]);
+            assert_eq!(next("watch", "merged"), ["merged"]);
+            assert_eq!(d.node("merged").unwrap().kind, "end", "a merge asks nothing");
+            assert_eq!(next("still_set", "true"), ["watch_wait"]);
+            assert_eq!(next("watch_head", "true"), ["why"], "off the queue, same head");
+            for p in ["open", "failed"] {
+                assert_eq!(next("why", p), ["blocked"]);
+            }
+            for from in ["check_ci", "moved"] {
+                assert!(!d.edges.iter().any(|e| e.from == from && e.to == "blocked"), "asked after a fresh read");
+            }
         }
     }
 
