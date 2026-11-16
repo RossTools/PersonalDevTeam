@@ -1,3 +1,4 @@
+import type { ConfigCommand } from '../api/gen/ConfigCommand';
 import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -152,6 +153,14 @@ export const CONNECT_PATH = '/settings/plugins/github';
 
 /** Where "Sign in to <server> again" (an MCP server's OAuth sign-in, PDT-322) sends the user. */
 export const MCP_SERVERS_PATH = '/settings/mcp-servers';
+
+/** A notice that a run-configuration command waits on the user's approval (PDT-611): its project and command. */
+export function commandNoticeOf(item: InboxItem): { projectId: string; command: ConfigCommand } | null {
+  const c = item.body.command as Partial<ConfigCommand> | undefined;
+  if (item.kind !== 'notice' || item.body.key !== 'untrusted-commands' || !item.projectId) return null;
+  if (typeof c?.fingerprint !== 'string' || typeof c.command !== 'string') return null;
+  return { projectId: item.projectId, command: { uses: [], setup: null, env: {}, ...c } as ConfigCommand };
+}
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */
 export function noticeText(item: InboxItem): string {

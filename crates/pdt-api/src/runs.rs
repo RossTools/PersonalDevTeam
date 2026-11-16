@@ -103,6 +103,15 @@ async fn place(st: &AppState, project: &Project, input: &NewRun) -> Result<Place
     Ok(Place::NewBranch(branch.to_string()))
 }
 
+/// The branch a run at `place` runs on.
+async fn place_branch(st: &AppState, project: &Project, place: &Place) -> Result<String, ApiError> {
+    Ok(match place {
+        Place::Worktree(id) => crate::runconfig::checkout_dir(st, project, Some(id)).await?.1,
+        Place::Main => crate::runconfig::checkout_dir(st, project, None).await?.1,
+        Place::NewBranch(b) => b.clone(),
+    })
+}
+
 /// The effective configuration where the run goes; for a branch without a worktree, read from the branch with git.
 async fn config_for(st: &AppState, project: &Project, place: &Place) -> Result<RunConfig, ApiError> {
     let worktree_id = match place {
@@ -235,6 +244,7 @@ async fn attempt_placement(
 pub(crate) async fn create(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
+    headers: HeaderMap,
     payload: Result<Json<NewRun>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Run>), ApiError> {
     let Json(input) = payload?;
@@ -248,9 +258,15 @@ pub(crate) async fn create(
     let def = list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, format!("the configuration has no \"{}\"", input.name))
     })?;
-    // A command the user hasn't approved (a branch's or an agent-edited worktree's config, a new clone) waits for them.
-    let commands = vec![pdt_core::command_trust::of_run(&def, input.kind == RunKind::Test)];
-    crate::command_trust::check(&st, &project.id, &project.repo_path, commands).await?;
+    // A command the user hasn't approved (a branch's or an agent-edited worktree's config, a new clone) waits for them;
+    // an agent's start refused for one tells them in the Inbox (PDT-611).
+    let test = input.kind == RunKind::Test;
+    let what = match crate::untrusted::from_ui(&st, &headers)? {
+        true => None,
+        false => Some(crate::command_trust::run_what(&def.name, test, &place_branch(&st, &project, &place).await?)),
+    };
+    let commands = vec![pdt_core::command_trust::of_run(&def, test)];
+    crate::command_trust::check_telling(&st, &project.id, &project.repo_path, commands, what.as_deref()).await?;
     let _start = st.run_start_lock.lock().await;
     if input.kind == RunKind::Run {
         check_run_limit(&st, input.stop_run_id.as_deref()).await?;
@@ -336,7 +352,10 @@ pub(crate) async fn restart(
     let was_active = run.state.is_active();
     // A command the user hasn't approved refuses the restart before the running one is stopped.
     let def = definition_for(&st, &run).await.map_err(|m| ApiError::bad_request(codes::INVALID_RUN_CONFIG, m))?;
-    crate::command_trust::check_run(&st, &run.project_id, &def, run.kind == RunKind::Test).await?;
+    let test = run.kind == RunKind::Test;
+    let what = (!crate::untrusted::from_ui(&st, &headers)?)
+        .then(|| crate::command_trust::run_what(&run.name, test, &run.branch));
+    crate::command_trust::check_run(&st, &run.project_id, &def, test, what.as_deref()).await?;
     if was_active && !run_manager::stop(&st, &id, None).await {
         return Err(still_stopping());
     }

@@ -41,16 +41,21 @@ pub(crate) async fn untrusted(
 }
 
 /// Ok when the user approved all of `commands`; else `409 untrusted_commands`, with the commands (`data.commands`) for
-/// PDT's web app to show before the user approves them.
-pub(crate) async fn check(
+/// PDT's web app to show before the user approves them. With `what`, the Inbox also says `what` waits on the user's
+/// approval: for a start that doesn't come from PDT's web app (an agent's), whose refusal the user wouldn't see.
+pub(crate) async fn check_telling(
     st: &AppState,
     project_id: &str,
     repo_path: &str,
     commands: Vec<ConfigCommand>,
+    what: Option<&str>,
 ) -> Result<(), ApiError> {
     let left = untrusted(st, project_id, repo_path, commands).await?;
     if left.is_empty() {
         return Ok(());
+    }
+    if let Some(what) = what {
+        notify(st, project_id, &left, what).await;
     }
     let message = format!(
         "{} hasn't run {} from this project's run configuration before: {}. Only the user can approve {}, in {}.",
@@ -64,28 +69,36 @@ pub(crate) async fn check(
         .with_data(serde_json::json!({ "projectId": project_id, "commands": left })))
 }
 
-/// [`check`] for a run's (or a test's) definition, in the project `project_id`.
+/// [`check_telling`] for a run's (or a test's) definition, in the project `project_id`.
 pub(crate) async fn check_run(
     st: &AppState,
     project_id: &str,
     def: &pdt_core::runconfig::RunDef,
     test: bool,
+    what: Option<&str>,
 ) -> Result<(), ApiError> {
     let project = st.project(project_id).await?;
-    check(st, project_id, &project.repo_path, vec![command_trust::of_run(def, test)]).await
+    check_telling(st, project_id, &project.repo_path, vec![command_trust::of_run(def, test)], what).await
+}
+
+/// What a run waits on, for the Inbox: `The test "check" on my-branch`.
+pub(crate) fn run_what(name: &str, test: bool, branch: &str) -> String {
+    format!("The {} \"{name}\" on {branch}", if test { "test" } else { "run" })
 }
 
 /// Tells the user, once per command, that `what` waits on their approval of `commands`.
 pub(crate) async fn notify(st: &AppState, project_id: &str, commands: &[ConfigCommand], what: &str) {
     for c in commands {
         let text = format!(
-            "{what} waits on a command from the repository's {} that {} hasn't run before: {}. Look at it in the \
-             project's settings, under Commands, and approve it there if you trust it.",
+            "{what} waits on a command from the repository's {} that {} hasn't run before: {}. Approve it here, or in \
+             the project's settings under Commands, if you trust it.",
             pdt_core::brand::PROJECT_CONFIG_FILE,
             pdt_core::brand::SHORT_NAME,
             command_trust::describe(std::slice::from_ref(c)),
         );
-        let body = serde_json::json!({"notice": null, "key": NOTICE_KEY, "text": text, "fingerprint": c.fingerprint});
+        let body = serde_json::json!({
+            "notice": null, "key": NOTICE_KEY, "text": text, "fingerprint": c.fingerprint, "command": c,
+        });
         let item =
             crate::inbox::new_item(InboxKind::Notice, InboxGroup::Notice, "A command waits on your approval", body)
                 .project(project_id.to_string());
@@ -121,6 +134,21 @@ pub struct ProjectCommands {
     pub untrusted: Vec<String>,
     /// Why there are none when the configuration is invalid.
     pub error: Option<String>,
+    /// For the main checkout: the project's worktrees whose configurations have commands waiting on approval that
+    /// the main checkout's doesn't (an agent's new or changed `.pdt/project.toml`). Empty for a worktree's listing.
+    pub worktrees: Vec<WorktreeCommands>,
+}
+
+/// A worktree's commands waiting on the user's approval.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct WorktreeCommands {
+    pub worktree_id: String,
+    pub branch: String,
+    /// The ticket working in it (`PDT-42`), if any.
+    pub ticket_key: Option<String>,
+    pub commands: Vec<ConfigCommand>,
 }
 
 #[derive(Deserialize)]
@@ -137,17 +165,54 @@ pub(crate) async fn list(
     let project = st.project(&id).await?;
     crate::projects::needs_repo(&project, "commands")?;
     let (dir, _) = crate::runconfig::checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
-    let config = match crate::runconfig::load_effective(&st, &id, &dir).await {
-        Ok(c) => c,
-        Err(e) => {
-            return Ok(Json(ProjectCommands { commands: vec![], untrusted: vec![], error: Some(e.message().into()) }));
+    let trusted = trusted(&st, &id, &project.repo_path).await?;
+    let (commands, error) = match crate::runconfig::load_effective(&st, &id, &dir).await {
+        Ok(c) => (command_trust::of_config(&c), None),
+        Err(e) => (vec![], Some(e.message().to_string())),
+    };
+    let untrusted: Vec<String> =
+        commands.iter().filter(|c| !trusted.contains(&c.fingerprint)).map(|c| c.fingerprint.clone()).collect();
+    let worktrees = match w.worktree_id {
+        Some(_) => vec![],
+        None => {
+            let shown: HashSet<&str> = untrusted.iter().map(String::as_str).collect();
+            waiting_in_worktrees(&st, &id, &trusted, &shown).await?
         }
     };
-    let commands = command_trust::of_config(&config);
-    let trusted = trusted(&st, &id, &project.repo_path).await?;
-    let untrusted =
-        commands.iter().filter(|c| !trusted.contains(&c.fingerprint)).map(|c| c.fingerprint.clone()).collect();
-    Ok(Json(ProjectCommands { commands, untrusted, error: None }))
+    Ok(Json(ProjectCommands { commands, untrusted, error, worktrees }))
+}
+
+/// The project's worktrees with commands waiting on approval, less those already `shown` (PDT-611). A worktree whose
+/// configuration can't be read has nothing to approve yet.
+async fn waiting_in_worktrees(
+    st: &AppState,
+    project_id: &str,
+    trusted: &HashSet<String>,
+    shown: &HashSet<&str>,
+) -> Result<Vec<WorktreeCommands>, ApiError> {
+    let tickets: Vec<_> =
+        st.store.list_active_attempts().await?.into_iter().filter(|a| a.project_id == project_id).collect();
+    let mut out = Vec::new();
+    for wt in st.store.list_worktrees(project_id).await? {
+        let dir = std::path::PathBuf::from(&wt.path);
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(config) = crate::runconfig::load_effective(st, project_id, &dir).await else { continue };
+        let commands: Vec<ConfigCommand> = command_trust::untrusted(command_trust::of_config(&config), trusted)
+            .into_iter()
+            .filter(|c| !shown.contains(c.fingerprint.as_str()))
+            .collect();
+        if commands.is_empty() {
+            continue;
+        }
+        let ticket_key = tickets
+            .iter()
+            .find(|a| a.attempt.worktree_id.as_deref() == Some(wt.id.as_str()))
+            .map(|a| a.ticket_key.clone());
+        out.push(WorktreeCommands { worktree_id: wt.id, branch: wt.branch, ticket_key, commands });
+    }
+    Ok(out)
 }
 
 #[derive(Debug, Deserialize, TS)]

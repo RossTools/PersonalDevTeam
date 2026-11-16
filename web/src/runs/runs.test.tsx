@@ -189,7 +189,7 @@ describe('RunView', () => {
     });
     const { qc } = renderWithQuery(<RunView run={run({ state: 'stopped' })} onRemoved={() => {}} />);
     // Settings' list of the project's commands, as it was before approving.
-    qc.setQueryData(runKeys.commands('p'), { commands: [command], untrusted: ['f1'], error: null });
+    qc.setQueryData(runKeys.commands('p'), { commands: [command], untrusted: ['f1'], error: null, worktrees: [] });
     await userEvent.click(screen.getByRole('button', { name: 'Restart' }));
     const dialog = await screen.findByRole('alertdialog', { name: 'Run this command?' });
     expect(within(dialog).getByRole('group', { name: 'Command for run "web"' })).toHaveTextContent('pnpm i PORT=1 pnpm dev');
@@ -304,7 +304,7 @@ describe('ProjectSettingsPanel', () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: 'pass_through', effectiveCredentials: 'pass_through', runOverrides: null, agentInstructions: 'Use make.' },
       'GET /api/projects/p/run-config': { ...config, file: '[[run]]\nname = "web"\n' },
-      'GET /api/projects/p/commands': { commands: [], untrusted: [], error: null },
+      'GET /api/projects/p/commands': { commands: [], untrusted: [], error: null, worktrees: [] },
       'PUT /api/projects/p/settings': (c) =>
         ++attempt === 1
           ? new Reply(400, { code: 'invalid_run_config', message: 'the host overrides is not valid: x' })
@@ -333,7 +333,7 @@ describe('ProjectSettingsPanel', () => {
     const calls = stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null },
       'GET /api/projects/p/run-config': config,
-      'GET /api/projects/p/commands': () => ({ commands: [ok, evil], untrusted: approved ? [] : ['evil'], error: null }),
+      'GET /api/projects/p/commands': () => ({ commands: [ok, evil], untrusted: approved ? [] : ['evil'], error: null, worktrees: [] }),
       'POST /api/projects/p/commands/trust': () => { approved = true; },
     });
     renderWithQuery(<ProjectSettingsPanel project={project} />);

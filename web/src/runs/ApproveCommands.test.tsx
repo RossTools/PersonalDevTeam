@@ -67,7 +67,7 @@ describe('ConfigCommands', () => {
   it('lists the commands waiting for approval first; Approve trusts one', async () => {
     let trusted: string[] = [];
     const calls = stubApi({
-      'GET /api/projects/p/commands': () => ({ commands: [command('a'), command('b'), command('c')], untrusted: ['b', 'c'].filter((f) => !trusted.includes(f)), error: null }),
+      'GET /api/projects/p/commands': () => ({ commands: [command('a'), command('b'), command('c')], untrusted: ['b', 'c'].filter((f) => !trusted.includes(f)), error: null, worktrees: [] }),
       'POST /api/projects/p/commands/trust': (c: { body: { fingerprints: string[] } }) => {
         trusted = [...trusted, ...c.body.fingerprints];
       },
@@ -86,14 +86,37 @@ describe('ConfigCommands', () => {
   });
 
   it('says when the configuration names no commands, and shows nothing when it is invalid', async () => {
-    stubApi({ 'GET /api/projects/p/commands': { commands: [], untrusted: [], error: null } });
+    stubApi({ 'GET /api/projects/p/commands': { commands: [], untrusted: [], error: null, worktrees: [] } });
     const { unmount } = renderWithQuery(<ConfigCommands projectId="p" />);
     expect(await screen.findByText('The run configuration names no commands.')).toBeInTheDocument();
     unmount();
-    stubApi({ 'GET /api/projects/p/commands': { commands: [command('a')], untrusted: [], error: 'bad toml' } });
+    stubApi({ 'GET /api/projects/p/commands': { commands: [command('a')], untrusted: [], error: 'bad toml', worktrees: [] } });
     const { qc } = renderWithQuery(<ConfigCommands projectId="p" />);
     await waitFor(() => expect(qc.getQueryState(runKeys.commands('p'))?.status).toBe('success'));
     expect(screen.queryByRole('group')).toBeNull();
     expect(screen.queryByText(/Loading the commands|names no commands/)).toBeNull();
+  });
+
+  it("lists a worktree's waiting commands under its ticket and branch, even when the main checkout has none", async () => {
+    let trusted: string[] = [];
+    const calls = stubApi({
+      'GET /api/projects/p/commands': () => ({
+        commands: [], untrusted: [], error: null,
+        worktrees: trusted.includes('w') ? [] : [{ worktreeId: 'wt', branch: 'agent-work', ticketKey: 'VAL-2', commands: [command('w', { uses: ['test "check"'], command: 'scripts/check.sh' })] }],
+      }),
+      'POST /api/projects/p/commands/trust': (c: { body: { fingerprints: string[] } }) => {
+        trusted = [...trusted, ...c.body.fingerprints];
+      },
+    });
+    renderWithQuery(<ConfigCommands projectId="p" />);
+    const group = await screen.findByRole('region', { name: 'Waiting in agent-work' });
+    expect(within(group).getByRole('heading')).toHaveTextContent('VAL-2 · Waiting in agent-work');
+    const card = within(group).getByRole('group', { name: 'Command for test "check"' });
+    expect(card).toHaveTextContent('scripts/check.sh');
+    expect(card).toHaveTextContent('Not approved');
+    await userEvent.click(within(card).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Waiting in agent-work' })).toBeNull());
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ fingerprints: ['w'] });
+    expect(screen.getByText('The run configuration names no commands.')).toBeInTheDocument();
   });
 });

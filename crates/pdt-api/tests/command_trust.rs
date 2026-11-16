@@ -186,3 +186,88 @@ async fn resending_an_api_callers_overrides_from_the_ui_approves_none_of_them() 
     assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
     env.state.ptys.shutdown().await;
 }
+
+async fn waiting_notices(env: &Env) -> Vec<pdt_core::inbox::InboxItem> {
+    let items = env.state.store.open_inbox_items_of(pdt_core::inbox::InboxKind::Notice).await.unwrap();
+    items.into_iter().filter(|i| i.body["key"] == "untrusted-commands").collect()
+}
+
+/// A worktree made through PDT with its own `.pdt/project.toml` (an agent's first one, or a changed one).
+async fn worktree_with(env: &Env, branch: &str, config: &str) -> (String, PathBuf) {
+    let (s, w) =
+        call(&env.app, "POST", &format!("/api/projects/{}/worktrees", env.pid), Some(json!({"branch": branch}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    let path = PathBuf::from(w["path"].as_str().unwrap());
+    std::fs::write(path.join(".pdt").join("project.toml"), config).unwrap();
+    (w["id"].as_str().unwrap().to_string(), path)
+}
+
+/// PDT-611: an agent's start refused for an unapproved command puts it in the Inbox, once, with the command; the
+/// user's start (whose refusal PDT's web app shows in place) doesn't; approving closes the notice.
+#[tokio::test]
+async fn an_agents_refused_start_tells_the_user_in_the_inbox() {
+    let env = setup().await;
+    common::approve_commands(&env.app, &env.pid, None).await;
+    let changed = CONFIG.replace("process.exit(1 - 1)", "process.exit(2 - 2)");
+    let (wt, _) = worktree_with(&env, "agent-work", &changed).await;
+    let body = json!({"name": "ok", "kind": "test", "worktreeId": wt});
+
+    let (s, v) = call_as_ui(&env.app, "POST", &format!("/api/projects/{}/runs", env.pid), Some(body.clone())).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
+    assert!(waiting_notices(&env).await.is_empty(), "the user sees it where they started it");
+
+    for _ in 0..2 {
+        let (s, v) = start(&env, body.clone()).await;
+        assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("untrusted_commands")), "{v}");
+    }
+    let notices = waiting_notices(&env).await;
+    assert_eq!(notices.len(), 1, "once per command: {notices:?}");
+    let n = &notices[0];
+    assert_eq!(n.project_id.as_deref(), Some(env.pid.as_str()));
+    assert_eq!(n.body["command"]["command"], "node -e \"process.exit(2 - 2)\"", "{n:?}");
+    let text = n.body["text"].as_str().unwrap();
+    assert!(text.contains("The test \"ok\" on agent-work"), "{text}");
+    assert!(text.contains("process.exit(2 - 2)"), "{text}");
+
+    // The user approves it from the notice: it closes, and the agent's start goes ahead.
+    let trust = format!("/api/projects/{}/commands/trust", env.pid);
+    let (s, r) = call_as_ui(&env.app, "POST", &trust, Some(json!({"fingerprints": [n.body["fingerprint"]]}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{r}");
+    assert!(waiting_notices(&env).await.is_empty());
+    let (s, v) = start(&env, body).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    env.state.ptys.shutdown().await;
+}
+
+/// PDT-611: the project's listing also shows the unapproved commands of its worktrees, with each worktree's branch
+/// (and ticket), so the user can approve a worktree's new configuration before anything runs it.
+#[tokio::test]
+async fn the_listing_shows_the_worktrees_unapproved_commands() {
+    let env = setup().await;
+    common::approve_commands(&env.app, &env.pid, None).await;
+    let added = format!("{CONFIG}\n[[test]]\nname = \"check\"\ncommand = \"scripts/check.sh\"\n");
+    let (wt, _) = worktree_with(&env, "first-config", &added).await;
+    worktree_with(&env, "nothing-new", CONFIG).await;
+
+    let listed = commands(&env, None).await;
+    assert!(untrusted(&listed).is_empty(), "the main checkout's are approved: {listed}");
+    let others = listed["worktrees"].as_array().unwrap();
+    assert_eq!(others.len(), 1, "only worktrees with commands waiting: {listed}");
+    assert_eq!(
+        (others[0]["worktreeId"].as_str(), others[0]["branch"].as_str()),
+        (Some(wt.as_str()), Some("first-config"))
+    );
+    assert_eq!(others[0]["ticketKey"], Value::Null);
+    let cmds = others[0]["commands"].as_array().unwrap();
+    assert_eq!(cmds.len(), 1, "{listed}");
+    assert_eq!(cmds[0]["command"], "scripts/check.sh");
+
+    // A worktree's own listing doesn't repeat the others.
+    assert_eq!(commands(&env, Some(&wt)).await["worktrees"], json!([]));
+
+    let fp = cmds[0]["fingerprint"].clone();
+    let trust = format!("/api/projects/{}/commands/trust", env.pid);
+    let (s, r) = call_as_ui(&env.app, "POST", &trust, Some(json!({"fingerprints": [fp]}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{r}");
+    assert_eq!(commands(&env, None).await["worktrees"], json!([]), "approved project-wide");
+}
