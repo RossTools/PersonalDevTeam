@@ -465,7 +465,14 @@ pub(crate) async fn turn_ended(st: &AppState, id: &str) {
         return;
     }
     let Ok(Some(s)) = st.store.get_session(id).await else { return };
-    // A turn of the user's that ended before the journal request went in: wait for the request's turn.
+    // A turn of the user's that ended before the journal request went in: wait for the request's turn. That includes
+    // one that ends between the rotation and the request being queued: ended then, the request queued after would
+    // reopen the conversation it ended, and nothing would end it again (PDT-606).
+    match st.store.latest_session_message(id, pm::JOURNAL_KEY).await {
+        Ok(None) => return,
+        Ok(Some(m)) if m.status == "waiting" => return,
+        _ => {}
+    }
     let waiting = st.store.waiting_session_messages().await.unwrap_or_default();
     if waiting.iter().any(|m| m.session_id.as_deref() == Some(id)) {
         return;
@@ -694,6 +701,22 @@ async fn ask_for_journal(st: &AppState, s: &Session, text: String, reopens: bool
     }
 }
 
+/// A conversation is opening a request for one of PDT's tools, before anyone can see it: a call that may let an external
+/// ticket in is held for the user's yes now, so a yes they give at once counts (PDT-606). [`request_opened`] lets go of
+/// it once it knows the call doesn't need them.
+pub(crate) fn request_opening(
+    st: &AppState,
+    session_id: &str,
+    request_id: &str,
+    tool: &str,
+    input: &serde_json::Value,
+) {
+    let short = tool.strip_prefix(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)).unwrap_or(tool);
+    if crate::untrusted::may_need_the_user(short) {
+        st.grants.hold(session_id, request_id, short, input);
+    }
+}
+
 /// A conversation opened a permission request: when a PM session asks for an asking tool whose target project lets the
 /// PM act, PDT answers yes for the user.
 pub(crate) async fn request_opened(
@@ -707,11 +730,12 @@ pub(crate) async fn request_opened(
     let Ok(Some(s)) = st.store.get_session(session_id).await else { return };
     // Letting an external ticket in always asks the user (PDT-201): their yes is kept for the call it allows.
     let short = tool.strip_prefix(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)).unwrap_or(tool);
+    // Held as it opened ([`request_opening`]).
     if crate::untrusted::needs_the_user(st, &s, short, input).await {
         tracing::info!(session = %session_id, tool, "a call that lets an external ticket in: the user answers it");
-        st.grants.hold(session_id, request_id, short, input);
         return;
     }
+    st.grants.release(session_id, request_id);
     if !acts_without_asking(st, &s, &target).await {
         return;
     }
