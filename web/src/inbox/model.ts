@@ -1,3 +1,4 @@
+import type { ConfigCommand } from '../api/gen/ConfigCommand';
 import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxGroup } from '../api/gen/InboxGroup';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -161,6 +162,14 @@ export const CHECKS_PATH = '/settings/host/checks';
 export function loginStepsOf(item: InboxItem): { persona: string; ticketKey: string | null }[] {
   const steps = Array.isArray(item.body.steps) ? (item.body.steps as Record<string, unknown>[]) : [];
   return steps.map((s) => ({ persona: nonBlank(s.persona) ?? 'An agent', ticketKey: nonBlank(s.ticketKey) }));
+}
+
+/** A notice that a run-configuration command waits on the user's approval (PDT-611): its project and command. */
+export function commandNoticeOf(item: InboxItem): { projectId: string; command: ConfigCommand } | null {
+  const c = item.body.command as Partial<ConfigCommand> | undefined;
+  if (item.kind !== 'notice' || item.body.key !== 'untrusted-commands' || !item.projectId) return null;
+  if (typeof c?.fingerprint !== 'string' || typeof c.command !== 'string') return null;
+  return { projectId: item.projectId, command: { uses: [], setup: null, env: {}, ...c } as ConfigCommand };
 }
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */

@@ -184,7 +184,10 @@ async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
 
 /// `def` when the user approved its commands (PDT-405); else the error the run ends with.
 async fn approved(st: &AppState, run: &Run, def: RunDef) -> Result<RunDef, String> {
-    match crate::command_trust::check_run(st, &run.project_id, &def, run.kind == pdt_core::run::RunKind::Test).await {
+    // Nobody is there to see the refusal: the Inbox tells the user.
+    let test = run.kind == pdt_core::run::RunKind::Test;
+    let what = crate::command_trust::run_what(&run.name, test, &run.branch);
+    match crate::command_trust::check_run(st, &run.project_id, &def, test, Some(&what)).await {
         Ok(()) => Ok(def),
         Err(e) => Err(e.message().to_string()),
     }
