@@ -288,7 +288,9 @@ also compares the list with GitHub's labels (it needs `gh`; CI doesn't run it).
 every Monday: one grouped PR of minor and patch updates per ecosystem, and one PR per major update, at most five open
 each. `rust-toolchain.toml` is bumped by hand.
 
-- Its PRs carry the `dependencies` and `no-changelog` labels and `deps:` commit messages.
+- Its PRs carry the `dependencies` and `no-changelog` labels and `deps:` commit messages. Dependabot adds the labels
+  just after it opens the PR, so CI reads a PR's labels from GitHub when its jobs run, never from the event that
+  started the run.
 - Third-party actions (anything but GitHub's `actions/*` and the local `./.github/actions`) are pinned to a full
   commit SHA with the tag in a comment, `uses: owner/repo@<sha> # v1.2.3`, so a moved tag can't change what CI or a
   release runs. Dependabot bumps the SHA and the comment together. `scripts/check-action-pins.sh` (in `check.sh`'s

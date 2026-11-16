@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Chunk } from '@codemirror/merge';
@@ -156,17 +157,20 @@ describe('CodeDiff comment boxes', () => {
   // The read-only editor hides the browser's caret, and caret-color is inherited: a box under a line must reset it.
   for (const mode of ['split', 'unified'] as const) {
     it(`shows the caret in a box under a line (${mode})`, async () => {
+      // The box's caret is var(--pdt-fg), which the computed style resolves: define it as tokens.css does.
       render(
-        <CodeDiff
-          path="a.ts"
-          oldText={'one\ntwo\n'}
-          newText={'one\nTWO\n'}
-          mode={mode}
-          wholeFile
-          anchors={[{ id: 't1', side: 'new', line: 2 }, { id: 't2', side: 'old', line: 2 }]}
-          renderAnchor={(id) => <textarea aria-label={`reply ${id}`} />}
-          onComment={vi.fn()}
-        />,
+        <div style={{ '--pdt-fg': '#17181d' } as CSSProperties}>
+          <CodeDiff
+            path="a.ts"
+            oldText={'one\ntwo\n'}
+            newText={'one\nTWO\n'}
+            mode={mode}
+            wholeFile
+            anchors={[{ id: 't1', side: 'new', line: 2 }, { id: 't2', side: 'old', line: 2 }]}
+            renderAnchor={(id) => <textarea aria-label={`reply ${id}`} />}
+            onComment={vi.fn()}
+          />
+        </div>,
       );
       for (const id of ['t1', 't2']) {
         const box = await screen.findByLabelText(`reply ${id}`);
