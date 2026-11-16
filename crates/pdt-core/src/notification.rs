@@ -304,7 +304,12 @@ impl NotificationKind {
             (InboxKind::Stalled | InboxKind::TimedOut, _) => K::InboxStalled,
             (InboxKind::LoopLimit, _) => K::InboxLoopLimit,
             (
-                InboxKind::Notice | InboxKind::Connect | InboxKind::McpSignIn | InboxKind::Storage | InboxKind::LowDisk,
+                InboxKind::Notice
+                | InboxKind::Connect
+                | InboxKind::McpSignIn
+                | InboxKind::Storage
+                | InboxKind::LowDisk
+                | InboxKind::AgentLogin,
                 _,
             ) => K::InboxNotice,
             (InboxKind::Manual, _) => K::InboxManual,

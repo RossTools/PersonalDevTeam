@@ -358,6 +358,22 @@ Inbox) when the workflow is off, its run for the step ended without acting, or n
 other edit makes it the user's (`InputsBuiltin::customized`). Its reset leaves the workflow on or off, since Settings
 has a switch for that.
 
+**Agents that aren't logged in** (`agent_login.rs`, `workflow/agent/login.rs`). The agents' errors (an
+`AgentEvent::Error` in a conversation: a failed turn's, an exit's) are read against one table of phrases in pdt-core
+`agent_login`; a match adds a notice with how to log in, doesn't mark the session as needing the user, and goes with
+the turn's end (`FollowUp::TurnEnded`'s `login_failure`, or `LoginFailed` outside a turn) to `agent_login::failed`.
+A weak phrase needs the agent's login check (`checks::agent_logged_in`) to agree. Confirmed, the agent's
+`agent_login` Inbox item opens (one per agent, under a per-agent lock; the open item is the record that it is logged
+out) and the session's working step goes to `waiting_login` instead of `outcome_less_turn`. While the item is open,
+`start_step` holds new steps of that agent with `wait.login` (`steps_waiting_for_login`; the idle net counts them as
+busy), so tickets pickup starts wait in the item too. The item's title counts the waiting steps as it is listed (`agent_login::decorate`). The login watch
+(every `CHECK_EVERY`) and Check again check the login; logged in, the item closes (`resumed` in its resolution) and
+each step goes on: a `waiting_login` one gets its task again under its prompt key (a fresh session through
+`stuck::restart_stalled` when its session can't take a message), a held one goes back to pending. An item whose check
+said logged in all along (`blind`), or whose agent has no login check (an ACP agent), waits for Check again. A step
+waiting for an agent with no open item (a new step held just as the item closed: `start_step` reads the item without
+the per-agent lock) goes on at the watch's next pass. A held step's max runtime stops while it waits (`heldAt`, `heldUntil` in its `wait`) and goes on moved later.
+
 **Idle tickets** (`workflow/idle.rs`). The poll's idle check is the safety net for tickets stuck in ways nothing else
 notices: a ticket in progress (not waiting until clear) with an unfinished workflow run, but no agent step that isn't
 done or waits for a slot, no busy session on its attempt, no open Inbox item about it (the idle net's own, `reason:

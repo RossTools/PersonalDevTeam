@@ -173,7 +173,7 @@ async fn persist(st: &AppState, id: &str, prev: Activity, now: Activity) -> Resu
     if now == Activity::Idle {
         // A terminal agent's turn ended: an agent step running in it may have stalled.
         let (st2, id) = (st.clone(), id.to_string());
-        tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id).await });
+        tokio::spawn(async move { crate::workflow::agent::turn_ended(&st2, &id, None).await });
     }
     Ok(())
 }

@@ -359,6 +359,8 @@ describe('board pipeline stages', () => {
     expect(agentLine({ ...a, state: 'working', busy: true }).dot.pulse).toBe(true);
     expect(agentLine({ ...a, state: 'background', background: ['Run pytest'] }).text)
       .toBe('Coder · waiting on background task: Run pytest');
+    const out = agentLine({ ...a, state: 'logged_out', background: ['Claude'] });
+    expect([out.text, out.dot.dot]).toEqual(["Coder · waiting: Claude isn't logged in", 'failed']);
   });
 });
 

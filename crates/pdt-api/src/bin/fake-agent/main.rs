@@ -27,6 +27,10 @@
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
 //!
+//! Logged out (a file `fake-agent-logged-out` beside the program), every message gets Claude's answer to an expired
+//! login: "Failed to authenticate. API Error: 401 …" and a failed result. `fake-agent auth status` says whether it is
+//! logged in, like `claude auth status`.
+//!
 //! Started without `-p` (Claude's TUI, in a terminal) it reads lines and leaves on `/exit`.
 //!
 //! With `--fork-session` (Make ticket's side request) it reads the prompt from stdin and prints one `json` result
@@ -240,6 +244,19 @@ impl Agent {
         self.result("success", started);
     }
 
+    /// What Claude answers every message with once its login expired (recorded): a synthetic assistant message and a
+    /// failed result, both saying "Failed to authenticate".
+    fn auth_failure(&mut self, started: Instant) {
+        let text = r#"Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."},"request_id":"req_fake"}"#;
+        let id = self.next_id("msg");
+        out(json!({"type":"assistant","message":{"id":id,"model":"<synthetic>","role":"assistant",
+            "content":[{"type":"text","text":text}]},"parent_tool_use_id":null,"session_id":self.session,
+            "error":"authentication_failed"}));
+        out(json!({"type":"result","subtype":"success","is_error":true,
+            "duration_ms":started.elapsed().as_millis() as u64,"total_cost_usd":0,"session_id":self.session,
+            "result":text}));
+    }
+
     fn result(&self, subtype: &str, started: Instant) {
         let is_error = subtype != "success";
         out(json!({"type":"result","subtype":subtype,"is_error":is_error,
@@ -309,6 +326,9 @@ impl Agent {
             return self.result("success", started);
         }
         self.replay(&v);
+        if logged_out() {
+            return self.auth_failure(started);
+        }
         if !images.is_empty() {
             self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
             return self.result("success", started);
@@ -505,8 +525,20 @@ fn draft(args: &[String], session: &str, resumed: bool) {
         "structured_output":{"title":format!("Draft of {session}"),"description":description}}));
 }
 
+/// Logged out: a file `fake-agent-logged-out` sits beside the program as it was started (a test copies the program
+/// into its own folder, so the file is that test's alone).
+fn logged_out() -> bool {
+    let program = std::env::args().next().unwrap_or_default();
+    std::path::Path::new(&program).with_file_name("fake-agent-logged-out").exists()
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // `claude auth status`.
+    if args.get(1..3).is_some_and(|a| a == ["auth", "status"]) {
+        out(json!({"loggedIn": !logged_out(), "authMethod": "claude.ai"}));
+        return;
+    }
     match args.get(1).map(String::as_str) {
         Some("app-server") => return codex::serve(&args),
         Some("resume") => return codex::tui(&args),

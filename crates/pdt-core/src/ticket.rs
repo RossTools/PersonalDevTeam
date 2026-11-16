@@ -583,6 +583,8 @@ pub enum TicketAgentState {
     Queued,
     /// Its turn ended while background tasks it started run (PDT-142): it goes on when they finish.
     Background,
+    /// Its agent isn't logged in (PDT-604): it goes on once the agent is logged in again.
+    LoggedOut,
 }
 
 /// Who owns a ticket's current workflow step, for the Board's cards.
@@ -597,7 +599,8 @@ pub struct TicketAgent {
     /// Its session is running a turn now.
     pub busy: bool,
     pub run_id: Option<String>,
-    /// What it waits on (`background`): the background tasks' descriptions.
+    /// What it waits on: the background tasks' descriptions (`background`), or the agent that isn't logged in
+    /// (`logged_out`).
     #[serde(default)]
     pub background: Vec<String>,
 }

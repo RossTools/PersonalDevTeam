@@ -110,6 +110,28 @@ Turned off, or if the workflow fails or ends without doing anything with the ste
 stalled agent is nudged once, then the step shows in the Inbox, and loop limits and time limits go straight to the
 Inbox.
 
+### When an agent's login expires
+
+When an agent's login expires (Claude's "Failed to authenticate", Codex's "401 Unauthorized", an ACP agent's
+"Authentication required"), every step using it would fail at once. PDT recognises it and checks the agent's login
+before acting:
+
+- The steps whose turn failed aren't nudged or counted as stalled. They wait, and the Board shows them as waiting for
+  the agent's login.
+- One Inbox item per agent says so, such as **Claude isn't logged in: 3 steps are waiting**, with how to log in again
+  (for Claude, run `claude` in a terminal and log in with `/login`; for Codex, `codex login`) and a link to the host's
+  **Checks**.
+- While the agent is logged out, new steps that would use it wait too, instead of failing one by one, including the
+  steps of tickets auto-start picks up and scheduled steps. A conversation you open with it shows the same hint under
+  the error.
+- PDT checks the login again every two minutes, or when you press **Check again**. Once the agent is logged in, the
+  waiting steps go on by themselves: each gets its task again in its conversation (or a fresh session when that one
+  can't take a message), and steps that hadn't started start. The item then closes.
+
+If the agent's own check still says it is logged in (a login whose token expired can look that way), or PDT has no
+way to check it (an ACP agent), only **Check again** takes the steps up again, once you have logged in. A step's time
+limit doesn't run while it waits. A step running in a terminal rather than a conversation isn't recognised this way.
+
 ### How many agents run at once
 
 **Agents running at once** (in **Settings › This host › Agents**) caps how many agents take a turn together. When it's

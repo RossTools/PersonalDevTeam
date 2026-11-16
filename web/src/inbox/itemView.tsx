@@ -20,8 +20,8 @@ import { useOpenSession, useOpenTicket } from '../common/open';
 import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
-  commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  CHECKS_PATH, commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
+  inboxTargets, loginStepsOf, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
 import { DecideRows, useRowsDecision } from '../common/DecideRows';
@@ -391,6 +391,28 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           content: <Callout tone="warning"><Markdown>{noticeText(item)}</Markdown></Callout>,
           actions: [{ id: 'settings', title: 'Open MCP servers', primary: true, run: () => navigate(MCP_SERVERS_PATH) }],
         };
+      case 'agent_login': {
+        const agent = nonBlank(item.body.label) ?? 'The agent';
+        const steps = loginStepsOf(item);
+        const detail = nonBlank(item.body.detail);
+        return {
+          region: 'Not logged in',
+          why: `${agent}'s steps wait instead of failing. Once it is logged in they go on by themselves (PDT checks every few minutes), or press Check again.`,
+          content: (
+            <>
+              <Callout tone="warning"><Markdown>{nonBlank(item.body.hint) ?? `Log ${agent} in again.`}</Markdown></Callout>
+              {steps.length > 0 && (
+                <ul aria-label="Waiting steps" className="flex flex-col gap-1 text-sm">
+                  {steps.map((s, n) => <li key={n}>{s.ticketKey ? `${s.persona} · ${s.ticketKey}` : s.persona}</li>)}
+                </ul>
+              )}
+              {detail && <CodeCard aria-label="What it said" title="What it said" code={detail} />}
+            </>
+          ),
+          actions: choiceActions(item, plain, busy),
+          links: [{ label: 'Checks', onClick: () => navigate(CHECKS_PATH) }],
+        };
+      }
       case 'storage':
         return {
           region: "Can't save changes",

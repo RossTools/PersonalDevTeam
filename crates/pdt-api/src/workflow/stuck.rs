@@ -232,7 +232,7 @@ async fn handled(st: &AppState, step_id: &str) {
 }
 
 /// Whether a session can take a nudge: a conversation (a stopped one reopens), or a running terminal.
-fn takes_messages(st: &AppState, s: &Session) -> bool {
+pub(crate) fn takes_messages(st: &AppState, s: &Session) -> bool {
     s.kind == SessionKind::AgentTui
         && (s.mode == SessionMode::Conversation || (s.status == SessionStatus::Running && st.ptys.is_running(&s.id)))
 }
@@ -306,7 +306,7 @@ pub(crate) async fn restart(cx: &StepCx<'_>, step_id: &str) -> R<Outcome> {
 
 /// A stalled step in a fresh session: the earlier one is stopped, the new one (the attempt's, for a `reuse` step) gets
 /// the task again. The step keeps waiting, now on it.
-async fn restart_stalled(st: &AppState, mut a: AgentStep, step: &Step, why: &str) -> R<String> {
+pub(crate) async fn restart_stalled(st: &AppState, mut a: AgentStep, step: &Step, why: &str) -> R<String> {
     let c: AgentConfig = serde_json::from_value(step.input.clone()).map_err(err)?;
     let run = st.store.get_workflow_run(&a.run_id).await.map_err(err)?.ok_or("the run is gone")?;
     let persona = step_persona(st, &c.persona).await?;

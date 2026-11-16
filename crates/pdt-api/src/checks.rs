@@ -5,7 +5,7 @@ use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
 use pdt_core::host::{CredentialPolicy, HostSettings};
-use pdt_core::session::{SessionKind, is_scrubbed};
+use pdt_core::session::{AgentKind, SessionKind, is_scrubbed};
 use serde::Serialize;
 use std::time::Duration;
 use ts_rs::TS;
@@ -159,6 +159,56 @@ pub(crate) fn devin_logged_in(exit_ok: bool, out: &str) -> bool {
     exit_ok && !out.to_ascii_lowercase().contains("not logged in")
 }
 
+/// Claude's, Codex's or Devin's login check, as a session of it would see it under `creds`. None for an ACP agent,
+/// which has no login check.
+async fn agent_check(st: &AppState, agent: AgentKind, creds: CredentialPolicy) -> Option<ToolCheck> {
+    let platform = st.agent_platform().await;
+    let run_agent = |program: &str, args: &'static [&'static str]| {
+        let program = program.to_string();
+        async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
+    };
+    Some(match agent {
+        AgentKind::Claude => {
+            check("claude", run_agent(&platform.claude_program, &["auth", "status"]).await, |_, out| {
+                match claude_logged_in(&out) {
+                    Some(true) => ToolCheck::answered(true, "logged in".into()),
+                    Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
+                    None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
+                }
+            })
+        }
+        AgentKind::Codex => {
+            check("codex", run_agent(&platform.codex_program, &["login", "status"]).await, |ok, out| {
+                if ok {
+                    ToolCheck::answered(true, out)
+                } else {
+                    ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
+                }
+            })
+        }
+        AgentKind::Devin => check("devin", run_agent(&platform.devin_program, &["auth", "status"]).await, |ok, out| {
+            if devin_logged_in(ok, &out) {
+                // Its status goes on to list the account and team settings; the first line says it all.
+                ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())
+            } else {
+                ToolCheck::answered(false, format!("not logged in: run `devin auth login` ({out})"))
+            }
+        }),
+        AgentKind::Acp(_) => return None,
+    })
+}
+
+/// Whether an agent is logged in (PDT-604), by its login check under the host's credential policy: None when it
+/// can't tell (an ACP agent, a program that is missing or whose check didn't finish, output it can't read).
+pub(crate) async fn agent_logged_in(st: &AppState, agent: AgentKind) -> Option<bool> {
+    let creds = st.store.get_host_settings().await.unwrap_or_default().agent_credentials;
+    let c = agent_check(st, agent, creds).await?;
+    if !c.found || c.inconclusive || c.detail.starts_with("could not read") {
+        return None;
+    }
+    Some(c.ok)
+}
+
 pub async fn run_host_checks(st: &AppState) -> HostChecks {
     // The host's policy: the one agent sessions get unless their project overrides it.
     let host = match st.store.get_host_settings().await {
@@ -169,33 +219,9 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
         }
     };
     let creds = host.agent_credentials;
-    let platform = st.agent_platform().await;
-    let agent = |program: &str, args: &'static [&'static str]| {
-        let program = program.to_string();
-        async move { run(st, &program, args, SessionKind::AgentTui, creds).await }
-    };
-    let claude = check("claude", agent(&platform.claude_program, &["auth", "status"]).await, |_, out| {
-        match claude_logged_in(&out) {
-            Some(true) => ToolCheck::answered(true, "logged in".into()),
-            Some(false) => ToolCheck::answered(false, "not logged in: run `claude` and log in".into()),
-            None => ToolCheck::answered(false, format!("could not read `claude auth status`: {out}")),
-        }
-    });
-    let codex = check("codex", agent(&platform.codex_program, &["login", "status"]).await, |ok, out| {
-        if ok {
-            ToolCheck::answered(true, out)
-        } else {
-            ToolCheck::answered(false, format!("not logged in: run `codex login` ({out})"))
-        }
-    });
-    let devin = check("devin", agent(&platform.devin_program, &["auth", "status"]).await, |ok, out| {
-        if devin_logged_in(ok, &out) {
-            // Its status goes on to list the account and team settings; the first line says it all.
-            ToolCheck::answered(true, out.lines().next().unwrap_or_default().trim().to_string())
-        } else {
-            ToolCheck::answered(false, format!("not logged in: run `devin auth login` ({out})"))
-        }
-    });
+    let claude = agent_check(st, AgentKind::Claude, creds).await.unwrap_or_default();
+    let codex = agent_check(st, AgentKind::Codex, creds).await.unwrap_or_default();
+    let devin = agent_check(st, AgentKind::Devin, creds).await.unwrap_or_default();
     let git = check("git", run(st, "git", &["--version"], SessionKind::Shell, creds).await, ToolCheck::answered);
     let git_identity = if git.found { identity_check(st).await } else { ToolCheck::missing("git is missing".into()) };
     let ts = st.tailscale.clone();

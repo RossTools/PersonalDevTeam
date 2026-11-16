@@ -48,6 +48,8 @@ pub fn start_background(state: &AppState) {
     crate::start_services(state);
     // Auto-start of To do / Ready tickets, per project policy.
     tokio::spawn(crate::run_pickup_watch(state.clone()));
+    // Agents that aren't logged in (PDT-604): checked again while their steps wait.
+    tokio::spawn(crate::run_login_watch(state.clone()));
     // Worktrees' sizes, and the cleanup of finished tickets' build output (PDT-324).
     tokio::spawn(crate::run_storage(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as.

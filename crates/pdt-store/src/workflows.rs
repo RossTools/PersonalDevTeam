@@ -798,6 +798,19 @@ impl Store {
         rows.iter().map(|r| Ok((r.try_get("tk")?, to_step(r)?))).collect()
     }
 
+    /// The waiting steps held because their agent isn't logged in (PDT-604: `wait.login` names the agent), oldest
+    /// first, with their run's ticket.
+    pub async fn steps_waiting_for_login(&self) -> Result<Vec<(Option<String>, Step)>, StoreError> {
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT r.ticket_id AS tk, {} FROM workflow_steps s JOIN workflow_runs r ON r.id = s.run_id \
+             WHERE s.status = 'waiting' AND json_extract(s.wait, '$.login') IS NOT NULL ORDER BY s.started_at, s.id",
+            STEP_COLUMNS.split(", ").map(|c| format!("s.{c}")).collect::<Vec<_>>().join(", ")
+        )))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(|r| Ok((r.try_get("tk")?, to_step(r)?))).collect()
+    }
+
     /// Deletes finished runs that ended before `before`. Returns how many went.
     pub async fn prune_workflow_runs(&self, before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(

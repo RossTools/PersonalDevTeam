@@ -363,6 +363,8 @@ pub(crate) async fn answer_item(st: &AppState, item: &InboxItem, answer: &inbox:
         InboxKind::TicketProposal => Err("decide a ticket proposal from PDT's Inbox".into()),
         InboxKind::Storage => Err("PDT can't save changes: it waits on no answer, and goes once saving works".into()),
         InboxKind::LowDisk => Err("low disk space waits on no answer: it goes once there is space again".into()),
+        // Answered by `inbox::answer`.
+        InboxKind::AgentLogin => Err("check the agent's login again from PDT's Inbox".into()),
     }
 }
 
