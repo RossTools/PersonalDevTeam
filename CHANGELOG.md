@@ -3,6 +3,32 @@
 What changed for people who use PDT, newest first. Each section is compiled from the changelog fragments the pull
 requests added (`.changes/`; docs/SDLC.md "Changelog") by `scripts/changelog.sh <version>`.
 
+## 0.6.4 (2026-11-16)
+
+### Changed
+
+- A question an agent asks while waiting for permission now shows the same cards as the Inbox's questions, with a description under each choice, tick boxes where several may be picked, and Something else… for your own answer.
+- The Inbox's links name what they open the way they read ("PR #12", "PM session"), so voice control finds them, and its change sizes, error lines and the import dialog's keyboard hints look the same as elsewhere in the app.
+- PDT opens faster: Settings, Setup, Files, the document and workflow import dialogs and the due-date picker now load the first time you open them, so the app's first load is about a sixth smaller.
+
+### Fixed
+
+- A request with a malformed query string, path or body now gets the API's usual JSON error, with a message saying what was wrong, instead of plain text.
+- A workflow step's forge or CI error now names the service it came from (GitLab, Buildkite) instead of always saying GitHub, and every workflow step that lists a run's failed jobs writes them the same way, `workflow: job`.
+- The Discord link shows as failed instead of connected when its connection stops unexpectedly, and odd values from Discord, Google, a forge's sign-in or an agent's rate limits no longer stop a background task or make PDT poll a forge in a tight loop.
+- Approving a run's commands now shows them approved in Settings at once, opening an Inbox item clears its unread mark straight away, and a conversation's watch card stops saying "Watching" once the PM stops watching. The Link document dialog and a ticket's attachments no longer refresh every 2 seconds.
+- The website's "Download for …" buttons download the file for your system (the Windows installer is now `pdt-windows-x64-setup.exe`) instead of opening the releases page. The one-line install no longer spends GitHub's hourly allowance of anonymous requests on a stable release, and a failed download says why, including when GitHub's rate limit is the cause.
+- The install command for macOS and Linux now stops before downloading when it can't write to the folder it installs into, and on Linux asks about keeping PDT running after you log out only once. On a Linux desktop it says the tray icon comes with the AppImage, and the uninstall steps now also remove the version kept from the last update and say how to turn lingering off.
+- Once you answer the PM's proposed Inbox decisions, its conversation keeps them as a card: each row with where its ticket went, the rows you unticked struck through, and any that failed with the reason.
+- Toasts on a desktop now sit above an Inbox item's action bar and a conversation's composer instead of covering Deny or Send, and a "new approval" toast closes once you open the item it announces.
+- The PM's Inbox decision card no longer reads "Decided 0 Inbox items" when the decisions were applied but their result isn't in the conversation; it says "Decided the Inbox items" instead.
+- When an agent's login expires, its workflow steps wait instead of being nudged and reported as stalled: one Inbox item per agent says how to log in, new steps and auto-start wait too, and the steps go on by themselves once the agent is logged in again.
+- PDT no longer reads an MCP server's reply without a size limit, so a misbehaving server can't make it run out of memory.
+- Closing a PM conversation right as one of its replies finished could leave it running instead of ending it. Allowing the PM to move an outside ticket to To do now counts even when you click Allow the moment the request appears.
+- A pull request or issue with very long text no longer makes its review or triage fail: the text is shortened, with a link to the rest. In Review outside pull requests, a review that fails now asks in the Inbox with Retry review, and a pull request set to merge is watched until it merges, so one the merge queue drops asks "Didn't merge".
+- When an agent's run or test waits on a command you haven't approved, the Inbox now shows the command with Approve, and the project's Commands settings list the commands waiting in its worktrees, under their ticket and branch.
+- A Claude agent asking to make or change a document, or for any other approval, now waits until you answer in the Inbox or its conversation, instead of giving up after five minutes while the request still showed.
+
 ## 0.6.3 (2026-11-08)
 
 ### Changed
