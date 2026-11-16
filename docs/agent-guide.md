@@ -48,7 +48,9 @@ Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_ticket
 `document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except the PM's, where the
 project lets the PM act, on its tickets, sessions and documents; other personas always wait). In Claude that is its permission prompt. Elsewhere
 the call waits while PDT asks the person (in the conversation, or in the Inbox from a terminal), then runs or tells you
-they said no. Don't end your turn while it waits. The PM's `add_ticket_comment` on a ticket that is being worked on
+they said no. Don't end your turn while it waits. A call still unanswered after a long wait returns "Still waiting for
+the user's answer … in PDT's Inbox": the request stays there, and PDT messages you the result once they answer, so
+don't call it again. A document for your own ticket (`document_create`) waits the same way. The PM's `add_ticket_comment` on a ticket that is being worked on
 waits the same way, in every agent, as the comment reaches that ticket's agent.
 
 **Secrets.** Never ask the person to paste a secret into the chat, and never print, log or commit one. `list_secrets`

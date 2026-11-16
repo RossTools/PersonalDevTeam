@@ -24,6 +24,9 @@
 //!   `--allowedTools` and the folder's `.claude/settings.local.json` leave out (unless bypassing permissions), and
 //!   one an ask rule in `--settings` names in any mode, and says `mcp <tool> denied` when refused.
 //! - `mcp-list` — says the pdt-mcp tools it was given.
+//! - `mcp-idle` — says how long, like Claude, it lets a pdt-mcp call send nothing before it gives up on it
+//!   (`mcp idle timeout <ms>`): its `timeout` in `--mcp-config` when longer than `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`
+//!   (5 minutes when unset), never past the call's own timeout. A call that waits longer fails as Claude's does.
 //! - a message with images — says `saw N images (<media types>)`.
 //! - anything else — streams `echo: <text>` back.
 //!
@@ -65,6 +68,8 @@ struct Agent {
     log: Option<std::fs::File>,
     /// pdt-mcp's URL and Authorization header, from `--mcp-config`.
     mcp: Option<(String, String)>,
+    /// How long a pdt-mcp call may send nothing ([`mcp_idle`]).
+    mcp_idle: Option<Duration>,
     /// `--allowedTools`.
     allowed: Vec<String>,
     /// `permissions.ask` in `--settings`: Claude asks for these whatever allows them.
@@ -90,8 +95,25 @@ fn mcp_server(file: Option<String>) -> Option<(String, String)> {
     Some((s["url"].as_str()?.to_string(), s["headers"]["Authorization"].as_str()?.to_string()))
 }
 
+/// How long Claude Code (2.1) lets a call to pdt-mcp, an HTTP server, send nothing: `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`
+/// (5 minutes when unset; 0: no limit) or the server's `timeout` in `--mcp-config`, the longer, capped by the call's
+/// own timeout (the server's `timeout`, else `MCP_TOOL_TIMEOUT`). None: no limit.
+fn mcp_idle(file: Option<String>) -> Option<Duration> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(file?).ok()?).ok()?;
+    let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u64>().ok());
+    let own = v["mcpServers"]["pdt"]["timeout"].as_u64().filter(|t| *t >= 1000);
+    let total = own.or_else(|| env("MCP_TOOL_TIMEOUT")).unwrap_or(100_000_000).clamp(1000, i32::MAX as u64);
+    let idle = env("CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT").unwrap_or(300_000);
+    (idle > 0).then(|| Duration::from_millis(idle.max(own.unwrap_or(0)).max(1000).min(total)))
+}
+
 /// One JSON-RPC call over plain HTTP/1.1 (pdt-mcp answers with JSON). Err: what went wrong.
 fn rpc(server: &(String, String), method: &str, params: Value) -> Result<Value, String> {
+    rpc_within(server, method, params, None)
+}
+
+/// [`rpc`], given up like Claude's after `idle` with nothing back.
+fn rpc_within(server: &(String, String), method: &str, params: Value, idle: Option<Duration>) -> Result<Value, String> {
     use std::io::Read;
     let rest = server.0.strip_prefix("http://").ok_or("not an http URL")?;
     let (host, path) = rest.split_once('/').ok_or("no path")?;
@@ -104,8 +126,15 @@ fn rpc(server: &(String, String), method: &str, params: Value) -> Result<Value, 
         body.len()
     );
     s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    s.set_read_timeout(idle).map_err(|e| e.to_string())?;
     let mut raw = String::new();
-    s.read_to_string(&mut raw).map_err(|e| e.to_string())?;
+    s.read_to_string(&mut raw).map_err(|e| match e.kind() {
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => format!(
+            "MCP server \"pdt\" tool sent no response or progress for {}s; aborting.",
+            idle.unwrap_or_default().as_secs()
+        ),
+        _ => e.to_string(),
+    })?;
     let (head, body) = raw.split_once("\r\n\r\n").ok_or("no body")?;
     let status = head.split_whitespace().nth(1).unwrap_or("");
     if status != "200" {
@@ -426,7 +455,7 @@ impl Agent {
                 None => "mcp error: no pdt-mcp server".to_string(),
                 Some(server) => {
                     let args: Value = serde_json::from_str(args.trim()).unwrap_or(json!({}));
-                    match rpc(server, "tools/call", json!({"name": tool, "arguments": args})) {
+                    match rpc_within(server, "tools/call", json!({"name": tool, "arguments": args}), self.mcp_idle) {
                         Ok(r) => format!(
                             "mcp {tool}{}: {}",
                             if r["isError"] == true { " failed" } else { "" },
@@ -437,6 +466,11 @@ impl Agent {
                 }
             };
             self.say(&reply);
+        } else if text == "mcp-idle" {
+            match self.mcp_idle {
+                Some(d) => self.say(&format!("mcp idle timeout {}", d.as_millis())),
+                None => self.say("mcp idle timeout none"),
+            }
         } else if text == "mcp-list" {
             let reply = match &self.mcp {
                 None => "mcp error: no pdt-mcp server".to_string(),
@@ -590,6 +624,7 @@ fn main() {
         tx,
         log,
         mcp: mcp_server(flag("--mcp-config")),
+        mcp_idle: mcp_idle(flag("--mcp-config")),
         allowed: flag("--allowedTools").map(|t| t.split(',').map(String::from).collect()).unwrap_or_default(),
         ask: rules(flag("--settings").as_deref(), "ask"),
         tools: flag("--tools"),

@@ -101,7 +101,11 @@ pub fn claude_config(m: &McpServer) -> Value {
     for x in m.extra.iter().filter(|x| claude_takes(x)) {
         servers.insert(x.name.clone(), claude_entry(x));
     }
-    servers.insert(SERVER_NAME.into(), json!({"type": "http", "url": m.url, "headers": {"Authorization": m.bearer()}}));
+    // Its own `timeout` (PDT-613): Claude aborts a call that sends nothing for 5 minutes (its idle timeout, which
+    // `MCP_TOOL_TIMEOUT` doesn't lift) unless the server's `timeout` is longer, so an asking call can wait for the user.
+    let pdt = json!({"type": "http", "url": m.url, "headers": {"Authorization": m.bearer()},
+                     "timeout": PDT_TOOL_TIMEOUT_SECS * 1000});
+    servers.insert(SERVER_NAME.into(), pdt);
     json!({"mcpServers": servers})
 }
 
@@ -217,12 +221,14 @@ pub const CODEX_LOCKED_CONFIG: [(&str, &str); 2] = [("web_search", "\"disabled\"
 
 /// How long an agent waits for one of PDT's tools: an asking tool's call waits for the user's answer, in a conversation
 /// (PDT-490) or a terminal's Inbox item (PDT-492). Codex gets it as pdt-mcp's `tool_timeout_sec` (its own default is a
-/// minute), Claude as [`CLAUDE_TOOL_TIMEOUT_ENV`] (PDT-589). PDT's own wait ends a little before it, with a "still
-/// waiting" result, so the agent never sees its call time out.
+/// minute), Claude as pdt-mcp's `timeout` in its `--mcp-config` (PDT-613: it also lifts Claude's idle timeout) and as
+/// [`CLAUDE_TOOL_TIMEOUT_ENV`] (PDT-589). PDT's own wait ends a little before it, with a "still waiting" result, so
+/// the agent never sees its call time out.
 pub const PDT_TOOL_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 
-/// Claude Code's MCP tool-call timeout, in milliseconds. Claude has no per-server setting, so it covers every MCP
-/// server in the session, not only PDT's: harmless, as the budget only matters to a call that waits.
+/// Claude Code's MCP tool-call timeout, in milliseconds, for a Claude that predates the per-server `timeout`
+/// ([`claude_config`]). It covers every MCP server in the session, not only PDT's: harmless, as the budget only
+/// matters to a call that waits.
 pub const CLAUDE_TOOL_TIMEOUT_ENV: &str = "MCP_TOOL_TIMEOUT";
 
 /// The variable a Claude process PDT starts gets for [`PDT_TOOL_TIMEOUT_SECS`]; none when the user set their own
@@ -745,6 +751,16 @@ mod tests {
         assert_eq!(claude_tool_timeout_env(Some("90000".as_ref())), None, "the user's own stands");
         // Within what Node's timers take (2^31 - 1 ms), or Claude would fire the timeout at once.
         assert!(PDT_TOOL_TIMEOUT_SECS * 1000 < i32::MAX as u64);
+    }
+
+    /// PDT-613: pdt-mcp's own `timeout` lifts Claude's 5-minute idle timeout for its calls only, so an asking call
+    /// waits for the user; the user's other servers keep Claude's.
+    #[test]
+    fn claude_waits_on_pdt_s_tools_as_long_as_pdt_does() {
+        let m = McpServer { extra: extras(), ..server(None) };
+        let v = claude_config(&m);
+        assert_eq!(v["mcpServers"]["pdt"]["timeout"], json!(PDT_TOOL_TIMEOUT_SECS * 1000));
+        assert!(v["mcpServers"]["slack"].get("timeout").is_none(), "{v}");
     }
 
     #[test]

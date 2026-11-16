@@ -248,3 +248,119 @@ async fn the_user_opens_several_documents_in_tabs_beside_a_conversation() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// An agent's conversation on PX-1 in Bypass, where PDT asks for its asking tools itself, as for a Coder's step: not
+/// the PM, so the project never lets it act without asking.
+async fn start_ticket_agent(env: &Env) -> String {
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let t = list["items"][0]["id"].as_str().unwrap().to_string();
+    let body = json!({"agent": "claude", "sessionMode": "conversation", "permissionMode": "bypass"});
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["session"]["id"].as_str().unwrap().to_string();
+    wait_said(env, &id, 1).await;
+    id
+}
+
+/// The open approval in the Inbox for `session`.
+async fn approval(env: &Env, session: &str) -> Value {
+    common::wait::wait_until("an approval in the Inbox", async || {
+        let (_, v) = call(&env.app, "GET", "/api/inbox", None).await;
+        let items = v["items"].as_array().cloned().unwrap_or_default();
+        items.into_iter().find(|i| i["kind"] == "approval" && i["sessionId"] == session).ok_or(v)
+    })
+    .await
+}
+
+/// Answers an approval as the user's click in PDT's web.
+async fn answer_as_user(env: &Env, item: &Value, a: Value) {
+    let (session, request) = (item["sessionId"].as_str().unwrap(), item["body"]["requestId"].as_str().unwrap());
+    let url = format!("/api/sessions/{session}/requests/{request}");
+    let (s, v) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": a}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+}
+
+async fn ticket_docs(env: &Env) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", "/api/documents?ticket=PX-1", None).await;
+    v.as_array().unwrap_or_else(|| panic!("{v}")).iter().filter_map(|d| d["title"].as_str().map(String::from)).collect()
+}
+
+/// PDT-613: a ticket's agent's `document_create` for its own ticket asks the user in the Inbox (and its conversation), and
+/// waits: Claude's idle timeout doesn't cut the wait short. The user's Allow creates and links the document; a Deny
+/// tells the agent no. An agent can't allow it.
+#[tokio::test]
+async fn an_agents_document_create_waits_for_the_users_answer_in_the_inbox() {
+    let (env, _fake) = setup_docs().await;
+    let id = start_ticket_agent(&env).await;
+    // Claude would give up on a call that waits for the user before PDT does (PDT-613).
+    let idle = ask(&env, &id, "mcp-idle").await;
+    let ms: u128 =
+        idle.strip_prefix("mcp idle timeout ").and_then(|m| m.parse().ok()).unwrap_or_else(|| panic!("{idle}"));
+    assert!(ms > env.state.ask_wait.as_millis(), "{idle}, PDT waits {:?}", env.state.ask_wait);
+
+    let create = |title: &str| {
+        let args = json!({"title": title, "kind": "doc", "ticket": "PX-1", "markdown": format!("# {title}\n")});
+        format!("mcp: document_create {args}")
+    };
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &create("Spike notes")).await;
+    let item = approval(&env, &id).await;
+    assert_eq!(item["ticketKey"], "PX-1", "{item}");
+    assert_eq!(item["body"]["input"]["title"], "Spike notes", "{item}");
+    assert!(ticket_docs(&env).await.is_empty(), "nothing before the yes");
+    // An agent's curl can't say yes.
+    let url = format!("/api/sessions/{id}/requests/{}", item["body"]["requestId"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &url, Some(json!({"answer": {"type": "approve"}}))).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{v}");
+    answer_as_user(&env, &item, json!({"type": "approve"})).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    let made = answer(&said);
+    assert_eq!(made["tickets"], json!(["PX-1"]), "created and linked: {said}");
+    assert_eq!(ticket_docs(&env).await, ["Spike notes"]);
+
+    let n = agent_says(&env, &id).await.len();
+    send(&env, &id, &create("Not wanted")).await;
+    let item = approval(&env, &id).await;
+    answer_as_user(&env, &item, json!({"type": "deny", "message": "Comment instead"})).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(
+        said.contains("denied this document_create call") && said.contains("Comment instead"),
+        "a clear refusal: {said}"
+    );
+    assert_eq!(ticket_docs(&env).await, ["Spike notes"]);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-613: a ticket's agent's `document_create` the user hasn't answered within PDT's wait (shortened here) returns, telling
+/// the agent the request waits in PDT's Inbox; the user's later Allow creates the document and tells the agent.
+#[tokio::test]
+async fn an_agents_unanswered_document_create_says_it_waits_in_the_inbox() {
+    let fake = Arc::new(FakeProvider::new("fake", "Fake"));
+    let given = fake.clone();
+    let env = setup_with(move |st| {
+        st.documents = DocumentProviders::new(vec![given]);
+        st.ask_wait = std::time::Duration::from_millis(300);
+    })
+    .await;
+    let id = start_ticket_agent(&env).await;
+    let n = agent_says(&env, &id).await.len();
+    let args = json!({"title": "Late", "kind": "doc", "ticket": "PX-1", "markdown": "# Late\n"});
+    send(&env, &id, &format!("mcp: document_create {args}")).await;
+    let said = wait_said(&env, &id, n + 1).await.pop().unwrap();
+    assert!(
+        said.contains("Still waiting for the user's answer") && said.contains("PDT's Inbox"),
+        "names where the user answers: {said}"
+    );
+    let item = approval(&env, &id).await;
+    assert!(ticket_docs(&env).await.is_empty());
+    let n = agent_says(&env, &id).await.len();
+    answer_as_user(&env, &item, json!({"type": "approve"})).await;
+    common::wait::wait_until("the agent to hear it ran", async || {
+        pdt_api::run_workflows(&env.state).await;
+        let said = agent_says(&env, &id).await;
+        said[n..].iter().find(|m| m.contains("The user allowed your document_create")).cloned().ok_or(said)
+    })
+    .await;
+    assert_eq!(ticket_docs(&env).await, ["Late"]);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
