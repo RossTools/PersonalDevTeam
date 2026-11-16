@@ -122,9 +122,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   them. The PM's `add_ticket_comment` on a ticket with an active attempt asks the same way whatever its agent
   (`mcp::tools::confirm_pm_comment`; Claude's prompt never covers it): "Ticket comments to the agent" sends the PM's
   comments to the attempt's agent, so it is a message to that agent, as `send_to_session` is. Agents get a budget for PDT's tools so the wait outlives their own default (pdt-agents
-  `mcp::PDT_TOOL_TIMEOUT_SECS`): Codex as pdt-mcp's `tool_timeout_sec`, Claude as `MCP_TOOL_TIMEOUT` (every Claude
-  process PDT starts, unless pdtd's environment has the user's own; Claude has no per-server setting, so it covers
-  every MCP server in the session, which only matters to a call that waits). ACP agents get none: ACP's `mcpServers`
+  `mcp::PDT_TOOL_TIMEOUT_SECS`): Codex as pdt-mcp's `tool_timeout_sec`, Claude as pdt-mcp's `timeout` in its
+  `--mcp-config` (`mcp::claude_config`; without it Claude gives up on a call that sends nothing for 5 minutes, its
+  idle timeout, whatever `MCP_TOOL_TIMEOUT` says) and as `MCP_TOOL_TIMEOUT` for a Claude without per-server timeouts
+  (every Claude process PDT starts, unless pdtd's environment has the user's own). `fake-agent`'s `mcp-idle` says
+  the idle timeout Claude would use, and a test holds it above `ask_wait`. ACP agents get none: ACP's `mcpServers`
   has no timeout. The wait itself ends a little sooner (`AppState::ask_wait`) with a "still waiting" result rather
   than the agent's timeout: the Inbox item takes `answer_confirm`'s old way, and a conversation's card is marked
   detached, so a turn's end keeps it, and its answer runs the call and messages the session (`held::answered_late`).

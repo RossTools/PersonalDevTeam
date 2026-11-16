@@ -91,7 +91,11 @@ rename and delete sheets, format cells, add conditional formats and charts, and 
 can. They read a document's comments, reply to them and resolve them.
 
 Reading never asks. Changing a document, making one, linking one, and replying to or resolving a comment ask you
-first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**). A document's
+first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**).
+Other agents always ask, even for a document on the ticket they work on. The request shows in their conversation and
+in your **Inbox** with what they want to write, and the agent waits for you: **Allow** makes the document and links
+it, **Deny** (with a reason, if you like) tells the agent no. If you answer much later, PDT does what you chose then
+and tells the agent. A document's
 title, its content and its comments reach agents marked as outside input, never as instructions, since anyone who can
 edit the document (or the file) could have written them.
 
