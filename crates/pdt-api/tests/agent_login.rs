@@ -28,6 +28,8 @@ async fn setup() -> Env {
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "t"]);
+    git(&repo, &["config", "user.email", "t@t"]);
     std::fs::write(repo.join("a.txt"), "one\n").unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-m", "init", "-q"]);
@@ -207,4 +209,50 @@ async fn steps_wait_for_the_login_and_go_on_after_it() {
     }
     let again = told(&env, &session).await;
     assert!(again.last().unwrap().contains("wasn't logged in"), "the task again, saying why: {again:#?}");
+}
+
+/// A started ticket whose step waits to start for the login: the Board says why, and the idle net doesn't call the
+/// ticket stalled meanwhile (the agent's item has no ticket).
+#[tokio::test]
+async fn a_step_waiting_to_start_is_not_an_idle_ticket() {
+    let env = setup().await;
+    let wf = review_workflow(&env).await;
+    run_now(&env, &wf, &ticket(&env, "One").await).await;
+    login_item(&env, 1).await;
+    let started = ticket(&env, "Started").await;
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/tickets/{started}/start"),
+        Some(json!({"agent": "claude", "noSession": true})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    run_now(&env, &wf, &started).await;
+    login_item(&env, 2).await;
+    assert_eq!(ticket_agent(&env, &started).await["state"], "logged_out");
+    let now = 1_000_000_000_000;
+    pdt_api::check_idle_at(&env.state, now).await;
+    pdt_api::check_idle_at(&env.state, now + 60 * 60_000).await;
+    let (_, idle) = call(&env.app, "GET", "/api/events?type=ticket.idle", None).await;
+    assert_eq!(idle.as_array().unwrap().len(), 0, "{idle:#}");
+}
+
+/// A step left waiting with no open item (held just as the item closed) goes on at the watch's next pass.
+#[tokio::test]
+async fn a_step_waiting_with_no_item_goes_on() {
+    let env = setup().await;
+    let wf = review_workflow(&env).await;
+    let run = run_now(&env, &wf, &ticket(&env, "One").await).await;
+    let item = login_item(&env, 1).await;
+    let id = item["id"].as_str().unwrap();
+    let resolution = json!({"by": "test"});
+    assert!(env.state.store.end_inbox_item(id, pdt_core::inbox::InboxStatus::Closed, &resolution, 1).await.unwrap());
+    std::fs::remove_file(&env.marker).unwrap();
+    pdt_api::watch_logins(&env.state).await;
+    tick_until(&env, "the run's end", || async {
+        let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{run}"), None).await;
+        (r["status"] == "succeeded").then_some(r)
+    })
+    .await;
 }

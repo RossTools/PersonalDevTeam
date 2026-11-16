@@ -72,8 +72,9 @@ pub fn login_failure(agent: AgentKind, error: &str) -> Option<Strength> {
     if found.contains(&Strength::Sure) { Some(Strength::Sure) } else { found.first().copied() }
 }
 
-/// Whether a match is one to act on, given the agent's login check (`logged_in`: None when it can't tell). An agent
-/// PDT can't check (an ACP agent) is taken at its word.
+/// Whether a match is one to act on, given the agent's login check (`logged_in`: None when it can't tell): a sure
+/// phrase always, a weak one only when the check says logged out. So for an agent PDT can't check (an ACP agent), only
+/// sure phrases count.
 pub fn confirmed(strength: Strength, logged_in: Option<bool>) -> bool {
     match (strength, logged_in) {
         (_, Some(false)) | (Strength::Sure, _) => true,

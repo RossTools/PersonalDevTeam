@@ -110,7 +110,7 @@ pub async fn watch_pickup(st: &AppState) {
     repair_half_done_starts(st).await;
     // Pickup paused (a disk almost full, PDT-370): nothing new starts, so nothing is told; once it resumes, every ticket
     // that can start is.
-    if crate::pickup_pause::held(st).await.is_some() {
+    if crate::pickup_pause::paused(st).await.is_some() {
         return;
     }
     let now = crate::routes::now_ms();
@@ -340,7 +340,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
 pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary]) {
     let now = crate::routes::now_ms();
     // No countdown while pickup is paused: the tickets it would take say why instead (PDT-370).
-    let paused = if items.is_empty() { None } else { crate::pickup_pause::held(st).await };
+    let paused = if items.is_empty() { None } else { crate::pickup_pause::paused(st).await };
     let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
     for t in items.iter_mut() {
         if !policies.contains_key(&t.project_id) {

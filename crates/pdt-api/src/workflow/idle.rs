@@ -40,6 +40,10 @@ impl Busy {
         for (t, _) in st.store.steps_waiting_for_slot().await.unwrap_or_default() {
             steps.extend(t);
         }
+        // Waiting to start until their agent is logged in (PDT-604): the agent's Inbox item has no ticket.
+        for (t, _) in st.store.steps_waiting_for_login().await.unwrap_or_default() {
+            steps.extend(t);
+        }
         let items = st.store.open_inbox_items(None).await.unwrap_or_default();
         let items = items
             .into_iter()

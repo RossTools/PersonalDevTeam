@@ -45,12 +45,6 @@ pub(crate) async fn logged_out(st: &AppState, agent: AgentKind) -> bool {
     open_item(st, agent).await.is_some()
 }
 
-/// The agents known not to be logged in, with their items' times, oldest first.
-pub(crate) async fn logged_out_agents(st: &AppState) -> Vec<(AgentKind, i64)> {
-    let items = st.store.open_inbox_items_of(InboxKind::AgentLogin).await.unwrap_or_default();
-    items.iter().filter_map(|i| Some((agent_of(i)?, i.created_at))).collect()
-}
-
 /// A session's error said its agent isn't logged in. Once that is sure (the error's own words, else the agent's login
 /// check), the agent's item is open and the session's step waits for the login. Whether it was sure: else the turn is
 /// one like any other.
@@ -59,7 +53,8 @@ pub(crate) async fn failed(st: &AppState, session_id: &str, error: &str) -> bool
     let agent = s.agent.unwrap_or(AgentKind::Claude);
     let Some(strength) = core::login_failure(agent, error) else { return false };
     {
-        // Sessions of one agent fail together: one check, one item.
+        // Sessions of one agent fail together: one check, one item. The step is held under the same lock, so a resume
+        // can't close the item between the two and leave it waiting on nothing.
         let _one = st.agent_login_locks.lock(agent.as_str()).await;
         if open_item(st, agent).await.is_none() {
             let logged_in = crate::checks::agent_logged_in(st, agent).await;
@@ -70,8 +65,8 @@ pub(crate) async fn failed(st: &AppState, session_id: &str, error: &str) -> bool
             }
             open(st, agent, error, strength == Strength::Sure && logged_in == Some(true)).await;
         }
+        login::hold(st, session_id).await;
     }
-    login::hold(st, session_id).await;
     crate::notifications::kick(st);
     true
 }
@@ -164,9 +159,21 @@ fn resumed_note(n: usize) -> String {
 }
 
 /// One pass of the login watch: each agent with an open item whose login check now says it is logged in has its
-/// steps go on. One whose check said logged in all along (`blind`) waits for Check again.
+/// steps go on. One whose check said logged in all along (`blind`) waits for Check again. A step that waits for an
+/// agent with no open item (held by a new step's start just as the item closed) goes on too.
 pub async fn watch_logins(st: &AppState) {
     let Ok(items) = st.store.open_inbox_items_of(InboxKind::AgentLogin).await else { return };
+    for agent in login::waiting_agents(st).await {
+        let _one = st.agent_login_locks.lock(agent.as_str()).await;
+        if open_item(st, agent).await.is_some() {
+            continue;
+        }
+        let label = label(st, agent).await;
+        for w in login::waiting(st, agent).await {
+            tracing::info!(step = %w.step_id, agent = agent.as_str(), "a step waited for a login that no item holds");
+            login::go_on(st, w, &label).await;
+        }
+    }
     for item in items {
         let Some(agent) = agent_of(&item) else { continue };
         if item.body.get("blind").and_then(Value::as_bool) == Some(true) {

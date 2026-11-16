@@ -1,7 +1,7 @@
 //! Pickup paused (PDT-370): while it is, auto-start starts no new tickets, the pickup watch tells nothing, and the
 //! Board shows why on each ticket that would have started. Agents already running carry on. `pickup.pause` and
 //! `pickup.resume` set it (the built-in Clean up storage pauses it while a disk is almost full); the user resumes it
-//! from Settings › Storage. Kept over a restart. Pickup is also held while an agent isn't logged in (PDT-604).
+//! from Settings › Storage. Kept over a restart.
 
 use crate::error::ApiError;
 use crate::routes::{AppState, now_ms};
@@ -35,17 +35,6 @@ pub async fn paused(st: &AppState) -> Option<PickupPause> {
             None
         }
     }
-}
-
-/// Why pickup starts nothing now: its pause, else an agent that isn't logged in (PDT-604), whose new steps would only
-/// wait for it. The second goes by itself once the agent is logged in again.
-pub async fn held(st: &AppState) -> Option<PickupPause> {
-    if let Some(p) = paused(st).await {
-        return Some(p);
-    }
-    let (agent, at) = crate::agent_login::logged_out_agents(st).await.into_iter().next()?;
-    let label = crate::agent_login::label(st, agent).await;
-    Some(PickupPause { reason: format!("{label} isn't logged in"), workflow_id: None, at })
 }
 
 /// Pauses pickup (or says why anew).

@@ -118,6 +118,23 @@ pub(crate) async fn waiting(st: &AppState, agent: AgentKind) -> Vec<Waiting> {
     out
 }
 
+/// The agents some step waits for.
+pub(crate) async fn waiting_agents(st: &AppState) -> std::collections::BTreeSet<AgentKind> {
+    let mut out = std::collections::BTreeSet::new();
+    for a in st.store.active_agent_steps().await.unwrap_or_default() {
+        if a.state == AgentStepState::WaitingLogin
+            && let Some(sid) = &a.session_id
+            && let Ok(Some(s)) = st.store.get_session(sid).await
+        {
+            out.insert(s.agent.unwrap_or(AgentKind::Claude));
+        }
+    }
+    for (_, step) in st.store.steps_waiting_for_login().await.unwrap_or_default() {
+        out.extend(step.wait.get("login").and_then(Value::as_str).and_then(AgentKind::parse_stored));
+    }
+    out
+}
+
 /// A waiting step goes on now its agent (`label`) is logged in again. Whether it did.
 pub(crate) async fn go_on(st: &AppState, w: Waiting, label: &str) -> bool {
     let r = match (w.stopped, w.held) {

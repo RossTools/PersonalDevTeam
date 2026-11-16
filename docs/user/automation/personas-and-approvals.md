@@ -121,15 +121,16 @@ before acting:
 - One Inbox item per agent says so, such as **Claude isn't logged in: 3 steps are waiting**, with how to log in again
   (for Claude, run `claude` in a terminal and log in with `/login`; for Codex, `codex login`) and a link to the host's
   **Checks**.
-- While the agent is logged out, new steps that would use it, auto-start and scheduled steps wait too, instead of
-  failing one by one. A conversation you open with it shows the same hint under the error.
+- While the agent is logged out, new steps that would use it wait too, instead of failing one by one, including the
+  steps of tickets auto-start picks up and scheduled steps. A conversation you open with it shows the same hint under
+  the error.
 - PDT checks the login again every two minutes, or when you press **Check again**. Once the agent is logged in, the
   waiting steps go on by themselves: each gets its task again in its conversation (or a fresh session when that one
   can't take a message), and steps that hadn't started start. The item then closes.
 
 If the agent's own check still says it is logged in (a login whose token expired can look that way), or PDT has no
 way to check it (an ACP agent), only **Check again** takes the steps up again, once you have logged in. A step's time
-limit doesn't run while it waits.
+limit doesn't run while it waits. A step running in a terminal rather than a conversation isn't recognised this way.
 
 ### How many agents run at once
 
