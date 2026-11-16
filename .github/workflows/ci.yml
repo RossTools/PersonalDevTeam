@@ -99,7 +99,6 @@ jobs:
       - id: pick
         env:
           GH_TOKEN: ${{ github.token }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR: ${{ github.event.pull_request.number }}
           EVENT: ${{ github.event_name }}
           QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
@@ -120,7 +119,10 @@ jobs:
           all() { out true true true true true; }
           case "$EVENT" in
             pull_request)
-              files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)" ;;
+              files="$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only)"
+              # The labels as they are now, not as the event saw them: Dependabot opens its PR and then labels it, and
+              # the run for `opened` (no labels yet) can be the one that cancels the others.
+              LABELS="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')" ;;
             merge_group)
               # Everything the queued group adds to main. Labels come from the PR the queue branch is named after
               # (refs/heads/gh-readonly-queue/main/pr-<n>-<sha>); the ruleset's group size of 1 makes that the PR.
@@ -194,7 +196,6 @@ jobs:
       - name: The pull request adds a changelog fragment
         env:
           GH_TOKEN: ${{ github.token }}
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           BODY: ${{ github.event.pull_request.body }}
           PR: ${{ github.event.pull_request.number }}
           RELEASE_PR: ${{ needs.changes.outputs.release }}
@@ -206,6 +207,8 @@ jobs:
           added="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
             --jq '.[] | select(.status != "removed") | .filename' | grep -E '^\.changes/unreleased/[^/]+\.md$' || true)"
           if [ -n "$added" ]; then printf 'Fragments:\n%s\n' "$added"; exit 0; fi
+          # The labels as they are now (see the changes job): the event's can predate Dependabot's.
+          LABELS="$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json labels --jq '[.labels[].name]')"
           if printf '%s' "$LABELS" | grep -q '"no-changelog"'; then echo "No fragment: the PR has the no-changelog label."; exit 0; fi
           # The same in the PR's description, for a contributor who can't set labels (the run sees the description as
           # it was at the push or label that started it).
