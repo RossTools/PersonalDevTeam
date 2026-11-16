@@ -722,6 +722,33 @@ describe('inbox', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/settings/plugins/github'));
   });
 
+  it('says an agent isn’t logged in: how to log in, the waiting steps, Check again and a link to Checks', async () => {
+    const login = item('l1', {
+      kind: 'agent_login', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null,
+      title: "Claude isn't logged in: 2 steps are waiting",
+      body: {
+        agent: 'claude', label: 'Claude', hint: 'Run `claude` in a terminal and log in with `/login`.', waiting: 2,
+        detail: 'Failed to authenticate. API Error: 401', steps: [
+          { stepId: 's1', persona: 'Reviewer', ticketKey: 'PDT-7', started: true },
+          { stepId: 's2', persona: 'PM', ticketKey: null, started: false },
+        ],
+      },
+      choices: [{ id: 'check_again', title: 'Check again', primary: true }],
+    });
+    const calls = stubApi({ 'POST /api/inbox/l1/answer': { loggedIn: true, resumed: 2 }, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[login]} selectedId="l1" onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Not logged in' });
+    expect(region).toHaveTextContent('/login');
+    expect(region).toHaveTextContent('Failed to authenticate');
+    expect(within(screen.getByRole('list', { name: 'Waiting steps' })).getAllByRole('listitem').map((l) => l.textContent))
+      .toEqual(['Reviewer · PDT-7', 'PM']);
+    expect(dismissable(login)).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/inbox/l1/answer')?.body).toEqual({ choice: 'check_again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Checks' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/host/checks'));
+  });
+
   it('says PDT can’t save changes, with what to do, and it is not dismissed', () => {
     const storage = item('storage', {
       kind: 'storage', group: 'notice', projectId: null, ticketId: null, runId: null, stepId: null,

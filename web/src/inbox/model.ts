@@ -45,6 +45,7 @@ export const KIND_LABEL: Record<InboxKind, string> = {
   mcp_sign_in: 'Sign in again',
   storage: "Can't save",
   low_disk: 'Low disk space',
+  agent_login: 'Not logged in',
 };
 
 /** The items of each section that has any, in the API's order. */
@@ -152,6 +153,15 @@ export const CONNECT_PATH = '/settings/plugins/github';
 
 /** Where "Sign in to <server> again" (an MCP server's OAuth sign-in, PDT-322) sends the user. */
 export const MCP_SERVERS_PATH = '/settings/mcp-servers';
+
+/** Where an agent's "isn't logged in" item (PDT-604) points: the host's Checks, which say whether each agent is. */
+export const CHECKS_PATH = '/settings/host/checks';
+
+/** The steps an agent's "isn't logged in" item counts: who, and on which ticket. */
+export function loginStepsOf(item: InboxItem): { persona: string; ticketKey: string | null }[] {
+  const steps = Array.isArray(item.body.steps) ? (item.body.steps as Record<string, unknown>[]) : [];
+  return steps.map((s) => ({ persona: nonBlank(s.persona) ?? 'An agent', ticketKey: nonBlank(s.ticketKey) }));
+}
 
 /** What an unheard notice said, and its settling, in a line (PDT-139). */
 export function noticeText(item: InboxItem): string {

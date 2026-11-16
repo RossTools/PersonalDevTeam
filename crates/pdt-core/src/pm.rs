@@ -513,11 +513,13 @@ pub fn ticket_state(t: &crate::ticket::TicketSummary) -> String {
             TicketAgentState::Yours => "waiting for the user",
             TicketAgentState::Queued => "queued for a slot",
             TicketAgentState::Background => "waiting on background tasks",
+            TicketAgentState::LoggedOut => "waiting: its agent isn't logged in",
         };
         match (a.state, a.background.as_slice()) {
             (TicketAgentState::Background, tasks @ [_, ..]) => {
                 parts.push(format!("{who} waiting on background task: {}", tasks.join(", ")))
             }
+            (TicketAgentState::LoggedOut, [agent, ..]) => parts.push(format!("{who} waiting: {agent} isn't logged in")),
             _ => parts.push(format!("{who} {what}")),
         }
     }

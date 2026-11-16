@@ -226,6 +226,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A stuck agent step is never left without anyone told.** A step handed to "When an agent is stuck" has no Inbox
   item until the workflow acts; `stuck::sweep` falls back to PDT's own handling when it is off, its run ends without
   acting, or no run starts in time. Code that ends or moves a step on takes its escalation (`take_escalation`).
+- **A login failure is never nudged, and never waits without an item.** A step goes to `waiting_login`, or is held
+  with `wait.login`, only while its agent's `agent_login` item is open; closing that item (`agent_login::resume`) takes
+  every such step up again, and the agent sweep leaves `waiting_login` steps alone.
 - **Only Install updates installs by itself.** The update loop checks and logs `update.available`; it never installs.
   An automatic install goes through `host.install_update` with `automatic`, which keeps to the host's policy and never
   retries a version pdt-host skipped. With the workflow off, nothing installs without the user.

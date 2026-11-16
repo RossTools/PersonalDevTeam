@@ -78,6 +78,9 @@ pub(crate) async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(
             }
             i.persona_name = personas.get(p).cloned().flatten();
         }
+        if i.kind == InboxKind::AgentLogin {
+            crate::agent_login::decorate(st, i).await;
+        }
         if i.kind == InboxKind::Gate {
             // A gate opened before PDT-306 has its whole question as its title.
             if i.title.contains('\n') || i.title.chars().count() > inbox::TITLE_CHARS {
@@ -433,6 +436,7 @@ pub(crate) async fn answer(
                 .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?
         }
         (InboxKind::Confirm, None) => return Err(ApiError::conflict(codes::CANNOT_ANSWER, "choose Allow or Deny")),
+        (InboxKind::AgentLogin, c) => crate::agent_login::answer(&st, &item, c).await?,
         _ => crate::workflow::agent::answer_item(&st, &item, &a)
             .await
             .map_err(|m| ApiError::conflict(codes::CANNOT_ANSWER, m))?,

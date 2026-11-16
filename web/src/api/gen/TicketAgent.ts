@@ -14,6 +14,7 @@ persona: string | null, state: TicketAgentState, sessionId: string | null,
  */
 busy: boolean, runId: string | null, 
 /**
- * What it waits on (`background`): the background tasks' descriptions.
+ * What it waits on: the background tasks' descriptions (`background`), or the agent that isn't logged in
+ * (`logged_out`).
  */
 background: Array<string>, };

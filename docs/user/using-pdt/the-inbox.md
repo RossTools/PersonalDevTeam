@@ -68,6 +68,10 @@ your ticket proposals, they wait here and in the PM's conversation as one table:
 
 ### To act on
 
+- **Not logged in**: an agent's login expired, so its steps wait instead of failing (see
+  [When an agent's login expires](../automation/personas-and-approvals.md#when-an-agents-login-expires)). It says how
+  to log in and which steps wait. **Check again** checks the login; once the agent is logged in, the steps go on and
+  the item closes by itself.
 - **Unheard notices**: pull request trouble (CI failed, a conflict, out of the merge queue) with no agent running to
   hear it (see [Pull request and CI status](review-and-merge.md#pull-request-and-ci-status)). **Open ticket** to deal
   with it; it clears once the pull request is fixed or merged.

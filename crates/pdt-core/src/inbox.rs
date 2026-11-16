@@ -54,6 +54,9 @@ pub enum InboxKind {
     /// A ticket an agent made, held in Draft off the board until the user decides (PDT-366): Accept to To do, Accept
     /// to backlog, Duplicate of… or Reject. It closes once the ticket leaves Draft some other way.
     TicketProposal,
+    /// An agent isn't logged in (PDT-604): one item per agent, with the steps waiting for it, how to log in and Check
+    /// again. It closes once the agent is logged in again and the steps went on.
+    AgentLogin,
 }
 
 impl InboxKind {
@@ -77,6 +80,7 @@ impl InboxKind {
             InboxKind::Storage => "storage",
             InboxKind::LowDisk => "low_disk",
             InboxKind::TicketProposal => "ticket_proposal",
+            InboxKind::AgentLogin => "agent_login",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -99,6 +103,7 @@ impl InboxKind {
             Self::Storage,
             Self::LowDisk,
             Self::TicketProposal,
+            Self::AgentLogin,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)

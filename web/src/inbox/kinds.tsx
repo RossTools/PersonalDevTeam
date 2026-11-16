@@ -23,6 +23,7 @@ const KINDS: Record<InboxKind, { icon: ComponentType<LucideProps>; tone: Tone }>
   notice: { icon: CircleX, tone: 'failed' },
   connect: { icon: Plug, tone: 'waiting' },
   mcp_sign_in: { icon: LogIn, tone: 'waiting' },
+  agent_login: { icon: LogIn, tone: 'failed' },
   storage: { icon: HardDrive, tone: 'failed' },
   low_disk: { icon: HardDrive, tone: 'waiting' },
   admit: { icon: FileCheck, tone: 'accent' },

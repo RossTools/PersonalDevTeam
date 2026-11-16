@@ -128,6 +128,8 @@ type LiveSlot = Option<(Arc<dyn LiveConversation>, u64)>;
 
 pub(crate) struct Conv {
     id: String,
+    /// Its agent, whose errors say whether it is logged in (PDT-604).
+    agent: AgentKind,
     tx: broadcast::Sender<ConversationServerMessage>,
     /// The live process; held across opening and closing so they never interleave.
     live: tokio::sync::Mutex<LiveSlot>,
@@ -170,6 +172,8 @@ struct ConvState {
     background_tasks: Vec<BackgroundTask>,
     /// Background tasks a restart of PDT stopped, until the agent is told with the next message (PDT-311).
     stopped_background: Vec<BackgroundTask>,
+    /// The running turn's error that said the agent isn't logged in (PDT-604), for its end.
+    login_failure: Option<String>,
 }
 
 impl ConvState {

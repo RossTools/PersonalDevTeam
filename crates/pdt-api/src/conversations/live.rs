@@ -34,6 +34,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
     let stopped_background = st.store.stopped_background(&session.id).await?;
     let c = Arc::new(Conv {
         id: session.id.clone(),
+        agent: session.agent.unwrap_or(AgentKind::Claude),
         tx: broadcast::channel(1024).0,
         live: tokio::sync::Mutex::new(None),
         state: Mutex::new(ConvState {
@@ -56,6 +57,7 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
             limited_until: None,
             background_tasks: Vec::new(),
             stopped_background,
+            login_failure: None,
         }),
         activity_write: tokio::sync::Mutex::new(()),
         sending: tokio::sync::RwLock::new(()),
@@ -426,6 +428,9 @@ pub(super) async fn append(
     }
     let scrubbed = integration_hooks(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
+    // An error that says the agent isn't logged in gets how to log in under it (PDT-604).
+    let login = matches!(&event, AgentEvent::Error { text, .. }
+        if pdt_core::agent_login::login_failure(c.agent, text).is_some());
     // The runtime state follows the event as it comes, whether or not it can be stored yet: a message the agent took
     // leaves the queue even while the disk is full (PDT-331). What reads the log waits until it is stored.
     let (state_changed, then) = apply_event(c, item_id, &event);
@@ -439,6 +444,14 @@ pub(super) async fn append(
         then,
     };
     store_in_order(st, c, unstored).await;
+    if login {
+        let label = crate::agent_login::label(st, c.agent).await;
+        let text = pdt_core::agent_login::inline_notice(&label, &pdt_core::agent_login::login_hint(c.agent, &label));
+        let event = AgentEvent::Notice { level: pdt_core::conversation::NoticeLevel::Warning, text, until: None };
+        let bytes = Unstored::size(&event, None);
+        let notice = Unstored { ts: now_ms(), item_id: None, turn_id: None, bytes, event, raw: None, then: vec![] };
+        store_in_order(st, c, notice).await;
+    }
     if state_changed {
         c.push_state();
         refresh_activity(st, c).await;
@@ -450,24 +463,27 @@ enum FollowUp {
     /// An agent step's session ended a turn: did it submit an outcome? A PM session's may be due
     /// its daily update (PDT-167), or end once the user closed it. `expire_held`: PDT's requests opened before the end
     /// was read ([`super::held::mark`]) expire with it, unless the agent has a message to take next.
-    TurnEnded { expire_held: Option<u64> },
+    /// `login_failure`: the turn's error said the agent isn't logged in (PDT-604).
+    TurnEnded { expire_held: Option<u64>, login_failure: Option<String> },
     /// One of PDT's asking tools in a project that lets the PM act is answered for the user (PDT-81).
     PdtRequest { id: String, tool: String, input: serde_json::Value },
     /// A PM conversation writes a journal checkpoint and carries on (PDT-167).
     Compacted,
     /// Whatever a message the agent took carried was told (PDT-129).
     Echoed(String),
+    /// An error outside a turn (its process exited) said the agent isn't logged in (PDT-604).
+    LoginFailed(String),
 }
 
 impl FollowUp {
     fn spawn(self, st: &AppState, session: &str) {
         let (st, sid) = (st.clone(), session.to_string());
         match self {
-            FollowUp::TurnEnded { expire_held } => tokio::spawn(async move {
+            FollowUp::TurnEnded { expire_held, login_failure } => tokio::spawn(async move {
                 if let Some(before) = expire_held {
                     super::held::end_turn(&st, &sid, before);
                 }
-                crate::workflow::agent::turn_ended(&st, &sid).await;
+                crate::workflow::agent::turn_ended(&st, &sid, login_failure.as_deref()).await;
                 crate::pm::turn_ended(&st, &sid).await;
             }),
             FollowUp::PdtRequest { id, tool, input } => {
@@ -477,6 +493,9 @@ impl FollowUp {
             FollowUp::Echoed(pending) => {
                 tokio::spawn(async move { crate::workflow::outbox::echoed(&st, &pending).await })
             }
+            FollowUp::LoginFailed(error) => tokio::spawn(async move {
+                crate::agent_login::failed(&st, &sid, &error).await;
+            }),
         };
     }
 }
@@ -494,6 +513,7 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
         AgentEvent::Turn { phase: TurnPhase::Started, .. } => {
             s.turn_running = true;
             s.errored = false;
+            s.login_failure = None;
             true
         }
         AgentEvent::Turn { phase: TurnPhase::Ended, .. } => {
@@ -506,7 +526,7 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
             // drops the call, at the next end with nothing waiting, or when the agent exits (PDT-420).
             // The mark is taken now, as the end is read: it runs once stored, and the next turn's call may be in by then.
             let expire_held = s.pending.is_empty().then(super::held::mark);
-            then.push(FollowUp::TurnEnded { expire_held });
+            then.push(FollowUp::TurnEnded { expire_held, login_failure: s.login_failure.take() });
             true
         }
         AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
@@ -520,6 +540,15 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
         AgentEvent::Request { id, .. } => s.open_requests.remove(id),
         AgentEvent::Compaction { .. } => {
             then.push(FollowUp::Compacted);
+            false
+        }
+        // The agent isn't logged in (PDT-604): the Inbox's item for its agent says so, not the session as needing you.
+        AgentEvent::Error { text, .. } if pdt_core::agent_login::login_failure(c.agent, text).is_some() => {
+            if s.turn_running {
+                s.login_failure = Some(text.clone());
+            } else {
+                then.push(FollowUp::LoginFailed(text.clone()));
+            }
             false
         }
         AgentEvent::Error { .. } => {

@@ -491,7 +491,7 @@ impl NodeKind for Start {
                 return Ok(Outcome::would("started", dry_run(cx.st, &tickets, per_project).await));
             }
             // Pickup paused (a disk almost full, PDT-370): nothing new starts until it resumes.
-            if let Some(p) = crate::pickup_pause::paused(cx.st).await {
+            if let Some(p) = crate::pickup_pause::held(cx.st).await {
                 let reason = format!("pickup is paused: {}", p.reason);
                 return Ok(Outcome::next("skipped", json!({"reason": reason, "quiet": true})));
             }

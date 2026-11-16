@@ -5,6 +5,7 @@
 use crate::routes::AppState;
 use pdt_core::inbox::{InboxGroup, InboxKind};
 use pdt_core::policy::{AutoStart, auto_start_at, settles_at};
+use pdt_core::session::AgentKind;
 use pdt_core::ticket::{TicketAgent, TicketAgentState, TicketQuery, TicketStage, TicketSummary};
 use pdt_core::workflow::agent::AgentStepState;
 use pdt_core::workflow::api::NewLogEvent;
@@ -109,7 +110,7 @@ pub async fn watch_pickup(st: &AppState) {
     repair_half_done_starts(st).await;
     // Pickup paused (a disk almost full, PDT-370): nothing new starts, so nothing is told; once it resumes, every ticket
     // that can start is.
-    if crate::pickup_pause::paused(st).await.is_some() {
+    if crate::pickup_pause::held(st).await.is_some() {
         return;
     }
     let now = crate::routes::now_ms();
@@ -223,7 +224,7 @@ pub async fn run_pickup_watch(st: AppState) {
 pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent> {
     let rank = |s: TicketAgentState| match s {
         TicketAgentState::Asking => 0,
-        TicketAgentState::Stalled => 1,
+        TicketAgentState::Stalled | TicketAgentState::LoggedOut => 1,
         TicketAgentState::Yours => 2,
         TicketAgentState::Working | TicketAgentState::Background => 3,
         TicketAgentState::Queued => 4,
@@ -242,6 +243,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
             AgentStepState::Asking => TicketAgentState::Asking,
             AgentStepState::Stalled => TicketAgentState::Stalled,
             AgentStepState::Manual => TicketAgentState::Yours,
+            AgentStepState::WaitingLogin => TicketAgentState::LoggedOut,
             AgentStepState::Done => continue,
         };
         let session_busy = a.session_id.as_ref().is_some_and(|s| busy.contains(s));
@@ -255,6 +257,14 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
                     .map(|b| b.tasks.into_iter().map(|t| t.description).collect())
                     .unwrap_or_default();
                 (TicketAgentState::Background, if now.is_empty() { a.background.clone() } else { now })
+            }
+            // Which agent isn't logged in (PDT-604).
+            _ if state == TicketAgentState::LoggedOut => {
+                let agent = match a.session_id.as_deref() {
+                    Some(sid) => st.store.get_session(sid).await.ok().flatten().and_then(|s| s.agent),
+                    None => None,
+                };
+                (state, vec![crate::agent_login::label(st, agent.unwrap_or(AgentKind::Claude)).await])
             }
             _ => (state, vec![]),
         };
@@ -290,6 +300,23 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
             );
         }
     }
+    // Steps that wait to start until their agent is logged in (PDT-604).
+    for (ticket, step) in st.store.steps_waiting_for_login().await.unwrap_or_default() {
+        let Some(ticket) = ticket else { continue };
+        let persona = step.wait.get("persona").and_then(Value::as_str).map(String::from);
+        let agent = step.wait.get("login").and_then(Value::as_str).and_then(AgentKind::parse_stored);
+        put(
+            ticket,
+            TicketAgent {
+                persona,
+                state: TicketAgentState::LoggedOut,
+                session_id: None,
+                busy: false,
+                run_id: Some(step.run_id.clone()),
+                background: vec![crate::agent_login::label(st, agent.unwrap_or(AgentKind::Claude)).await],
+            },
+        );
+    }
     for (ticket, step) in st.store.steps_waiting_for_slot().await.unwrap_or_default() {
         let Some(ticket) = ticket else { continue };
         let persona = step.wait.get("persona").and_then(Value::as_str).map(String::from);
@@ -313,7 +340,7 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
 pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary]) {
     let now = crate::routes::now_ms();
     // No countdown while pickup is paused: the tickets it would take say why instead (PDT-370).
-    let paused = if items.is_empty() { None } else { crate::pickup_pause::paused(st).await };
+    let paused = if items.is_empty() { None } else { crate::pickup_pause::held(st).await };
     let mut policies: HashMap<String, Option<pdt_core::policy::ProjectPolicy>> = HashMap::new();
     for t in items.iter_mut() {
         if !policies.contains_key(&t.project_id) {

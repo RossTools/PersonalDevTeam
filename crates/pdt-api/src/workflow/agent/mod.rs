@@ -21,6 +21,7 @@ use serde_json::{Value, json};
 
 mod confirm_wait;
 mod inbox_items;
+pub(crate) mod login;
 mod recovery;
 
 pub(crate) use confirm_wait::{ASK_WAIT, ConfirmWaits, wait as wait_confirm};
@@ -188,6 +189,12 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
         agent_on(st, &persona).await?;
     }
     let t = target(cx, &c, false).await?;
+    // Its agent isn't logged in (PDT-604): the step waits with the others for it, instead of failing as they did.
+    if c.owner == Owner::Agent && crate::agent_login::logged_out(st, persona.setup.agent).await {
+        tracing::info!(run = %cx.run.id, node = %cx.node.id, "an agent step waits for its agent's login");
+        crate::notifications::kick(st);
+        return Ok(login::held(persona.setup.agent, &persona.name, &cx.step.wait));
+    }
     if let (Some(stage), Some((ticket_id, _, _))) = (c.pipeline_stage, &t.ticket)
         && let Err(e) = st.store.set_pipeline_stage(ticket_id, Some(stage)).await
     {
@@ -937,7 +944,15 @@ async fn handed_in(st: &AppState, a: &AgentStep, outcome: &str) -> R<()> {
 /// A session's turn ended (a conversation's `Turn` end, a terminal going idle): a working step with no outcome is
 /// nudged, then stalled; at `maxTurns` it times out. A conversation still running background tasks it
 /// started waits on them instead (PDT-142): Claude takes each one up when it finishes, in a turn of its own.
-pub(crate) async fn turn_ended(st: &AppState, session_id: &str) {
+///
+/// A turn whose error said the agent isn't logged in (`login_failure`) is no turn without an outcome once
+/// `crate::agent_login` confirms it: the step waits for the login instead (PDT-604).
+pub(crate) async fn turn_ended(st: &AppState, session_id: &str, login_failure: Option<&str>) {
+    if let Some(error) = login_failure
+        && crate::agent_login::failed(st, session_id, error).await
+    {
+        return;
+    }
     let run = session_run(st, session_id).await;
     let _locked = super::engine::lock_run(st, run.as_deref()).await;
     // A session being removed ends its turn as it closes: not a turn without an outcome (the sweep stalls its step as

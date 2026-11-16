@@ -1,4 +1,5 @@
 mod activity;
+mod agent_login;
 mod agent_mcp;
 mod attachments;
 mod background;
@@ -113,6 +114,7 @@ pub async fn shutdown_mcp(st: &AppState) {
 pub fn mcp_token(st: &AppState, session_id: &str) -> std::io::Result<String> {
     mcp::token(st, session_id)
 }
+pub use agent_login::{run_login_watch, watch_logins};
 pub use host::HostEnv;
 pub use host_guard::{AllowedHosts, with_host_guard};
 pub use integrations::{
