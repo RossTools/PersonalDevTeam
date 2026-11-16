@@ -1,6 +1,7 @@
 // What an Inbox item shows and offers (PDT-361), whatever the screen: one line on why it waits, its content in the
 // kind's style, the note box and the actions. The desktop and the phone lay the same spec out their own way.
 import { Fragment, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
@@ -19,7 +20,7 @@ import { useOpenSession, useOpenTicket } from '../common/open';
 import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
-  confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
+  commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
   inboxTargets, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerApproval } from './approval';
@@ -28,6 +29,11 @@ import { pdtApproval } from '../conversation/PdtProposal';
 import { pdtTool } from '../conversation/pdtTools';
 import { nonBlank } from '../common/guards';
 import { capitalize, formatBytes } from '../common/text';
+import { api } from '../api/client';
+import { useAction } from '../common/useAction';
+import { commandText } from '../runs/ApproveCommands';
+import { invalidateCommands } from '../runs/queries';
+import { inboxKey } from './useInbox';
 
 /** One of an item's actions. */
 export interface ItemAction {
@@ -133,6 +139,15 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const dismissAction: ItemAction[] = dismissable(item) ? [{ id: 'dismiss', title: 'Dismiss', kbd: 'e', end: true, run: dismiss }] : [];
   const workflow = nonBlank(item.body.workflow);
   const persona = item.personaName ?? 'The agent';
+  // A command waiting on the user's approval is approved in place (PDT-611); approving closes the notice.
+  const qc = useQueryClient();
+  const waitingCommand = commandNoticeOf(item);
+  const [approveCommand, approvingCommand] = useAction(async () => {
+    if (!waitingCommand) return;
+    await api.trustCommands(waitingCommand.projectId, [waitingCommand.command.fingerprint]);
+    void invalidateCommands(qc, waitingCommand.projectId);
+    await qc.invalidateQueries({ queryKey: inboxKey });
+  }, { success: 'Approved' });
 
   // The PM's batch of decisions, from an Inbox confirmation or its conversation's card: untick rows, then Allow (`y`)
   // or Deny (`n`), as on the card.
@@ -402,6 +417,23 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
         };
       }
       case 'notice':
+        if (waitingCommand) {
+          const { command } = waitingCommand;
+          return {
+            region: 'Command to approve',
+            why: "PDT runs a repository's commands only once you approve them. Approve runs this one from now on, in every branch of the project; it goes away once approved.",
+            content: (
+              <>
+                <Callout tone="warning"><Markdown>{noticeText(item)}</Markdown></Callout>
+                <CodeCard title={command.uses.join(', ') || 'Command'} aria-label="The command" code={commandText(command)} />
+              </>
+            ),
+            actions: [
+              { id: 'approve', title: 'Approve', primary: true, pending: approvingCommand, disabled: approvingCommand, run: () => void approveCommand() },
+              ...dismissAction,
+            ],
+          };
+        }
         return {
           region: 'Unheard notice',
           why: item.attemptId

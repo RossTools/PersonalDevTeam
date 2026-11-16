@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, CodeCard, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
+import { Alert, Badge, Button, CodeCard, SectionLabel, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
@@ -8,7 +8,7 @@ import { invalidateCommands, runKeys } from './queries';
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
 
 /** A command as it runs: its setup, then the command with its environment. */
-function commandText(c: ConfigCommand): string {
+export function commandText(c: ConfigCommand): string {
   const env = Object.entries(c.env).map(([k, v]) => `${k}=${v} `).join('');
   return c.setup ? `${c.setup}\n${env}${c.command}` : `${env}${c.command}`;
 }
@@ -60,8 +60,31 @@ export async function withApproval<T>(confirm: Confirm, qc: QueryClient, attempt
   }
 }
 
+/** A command with whether it waits on the user's approval, and Approve when it does. */
+function CommandRow({ command: c, waiting, approve, approving }: {
+  command: ConfigCommand;
+  waiting: boolean;
+  approve: (fingerprints: string[]) => void;
+  approving: boolean;
+}) {
+  return (
+    <CodeCard
+      aria-label={`Command for ${c.uses.join(', ')}`}
+      title={c.uses.join(', ')}
+      aside={waiting ? (
+        <span className="flex items-center gap-2">
+          <Badge tone="waiting">Not approved</Badge>
+          <Button type="button" size="sm" pending={approving} onClick={() => approve([c.fingerprint])}>Approve</Button>
+        </span>
+      ) : 'Approved'}
+      code={commandText(c)}
+    />
+  );
+}
+
 /** The commands the main checkout's run configuration runs (with the overrides), those waiting on the user's approval
- * first, each with Approve. */
+ * first, each with Approve; then the commands waiting in the project's worktrees (an agent's new or changed
+ * configuration), under their branch and ticket. */
 export function ConfigCommands({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null) });
@@ -71,25 +94,25 @@ export function ConfigCommands({ projectId }: { projectId: string }) {
   }, { success: 'Approved' });
   if (list.isPending) return <Skeleton lines={2} label="Loading the commands" />;
   if (list.isError) return <Alert tone="error">{list.error.message}</Alert>;
-  if (list.data.error) return null;
   const waiting = new Set(list.data.untrusted);
-  if (list.data.commands.length === 0) return <p className="text-xs text-muted-foreground">The run configuration names no commands.</p>;
   const ordered = [...list.data.commands].sort((a, b) => Number(waiting.has(b.fingerprint)) - Number(waiting.has(a.fingerprint)));
+  const worktrees = list.data.worktrees;
+  const main = list.data.error ? null : ordered.length === 0
+    ? <p className="text-xs text-muted-foreground">The run configuration names no commands.</p>
+    : ordered.map((c) => (
+      <CommandRow key={c.fingerprint} command={c} waiting={waiting.has(c.fingerprint)} approve={(f) => void approve(f)} approving={approving} />
+    ));
+  if (!main && worktrees.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
-      {ordered.map((c) => (
-        <CodeCard
-          key={c.fingerprint}
-          aria-label={`Command for ${c.uses.join(', ')}`}
-          title={c.uses.join(', ')}
-          aside={waiting.has(c.fingerprint) ? (
-            <span className="flex items-center gap-2">
-              <Badge tone="waiting">Not approved</Badge>
-              <Button type="button" size="sm" pending={approving} onClick={() => void approve([c.fingerprint])}>Approve</Button>
-            </span>
-          ) : 'Approved'}
-          code={commandText(c)}
-        />
+      {main}
+      {worktrees.map((w) => (
+        <section key={w.worktreeId} aria-label={`Waiting in ${w.branch}`} className="flex flex-col gap-2">
+          <SectionLabel as="h4" className="pt-2">{w.ticketKey ? `${w.ticketKey} · ` : ''}Waiting in {w.branch}</SectionLabel>
+          {w.commands.map((c) => (
+            <CommandRow key={c.fingerprint} command={c} waiting approve={(f) => void approve(f)} approving={approving} />
+          ))}
+        </section>
       ))}
     </div>
   );

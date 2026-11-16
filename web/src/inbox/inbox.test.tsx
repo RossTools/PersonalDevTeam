@@ -400,6 +400,21 @@ describe('inbox', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/inbox/n/dismiss')).toBe(true));
   });
 
+  it('approves a command an agent waits on in place, as the user (PDT-611)', async () => {
+    const command = { fingerprint: 'fp', uses: ['test "check"'], setup: null, command: 'scripts/check.sh', env: {} };
+    const notice = item('c', {
+      kind: 'notice', group: 'notice', stepId: null, ticketId: null, projectId: 'p', title: 'A command waits on your approval',
+      body: { notice: null, key: 'untrusted-commands', fingerprint: 'fp', command, text: 'The test "check" on agent-work waits on a command' },
+    });
+    const calls = stubApi({ 'POST /api/projects/p/commands/trust': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[notice]} selectedId="c" onSelect={() => {}} />);
+    const region = screen.getByRole('region', { name: 'Command to approve' });
+    expect(region).toHaveTextContent('The test "check" on agent-work');
+    expect(within(region).getByRole('group', { name: 'The command' })).toHaveTextContent('scripts/check.sh');
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/projects/p/commands/trust')?.body).toEqual({ fingerprints: ['fp'] }));
+  });
+
   it('shows a triaged ticket with its notes and issue: Enter approves it, Reject rejects it (PDT-225)', async () => {
     const triaged = item('a', {
       kind: 'admit', group: 'admit', runId: 'r', stepId: null, title: 'Crash on start',

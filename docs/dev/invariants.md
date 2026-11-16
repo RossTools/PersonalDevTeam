@@ -83,7 +83,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   committed file, never the worktree's). An approval is the command's fingerprint (setup, command, env), kept in
   `trusted_commands`; only the UI token approves (`POST …/commands/trust`, or overrides saved from the web app).
   Projects from before carry a `legacy` mark that trusts the main checkout's commands once. A new place that runs a
-  configured command checks it first.
+  configured command checks it first, and when nobody in the web app sees the refusal (an agent's call, a restart of
+  its own) uses `check_telling`, so the Inbox notice (deduplicated per fingerprint, closed by the approval) carries
+  the command for its Approve.
 - **Making tickets over the HTTP API records the user only with the UI token** (pdt-api `tickets::creator`, also
   parts): without it the caller is an agent, the session its `x-agent-session` header names (persona, the ticket it
   works on), and the ticket's source is `agent` (`pm`, `external` for a PM or triage session). The web client sends

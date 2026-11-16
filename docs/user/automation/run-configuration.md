@@ -38,12 +38,15 @@ cloned, a branch, an agent working in a ticket's folder. So PDT runs a command o
 
 - **Starting a run or test** whose command PDT hasn't run before shows the command first. **Approve and run** starts
   it; PDT doesn't ask again for that command.
-- **CI and regeneration rules** wait instead, and the Inbox says what's waiting. Approve the command in the project's
-  **Settings**, under **Runs on this host** › **Commands**, which lists every command with what uses it. CI starts on
-  its own once you approve it.
+- **An agent's run or test, CI and regeneration rules** wait instead, and the Inbox shows the command with
+  **Approve**. Once you approve it, the agent can start it again and CI starts on its own.
+- **The project's Settings**, under **Runs on this host** › **Commands**, list every command with what uses it, and
+  below them the commands waiting in the project's worktrees, under each one's ticket and branch: an agent's first
+  `.pdt/project.toml`, or one it changed. Approve them there before anything runs them.
 - **A changed command is a new command.** Editing a run's command, its `setup` or its `env` asks again, wherever the
   change comes from.
 - **Commands you write in the host overrides** count as approved when you save them.
+- **An approval covers the whole project**: a command you approve runs in every branch and worktree.
 
 A project you add starts with nothing approved. You approve commands in PDT's own window, and agents aren't given a way
 to approve one for you.

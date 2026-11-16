@@ -10,11 +10,12 @@ export const runsApi = {
   listRuns: (projectId: string, q: { ended?: number } = {}) =>
     request<Run[]>(`/api/projects/${enc(projectId)}/runs${queryString(q)}`),
   listActiveRuns: () => request<Run[]>('/api/runs'),
+  /** As the user, so a refusal for an unapproved command is shown here rather than in the Inbox, as an agent's is. */
   startRun: (projectId: string, r: NewRun) =>
-    request<Run>(`/api/projects/${enc(projectId)}/runs`, { method: 'POST', body: JSON.stringify(r) }),
+    request<Run>(`/api/projects/${enc(projectId)}/runs`, { method: 'POST', body: JSON.stringify(r) }, { asUser: true }),
   stopRun: (id: string) => request<void>(`/api/runs/${enc(id)}/stop`, { method: 'POST' }),
   restartRun: (id: string, stopRunId?: string) =>
-    request<Run>(`/api/runs/${enc(id)}/restart`, { method: 'POST', body: JSON.stringify(stopRunId ? { stopRunId } : {}) }),
+    request<Run>(`/api/runs/${enc(id)}/restart`, { method: 'POST', body: JSON.stringify(stopRunId ? { stopRunId } : {}) }, { asUser: true }),
   resetRunData: (id: string) => request<void>(`/api/runs/${enc(id)}/reset-data`, { method: 'POST' }),
   deleteRun: (id: string) => request<void>(`/api/runs/${enc(id)}`, { method: 'DELETE' }),
   runConfig: (projectId: string, worktreeId: string | null) =>
