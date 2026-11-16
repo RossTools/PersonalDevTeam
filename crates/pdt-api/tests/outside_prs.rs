@@ -830,23 +830,33 @@ async fn a_merge_that_is_no_longer_set_asks_and_a_push_hands_it_on() {
     assert_eq!(r["status"], "quiet", "the push's run takes over: {r}");
 }
 
-/// PDT-609: a pull request whose text is far over a message's 64 KB (Dependabot's release notes) is still reviewed,
-/// its text cut, with where the rest is.
+/// Dependabot's text for a grouped update (#613): its release notes, at GitHub's cap of 65,535 characters.
+const DEPENDABOT_BODY: &str = include_str!("fixtures/outside_prs/dependabot-613-body.md");
+
+/// PDT-609: a pull request whose text is over a message's 64 KB (Dependabot's release notes, #613) is still
+/// reviewed, its text cut, with where the rest is.
 #[tokio::test]
 async fn an_oversized_pull_request_is_reviewed_with_its_text_cut() {
     let env = setup_with(Some(None)).await;
     let mut seen = HashSet::new();
+    assert_eq!(DEPENDABOT_BODY.chars().count(), 65_535, "GitHub's cap");
     let pr = RepoChangeRequest {
-        title: format!("Bump the pnpm group with 15 updates {}", "x".repeat(20_000)),
-        body: "Release notes. ".repeat(10_000),
-        ..outside(38, "al", "", "patch-38", 1)
+        body: DEPENDABOT_BODY.into(),
+        ..outside(
+            38,
+            "dependabot[bot]",
+            "deps: bump the pnpm-minor-patch group across 1 directory with 16 updates",
+            "dependabot/npm_and_yarn/pnpm-minor-patch",
+            1,
+        )
     };
     look(&env, vec![pr.clone()]).await;
     let session = reviewer(&env, &mut seen).await;
     let prompt = first_prompt(&env, &session).await;
     assert!(prompt.len() < pdt_core::conversation::MAX_MESSAGE, "{}", prompt.len());
-    assert_eq!(prompt.matches(&format!("the full text is at {}]", pr.url)).count(), 2, "the title and the body");
-    assert!(prompt.contains("Bump the pnpm group with 15 updates") && prompt.contains("change_request_diff"));
+    assert_eq!(prompt.matches(&format!("the full text is at {}]", pr.url)).count(), 1, "the body only");
+    assert!(prompt.contains("Bumps the pnpm-minor-patch group with 16 updates"), "its head is kept");
+    assert!(prompt.contains("16 updates") && prompt.contains("change_request_diff"));
     review(&env, &session, "merge", "").await;
 }
 
