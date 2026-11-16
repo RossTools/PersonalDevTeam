@@ -727,17 +727,154 @@ async fn the_template_with_tickets_on_makes_a_ticket_per_pr() {
 async fn the_template_still_merges_dependabot_patches_on_green_ci() {
     let env = setup_with(Some(None)).await;
     let bump = outside(33, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", "dependabot/cargo/serde", 1);
-    look(&env, vec![bump]).await;
+    look(&env, vec![bump.clone()]).await;
     let id = newest_run(&env).await;
     assert_eq!(waiting(&env, &id).await.0, "wait_ci");
     assert_eq!(reviewer_sessions(&env).await, 0, "no review");
     env.gh.set_runs("dependabot/cargo/serde", vec![ci("dependabot/cargo/serde", "sha-33", CiState::Passed)]);
     time_passes(&env, &id).await;
-    assert_eq!(run(&env, &id).await["status"], "succeeded");
     let calls = env.gh.calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 33 squash")), "{calls:?}");
+    // Set to merge, it is watched until GitHub merges it (PDT-609).
+    assert_eq!(waiting(&env, &id).await.0, "watch_wait");
+    merges(&env, &bump);
+    time_passes(&env, &id).await;
+    assert_eq!(run(&env, &id).await["status"], "succeeded");
     assert!(gates(&env).await.is_empty());
     assert_eq!(ticket_count(&env).await, 0);
+}
+
+/// GitHub has `p` set to merge (auto-merge on, or in the merge queue).
+fn set_to_merge(env: &Env, p: &RepoChangeRequest, queued: bool) {
+    let c =
+        ChangeRequest { auto_merge: !queued, in_merge_queue: queued, queue_position: queued.then_some(1), ..change(p) };
+    env.gh.set_pr(&p.head_branch, Some(c));
+}
+
+/// GitHub merges `p`.
+fn merges(env: &Env, p: &RepoChangeRequest) {
+    env.gh.set_pr(&p.head_branch, Some(ChangeRequest { state: PrState::Merged, ..change(p) }));
+}
+
+/// A Dependabot patch on the template, its CI green, set to merge: the run watches it (PDT-609).
+async fn queued_patch(env: &Env, n: u32) -> (String, RepoChangeRequest) {
+    let branch = format!("dependabot/cargo/serde-{n}");
+    let bump = outside(n, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", &branch, 1);
+    look(env, vec![bump.clone()]).await;
+    let id = newest_run(env).await;
+    env.gh.set_runs(&branch, vec![ci(&branch, &format!("sha-{n}"), CiState::Passed)]);
+    time_passes(env, &id).await;
+    assert_eq!(waiting(env, &id).await.0, "watch_wait");
+    (id, bump)
+}
+
+/// PDT-609: a merge left in the merge queue is read again and again, quietly, until it merges.
+#[tokio::test]
+async fn a_queued_merge_is_watched_until_it_merges() {
+    let env = setup_with(Some(None)).await;
+    let (id, bump) = queued_patch(&env, 34).await;
+    set_to_merge(&env, &bump, true);
+    for _ in 0..2 {
+        time_passes(&env, &id).await;
+        assert_eq!(waiting(&env, &id).await.0, "watch_wait", "still queued");
+    }
+    assert!(gates(&env).await.is_empty(), "nothing asked while it waits in the queue");
+    merges(&env, &bump);
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "merged"), "{r}");
+    assert!(gates(&env).await.is_empty());
+}
+
+/// PDT-609: the merge queue dropping a queued merge (failed checks) asks "Didn't merge", saying why.
+#[tokio::test]
+async fn a_queued_merge_the_queue_drops_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let (id, bump) = queued_patch(&env, 35).await;
+    set_to_merge(&env, &bump, true);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "watch_wait");
+    // The queue's checks fail: it takes the pull request out, and auto-merge goes off.
+    let removal = pdt_core::pr::QueueRemoval {
+        id: "r1".into(),
+        reason: pdt_core::pr::QueueRemovalReason::FailedChecks,
+        by_queue: true,
+    };
+    env.gh.set_pr(&bump.head_branch, Some(ChangeRequest { queue_removal: Some(removal), ..change(&bump) }));
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "blocked");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "Didn't merge: ask me", "{gate}");
+    let q = gate["body"]["question"].as_str().unwrap();
+    assert!(q.contains("The merge queue removed it: its checks failed."), "{q}");
+    assert_eq!(gate["changeRequest"]["url"], bump.url, "{gate}");
+}
+
+/// PDT-609: one taken off auto-merge while it waited asks too; a push instead hands it to the push's run.
+#[tokio::test]
+async fn a_merge_that_is_no_longer_set_asks_and_a_push_hands_it_on() {
+    let env = setup_with(Some(None)).await;
+    let (id, _) = queued_patch(&env, 36).await;
+    // Still open, CI green, but nothing will merge it.
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "blocked");
+    let q = gates(&env).await[0]["body"]["question"].as_str().unwrap().to_string();
+    assert!(q.contains("It isn't set to merge."), "{q}");
+
+    let (id, bump2) = queued_patch(&env, 37).await;
+    let pushed = ChangeRequest { head_sha: "sha-37b".into(), ..change(&bump2) };
+    env.gh.set_pr(&bump2.head_branch, Some(pushed));
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "quiet", "the push's run takes over: {r}");
+}
+
+/// PDT-609: a pull request whose text is far over a message's 64 KB (Dependabot's release notes) is still reviewed,
+/// its text cut, with where the rest is.
+#[tokio::test]
+async fn an_oversized_pull_request_is_reviewed_with_its_text_cut() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    let pr = RepoChangeRequest {
+        title: format!("Bump the pnpm group with 15 updates {}", "x".repeat(20_000)),
+        body: "Release notes. ".repeat(10_000),
+        ..outside(38, "al", "", "patch-38", 1)
+    };
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let prompt = first_prompt(&env, &session).await;
+    assert!(prompt.len() < pdt_core::conversation::MAX_MESSAGE, "{}", prompt.len());
+    assert_eq!(prompt.matches(&format!("the full text is at {}]", pr.url)).count(), 2, "the title and the body");
+    assert!(prompt.contains("Bump the pnpm group with 15 updates") && prompt.contains("change_request_diff"));
+    review(&env, &session, "merge", "").await;
+}
+
+/// PDT-609: a review that fails (here its agent is switched off) asks in the Inbox, and Retry review runs it again.
+#[tokio::test]
+async fn a_failed_review_asks_and_retries() {
+    let env = setup_with(Some(None)).await;
+    let put = |body: Value| call(&env.app, "PUT", "/api/host/settings", Some(body));
+    let (s, v) = put(json!({"defaultAgent": "codex", "disabledAgents": ["claude"]})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let pr = outside(39, "al", "Fix the board", "patch-39", 1);
+    look(&env, vec![pr.clone()]).await;
+    let id = newest_run(&env).await;
+    let (node, step) = waiting(&env, &id).await;
+    assert_eq!(node, "review_failed");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "Review failed: ask me", "{gate}");
+    let q = gate["body"]["question"].as_str().unwrap();
+    assert!(q.contains("The review of **[") && q.contains(" failed: PR Reviewer: "), "{q}");
+    assert_eq!(gate["changeRequest"]["url"], pr.url, "{gate}");
+    assert_eq!(reviewer_sessions(&env).await, 0);
+
+    let (s, v) = put(json!({"defaultAgent": "claude", "disabledAgents": []})).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    answer(&env, &id, &step, "retry_review", None).await;
+    let session = reviewer(&env, &mut HashSet::new()).await;
+    review(&env, &session, "merge", "").await;
+    untouched(&env.gh);
 }
 
 /// Dry runs of both settings: an outsider's pull request goes through the review to the Inbox, with the ticket steps

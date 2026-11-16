@@ -192,7 +192,9 @@ fn outside_fields(reg: &crate::integrations::Registry, trigger: &Value) -> Vec<&
 /// `{{trigger.body.message}}`) put in a block tagged with an id picked for this prompt, and the fixed instruction goes
 /// before it. Other fields, and other nodes, get the text as it is, as do the fields of a trigger the user wrote (`byUser`). In a
 /// sub-workflow's run whose `origin` (the trigger of the run that called it first) carries outside text, all of the
-/// trigger (its input) counts as outside (PDT-415).
+/// trigger (its input) counts as outside (PDT-415). Each outside text is cut to a budget (PDT-609; the trigger's `url`
+/// is where the whole text is), smaller again while a field is longer than `PROMPT_MAX`, so outside text can't make a
+/// message too long to send: only the outside text is cut.
 pub(crate) fn fence_input(
     reg: &crate::integrations::Registry,
     fields: &[&str],
@@ -211,12 +213,24 @@ pub(crate) fn fence_input(
     if outside.is_empty() {
         return;
     }
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    use pdt_core::fence::{BUDGET, Fence, MIN_BUDGET, PROMPT_MAX, resolve_fenced};
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let link = ctx["trigger"]["url"].as_str();
     for f in fields {
         let (Some(raw), Some(slot)) = (config.get(*f), input.get_mut(*f)) else { continue };
-        let fenced = pdt_core::fence::resolve_fenced(raw, ctx, &["event", "secret"], "trigger", &outside, &fence);
-        if let Value::String(text) = fenced {
-            *slot = Value::String(fence.with_note(&text));
+        let mut budget = BUDGET;
+        loop {
+            let fence = Fence::new(id.clone()).with_budget(budget, link);
+            let Value::String(text) = resolve_fenced(raw, ctx, &["event", "secret"], "trigger", &outside, &fence)
+            else {
+                break;
+            };
+            let text = fence.with_note(&text);
+            if text.len() <= PROMPT_MAX || budget <= MIN_BUDGET {
+                *slot = Value::String(text);
+                break;
+            }
+            budget /= 2;
         }
     }
 }
@@ -1070,4 +1084,38 @@ pub async fn install_builtins(st: &AppState) {
     let _engine = st.engine_lock.lock().await;
     super::builtins::ensure_installed(st).await;
     crate::personas::ensure_builtins(st).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdt_core::fence::{BUDGET, PROMPT_MAX};
+
+    /// PDT-609: a pull request's text, however long, is cut to fit a message, the rest of the prompt kept whole.
+    #[test]
+    fn outside_text_is_cut_to_fit_a_message() {
+        let reg = crate::integrations::test_registry();
+        let url = "https://github.com/o/r/pull/605";
+        let ctx = json!({"trigger": {
+            "type": pdt_core::workflow::events::GITHUB_PR_OPENED, "url": url, "number": 605,
+            "title": "Bump the pnpm group with 15 updates", "body": "release notes ".repeat(20_000)}});
+        let fill = |prompt: &str| {
+            let config = json!({"prompt": prompt});
+            let mut input = config.clone();
+            fence_input(reg, &["prompt"], &config, &ctx, None, &mut input);
+            input["prompt"].as_str().unwrap().to_string()
+        };
+        let p = fill("Review #{{trigger.number}}: {{trigger.title}}\n\n{{trigger.body}}\n\nThe end of the task.");
+        assert!(p.len() <= BUDGET + 2048, "the body is cut to the budget: {}", p.len());
+        assert!(p.contains("Review #605: <untrusted id=") && p.ends_with("The end of the task."), "{p}");
+        assert!(p.contains(&format!("KB of that text was cut; the full text is at {url}]")), "{p}");
+        assert!(p.contains("Bump the pnpm group with 15 updates"), "a short title stays whole");
+        // The body many times over: each copy is cut further, until the prompt fits.
+        let p = fill(&"{{trigger.body}}\n".repeat(12));
+        assert!(p.len() <= PROMPT_MAX, "{}", p.len());
+        assert_eq!(p.matches("the full text is at").count(), 12);
+        // Text from inside PDT is never cut.
+        let long = "x".repeat(100_000);
+        assert_eq!(fill(&long), long);
+    }
 }

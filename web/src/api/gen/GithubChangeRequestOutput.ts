@@ -22,4 +22,12 @@ ciUrl?: string,
 /**
  * With `ci`, when `failed`: the failed jobs (`workflow: job`), as a Markdown list.
  */
-failedJobs?: string, };
+failedJobs?: string, 
+/**
+ * With `ci`, when open: whether it is set to merge (in the merge queue, on auto-merge, or held for PDT to merge).
+ */
+mergeSet?: boolean, 
+/**
+ * With `ci`, when open: how it stands to merge, in a sentence ("It is in the merge queue (position 2).").
+ */
+mergeNote?: string, };
