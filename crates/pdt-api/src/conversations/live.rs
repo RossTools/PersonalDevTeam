@@ -426,6 +426,12 @@ pub(super) async fn append(
     }
     let scrubbed = integration_hooks(st, &mut event, raw);
     let raw = scrubbed.as_deref().or(raw);
+    // Held for the user's yes before anyone can see the request to answer it (PDT-606).
+    if let AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } = &event
+        && pdt_request(id, tool)
+    {
+        crate::pm::request_opening(st, &c.id, id, tool, input);
+    }
     // The runtime state follows the event as it comes, whether or not it can be stored yet: a message the agent took
     // leaves the queue even while the disk is full (PDT-331). What reads the log waits until it is stored.
     let (state_changed, then) = apply_event(c, item_id, &event);
@@ -481,6 +487,11 @@ impl FollowUp {
     }
 }
 
+/// Whether a request is the agent's for one of PDT's tools (not one PDT asks itself, [`super::held`]).
+fn pdt_request(id: &str, tool: &str) -> bool {
+    tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) && !super::held::is_held(id)
+}
+
 /// Applies an event to the conversation's runtime state: whether the state viewers see changed, and what it sets off.
 fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Vec<FollowUp>) {
     let mut then = Vec::new();
@@ -512,7 +523,7 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
         AgentEvent::Request { id, state: RequestState::Open, tool, input, .. } => {
             s.open_requests.insert(id.clone());
             // PDT's own requests are the user's to answer (PDT-490).
-            if tool.starts_with(&format!("mcp__{}__", pdt_core::mcp::SERVER_NAME)) && !super::held::is_held(id) {
+            if pdt_request(id, tool) {
                 then.push(FollowUp::PdtRequest { id: id.clone(), tool: tool.clone(), input: input.clone() });
             }
             true

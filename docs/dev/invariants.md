@@ -70,6 +70,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   prompt or proposal), not a process that means to: `GET /api/ui/token` hands the token to any request that sends
   `Sec-Fetch-Site: same-origin`, which a local process can (see "Requests" for the trust model). A new route that acts
   as the user still checks the token, and nothing may treat it as proof a person clicked.
+- **A PM call that may let an external ticket in is held for the user's yes before its request can be seen**
+  (`pm::request_opening`, called as the `Request` event comes in, before it is stored): the user's Allow only counts
+  for a held request (`Grants::answered`), so holding it later (in `pm::request_opened`, a spawned task) loses a yes
+  given at once. `request_opened` lets go of one that turns out not to need the user.
+- **A closing PM conversation ends only after its journal request was queued** (`pm::turn_ended`): `close` and
+  `reset` set the rotation to `journal` and then queue the request (which reopens a parked conversation). A turn that
+  ends in between must not end it, or the request queued after reopens a conversation nothing ends again.
 - **A run configuration's commands run only once the user approved them** (pdt-core `command_trust.rs`, pdt-api
   `command_trust.rs`): runs and tests (`runs::create`, `restart`, and `run_manager`'s restarts), the local forge's
   `[ci] command` (it waits, with an Inbox notice) and `[[merge.regenerate]]` rules (read from the base branch's

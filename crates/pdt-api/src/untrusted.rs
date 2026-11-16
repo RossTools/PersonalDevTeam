@@ -34,6 +34,11 @@ impl Grants {
         p.insert((session_id.into(), request_id.into()), (tool.into(), input.clone()));
     }
 
+    /// A held request that turned out not to need the user.
+    pub(crate) fn release(&self, session_id: &str, request_id: &str) {
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&(session_id.into(), request_id.into()));
+    }
+
     /// The user answered a request in the UI: a yes to a held one is good for one call with that input.
     pub(crate) fn answered(&self, session_id: &str, request_id: &str, approved: bool) {
         let held =
@@ -144,6 +149,11 @@ pub(crate) fn decides_proposal(t: &TicketSummary, p: &pdt_core::ticket::ValidPat
         .map_err(|m| ApiError::forbidden(codes::TICKET_PROPOSAL, m))
 }
 
+/// Whether a pdt-mcp tool's calls can be ones PDT never answers for the user ([`needs_the_user`]), from its name alone.
+pub(crate) fn may_need_the_user(tool: &str) -> bool {
+    tool == "edit_ticket"
+}
+
 /// Whether a pdt-mcp call (`tool`, `input`) from a session is one PDT never answers for the user (PDT-201): the PM's
 /// `edit_ticket` letting an external ticket in.
 pub(crate) async fn needs_the_user(st: &AppState, s: &Session, tool: &str, input: &Value) -> bool {
@@ -155,7 +165,7 @@ pub(crate) async fn needs_the_user(st: &AppState, s: &Session, tool: &str, input
         #[serde(default)]
         labels: Option<Vec<String>>,
     }
-    if tool != "edit_ticket" {
+    if !may_need_the_user(tool) {
         return false;
     }
     let Ok(e) = serde_json::from_value::<Edit>(input.clone()) else { return false };
