@@ -38,6 +38,17 @@ const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_br
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
 
+/// [`Store::unannounced_starts`]'s query, run by the pickup watch every pass (PDT-614): it starts from the few active
+/// attempts (`CROSS JOIN` keeps them the outer loop), finds each one's `started` event by its ticket and time (Start
+/// writes both with the same `now`; `+e.kind` keeps it on `ticket_events_by_ticket`), and looks for that event's log
+/// copy by key, so it searches indexes and never scans the timeline or the event log.
+pub(crate) const UNANNOUNCED_STARTS: &str = "SELECT a.ticket_id, a.created_at FROM attempts a \
+     CROSS JOIN ticket_events e ON e.ticket_id = a.ticket_id AND e.created_at = a.created_at AND +e.kind = 'started' \
+       AND json_extract(e.data, '$.attemptId') = a.id \
+     WHERE a.state = 'active' AND a.created_at >= ? AND a.created_at < ? \
+       AND NOT EXISTS (SELECT 1 FROM events v WHERE v.key = e.id AND v.source = 'tickets') \
+     ORDER BY a.created_at";
+
 fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
     let pkey: String = r.try_get("pkey")?;
     Ok(AttemptInfo {
@@ -193,18 +204,8 @@ impl Store {
     /// reached the event log (pdtd stopped, or the write failed, between the attempt and its announcement), each with
     /// the timeline events its start made (the stage change and `started`), to announce now.
     pub async fn unannounced_starts(&self, since: i64, before: i64) -> Result<Vec<(String, Vec<String>)>, StoreError> {
-        let rows: Vec<(String, i64)> = sqlx::query_as(
-            "SELECT a.ticket_id, a.created_at FROM attempts a \
-             JOIN ticket_events e ON e.ticket_id = a.ticket_id AND e.kind = 'started' \
-               AND json_extract(e.data, '$.attemptId') = a.id \
-             WHERE a.state = 'active' AND a.created_at >= ? AND a.created_at < ? \
-               AND NOT EXISTS (SELECT 1 FROM events v WHERE v.key = e.id AND v.source = 'tickets') \
-             ORDER BY a.created_at",
-        )
-        .bind(since)
-        .bind(before)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as(UNANNOUNCED_STARTS).bind(since).bind(before).fetch_all(&self.pool).await?;
         let mut out = vec![];
         for (ticket, at) in rows {
             let ids: Vec<(String,)> = sqlx::query_as(

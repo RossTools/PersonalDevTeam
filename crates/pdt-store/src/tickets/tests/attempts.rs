@@ -260,3 +260,48 @@ async fn sessions_carry_their_ticket_and_tickets_list_their_sessions() {
     let s = store.get_session("s1").await.unwrap().unwrap();
     assert_eq!((s.attempt_id, s.ticket), (None, None));
 }
+
+/// PDT-614: the pickup watch looks for half-done starts every pass, so on a store with a long history it searches
+/// indexes from the few active attempts instead of scanning the timeline and the event log.
+#[tokio::test]
+async fn half_done_starts_are_found_by_index_on_a_long_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = store_with_project(tmp.path()).await;
+    add(&store, "a", new("Announced")).await;
+    add(&store, "b", new("Half done")).await;
+    // A long history: 20k timeline events (old starts among them) and 100k logged events.
+    sqlx::query(
+        "INSERT INTO ticket_events (id, ticket_id, kind, actor, data, created_at) \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000) \
+         SELECT 'old' || i, 'a', CASE i % 3 WHEN 0 THEN 'started' ELSE 'comment' END, 'user', \
+           json_object('attemptId', 'old' || i), i FROM n",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO events (id, type, key, source, payload, created_at) \
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 100000) \
+         SELECT 'ev' || i, 'ticket.commented', 'old' || i, 'tickets', '{}', i FROM n",
+    )
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    let t = 1_000_000;
+    let a = store.start_attempt("at-a", "a", None, "a", "main", "abc", json!({}), t).await.unwrap();
+    store.announce_start(&a, t + 1).await.unwrap();
+    let b = store.start_attempt("at-b", "b", None, "b", "main", "abc", json!({}), t + 2).await.unwrap();
+
+    let started = std::time::Instant::now();
+    let half_done = store.unannounced_starts(0, t + 10).await.unwrap();
+    let took = started.elapsed();
+    assert_eq!(half_done, [("b".to_string(), b.event_ids.clone())], "the start whose events never reached the log");
+    assert!(store.unannounced_starts(t + 3, t + 10).await.unwrap().is_empty(), "made before `since`");
+    assert!(store.unannounced_starts(0, t + 2).await.unwrap().is_empty(), "made at or after `before`");
+    assert!(took < std::time::Duration::from_millis(500), "took {took:?}");
+
+    let plan = crate::query_plans::plan(&store, crate::tickets::attempts::UNANNOUNCED_STARTS).await;
+    assert_eq!(crate::query_plans::scans(&plan), ["SCAN a USING INDEX one_active_attempt"], "{plan:#?}");
+    assert!(plan.iter().any(|d| d.contains("USING INDEX ticket_events_by_ticket")), "{plan:#?}");
+    assert!(plan.iter().any(|d| d.contains("USING INDEX events_by_key")), "{plan:#?}");
+}

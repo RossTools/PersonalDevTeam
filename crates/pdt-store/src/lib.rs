@@ -11,6 +11,8 @@ mod migrate;
 mod notifications;
 mod personas;
 mod pm;
+#[cfg(test)]
+mod query_plans;
 mod review;
 mod runs;
 mod secrets;
@@ -37,7 +39,7 @@ pub use tickets::{
     AttemptInfo, DeleteTicket, Made, OverlapRow, PartRow, StartedAttempt, StoredExternalLink, TicketError,
 };
 pub use todos::TodoFilter;
-pub use workflows::{RUN_RETENTION_MS, RunFilter, SessionMessage};
+pub use workflows::{QUIET_RUN_RETENTION_MS, RUN_RETENTION_MS, RunFilter, SessionMessage};
 pub use workspaces::DeleteWorkspace;
 pub use worktrees::WorktreeTicketRow;
 
