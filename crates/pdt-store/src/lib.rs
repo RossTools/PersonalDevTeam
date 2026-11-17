@@ -11,6 +11,8 @@ mod migrate;
 mod notifications;
 mod personas;
 mod pm;
+#[cfg(test)]
+mod query_plans;
 mod review;
 mod runs;
 mod secrets;
