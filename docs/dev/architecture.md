@@ -221,7 +221,8 @@ the project's overrides stay the same, so the 2 s polls don't re-read it; a file
 **Sessions.** An agent session runs as a terminal (the agent's own TUI in a PTY) or a conversation (PDT's structured
 view: Claude's stream-json, a PDT-owned Codex app-server, Devin and other agents over ACP). Conversation events are
 stored in `session_events` (in the order received; while writes fail they wait in memory, and a Claude conversation's
-gaps are filled in from its transcript when it loads); terminals keep their scrollback in memory, and a shell also tees its output to `sessions/<id>/output.log` in the
+gaps are filled in from its transcript in the background after it first loads, the rows it adds or moves going to its
+viewers as live events); terminals keep their scrollback in memory, and a shell also tees its output to `sessions/<id>/output.log` in the
 data dir (pdt-agents `output_file`, capped and rotated at the scrollback size), which the next process of that session
 shows above a divider. Every agent gets PDT's instructions (pdt-core
 `agent_context`, plus the project's agent instructions and the ticket), written to the session's folder and passed in
@@ -245,6 +246,14 @@ become pills with a hover card (`TicketPill.tsx`, fetched on first hover; the on
 ticket, on `@ui` `Chip`, also in the Inbox; `isTicketKey` in `tickets/model.ts` is the one key pattern), `#12` and the forge's PR links PR pills,
 inline-code file paths links to the file viewer once the session's folder has them, SHAs muted, tables framed with
 status chips. Without it (ticket descriptions, notes) Markdown only links ticket keys.
+
+Opening a conversation: `useConversation` holds the events socket's replay until `ready` and applies it as one
+action, showing a skeleton until then; the last few conversations' models stay in memory, so one opened again shows
+what it had at once and asks only for what came after. `MessageList` renders the latest `WINDOW` blocks, and earlier
+ones a window at a time as the reader scrolls near the top (or clicks Show earlier messages), keeping the block that
+was first in place on screen; the first block shown stays fixed as new ones arrive. Each block re-renders only when
+its rows or streamed text change (`BlockView`, `reuseBlocks`). A scrolled-up position is kept as the distance from
+the bottom, and enough windows are shown to get back there.
 
 **pdt-mcp.** PDT's MCP server at `/api/mcp` (pdt-api `mcp/`). Each session gets a token (its id, signed with a key in
 the data folder) and the tools of its persona; each tool calls the API route's own function. Tools that need the

@@ -26,6 +26,18 @@ describe('conversation reducer', () => {
     expect(m.maxSeq).toBe(4);
   });
 
+  it('a gap filled in moves the rows after it: each place shows its newest row once', () => {
+    const notice = { kind: 'notice', level: 'info', text: 'n' } as const;
+    const m = run([
+      { type: 'event', event: ev(1, 1, { kind: 'user_message', text: 'hi', images: [], source: 'pdt' }, 'u:1') },
+      { type: 'event', event: ev(2, 2, notice) },
+      // The gap: one row in after the first; the notice, which has no item id, moves down under a new seq.
+      { type: 'event', event: ev(5, 3, notice) },
+      { type: 'event', event: ev(6, 2, { kind: 'reasoning', summary: 'lost' }, 'th:1') },
+    ]);
+    expect(sortedRows(m).map((r) => [r.pos, r.seq])).toEqual([[1, 1], [2, 6], [3, 5]]);
+  });
+
   it('ignores an older version of an item that arrives late', () => {
     const m = run([
       { type: 'event', event: ev(4, 2, tool('done'), 't:t1') },

@@ -241,9 +241,9 @@ pub fn claude_project_folder(cwd: &str) -> String {
 }
 
 /// Claude's transcript of a session started in `cwd`: `<config dir>/projects/<project folder>/<session id>.jsonl`, once
-/// it has one. The folder `cwd` names is checked first; only when the file is not there is every project folder
-/// (one per working folder Claude ever ran in, so it grows with each worktree) scanned. Reads the file system: call
-/// it on the blocking pool.
+/// it has one. The folder `cwd` names is checked first, then where a scan found it before; only when the file is in
+/// neither is every project folder (one per working folder Claude ever ran in, so it grows with each worktree)
+/// scanned. Reads the file system: call it on the blocking pool.
 pub fn claude_transcript(config_dir: &Path, cwd: &str, session_id: &str) -> Option<PathBuf> {
     let root = config_dir.join("projects");
     let file = format!("{session_id}.jsonl");
@@ -251,8 +251,19 @@ pub fn claude_transcript(config_dir: &Path, cwd: &str, session_id: &str) -> Opti
     if direct.is_file() {
         return Some(direct);
     }
-    std::fs::read_dir(root).ok()?.flatten().map(|d| d.path().join(&file)).find(|p| p.is_file())
+    // A scan of hundreds of folders, once per transcript and pdtd (PDT-619).
+    let found = SCANNED.lock().unwrap_or_else(|e| e.into_inner()).get(&(root.clone(), file.clone())).cloned();
+    if let Some(p) = found.filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    let p = std::fs::read_dir(&root).ok()?.flatten().map(|d| d.path().join(&file)).find(|p| p.is_file())?;
+    SCANNED.lock().unwrap_or_else(|e| e.into_inner()).insert((root, file), p.clone());
+    Some(p)
 }
+
+/// Where [`claude_transcript`]'s scans found transcripts, by projects folder and file name.
+static SCANNED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, String), PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// Runs `shell args` and returns the last line of its stdout, or None if it fails, prints nothing or outlives `timeout`.
 fn login_path_from(shell: &str, args: &[&str], timeout: Duration) -> Option<String> {
@@ -428,6 +439,14 @@ mod tests {
         std::fs::create_dir_all(&other).unwrap();
         std::fs::write(other.join("def.jsonl"), "{}\n").unwrap();
         assert_eq!(claude_transcript(dir.path(), "/work/repo", "def"), Some(other.join("def.jsonl")));
+        // Found there again without a scan; moved since, found by scanning again.
+        assert_eq!(claude_transcript(dir.path(), "/work/repo", "def"), Some(other.join("def.jsonl")));
+        let third = projects.join("-third");
+        std::fs::create_dir_all(&third).unwrap();
+        std::fs::rename(other.join("def.jsonl"), third.join("def.jsonl")).unwrap();
+        assert_eq!(claude_transcript(dir.path(), "/work/repo", "def"), Some(third.join("def.jsonl")));
+        std::fs::remove_file(third.join("def.jsonl")).unwrap();
+        assert_eq!(claude_transcript(dir.path(), "/work/repo", "def"), None);
     }
 
     #[tokio::test]

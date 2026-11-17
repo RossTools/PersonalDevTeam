@@ -288,7 +288,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   with a backoff and stored in the order received, and only a stored event goes to viewers. What reads the log (a
   turn's end, the PM's hooks) runs once the event is stored. A Claude conversation's log is checked for gaps against
   Claude's transcript the first time it loads in a pdtd (`repair_gaps`, by item id; only messages, tool calls and
-  reasoning, since turn markers of turns the agent starts on its own have other ids live).
+  reasoning, since turn markers of turns the agent starts on its own have other ids live). The check runs in the
+  background, claimed per conversation (`Conversations::claim_repair`), and never holds a lock while it reads: a
+  load never waits on it, nor on another conversation's. What it inserts, and the rows it moves (new `seq`s), go to
+  the conversation's viewers; the web keeps the newest row in each `pos`.
 - **An agent's output is read with backpressure.** An adapter sends into an `EventSink` (pdt-agents
   `adapter/sink.rs`) without waiting, and its reader awaits `sink.ready()` before the next frame, so a conversation
   whose store lags pauses reading the agent's pipe (Codex: the whole app-server connection). Read lines with
@@ -399,8 +402,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   go through `launch::find_launch` or `spawn_blocking`, and so do `PtyManager::spawn`/`remove`/`kill`
   (`AppState::kill_pty`/`remove_pty`). Killing a tree from async code or a `Drop` uses `proc::kill_group` (Windows'
   `taskkill` starts on a thread of its own). The same goes for folders that grow with use: Claude's transcript is
-  looked up in its working folder's project first (`launch::claude_transcript`), and only scanned for on a miss, on
-  the blocking pool. `PtyManager` holds its map lock only to look
+  looked up in its working folder's project first (`launch::claude_transcript`), then where a scan found it before,
+  and only scanned for on a miss, on the blocking pool. `PtyManager` holds its map lock only to look
   up, reserve an id or insert, never while a PTY opens, a process starts or one is killed, so attaching, writing and
   resizing other terminals never wait on them. The id reserved while a process starts is released on every way out
   (a `Reservation` drop guard; a panic while starting becomes a spawn error), or that session could not start again

@@ -1,18 +1,41 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ConversationServerMessage } from '../api/gen/ConversationServerMessage';
 import { EventsSocket, eventsUrl, type EventsSocketLike, type EventsStatus } from './eventsSocket';
-import { emptyModel, provisionalMessages, reduce, sortedRows } from './model';
+import { emptyModel, provisionalMessages, reduce, sortedRows, type ConversationModel } from './model';
+
+/** How many conversations' models are kept for the page once left. */
+const KEEP = 5;
+/** The last conversations shown, least recent first. */
+const kept = new Map<string, ConversationModel>();
+
+function keep(sessionId: string, m: ConversationModel) {
+  kept.delete(sessionId);
+  kept.set(sessionId, m);
+  for (const id of kept.keys()) {
+    if (kept.size <= KEEP) break;
+    kept.delete(id);
+  }
+}
+
+/** Tests: no conversation is kept from one test to the next. */
+export function resetConversations() {
+  kept.clear();
+}
 
 /**
  * A conversation's events, live: replays what is stored, then follows new and updated rows, streaming deltas and
  * the conversation state. Reconnects (asking only for what it lacks) and keeps what it has meanwhile. Key the
- * caller by session id: the model is not reset when `sessionId` changes.
+ * caller by session id: the model is not reset when `sessionId` changes. One of the last few conversations shown
+ * starts from what it had (PDT-619), so going back to it shows it at once and asks only for what came after.
  */
 export function useConversation(sessionId: string, factory?: (url: string) => EventsSocketLike) {
-  const [model, dispatch] = useReducer(reduce, undefined, emptyModel);
+  const [model, dispatch] = useReducer(reduce, sessionId, (id) => kept.get(id) ?? emptyModel());
   const [status, setStatus] = useState<EventsStatus>('connecting');
   const maxSeq = useRef(0);
   maxSeq.current = model.maxSeq;
+  useEffect(() => {
+    if (model.ready) keep(sessionId, model);
+  }, [sessionId, model]);
 
   useEffect(() => {
     // A connection's replay (everything up to `ready`) is held and applied in one action: thousands of stored events
