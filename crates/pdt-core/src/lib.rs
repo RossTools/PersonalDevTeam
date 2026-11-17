@@ -12,6 +12,7 @@ pub mod bug_report;
 pub mod command_trust;
 pub mod conversation;
 pub mod document;
+pub mod document_access;
 pub mod document_diff;
 pub mod document_ops;
 pub mod document_watch;

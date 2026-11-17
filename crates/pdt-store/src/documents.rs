@@ -3,8 +3,8 @@
 
 use crate::{Store, StoreError};
 use pdt_core::document::{
-    BesideTab, Chart, CommentAnchor, CommentReply, Document, DocumentComment, DocumentFilter, DocumentKind,
-    DocumentProject, DocumentTicket, DocumentsBeside, ProjectDocumentSettings,
+    BesideTab, Chart, CommentAnchor, CommentReply, Document, DocumentChange, DocumentComment, DocumentFilter,
+    DocumentKind, DocumentProject, DocumentTicket, DocumentsBeside, ProjectDocumentSettings,
 };
 use pdt_core::ticket::Actor;
 use sqlx::Row;
@@ -503,6 +503,55 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Records a change an agent made to a document without asking (PDT-618); false when the document is gone.
+    pub async fn add_document_change(&self, c: &DocumentChange) -> Result<bool, StoreError> {
+        let summary = self.redactor.string(&c.summary);
+        let diff = c.diff.as_deref().map(|d| self.redactor.string(d));
+        let r = sqlx::query(
+            "INSERT INTO document_changes (id, document_id, at, tool, summary, version, diff, agent, ticket_id) \
+             SELECT ?, id, ?, ?, ?, ?, ?, ?, ? FROM documents WHERE id = ?",
+        )
+        .bind(&c.id)
+        .bind(c.at)
+        .bind(&c.tool)
+        .bind(&summary)
+        .bind(&c.version)
+        .bind(&diff)
+        .bind(serde_json::to_string(&c.agent).expect("an agent serializes"))
+        .bind(&c.agent.from_ticket_id)
+        .bind(&c.document_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// The changes agents made to a document without asking, newest first.
+    pub async fn document_changes(&self, document_id: &str) -> Result<Vec<DocumentChange>, StoreError> {
+        let rows = sqlx::query(
+            "SELECT id, document_id, at, tool, summary, version, diff, agent FROM document_changes \
+             WHERE document_id = ? ORDER BY at DESC, rowid DESC",
+        )
+        .bind(document_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|r| {
+                let agent: String = r.try_get("agent")?;
+                Ok(DocumentChange {
+                    id: r.try_get("id")?,
+                    document_id: r.try_get("document_id")?,
+                    at: r.try_get("at")?,
+                    tool: r.try_get("tool")?,
+                    summary: r.try_get("summary")?,
+                    version: r.try_get("version")?,
+                    diff: r.try_get("diff")?,
+                    agent: serde_json::from_str(&agent)
+                        .map_err(|e| StoreError::Corrupt(format!("a document change's agent {agent:?}: {e}")))?,
+                })
+            })
+            .collect()
+    }
+
     /// Puts a conversation's tabs in this order; tabs it leaves out keep their places after these.
     pub async fn order_beside(&self, session_id: &str, document_ids: &[String]) -> Result<(), StoreError> {
         let mut tx = self.write_tx().await?;
@@ -686,6 +735,42 @@ mod tests {
         store.delete_document("d1").await.unwrap();
         assert!(store.document_comments("d1").await.unwrap().is_empty());
         assert!(store.document_charts("d1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agents_changes_are_kept_newest_first_and_go_with_their_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.add_document(&doc("d1", "Spec", DocumentKind::Doc, "local", 1)).await.unwrap();
+        let change = |id: &str, at: i64| DocumentChange {
+            id: id.into(),
+            document_id: "d1".into(),
+            at,
+            tool: "doc_edit".into(),
+            summary: format!("Edited {id}"),
+            version: Some(at.to_string()),
+            diff: Some("-a\n+b\n".into()),
+            agent: pdt_core::ticket::AgentBy {
+                session_id: "s1".into(),
+                project_id: Some("p".into()),
+                persona: Some("Coder".into()),
+                from_ticket: Some("P-1".into()),
+                from_ticket_id: Some("t1".into()),
+            },
+        };
+        assert!(store.add_document_change(&change("c1", 5)).await.unwrap());
+        assert!(store.add_document_change(&change("c2", 6)).await.unwrap());
+        assert!(
+            !store
+                .add_document_change(&DocumentChange { document_id: "gone".into(), ..change("c3", 7) })
+                .await
+                .unwrap()
+        );
+        let got = store.document_changes("d1").await.unwrap();
+        assert_eq!(got.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["c2", "c1"]);
+        assert_eq!(got[1], change("c1", 5));
+        store.delete_document("d1").await.unwrap();
+        assert!(store.document_changes("d1").await.unwrap().is_empty());
     }
 
     #[tokio::test]

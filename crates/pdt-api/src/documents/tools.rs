@@ -4,6 +4,7 @@
 //! resolves) ask the user unless a project the document is linked to lets the agent act. What other people wrote in a
 //! document's comments comes fenced as outside input (PDT-202), and so do its title and content (PDT-536).
 
+use super::access;
 use super::routes::{
     DocumentLinkInput, NewDocument, apply_edits, create_document, document, link_of, open_beside_doc, provider_of,
     with_comments,
@@ -123,6 +124,13 @@ pub(crate) async fn find(st: &AppState, given: &str) -> Result<Document, String>
     }
 }
 
+/// Whether the project let this session's call through without asking (PDT-618), worked out before it runs: such a
+/// change is recorded ([`access::record`]).
+async fn unasked(cx: &ActionCx<'_>, wants: access::Wants<'_>) -> Option<pdt_core::session::Session> {
+    let s = cx.session?;
+    access::unasked(cx.st, s, wants).await.then(|| s.clone())
+}
+
 /// Who an agent's change is by.
 async fn by(cx: &ActionCx<'_>) -> By {
     match cx.session {
@@ -199,6 +207,11 @@ fn fenced(comments: Vec<DocumentComment>, resolved: bool, fence: &Outside) -> Ve
             })
         })
         .collect()
+}
+
+/// "Edited (n edits)", for a change's record.
+fn edits_summary(n: usize) -> String {
+    if n == 1 { "Edited (1 edit)".into() } else { format!("Edited ({n} edits)") }
 }
 
 fn edits_for(edits: &[DocumentEdit], docs: bool) -> Result<(), String> {
@@ -422,6 +435,8 @@ impl Action for DocEdit {
             let d = find(cx.st, &i.document).await?;
             need_kind(&d, DocumentKind::Doc, "doc_edit")?;
             edits_for(&i.edits, true)?;
+            let unasked = unasked(cx, access::Wants::Change { document: &d.id }).await;
+            let n = i.edits.len();
             let before = match read(cx.st, &d).await? {
                 DocumentContent::Doc { markdown, .. } => markdown,
                 DocumentContent::Sheet { .. } => String::new(),
@@ -432,10 +447,17 @@ impl Action for DocEdit {
                 _ => before.clone(),
             };
             // The document's brief too, for the conversation's card.
+            let diff = pdt_core::document_ops::diff(&before, &after);
+            if let Some(s) = &unasked {
+                let summary = edits_summary(n);
+                let change =
+                    access::Change { tool: "doc_edit", summary, version: r.version.clone(), diff: Some(diff.clone()) };
+                access::record(cx.st, s, &d, change).await;
+            }
             let fence = Outside::new();
             let mut v = fence.brief(&d);
             v["version"] = json!(r.version);
-            v["diff"] = json!(fence.wrap(&pdt_core::document_ops::diff(&before, &after)));
+            v["diff"] = json!(fence.wrap(&diff));
             Ok(fence.noted(v))
         })
     }
@@ -553,7 +575,15 @@ impl Action for SheetEdit {
             let d = find(cx.st, &i.document).await?;
             need_kind(&d, DocumentKind::Sheet, "sheet_edit")?;
             edits_for(&i.edits, false)?;
+            let unasked = unasked(cx, access::Wants::Change { document: &d.id }).await;
+            // A sheet has no diff: the operations, and the version to go back to.
+            let ops: Vec<&str> = i.edits.iter().map(DocumentEdit::op).collect();
+            let summary = format!("{}: {}", edits_summary(ops.len()), ops.join(", "));
             let r = apply_edits(cx.st, &d, i.edits).await.map_err(api)?;
+            if let Some(s) = &unasked {
+                let change = access::Change { tool: "sheet_edit", summary, version: r.version.clone(), diff: None };
+                access::record(cx.st, s, &d, change).await;
+            }
             let fence = Outside::new();
             let mut v = fence.brief(&d);
             v["version"] = json!(r.version);
@@ -635,6 +665,8 @@ impl Action for DocumentCreate {
 
     fn run<'a>(&'a self, cx: &'a ActionCx<'a>, i: CreateInput) -> BoxFut<'a, Result<Value, String>> {
         Box::pin(async move {
+            let wants = access::Wants::Create { project: i.project.as_deref(), ticket: i.ticket.as_deref() };
+            let unasked = unasked(cx, wants).await;
             let (project, ticket) = create_links(cx, &i).await;
             let new = NewDocument {
                 title: i.title.clone(),
@@ -646,6 +678,17 @@ impl Action for DocumentCreate {
                 by: None,
             };
             let d = create_document(cx.st, new, &by(cx).await).await.map_err(api)?;
+            if let Some(s) = &unasked {
+                let diff = i.markdown.as_deref().map(|m| pdt_core::document_ops::diff("", m));
+                let kind = if d.kind == DocumentKind::Sheet { "spreadsheet" } else { "document" };
+                let change = access::Change {
+                    tool: "document_create",
+                    summary: format!("Created the {kind}"),
+                    version: None,
+                    diff,
+                };
+                access::record(cx.st, s, &d, change).await;
+            }
             let mut v = brief(&d);
             if i.open_beside
                 && let Some(s) = cx.session
@@ -710,12 +753,21 @@ impl Action for DocumentLink {
         Box::pin(async move {
             let st = cx.st;
             let d = find(st, &i.document).await?;
+            let wants =
+                access::Wants::Link { document: &d.id, project: i.project.as_deref(), ticket: i.ticket.as_deref() };
+            let unasked = unasked(cx, wants).await;
+            let what = i.ticket.as_deref().or(i.project.as_deref()).map(str::trim).unwrap_or_default().to_string();
             let input = DocumentLinkInput { project_id: i.project, ticket_id: i.ticket };
             let link = link_of(st, &input).await.map_err(api)?;
             if i.unlink {
                 st.store.unlink_document(&d.id, &link).await.map_err(|e| e.to_string())?;
             } else {
                 st.store.link_document(&d.id, &link, now_ms()).await.map_err(|e| e.to_string())?;
+            }
+            if let Some(s) = &unasked {
+                let summary = if i.unlink { format!("Unlinked from {what}") } else { format!("Linked to {what}") };
+                access::record(st, s, &d, access::Change { tool: "document_link", summary, version: None, diff: None })
+                    .await;
             }
             let fence = Outside::new();
             Ok(fence.noted(fence.brief(&document(st, &d.id).await.map_err(api)?)))

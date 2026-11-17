@@ -566,7 +566,12 @@ answers `Unsupported` for one it can't do; pdt-core `document_ops.rs` applies th
 ones to plain cells, for providers that keep content in memory or as Markdown. The agent tools (`documents_list`,
 `doc_read`, `doc_edit`, `sheet_read`, `sheet_edit`, `document_create`, `document_open_beside`, comments) are actions
 of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, with `AskTarget::Document` (for a PM session, a project
-the document is linked to lets the PM act) or the project or ticket they name, and a document's title, content and comments
+the document is linked to lets the PM act) or the project or ticket they name. The project's `agent_documents` policy
+(`AgentDocuments`, set only from the web app) lets any agent's `document_create`, `doc_edit`, `sheet_edit` and
+`document_link` through unasked on its own ticket's documents or the project's: pdt-core `document_access.rs` decides
+from the resolved ids, and pdt-api `documents/access.rs` resolves the call, answers both Claude's permission prompt
+(`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
+`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. A document's title, content and comments
 come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON
 in one block). The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's

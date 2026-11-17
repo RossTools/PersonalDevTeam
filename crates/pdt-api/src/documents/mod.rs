@@ -6,6 +6,7 @@
 //! Providers come from [`AppState::documents`] (PDT's own) and the enabled integrations
 //! ([`crate::Integration::document_providers`]); [`providers`] lists them.
 
+pub(crate) mod access;
 pub mod local;
 pub(crate) mod nodes;
 pub(crate) mod routes;

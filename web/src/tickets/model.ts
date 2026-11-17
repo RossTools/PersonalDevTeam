@@ -290,6 +290,10 @@ export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => un
     }
     case 'outside_input': return outsideInputTitle((e.data ?? {}) as OutsideInputData);
     case 'merge_update': return mergeUpdateTitle((e.data ?? {}) as MergeUpdateData);
+    case 'document': {
+      const d = (e.data ?? {}) as { title?: string; summary?: string };
+      return `${d.summary ?? 'Changed'} · “${d.title ?? 'a document'}”, without asking`;
+    }
   }
 }
 

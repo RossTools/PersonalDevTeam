@@ -16,6 +16,7 @@ export const documentKeys = {
   one: (id: string) => ['documents', 'one', id] as const,
   content: (id: string) => ['documents', 'content', id] as const,
   comments: (id: string) => ['documents', 'comments', id] as const,
+  changes: (id: string) => ['documents', 'changes', id] as const,
   charts: (id: string) => ['documents', 'charts', id] as const,
   version: (id: string) => ['documents', 'version', id] as const,
   providers: (project: string | null) => ['documents', 'providers', project] as const,

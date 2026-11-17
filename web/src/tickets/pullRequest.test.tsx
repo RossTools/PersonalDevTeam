@@ -62,6 +62,11 @@ describe('pull request status', () => {
     expect(screen.getByText('Resolving conflicts (agent)')).toBeInTheDocument();
   });
 
+  it('names an agent’s document change made without asking (PDT-618)', () => {
+    const e = event('e1', { kind: 'document', data: { title: 'Spec', summary: 'Edited (2 edits)', tool: 'doc_edit' } });
+    expect(eventTitle(e)).toBe('Edited (2 edits) · “Spec”, without asking');
+  });
+
   it('names how each update with the base went on the timeline (PDT-328)', () => {
     const title = (data: Record<string, unknown>) => eventTitle(event('e1', { kind: 'merge_update', data }));
     expect(title({ how: 'deferred', pr: 12 })).toBe('Conflicts with the base branch (PR #12) · resolved at merge time');

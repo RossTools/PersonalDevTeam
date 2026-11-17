@@ -13,6 +13,7 @@ import { ConfigCommands } from './ApproveCommands';
 import { BranchNames } from './BranchNames';
 import type { CredentialPolicy } from '../api/gen/CredentialPolicy';
 import type { PermissionMode } from '../api/gen/PermissionMode';
+import type { AgentDocuments } from '../api/gen/AgentDocuments';
 import type { AutoStart } from '../api/gen/AutoStart';
 import type { AutoStartOrder } from '../api/gen/AutoStartOrder';
 import type { ResolveConflicts } from '../api/gen/ResolveConflicts';
@@ -327,6 +328,11 @@ const TRIAGE_APPROVAL: { value: TriageApproval; label: string }[] = [
   { value: 'inbox', label: 'Wait in the Inbox' },
   { value: 'off', label: 'Off: stay in the backlog' },
 ];
+const AGENT_DOCUMENTS: { value: AgentDocuments; label: string }[] = [
+  { value: 'off', label: 'Off: always ask' },
+  { value: 'own_ticket', label: 'On their own ticket' },
+  { value: 'project', label: 'Across the project' },
+];
 const RESOLVE_CONFLICTS: { value: ResolveConflicts; label: string }[] = [
   { value: 'merge_time', label: 'At merge time' },
   { value: 'immediately', label: 'Immediately' },
@@ -537,6 +543,21 @@ function Pipeline({ project, settings, personal }: { project: Project; settings:
             checked={p?.pmActs ?? false}
             disabled={!settings || save.isPending}
             onChange={(on) => void track(set({ pmActs: on }))}
+          />
+        )}
+      </AutoSaveRow>
+      <AutoSaveRow
+        label="Agents change documents without asking"
+        description="Agents other than the PM create, edit and link documents without asking you first. On their own ticket: new documents on it, and the ones already linked to it. Across the project: also new documents on the project, and any document linked to it. Each change shows on the document and the agent's ticket. Replying to and resolving comments always asks."
+      >
+        {(track) => (
+          <Select<AgentDocuments>
+            aria-label="Agents change documents without asking"
+            className="w-56 max-w-full"
+            options={AGENT_DOCUMENTS}
+            value={p?.agentDocuments ?? 'off'}
+            disabled={!settings}
+            onChange={(v) => void track(set({ agentDocuments: v }))}
           />
         )}
       </AutoSaveRow>

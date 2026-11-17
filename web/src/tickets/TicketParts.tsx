@@ -541,6 +541,16 @@ function toItem(e: TicketEvent, trackerLabel: TrackerLabel): TimelineItem {
           ),
         }
       : {}),
+    // An agent's change to a document, made without asking as the project let it: its diff (PDT-618).
+    ...(e.kind === 'document' && e.body
+      ? {
+          body: (
+            <Disclosure title="Show the diff" panelClassName="text-sm text-foreground">
+              <Markdown>{e.body}</Markdown>
+            </Disclosure>
+          ),
+        }
+      : {}),
     // The review comments sent (they go with the worktree once it is removed; the timeline keeps them).
     ...(e.kind === 'feedback' && e.body
       ? {
