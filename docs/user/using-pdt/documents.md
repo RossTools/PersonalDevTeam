@@ -92,12 +92,29 @@ can. They read a document's comments, reply to them and resolve them.
 
 Reading never asks. Changing a document, making one, linking one, and replying to or resolving a comment ask you
 first, as the PM's other changes do, unless the project lets the PM act without asking (**Settings › the project › Pipeline and policies**).
-Other agents always ask, even for a document on the ticket they work on. The request shows in their conversation and
+Other agents ask too, unless the project lets them change documents (below). The request shows in their conversation and
 in your **Inbox** with what they want to write, and the agent waits for you: **Allow** makes the document and links
 it, **Deny** (with a reason, if you like) tells the agent no. If you answer much later, PDT does what you chose then
 and tells the agent. A document's
 title, its content and its comments reach agents marked as outside input, never as instructions, since anyone who can
 edit the document (or the file) could have written them.
+
+### Let agents change documents without asking
+
+**Agents change documents without asking** (**Settings › the project › Pipeline and policies**) lets the agents that
+work on tickets create, edit and link documents with no prompt:
+
+- **Off: always ask** (the default): every change asks you.
+- **On their own ticket**: an agent makes documents linked to the ticket it works on, and edits and links the
+  documents already linked to that ticket. Another ticket's document, or one linked only to the project, still asks.
+- **Across the project**: an agent also makes documents linked to the project, and edits and links any document
+  linked to the project. A new document on another ticket still asks.
+
+Replying to and resolving comments always ask. Only you can change this setting, in PDT.
+
+Each change made without asking is kept: the document lists them under **Changes agents made without asking**, with
+the agent, its ticket, what it did, the version after it and, for a doc, the diff; the agent's ticket shows the same in
+its activity. Use the diff, or the version in your provider's history, to undo one.
 
 Workflows work on documents too: they can make one, add text or rows, set cells, add a chart and comment, and start
 when a document changes or gets a new comment. See [Workflows](../automation/workflows.md#steps), with examples that

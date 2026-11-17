@@ -285,6 +285,12 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
              doc_read gives a doc as Markdown, sheet_read a sheet's cells."
         );
     }
+    // What the project lets agents do to documents without asking (PDT-618).
+    let docs = st.store.get_project_settings(&ticket_project).await.map_err(store)?.policy.agent_documents;
+    if let Some(note) = documents_unasked_note(docs) {
+        v["documentsWithoutAsking"] = json!(docs);
+        v["documentsWithoutAskingNote"] = json!(note);
+    }
     if let Some(project) = st.store.get_project(&ticket_project).await.map_err(store)? {
         let areas = crate::overlap::project_areas(st, &project).await.areas;
         if !areas.is_empty() {
@@ -304,6 +310,26 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["step"] = step;
     }
     Ok(v)
+}
+
+/// What `get_ticket` tells an agent its project lets it do to documents without asking; None when it lets nothing.
+fn documents_unasked_note(level: pdt_core::policy::AgentDocuments) -> Option<&'static str> {
+    use pdt_core::policy::AgentDocuments;
+    match level {
+        AgentDocuments::Off => None,
+        AgentDocuments::OwnTicket => Some(
+            "This project lets you create documents linked to your own ticket, and edit and link the documents \
+             linked to it, without asking: document_create, doc_edit, sheet_edit and document_link go through with \
+             no prompt there. Other documents, and comment replies and resolves, still ask. The user sees each change \
+             on the document and the ticket.",
+        ),
+        AgentDocuments::Project => Some(
+            "This project lets you create documents linked to it or to your own ticket, and edit and link any \
+             document linked to it, without asking: document_create, doc_edit, sheet_edit and document_link go \
+             through with no prompt there. Other tickets' new documents, other projects' documents, and comment \
+             replies and resolves still ask. The user sees each change on the document and the ticket.",
+        ),
+    }
 }
 
 /// A ticket's attachments for `get_ticket`: name, type, size, who added it and when, and the local file's path. On

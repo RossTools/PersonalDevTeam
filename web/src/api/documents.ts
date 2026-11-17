@@ -3,6 +3,7 @@ import type { ChartView } from './gen/ChartView';
 import type { CommentReply } from './gen/CommentReply';
 import type { DiffsApplied } from './gen/DiffsApplied';
 import type { Document } from './gen/Document';
+import type { DocumentChange } from './gen/DocumentChange';
 import type { DocumentComment } from './gen/DocumentComment';
 import type { DocumentCommentInput } from './gen/DocumentCommentInput';
 import type { DocumentEdit } from './gen/DocumentEdit';
@@ -60,6 +61,8 @@ export const documentsApi = {
       method: 'POST',
       body: JSON.stringify({ edits, ...(baseVersion ? { baseVersion } : {}) }),
     }),
+  /** The changes agents made to it without asking, newest first. */
+  documentChanges: (id: string) => request<DocumentChange[]>(`/api/documents/${enc(id)}/changes`),
   documentComments: (id: string) => request<DocumentComment[]>(`/api/documents/${enc(id)}/comments`),
   addDocumentComment: (id: string, c: DocumentCommentInput) =>
     request<DocumentComment>(`/api/documents/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ ...c, by: 'user' } satisfies DocumentCommentInput) }),

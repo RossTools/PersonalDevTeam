@@ -160,6 +160,27 @@ describe('documents', () => {
     expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/documents/d1')).toBe(true);
   });
 
+  it('shows the changes agents made without asking, with their diff (PDT-618)', async () => {
+    const agent = { sessionId: 's1', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-7', fromTicketId: 't7' };
+    stubApi({
+      'GET /api/documents/d5': doc('d5', 'Spec'),
+      'GET /api/documents/d5/content': { content: { kind: 'doc', version: '3', markdown: '# Spec\n' }, embedUrl: null },
+      'GET /api/documents/d5/changes': [
+        { id: 'c2', documentId: 'd5', at: Date.now(), tool: 'doc_edit', summary: 'Edited (1 edit)', version: '3', diff: '-Old.\n+New.\n', agent },
+        { id: 'c1', documentId: 'd5', at: Date.now(), tool: 'document_create', summary: 'Created the document', version: null, diff: null, agent },
+      ],
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<DocumentPage id="d5" phone={false} onGone={() => {}} />);
+    const changes = await screen.findByRole('region', { name: 'Changes agents made without asking' });
+    expect(within(changes).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(changes).getByText('Edited (1 edit)')).toBeInTheDocument();
+    expect(within(changes).getByText('version 3')).toBeInTheDocument();
+    await userEvent.click(within(changes).getByRole('button', { name: 'Show the diff' }));
+    expect(await within(changes).findByText(/\+New\./)).toBeInTheDocument();
+  });
+
   it('a sheet shows as a table with its formulas', async () => {
     stubApi({
       'GET /api/documents/d2': doc('d2', 'Budget', { kind: 'sheet' }),

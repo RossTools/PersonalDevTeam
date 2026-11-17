@@ -253,7 +253,10 @@ async fn the_user_opens_several_documents_in_tabs_beside_a_conversation() {
 /// the PM, so the project never lets it act without asking.
 async fn start_ticket_agent(env: &Env) -> String {
     let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
-    let t = list["items"][0]["id"].as_str().unwrap().to_string();
+    let t = list["items"].as_array().unwrap().iter().find(|t| t["key"] == "PX-1").unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let body = json!({"agent": "claude", "sessionMode": "conversation", "permissionMode": "bypass"});
     let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{t}/start"), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{v}");
@@ -362,5 +365,197 @@ async fn an_agents_unanswered_document_create_says_it_waits_in_the_inbox() {
     })
     .await;
     assert_eq!(ticket_docs(&env).await, ["Late"]);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// Sets what the project lets agents do to documents without asking, as the user in PDT's web (PDT-618).
+async fn agent_documents(env: &Env, level: &str) {
+    let url = format!("/api/projects/{}/settings", env.project);
+    let (s, v) = common::call_as_ui(&env.app, "PUT", &url, Some(json!({"agentDocuments": level}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["policy"]["agentDocuments"], level);
+}
+
+/// A second ticket, PX-2, and two documents the agent's ticket isn't linked to: one on PX-2, one on the project only.
+/// Returns their ids.
+async fn others(env: &Env) -> (String, String) {
+    let (s, t) =
+        call(&env.app, "POST", &format!("/api/projects/{}/tickets", env.project), Some(json!({"title": "Other"})))
+            .await;
+    assert_eq!(s, StatusCode::CREATED, "{t}");
+    let make = |body: Value| async move {
+        let (s, d) = call(&env.app, "POST", "/api/documents", Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{d}");
+        d["id"].as_str().unwrap().to_string()
+    };
+    let other = make(json!({"title": "Theirs", "kind": "doc", "ticketId": "PX-2", "markdown": "# Theirs\n"})).await;
+    let plan = make(json!({"title": "Plan", "kind": "doc", "projectId": "PX", "markdown": "# Plan\n\nOld.\n"})).await;
+    (other, plan)
+}
+
+/// Calls a tool that must ask: its approval comes (in the Inbox, or as the conversation's request), the user denies
+/// it, and the agent hears no.
+async fn asks(env: &Env, id: &str, tool: &str, args: Value) {
+    let n = agent_says(env, id).await.len();
+    send(env, id, &format!("mcp: {tool} {args}")).await;
+    let req = open_request(env, id).await;
+    let url = format!("/api/sessions/{id}/requests/{req}");
+    let (s, v) = common::call_as_ui(&env.app, "POST", &url, Some(json!({"answer": {"type": "deny"}}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let said = wait_said(env, id, n + 1).await.pop().unwrap();
+    assert!(said.contains("denied"), "{tool} asked: {said}");
+}
+
+/// No request opened in the session (every call so far went through without asking).
+async fn never_asked(env: &Env, id: &str) {
+    let asked: Vec<Value> = events(env, id).await.into_iter().filter(|e| e["event"]["kind"] == "request").collect();
+    assert!(asked.is_empty(), "{asked:?}");
+}
+
+async fn changes(env: &Env, doc: &str) -> Vec<Value> {
+    let (s, v) = call(&env.app, "GET", &format!("/api/documents/{doc}/changes"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v.as_array().unwrap().clone()
+}
+
+/// The `document` events in PX-1's history (oldest first).
+async fn ticket_changes(env: &Env) -> Vec<Value> {
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let t = list["items"].as_array().unwrap().iter().find(|t| t["key"] == "PX-1").unwrap()["id"].clone();
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{}/events?limit=200", t.as_str().unwrap()), None).await;
+    let items = v.get("items").unwrap_or(&v).as_array().unwrap_or_else(|| panic!("{v}")).clone();
+    items.into_iter().filter(|e| e["kind"] == "document").collect()
+}
+
+/// PDT-618: only the user sets what agents may do to documents unasked; an agent's API call can't.
+#[tokio::test]
+async fn only_the_user_lets_agents_change_documents_unasked() {
+    let (env, _) = setup_docs().await;
+    let url = format!("/api/projects/{}/settings", env.project);
+    let (_, v) = call(&env.app, "GET", &url, None).await;
+    assert_eq!(v["policy"]["agentDocuments"], "off", "off by default");
+    let (s, v) = call(&env.app, "PUT", &url, Some(json!({"agentDocuments": "project"}))).await;
+    assert_eq!((s, &v["code"]), (StatusCode::FORBIDDEN, &json!("not_the_user")), "{v}");
+    agent_documents(&env, "own_ticket").await;
+    // Resending the stored level (another section's save) is no change, so it goes through.
+    let (s, v) = call(&env.app, "PUT", &url, Some(json!({"agentDocuments": "own_ticket", "pmActs": true}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
+/// PDT-618, "Own ticket": a ticket's agent (PDT asks for it: Bypass) creates, edits and links its ticket's documents and
+/// sheets with no prompt, each change recorded on the document and the ticket; another ticket's or a project-only
+/// document, and comment replies, still ask.
+#[tokio::test]
+async fn own_ticket_lets_an_agent_change_its_tickets_documents_unasked() {
+    let (env, fake) = setup_docs().await;
+    let (theirs, plan) = others(&env).await;
+    let id = start_ticket_agent(&env).await;
+    let t = tool(&env, &id, "get_ticket", json!({})).await;
+    assert!(t.get("documentsWithoutAsking").is_none(), "off: nothing to say");
+    agent_documents(&env, "own_ticket").await;
+    // The agent learns what it may do without asking.
+    let t = tool(&env, &id, "get_ticket", json!({})).await;
+    assert_eq!(t["documentsWithoutAsking"], "own_ticket", "{t}");
+    assert!(t["documentsWithoutAskingNote"].as_str().unwrap().contains("linked to your own ticket"));
+
+    let made =
+        tool(&env, &id, "document_create", json!({"title": "Notes", "kind": "doc", "markdown": "# Notes\n\nOld.\n"}))
+            .await;
+    assert_eq!(made["tickets"], json!(["PX-1"]), "its own ticket: {made}");
+    let notes = made["id"].as_str().unwrap().to_string();
+    let edits = json!({"document": notes, "edits": [{"op": "replace_string", "find": "Old.", "replace": "New."}]});
+    let done = tool(&env, &id, "doc_edit", edits).await;
+    assert!(inner(&done["diff"]).contains("+New."), "{done}");
+    let sheet = tool(&env, &id, "document_create", json!({"title": "Costs", "kind": "sheet", "ticket": "PX-1"})).await;
+    let sheet = sheet["id"].as_str().unwrap_or_else(|| panic!("{sheet}")).to_string();
+    let cells =
+        json!({"document": sheet, "edits": [{"op": "set_cells", "sheet": "Sheet1", "cell": "A1", "values": [["1"]]}]});
+    assert_eq!(tool(&env, &id, "sheet_edit", cells).await["id"], sheet.as_str());
+    let linked = tool(&env, &id, "document_link", json!({"document": notes, "ticket": "PX-1"})).await;
+    assert_eq!(linked["tickets"], json!(["PX-1"]), "{linked}");
+    never_asked(&env, &id).await;
+
+    // Each is recorded: on the document with the agent and its diff, and in its ticket's history.
+    let c = changes(&env, &notes).await;
+    let tools: Vec<&str> = c.iter().map(|c| c["tool"].as_str().unwrap()).collect();
+    assert_eq!(tools, ["document_link", "doc_edit", "document_create"], "newest first: {c:?}");
+    assert!(c[1]["diff"].as_str().unwrap().contains("-Old.\n+New."), "{c:?}");
+    assert_eq!((&c[1]["agent"]["fromTicket"], &c[1]["summary"]), (&json!("PX-1"), &json!("Edited (1 edit)")));
+    assert_eq!(c[1]["version"], done["version"]);
+    let s = changes(&env, &sheet).await;
+    assert!(s[0]["summary"].as_str().unwrap().contains("set_cells") && s[0]["version"].is_string(), "{s:?}");
+    let on_ticket = ticket_changes(&env).await;
+    assert_eq!(on_ticket.len(), 5, "{on_ticket:?}");
+    let edit = on_ticket.iter().find(|e| e["data"]["tool"] == "doc_edit").unwrap();
+    assert_eq!((&edit["data"]["documentId"], &edit["data"]["title"]), (&json!(notes), &json!("Notes")));
+    assert!(
+        edit["body"].as_str().unwrap().starts_with("```diff\n") && edit["body"].as_str().unwrap().contains("+New.")
+    );
+    assert_eq!(edit["actor"], "agent");
+
+    // Beyond its ticket it asks: another ticket's document, a project-only one, a new one elsewhere, a link elsewhere.
+    let other_edit = json!({"op": "append_text", "markdown": "x"});
+    asks(&env, &id, "doc_edit", json!({"document": theirs, "edits": [other_edit]})).await;
+    asks(&env, &id, "doc_edit", json!({"document": plan, "edits": [other_edit]})).await;
+    asks(&env, &id, "document_create", json!({"title": "Elsewhere", "kind": "doc", "ticket": "PX-2"})).await;
+    asks(&env, &id, "document_create", json!({"title": "Project", "kind": "doc", "project": "PX"})).await;
+    asks(&env, &id, "document_link", json!({"document": notes, "ticket": "PX-2"})).await;
+    asks(&env, &id, "document_link", json!({"document": plan, "ticket": "PX-1"})).await;
+    let reference = fake.put("Roadmap", DocumentKind::Doc, "# Roadmap\n");
+    let body = json!({"provider": "fake", "reference": reference, "ticketId": "PX-1"});
+    let (_, road) = call(&env.app, "POST", "/api/documents/import", Some(body)).await;
+    let road = road["id"].as_str().unwrap_or_else(|| panic!("{road}")).to_string();
+    asks(&env, &id, "comment_reply", json!({"document": road, "comment": "c1", "body": "Yes."})).await;
+    assert_eq!(changes(&env, &plan).await, Vec::<Value>::new(), "nothing recorded for what it asked");
+    assert_eq!(ticket_changes(&env).await.len(), 5);
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-618, "Project": an agent whose Claude asks through its permission prompt gets PDT's yes at once for any
+/// document linked to the project, and for new ones on the project or its own ticket; another ticket's new document
+/// and comment resolves still ask. Off again, its own ticket's document asks too.
+#[tokio::test]
+async fn project_lets_an_agent_change_the_projects_documents_unasked() {
+    let (env, fake) = setup_docs().await;
+    let (theirs, plan) = others(&env).await;
+    let (_, list) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let t = list["items"].as_array().unwrap().iter().find(|t| t["key"] == "PX-1").unwrap()["id"].clone();
+    let body = json!({"agent": "claude", "sessionMode": "conversation", "permissionMode": "ask"});
+    let (s, v) = call(&env.app, "POST", &format!("/api/tickets/{}/start", t.as_str().unwrap()), Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["session"]["id"].as_str().unwrap().to_string();
+    wait_said(&env, &id, 1).await;
+    agent_documents(&env, "project").await;
+
+    let edits = json!({"document": plan, "edits": [{"op": "replace_section", "heading": "Plan", "markdown": "New."}]});
+    let done = tool(&env, &id, "doc_edit", edits).await;
+    assert!(inner(&done["diff"]).contains("+New."), "{done}");
+    let edits = json!({"document": theirs, "edits": [{"op": "append_text", "markdown": "More."}]});
+    tool(&env, &id, "doc_edit", edits).await;
+    let made = tool(&env, &id, "document_create", json!({"title": "Overview", "kind": "doc", "project": "PX"})).await;
+    assert_eq!(made["projects"], json!(["PX"]), "{made}");
+    let linked = tool(&env, &id, "document_link", json!({"document": plan, "ticket": "PX-1"})).await;
+    assert_eq!(linked["tickets"], json!(["PX-1"]), "{linked}");
+    // Claude asked each time, and PDT said yes for the user.
+    let requests: Vec<Value> =
+        events(&env, &id).await.into_iter().filter(|e| e["event"]["kind"] == "request").collect();
+    assert_eq!(requests.len(), 4, "{requests:?}");
+    assert!(requests.iter().all(|r| r["event"]["state"] != "open"), "{requests:?}");
+    let c = changes(&env, &plan).await;
+    assert_eq!(c.iter().map(|c| c["tool"].as_str().unwrap()).collect::<Vec<_>>(), ["document_link", "doc_edit"]);
+    assert_eq!(c[0]["summary"], "Linked to PX-1");
+    assert_eq!(ticket_changes(&env).await.len(), 4, "on the agent's own ticket, whichever document");
+
+    asks(&env, &id, "document_create", json!({"title": "Theirs too", "kind": "doc", "ticket": "PX-2"})).await;
+    let reference = fake.put("Roadmap", DocumentKind::Doc, "# Roadmap\n");
+    let body = json!({"provider": "fake", "reference": reference, "projectId": "PX"});
+    let (_, road) = call(&env.app, "POST", "/api/documents/import", Some(body)).await;
+    let road = road["id"].as_str().unwrap_or_else(|| panic!("{road}")).to_string();
+    asks(&env, &id, "comment_resolve", json!({"document": road, "comment": "c1"})).await;
+
+    agent_documents(&env, "off").await;
+    let edits = json!({"document": made["id"], "edits": [{"op": "append_text", "markdown": "x"}]});
+    asks(&env, &id, "doc_edit", edits).await;
+    assert_eq!(ticket_changes(&env).await.len(), 4);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }

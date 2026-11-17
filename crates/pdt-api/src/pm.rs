@@ -736,10 +736,13 @@ pub(crate) async fn request_opened(
         return;
     }
     st.grants.release(session_id, request_id);
-    if !acts_without_asking(st, &s, &target).await {
+    if crate::documents::access::unasked_call(st, &s, tool, input).await {
+        tracing::info!(session = %session_id, tool, "the project lets agents change the document: allowing");
+    } else if acts_without_asking(st, &s, &target).await {
+        tracing::info!(session = %session_id, tool, "the project lets the PM act: allowing without asking");
+    } else {
         return;
     }
-    tracing::info!(session = %session_id, tool, "the project lets the PM act: allowing without asking");
     if let Err(e) =
         crate::conversations::answer_request(st, &s, request_id, &Answer::Approve { always: false }, None, false).await
     {

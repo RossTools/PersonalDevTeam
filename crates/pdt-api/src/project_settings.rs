@@ -1,11 +1,11 @@
-use crate::error::ApiError;
+use crate::error::{ApiError, codes};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use pdt_core::host::{CredentialPolicy, effective_credentials};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
+use pdt_core::policy::{AgentDocuments, AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, TriageApproval};
 use pdt_store::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -81,6 +81,11 @@ pub struct ProjectSettingsInput {
     #[serde(default)]
     #[ts(optional)]
     pub pm_acts: Option<bool>,
+    /// What other agents may do to the project's documents without asking: `off`, `own_ticket` or `project`
+    /// (PDT-618). Only the user changes it, from PDT's web app.
+    #[serde(default)]
+    #[ts(optional)]
+    pub agent_documents: Option<AgentDocuments>,
     /// Auto-start takes a ticket only once it has gone this many seconds unchanged (PDT-146); 0: at once.
     #[serde(default)]
     #[ts(optional)]
@@ -178,6 +183,13 @@ pub(crate) async fn put_settings(
         crate::runconfig::validate_overrides(t)?;
     }
     let current = st.store.get_project_settings(&id).await?;
+    // Letting agents change documents unasked is the user's to decide (PDT-618): an agent can't give itself that.
+    if input.agent_documents.is_some_and(|d| d != current.policy.agent_documents) && !from_ui {
+        return Err(ApiError::forbidden(
+            codes::NOT_THE_USER,
+            "only the user can change what agents may do to documents without asking, in PDT's project settings",
+        ));
+    }
     // The overrides' commands before this write: an agent may have put them there, and resending them (every section's
     // save sends the stored overrides back) is no approval of them.
     let stored: std::collections::HashSet<String> = override_commands(current.run_overrides.as_deref());
@@ -222,6 +234,7 @@ pub(crate) async fn put_settings(
         auto_start_order: input.auto_start_order.unwrap_or(current.policy.auto_start_order),
         approval_exempt_labels,
         pm_acts: input.pm_acts.unwrap_or(current.policy.pm_acts),
+        agent_documents: input.agent_documents.unwrap_or(current.policy.agent_documents),
         start_delay_seconds: input.start_delay_seconds.unwrap_or(current.policy.start_delay_seconds),
         require_green_ci: input.require_green_ci.unwrap_or(current.policy.require_green_ci),
         triage_approval: input.triage_approval.unwrap_or(current.policy.triage_approval),

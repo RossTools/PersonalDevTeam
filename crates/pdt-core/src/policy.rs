@@ -143,6 +143,35 @@ impl ResolveConflicts {
     }
 }
 
+/// What agents other than the PM may do to the project's documents without asking the user (PDT-618).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AgentDocuments {
+    /// Every change asks.
+    #[default]
+    Off,
+    /// An agent creates documents linked to its own ticket, and edits and links the ones linked to it.
+    OwnTicket,
+    /// An agent creates documents linked to the project or its own ticket, and edits and links any document linked
+    /// to the project.
+    Project,
+}
+
+impl AgentDocuments {
+    pub const ALL: [AgentDocuments; 3] = [AgentDocuments::Off, AgentDocuments::OwnTicket, AgentDocuments::Project];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AgentDocuments::Off => "off",
+            AgentDocuments::OwnTicket => "own_ticket",
+            AgentDocuments::Project => "project",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
 /// How long a ticket goes unchanged before auto-start takes it, unless the project says otherwise (PDT-146).
 pub const DEFAULT_START_DELAY_SECONDS: u32 = 120;
 
@@ -171,6 +200,9 @@ pub struct ProjectPolicy {
     /// The PM may create and edit the project's tickets and message its sessions without asking (PDT-81).
     #[serde(default)]
     pub pm_acts: bool,
+    /// What other agents may do to the project's documents without asking (PDT-618).
+    #[serde(default)]
+    pub agent_documents: AgentDocuments,
     /// Auto-start takes a ticket only once it has gone this long unchanged (PDT-146); 0: at once.
     #[serde(default = "default_start_delay")]
     pub start_delay_seconds: u32,
@@ -208,6 +240,7 @@ impl Default for ProjectPolicy {
             auto_start: AutoStart::default(),
             auto_start_order: AutoStartOrder::default(),
             pm_acts: false,
+            agent_documents: AgentDocuments::Off,
             start_delay_seconds: DEFAULT_START_DELAY_SECONDS,
             require_green_ci: true,
             triage_approval: TriageApproval::default(),

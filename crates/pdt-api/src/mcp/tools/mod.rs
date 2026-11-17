@@ -188,6 +188,10 @@ pub(crate) async fn confirmable(cx: &Cx<'_>, tool: &str, target: &pdt_core::pm::
         {
             return Ok(());
         }
+        // The project lets agents change these documents without asking (PDT-618).
+        if crate::documents::access::unasked_call(cx.st, cx.session, tool, cx.input).await {
+            return Ok(());
+        }
     }
     ask_the_user(cx, tool, target, in_inbox).await
 }
@@ -265,17 +269,22 @@ async fn ticket_for(cx: &Cx<'_>, given: Option<&str>) -> Result<String, String> 
 
 /// Who a session's ticket changes and comments are by (PDT-163): the agent, its persona and the ticket it works on.
 pub(crate) async fn agent_by(st: &AppState, s: &Session) -> By {
+    By::agent(agent_of(st, s).await)
+}
+
+/// The agent behind a session's changes: the session, its persona and the ticket it works on.
+pub(crate) async fn agent_of(st: &AppState, s: &Session) -> AgentBy {
     let from = match session_ticket(st, s).await {
         Some(id) => st.store.get_ticket_summary(&id).await.ok().flatten(),
         None => None,
     };
-    By::agent(AgentBy {
+    AgentBy {
         session_id: s.id.clone(),
         project_id: Some(s.project_id.clone()),
         persona: s.persona.as_ref().map(|p| p.name.clone()),
         from_ticket: from.as_ref().map(|t| t.key.clone()),
         from_ticket_id: from.map(|t| t.id),
-    })
+    }
 }
 
 /// The ticket a session works on: its attempt's, else its agent step's.
