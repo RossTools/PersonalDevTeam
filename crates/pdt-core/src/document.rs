@@ -97,6 +97,30 @@ impl Document {
     }
 }
 
+/// A change an agent made to a document without asking, as the project let it (PDT-618): the user reviews it on the
+/// document and on the agent's ticket, and rolls it back from the diff or the version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentChange {
+    pub id: String,
+    pub document_id: String,
+    #[ts(type = "number")]
+    pub at: i64,
+    /// The tool that made it: `document_create`, `doc_edit`, `sheet_edit` or `document_link`.
+    pub tool: String,
+    /// What it did, for people (`Edited (2 edits)`, `Linked to PDT-12`).
+    pub summary: String,
+    /// The provider's version after it, when it has versions.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// A text document's unified diff.
+    #[serde(default)]
+    pub diff: Option<String>,
+    /// The agent session that made it (its persona and ticket).
+    pub agent: AgentBy,
+}
+
 /// A document open beside a conversation (PDT-317): one tab of its side panel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

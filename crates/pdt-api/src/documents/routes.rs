@@ -1134,6 +1134,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
             post(sheet_diffs).layer(axum::extract::DefaultBodyLimit::max(crate::documents::local::MAX_FILE)),
         )
         .route("/documents/{id}/events", get(events))
+        .route("/documents/{id}/changes", get(super::access::changes))
         .route("/documents/{id}/charts", get(charts))
         .route("/documents/{id}/export", get(export))
         .route(

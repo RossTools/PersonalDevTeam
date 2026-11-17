@@ -188,8 +188,8 @@ Each project has its own sections. A personal project (one without a repository)
 - **Agents**: **Agent credentials** for this project, and the **Agent permission mode for workflow steps**.
 - **Review**: **Merge through pull requests**: **Merge…** only turns on auto-merge for the pull request, and never
   merges on your machine.
-- **Pipeline and policies**: who may merge, approvals, how many tickets run at once, auto-start, and whether the PM
-  acts without asking. See [Workflows](../automation/workflows.md#pipeline-settings) and
+- **Pipeline and policies**: who may merge, approvals, how many tickets run at once, auto-start, whether the PM
+  acts without asking, and whether [agents change documents without asking](../using-pdt/documents.md#let-agents-change-documents-without-asking). See [Workflows](../automation/workflows.md#pipeline-settings) and
   [Personas and approvals](../automation/personas-and-approvals.md#approvals-and-merging).
 - **Plugins**: which Jira project, Buildkite pipeline or other service this project's issues and CI live in.
 - **Documents**: the [documents](../using-pdt/documents.md) linked to the project, with **Add**, and its own

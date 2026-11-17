@@ -15,6 +15,7 @@ import { useTopBarActions } from '../shell/PhoneTopBar';
 import { TicketPicker } from '../tickets/TicketPicker';
 import { KindIcon } from './LinkedDocuments';
 import { openBesideEntry, useBesideTargets } from './BesidePanel';
+import { AgentChanges } from './AgentChanges';
 import { DocumentBody, type SheetHandle } from './DocumentBody';
 import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
@@ -203,6 +204,8 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
             onShow={sheetHandle ? sheetHandle.show : undefined}
           />
         )}
+
+        <AgentChanges id={id} />
       </article>
       {linkingTicket && (
         <Dialog onClose={() => setLinkingTicket(false)} title={`Link “${d.title}” to a ticket`} size="md">

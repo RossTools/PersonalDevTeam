@@ -246,13 +246,16 @@ pub enum EventKind {
     /// The branch was brought up to date with its base, or a conflict with it left for merge time (PDT-328):
     /// `{attemptId, how, base, files, regenerated, pr}` (`how`: [`crate::merge_update::MergeUpdateHow`]).
     MergeUpdate,
+    /// An agent changed a document without asking, as the project let it (PDT-618), on the ticket it works on:
+    /// `{agent, documentId, title, tool, summary, version, changeId}`, a text document's diff as the body.
+    Document,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
     Started => "started", Session => "session", Merged => "merged", Abandoned => "abandoned",
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
     Parted => "parted", Feedback => "feedback", Review => "review", Outcome => "outcome",
-    OutsideInput => "outside_input", MergeUpdate => "merge_update",
+    OutsideInput => "outside_input", MergeUpdate => "merge_update", Document => "document",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

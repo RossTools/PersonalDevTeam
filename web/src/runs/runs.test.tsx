@@ -450,6 +450,23 @@ describe('ProjectSettingsPanel', () => {
     expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, triageApproval: 'off' });
   });
 
+  it('lets agents change documents without asking on their own ticket or across the project (off by default, PDT-618)', async () => {
+    const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, agentDocuments: 'off' };
+    const calls = stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null, agentInstructions: null, policy },
+      'GET /api/projects/p/run-config': config,
+      'PUT /api/projects/p/settings': (c) => ({
+        effectiveCredentials: 'subscription', agentInstructions: null, policy: { ...policy, ...(c.body as object) },
+      }),
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const select = await screen.findByRole('button', { name: /Agents change documents without asking/ });
+    expect(select).toHaveTextContent('Off: always ask');
+    await choose(select, 'On their own ticket');
+    await waitFor(() => expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1));
+    expect(calls.find((c) => c.method === 'PUT')!.body).toEqual({ agentCredentials: null, runOverrides: null, agentDocuments: 'own_ticket' });
+  });
+
   it('resolves conflicts at merge time by default, or immediately (PDT-328)', async () => {
     const policy = { mergeBy: 'agents', requireApproval: false, approvalExemptLabels: [], maxRunningAttempts: null, autoStart: 'off', autoStartOrder: 'priority', pmActs: false, startDelaySeconds: 120, requireGreenCi: true, triageApproval: 'inbox', resolveConflicts: 'merge_time', hotAreas: [], untaggedAlongsideHot: true };
     const calls = stubApi({

@@ -46,11 +46,17 @@ for what they cover, and the API for the rest. Which tools a session has depends
 Tools that act beyond this session (`create_ticket`, `edit_ticket`, `link_tickets`, `unlink_tickets`, `link_issue`,
 `unlink_issue`, `stop_ticket`, `send_to_session`, `workflow_run`, `workflow_import`, `issue_create`, and the document writes `doc_edit`, `sheet_edit`,
 `document_create`, `document_link`, `comment_reply`, `comment_resolve`) wait for the person's yes (except the PM's, where the
-project lets the PM act, on its tickets, sessions and documents; other personas always wait). In Claude that is its permission prompt. Elsewhere
+project lets the PM act, on its tickets, sessions and documents; other personas wait unless the project lets agents
+change documents, below). In Claude that is its permission prompt. Elsewhere
 the call waits while PDT asks the person (in the conversation, or in the Inbox from a terminal), then runs or tells you
 they said no. Don't end your turn while it waits. A call still unanswered after a long wait returns "Still waiting for
 the user's answer … in PDT's Inbox": the request stays there, and PDT messages you the result once they answer, so
-don't call it again. A document for your own ticket (`document_create`) waits the same way. The PM's `add_ticket_comment` on a ticket that is being worked on
+don't call it again. A document for your own ticket (`document_create`) waits the same way, unless the project lets agents change documents
+without asking: `get_ticket`'s `documentsWithoutAsking` (with a note) says how far. `own_ticket`: `document_create`,
+`doc_edit`, `sheet_edit` and `document_link` go through unasked for documents linked to your own ticket (new ones on
+it, links to it). `project`: also for any document linked to the project and new ones on the project. Everything
+else asks, and `comment_reply` and `comment_resolve` always do. The person sees each such change, with its diff, on the
+document and your ticket. The PM's `add_ticket_comment` on a ticket that is being worked on
 waits the same way, in every agent, as the comment reaches that ticket's agent.
 
 **Secrets.** Never ask the person to paste a secret into the chat, and never print, log or commit one. `list_secrets`

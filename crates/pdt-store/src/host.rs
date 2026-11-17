@@ -1,7 +1,9 @@
 use crate::{Store, StoreError};
 use pdt_core::host::{CredentialPolicy, HostSettings};
 use pdt_core::integration::IntegrationSettings;
-use pdt_core::policy::{AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, ResolveConflicts, TriageApproval};
+use pdt_core::policy::{
+    AgentDocuments, AutoStart, AutoStartOrder, MergeBy, ProjectPolicy, ResolveConflicts, TriageApproval,
+};
 use std::collections::BTreeMap;
 
 const HOST_KEY: &str = "host";
@@ -210,8 +212,9 @@ impl Store {
             return Ok(ProjectSettings::default());
         };
         // Past the 16 columns a row tuple can hold.
-        let (resolve, hot, untagged): (String, String, bool) = sqlx::query_as(
-            "SELECT resolve_conflicts, hot_areas, untagged_alongside_hot FROM project_settings WHERE project_id = ?",
+        let (resolve, hot, untagged, documents): (String, String, bool, String) = sqlx::query_as(
+            "SELECT resolve_conflicts, hot_areas, untagged_alongside_hot, agent_documents FROM project_settings \
+             WHERE project_id = ?",
         )
         .bind(project_id)
         .fetch_one(&self.pool)
@@ -243,6 +246,8 @@ impl Store {
                 approval_exempt_labels: serde_json::from_str(&exempt)
                     .map_err(|_| StoreError::Corrupt(format!("approval-exempt labels {exempt:?}")))?,
                 pm_acts,
+                agent_documents: AgentDocuments::parse(&documents)
+                    .ok_or_else(|| StoreError::Corrupt(format!("agent documents {documents:?}")))?,
                 start_delay_seconds: u32::try_from(start_delay).unwrap_or(0),
                 require_green_ci,
                 triage_approval: TriageApproval::parse(&triage)
@@ -261,8 +266,8 @@ impl Store {
             "INSERT INTO project_settings (project_id, run_overrides, agent_credentials, agent_instructions, \
              merge_via_pr, agent_permission_mode, merge_by, require_approval, max_running_attempts, auto_start, \
              approval_exempt_labels, pm_acts, integration_settings, start_delay_seconds, require_green_ci, \
-             auto_start_order, triage_approval, resolve_conflicts, hot_areas, untagged_alongside_hot) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             auto_start_order, triage_approval, resolve_conflicts, hot_areas, untagged_alongside_hot, agent_documents) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(project_id) DO UPDATE SET \
              run_overrides = excluded.run_overrides, agent_credentials = excluded.agent_credentials, \
              agent_instructions = excluded.agent_instructions, merge_via_pr = excluded.merge_via_pr, \
@@ -273,7 +278,7 @@ impl Store {
              start_delay_seconds = excluded.start_delay_seconds, require_green_ci = excluded.require_green_ci, \
              auto_start_order = excluded.auto_start_order, triage_approval = excluded.triage_approval, \
              resolve_conflicts = excluded.resolve_conflicts, hot_areas = excluded.hot_areas, \
-             untagged_alongside_hot = excluded.untagged_alongside_hot",
+             untagged_alongside_hot = excluded.untagged_alongside_hot, agent_documents = excluded.agent_documents",
         )
         .bind(project_id)
         .bind(&s.run_overrides)
@@ -295,6 +300,7 @@ impl Store {
         .bind(s.policy.resolve_conflicts.as_str())
         .bind(serde_json::to_string(&s.policy.hot_areas).expect("a list of areas"))
         .bind(s.policy.untagged_alongside_hot)
+        .bind(s.policy.agent_documents.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -685,6 +691,7 @@ mod tests {
                 auto_start_order: pdt_core::policy::AutoStartOrder::Rank,
                 approval_exempt_labels: vec!["automerge".into()],
                 pm_acts: true,
+                agent_documents: pdt_core::policy::AgentDocuments::OwnTicket,
                 start_delay_seconds: 30,
                 require_green_ci: false,
                 triage_approval: pdt_core::policy::TriageApproval::Off,

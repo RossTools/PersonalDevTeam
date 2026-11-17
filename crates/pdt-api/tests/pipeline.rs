@@ -598,7 +598,7 @@ async fn a_strict_project_is_other_parameters_and_policies() {
     assert_eq!(
         s["policy"],
         json!({"mergeBy": "user", "requireApproval": true, "approvalExemptLabels": [], "maxRunningAttempts": 1,
-               "autoStart": "off", "autoStartOrder": "priority", "pmActs": false, "startDelaySeconds": 120,
+               "autoStart": "off", "autoStartOrder": "priority", "pmActs": false, "agentDocuments": "off", "startDelaySeconds": 120,
                "requireGreenCi": true, "triageApproval": "inbox", "resolveConflicts": "merge_time", "hotAreas": [],
                "untaggedAlongsideHot": true})
     );
