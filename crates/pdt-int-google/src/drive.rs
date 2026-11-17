@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 pub const DOC_MIME: &str = "application/vnd.google-apps.document";
 pub const SHEET_MIME: &str = "application/vnd.google-apps.spreadsheet";
-const FILE_FIELDS: &str = "id,name,mimeType,webViewLink,version,modifiedTime,trashed";
+const FILE_FIELDS: &str = "id,name,mimeType,webViewLink,version,modifiedTime,trashed,lastModifyingUser(displayName)";
 
 pub fn kind_of(mime: &str) -> Option<DocumentKind> {
     match mime {
@@ -54,6 +54,7 @@ fn file_of(conn: &str, v: &Value) -> Option<ProviderFile> {
             .as_str()
             .and_then(|t| t.parse::<jiff::Timestamp>().ok())
             .map(|t| t.as_millisecond()),
+        modified_by: v["lastModifyingUser"]["displayName"].as_str().filter(|n| !n.is_empty()).map(str::to_string),
     })
 }
 

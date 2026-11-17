@@ -582,6 +582,7 @@ pub(crate) async fn list_events(
         after: q.after,
         since: None,
         limit: q.limit.unwrap_or(100),
+        kinds: vec![],
     };
     Ok(Json(st.store.list_log_events(&f).await?))
 }

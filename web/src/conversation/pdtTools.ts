@@ -160,8 +160,9 @@ export function workflowRun(input: unknown, output?: string): { workflow: string
 export interface WatchView {
   id: string | null;
   label: string;
-  /** `ticket` or `run`. */
-  target: 'ticket' | 'run';
+  /** The watched target's id, once watched. */
+  targetId: string | null;
+  target: 'ticket' | 'run' | 'document';
   events: string[];
 }
 
@@ -169,10 +170,12 @@ export function watchOf(input: unknown, output?: string): WatchView {
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
   const w = Array.isArray(r.watching) && isRecord(r.watching[0]) ? r.watching[0] : null;
-  const target = (w?.target ?? (a.run ? 'run' : 'ticket')) === 'run' ? 'run' : 'ticket';
+  const asked = w?.target ?? (a.run ? 'run' : a.document ? 'document' : 'ticket');
+  const target = asked === 'run' || asked === 'document' ? asked : 'ticket';
   return {
     id: nonBlank(w?.id),
-    label: nonBlank(w?.targetLabel) ?? nonBlank(a.ticket) ?? nonBlank(a.run) ?? '?',
+    label: nonBlank(w?.targetLabel) ?? nonBlank(a.ticket) ?? nonBlank(a.run) ?? nonBlank(a.document) ?? '?',
+    targetId: nonBlank(w?.targetId),
     target,
     events: strings(w?.events ?? a.events),
   };
@@ -184,7 +187,7 @@ export function watchOf(input: unknown, output?: string): WatchView {
  */
 export function watchEventsText(events: string[]): string {
   // What the target does reads after one "it"; what others do names who.
-  const ofIt: Record<string, string> = { finished: 'finishes', failed: 'fails', needs_you: 'needs you' };
+  const ofIt: Record<string, string> = { finished: 'finishes', failed: 'fails', needs_you: 'needs you', changed: 'changes' };
   const ofOthers: Record<string, string> = { outcome: 'an agent reports', comment: 'someone comments' };
   const given = events.length ? events : ['finished', 'failed', 'needs_you'];
   const own = given.filter((e) => !(e in ofOthers)).map((e) => ofIt[e] ?? e);

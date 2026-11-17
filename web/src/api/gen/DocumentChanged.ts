@@ -13,6 +13,15 @@ version: string,
  */
 previousVersion: string, 
 /**
+ * What changed, as short text (PDT-616): a doc's changed headings and paragraphs (`-` before, `+` after), a sheet's
+ * changed ranges and a few cells; cut to about 4 KB. Null when PDT had no earlier read to compare with.
+ */
+diff?: string, 
+/**
+ * Who edited it last, where the provider says (Google's last modifying user).
+ */
+modifiedBy?: string, 
+/**
  * One of `projectIds`; empty for a document linked to no project.
  */
 projectId?: string, documentId: string, title: string, 

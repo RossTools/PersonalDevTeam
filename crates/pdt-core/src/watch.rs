@@ -1,8 +1,11 @@
-//! Watches (PDT-319): a ticket or a workflow run that a PM conversation (or the user) wants to hear about. What
-//! happens to it (from the event log, its Inbox items and the run's status) is noted on the watch, a burst of notes
-//! is coalesced into one message, and the message goes to the conversation through the outbox, or to the user as a
-//! `watch.event` notification. Pure types and rules; pdt-store keeps the watches, pdt-api's `watches` ticks them.
+//! Watches (PDT-319): a ticket, a workflow run or a document (PDT-616) that a PM conversation (or the user) wants to
+//! hear about. What happens to it (from the event log, its Inbox items and the run's status) is noted on the watch, a
+//! burst of notes is coalesced into one message, and the message goes to the conversation through the outbox, or to
+//! the user as a `watch.event` notification. A document's message carries what changed (a text diff), fenced: whoever
+//! can edit the document wrote it. Pure types and rules; pdt-store keeps the watches, pdt-api's `watches` ticks them.
 
+use crate::document::DocumentContent;
+use crate::fence::Fence;
 use crate::workflow::events as ev;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,11 +27,19 @@ pub enum WatchEvent {
     NeedsYou,
     /// CI failed, the merge queue dropped its pull request, or the run failed.
     Failed,
+    /// A document's content changed.
+    Changed,
 }
 
 impl WatchEvent {
-    pub const ALL: [WatchEvent; 5] =
-        [WatchEvent::Finished, WatchEvent::Outcome, WatchEvent::Comment, WatchEvent::NeedsYou, WatchEvent::Failed];
+    pub const ALL: [WatchEvent; 6] = [
+        WatchEvent::Finished,
+        WatchEvent::Outcome,
+        WatchEvent::Comment,
+        WatchEvent::NeedsYou,
+        WatchEvent::Failed,
+        WatchEvent::Changed,
+    ];
     pub fn as_str(self) -> &'static str {
         match self {
             WatchEvent::Finished => "finished",
@@ -36,12 +47,15 @@ impl WatchEvent {
             WatchEvent::Comment => "comment",
             WatchEvent::NeedsYou => "needs_you",
             WatchEvent::Failed => "failed",
+            WatchEvent::Changed => "changed",
         }
     }
 }
 
-/// What a watch tells about when none are named.
+/// What a watch of a ticket or run tells about when none are named.
 pub const DEFAULT_EVENTS: [WatchEvent; 3] = [WatchEvent::Finished, WatchEvent::Failed, WatchEvent::NeedsYou];
+/// What a watch of a document tells about when none are named.
+pub const DOCUMENT_EVENTS: [WatchEvent; 2] = [WatchEvent::Changed, WatchEvent::Comment];
 
 /// What is watched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
@@ -51,6 +65,8 @@ pub enum WatchTarget {
     Ticket,
     /// A workflow run.
     Run,
+    /// A document PDT has (imported, linked or made).
+    Document,
 }
 
 impl WatchTarget {
@@ -58,10 +74,29 @@ impl WatchTarget {
         match self {
             WatchTarget::Ticket => "ticket",
             WatchTarget::Run => "run",
+            WatchTarget::Document => "document",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [WatchTarget::Ticket, WatchTarget::Run].into_iter().find(|t| t.as_str() == s)
+        [WatchTarget::Ticket, WatchTarget::Run, WatchTarget::Document].into_iter().find(|t| t.as_str() == s)
+    }
+    /// What a watch of it tells about when none are named.
+    pub fn default_events(self) -> &'static [WatchEvent] {
+        match self {
+            WatchTarget::Document => &DOCUMENT_EVENTS,
+            _ => &DEFAULT_EVENTS,
+        }
+    }
+    /// Whether it can tell about `e`.
+    pub fn has(self, e: WatchEvent) -> bool {
+        match self {
+            WatchTarget::Document => matches!(e, WatchEvent::Changed | WatchEvent::Comment),
+            _ => e != WatchEvent::Changed,
+        }
+    }
+    /// Whether a watch of it ends when it finishes unless told otherwise: a document never finishes.
+    pub fn once_by_default(self) -> bool {
+        self != WatchTarget::Document
     }
 }
 
@@ -76,6 +111,9 @@ pub struct WatchNote {
     /// The target finished with it (a `once` watch ends after telling it).
     #[serde(default)]
     pub ends: bool,
+    /// What someone outside PDT wrote that goes with it (a document's comment, who edited it): told fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside: Option<String>,
 }
 
 /// A stored watch.
@@ -96,6 +134,8 @@ pub struct Watch {
     pub run_status: Option<String>,
     /// Notes not told yet, oldest first.
     pub pending: Vec<WatchNote>,
+    /// A document's content when its watcher was last told (what the next change is diffed against).
+    pub snapshot: Option<DocumentContent>,
     pub created_at: i64,
     pub ended_at: Option<i64>,
 }
@@ -108,9 +148,9 @@ pub struct WatchInfo {
     pub id: String,
     pub target: WatchTarget,
     pub target_id: String,
-    /// `ABC-12` for a ticket, the workflow's name for a run.
+    /// `ABC-12` for a ticket, the workflow's name for a run, the title for a document.
     pub target_label: String,
-    /// The ticket's title; null for a run (or a target that is gone).
+    /// The ticket's title; null for a run or a document (or a target that is gone).
     pub target_title: Option<String>,
     /// The ticket's stage (`in_progress`) or the run's status (`running`); null for a target that is gone.
     pub target_state: Option<String>,
@@ -126,21 +166,31 @@ pub struct WatchInfo {
     pub created_at: i64,
 }
 
-/// A watch's events: the ones named, in their order, without repeats; the defaults when none are.
-pub fn events_or_default(given: Option<&[WatchEvent]>) -> Vec<WatchEvent> {
+/// A watch's events: the ones named, in their order, without repeats; the target's defaults when none are. Err names
+/// an event the target can't tell about.
+pub fn events_or_default(target: WatchTarget, given: Option<&[WatchEvent]>) -> Result<Vec<WatchEvent>, String> {
     let mut out: Vec<WatchEvent> = vec![];
     for e in given.unwrap_or(&[]) {
+        if !target.has(*e) {
+            let can: Vec<&str> = WatchEvent::ALL.iter().filter(|e| target.has(**e)).map(|e| e.as_str()).collect();
+            return Err(format!("a {} can't tell `{}`: give {}", target.as_str(), e.as_str(), can.join(", ")));
+        }
         if !out.contains(e) {
             out.push(*e);
         }
     }
-    if out.is_empty() { DEFAULT_EVENTS.to_vec() } else { out }
+    Ok(if out.is_empty() { target.default_events().to_vec() } else { out })
 }
 
 /// How long a note waits for others after the newest one, so a burst is told in one message.
 pub const QUIET_MS: i64 = 15_000;
 /// The longest a note waits to be told.
 pub const MAX_WAIT_MS: i64 = 60_000;
+/// A document's quiet: its version is looked at every minute, so someone typing makes a change a minute; a burst of
+/// edits is told once they have stopped for three.
+pub const DOCUMENT_QUIET_MS: i64 = 180_000;
+/// The longest a document's note waits to be told.
+pub const DOCUMENT_MAX_WAIT_MS: i64 = 600_000;
 
 /// Whether a watch's pending notes are told now: the newest is `quiet_ms` old (nothing more came), or the oldest has
 /// waited `max_ms`.
@@ -262,6 +312,118 @@ pub fn message(label: &str, notes: &[WatchNote], ended: bool) -> String {
     }
 }
 
+/// What a document's logged event (`document.changed`, `document.comment_added`) means to a watch: (event, clause,
+/// outside text), or None when it is no news to this watcher (the user's own comment, to the user).
+pub fn document_note(kind: &str, payload: &Value, to_user: bool) -> Option<(WatchEvent, String, Option<String>)> {
+    let s = |k: &str| payload.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty());
+    match kind {
+        ev::DOCUMENT_CHANGED => Some((WatchEvent::Changed, "it changed".into(), s("modifiedBy").map(String::from))),
+        ev::DOCUMENT_COMMENT_ADDED => {
+            let by_user = payload.get("byUser").and_then(Value::as_bool) == Some(true);
+            if to_user && by_user {
+                return None;
+            }
+            let reply = payload.get("reply").and_then(Value::as_bool) == Some(true);
+            let line = if reply { "a reply in a comment thread" } else { "a new comment" };
+            let mut outside = format!(
+                "{} by {}: {}",
+                if reply { "Reply" } else { "Comment" },
+                s("author").unwrap_or("someone"),
+                s("body").unwrap_or_default()
+            );
+            if let Some(q) = s("quote") {
+                outside.push_str(&format!(" (on “{}”)", clip(q, 160)));
+            }
+            Some((WatchEvent::Comment, line.into(), Some(outside)))
+        }
+        _ => None,
+    }
+}
+
+/// A document's clauses, in one line: "it changed; 2 new comments".
+fn document_summary(notes: &[WatchNote]) -> String {
+    let mut parts: Vec<String> = vec![];
+    if notes.iter().any(|n| n.event == WatchEvent::Changed) {
+        parts.push("it changed".into());
+    }
+    let comments: Vec<&WatchNote> = notes.iter().filter(|n| n.event == WatchEvent::Comment).collect();
+    match comments.as_slice() {
+        [] => {}
+        [one] => parts.push(one.line.clone()),
+        many => parts.push(format!("{} new comments or replies", many.len())),
+    }
+    parts.extend(
+        notes.iter().filter(|n| !matches!(n.event, WatchEvent::Changed | WatchEvent::Comment)).map(|n| n.line.clone()),
+    );
+    parts.join("; ")
+}
+
+/// What outside text a document's notes carry, for the fenced block: its title, who edited it, the comments, and
+/// `diff` (what changed).
+fn document_outside(title: &str, notes: &[WatchNote], diff: Option<&str>) -> String {
+    let mut out = format!("Title: {title}");
+    let mut editors: Vec<&str> = vec![];
+    for n in notes.iter().filter(|n| n.event == WatchEvent::Changed) {
+        if let Some(who) = n.outside.as_deref().filter(|w| !editors.contains(w)) {
+            editors.push(who);
+        }
+    }
+    if !editors.is_empty() {
+        out.push_str(&format!("\nEdited by: {}", editors.join(", ")));
+    }
+    for n in notes.iter().filter(|n| n.event == WatchEvent::Comment) {
+        if let Some(o) = &n.outside {
+            out.push_str(&format!("\n{o}"));
+        }
+    }
+    if notes.iter().any(|n| n.event == WatchEvent::Changed) {
+        match diff {
+            Some(d) => out.push_str(&format!("\n\nWhat changed:\n{d}")),
+            None => out.push_str("\n\nWhat changed: no change to its text PDT can show (formatting, or edited back)."),
+        }
+    }
+    out
+}
+
+/// The message for a PM conversation about a watched document: `[PDT] Watched the document <id>: it changed.`, then
+/// the fence's note and a block with its title, who edited it, the comments and what changed (`diff`), since anyone
+/// with edit rights wrote those. `ended` says why the watch is over, if it is.
+pub fn document_message(
+    id: &str,
+    title: &str,
+    notes: &[WatchNote],
+    diff: Option<&str>,
+    ended: Option<&str>,
+    fence: &Fence,
+) -> String {
+    let summary = document_summary(notes);
+    let mut out = format!("[PDT] Watched the document {id} (`doc_read` reads it)");
+    match (summary.is_empty(), ended) {
+        (false, _) => out.push_str(&format!(": {summary}.")),
+        (true, Some(e)) => out.push_str(&format!(": {e}.")),
+        (true, None) => out.push('.'),
+    }
+    out.push_str(&format!("\n\n{}\n\n{}", fence.note(), fence.wrap(&document_outside(title, notes, diff))));
+    if let Some(e) = ended {
+        if !summary.is_empty() {
+            out.push_str(&format!("\n\nThen {e}."));
+        }
+        out.push_str("\n\nThe watch has ended.");
+    }
+    out
+}
+
+/// The user's notification about a watched document: (title, body). The Inbox shows it as text, so nothing is fenced.
+pub fn document_notice(title: &str, notes: &[WatchNote], diff: Option<&str>, ended: Option<&str>) -> (String, String) {
+    let mut summary = document_summary(notes);
+    if let Some(e) = ended {
+        summary = if summary.is_empty() { e.to_string() } else { format!("{summary}; then {e}") };
+    }
+    let body = document_outside(title, notes, diff);
+    let body = body.split_once('\n').map_or("", |(_, rest)| rest).trim_start().to_string();
+    (format!("“{title}”: {summary}"), body)
+}
+
 /// The first line of `text`, cut to `max` characters with "…".
 fn clip(text: &str, max: usize) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
@@ -278,15 +440,71 @@ mod tests {
     use serde_json::json;
 
     fn note(at: i64) -> WatchNote {
-        WatchNote { event: WatchEvent::Outcome, at, line: "x".into(), ends: false }
+        WatchNote { event: WatchEvent::Outcome, at, line: "x".into(), ends: false, outside: None }
     }
 
     #[test]
     fn events_default_and_lose_repeats() {
-        assert_eq!(events_or_default(None), DEFAULT_EVENTS.to_vec());
-        assert_eq!(events_or_default(Some(&[])), DEFAULT_EVENTS.to_vec());
+        let t = WatchTarget::Ticket;
+        assert_eq!(events_or_default(t, None).unwrap(), DEFAULT_EVENTS.to_vec());
+        assert_eq!(events_or_default(t, Some(&[])).unwrap(), DEFAULT_EVENTS.to_vec());
         let given = [WatchEvent::Outcome, WatchEvent::Outcome, WatchEvent::Comment];
-        assert_eq!(events_or_default(Some(&given)), vec![WatchEvent::Outcome, WatchEvent::Comment]);
+        assert_eq!(events_or_default(t, Some(&given)).unwrap(), vec![WatchEvent::Outcome, WatchEvent::Comment]);
+        assert!(events_or_default(t, Some(&[WatchEvent::Changed])).is_err(), "a ticket has no `changed`");
+        let d = WatchTarget::Document;
+        assert_eq!(events_or_default(d, None).unwrap(), DOCUMENT_EVENTS.to_vec());
+        let err = events_or_default(d, Some(&[WatchEvent::Outcome])).unwrap_err();
+        assert_eq!(err, "a document can't tell `outcome`: give comment, changed");
+        assert!(!d.once_by_default() && t.once_by_default());
+    }
+
+    fn doc_note(event: WatchEvent, line: &str, outside: Option<&str>) -> WatchNote {
+        WatchNote { event, at: 0, line: line.into(), ends: false, outside: outside.map(String::from) }
+    }
+
+    #[test]
+    fn document_events_become_notes() {
+        let changed = json!({"documentId": "d1", "modifiedBy": "Ann"});
+        assert_eq!(
+            document_note(ev::DOCUMENT_CHANGED, &changed, false),
+            Some((WatchEvent::Changed, "it changed".into(), Some("Ann".into())))
+        );
+        let c = json!({"author": "Sam", "body": "Why?", "quote": "Ship it", "reply": false, "byUser": true});
+        let (e, line, outside) = document_note(ev::DOCUMENT_COMMENT_ADDED, &c, false).unwrap();
+        assert_eq!((e, line.as_str()), (WatchEvent::Comment, "a new comment"));
+        assert_eq!(outside.unwrap(), "Comment by Sam: Why? (on “Ship it”)");
+        assert_eq!(document_note(ev::DOCUMENT_COMMENT_ADDED, &c, true), None, "the user's own, to the user");
+        assert_eq!(document_note(ev::TICKET_COMMENTED, &c, false), None);
+    }
+
+    #[test]
+    fn a_document_message_fences_what_others_wrote() {
+        let fence = Fence::new("f1");
+        let notes = [
+            doc_note(WatchEvent::Changed, "it changed", Some("Ann")),
+            doc_note(WatchEvent::Changed, "it changed", Some("Ann")),
+            doc_note(WatchEvent::Comment, "a new comment", Some("Comment by Sam: Why?")),
+        ];
+        let m = document_message("d1", "Plan", &notes, Some("+ New idea."), None, &fence);
+        assert!(
+            m.starts_with("[PDT] Watched the document d1 (`doc_read` reads it): it changed; a new comment.\n\n"),
+            "{m}"
+        );
+        assert!(m.contains(&fence.note()));
+        assert!(m.ends_with(
+            "<untrusted id=\"f1\">\nTitle: Plan\nEdited by: Ann\nComment by Sam: Why?\n\nWhat changed:\n+ New idea.\n</untrusted id=\"f1\">"
+        ), "{m}");
+        let gone = document_message("d1", "Plan", &[], None, Some("it was removed from PDT"), &fence);
+        assert!(gone.starts_with("[PDT] Watched the document d1 (`doc_read` reads it): it was removed from PDT."));
+        assert!(gone.ends_with("The watch has ended."));
+        let two = [notes[2].clone(), notes[2].clone()];
+        assert!(document_message("d1", "Plan", &two, None, None, &fence).contains(": 2 new comments or replies."));
+        let (title, body) = document_notice("Plan", &notes[..1], None, None);
+        assert_eq!(title, "“Plan”: it changed");
+        assert_eq!(
+            body,
+            "Edited by: Ann\n\nWhat changed: no change to its text PDT can show (formatting, or edited back)."
+        );
     }
 
     #[test]
@@ -343,9 +561,15 @@ mod tests {
 
     #[test]
     fn messages_are_one_line_or_a_list() {
-        let a =
-            WatchNote { event: WatchEvent::Outcome, at: 0, line: "the Coder reported `submitted`".into(), ends: false };
-        let b = WatchNote { event: WatchEvent::Finished, at: 1, line: "moved to Done".into(), ends: true };
+        let a = WatchNote {
+            event: WatchEvent::Outcome,
+            at: 0,
+            line: "the Coder reported `submitted`".into(),
+            ends: false,
+            outside: None,
+        };
+        let b =
+            WatchNote { event: WatchEvent::Finished, at: 1, line: "moved to Done".into(), ends: true, outside: None };
         assert_eq!(
             message("ABC-12", std::slice::from_ref(&a), false),
             "[PDT] Watched ABC-12: the Coder reported `submitted`."

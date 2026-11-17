@@ -7,11 +7,11 @@ import type { WatchTarget } from "./WatchTarget";
  */
 export type WatchInfo = { id: string, target: WatchTarget, targetId: string, 
 /**
- * `ABC-12` for a ticket, the workflow's name for a run.
+ * `ABC-12` for a ticket, the workflow's name for a run, the title for a document.
  */
 targetLabel: string, 
 /**
- * The ticket's title; null for a run (or a target that is gone).
+ * The ticket's title; null for a run or a document (or a target that is gone).
  */
 targetTitle: string | null, 
 /**

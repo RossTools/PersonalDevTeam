@@ -227,7 +227,9 @@ mod tests {
         let t = event_type(DOCUMENT_COMMENT_ADDED).unwrap();
         assert_eq!(t.outside_of(&serde_json::json!({"byUser": false})), ["title", "body", "quote"]);
         assert_eq!(t.outside_of(&serde_json::json!({"byUser": true})), ["title"]);
-        assert_eq!(event_type(DOCUMENT_CHANGED).unwrap().outside_of(&serde_json::json!({"byUser": true})), ["title"]);
+        // A change's text and editor are whoever can edit the document (PDT-616), whoever the payload says.
+        let changed = event_type(DOCUMENT_CHANGED).unwrap();
+        assert_eq!(changed.outside_of(&serde_json::json!({"byUser": true})), ["title", "diff", "modifiedBy"]);
     }
 
     #[test]

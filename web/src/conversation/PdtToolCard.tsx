@@ -274,7 +274,9 @@ function WatchCard({ call }: { call: PdtCall }) {
     if (stop.isSuccess && focusLost()) card.current?.focus({ preventScroll: true });
   }, [stop.isSuccess]);
   const watching = !!w.id && call.status === 'done' && !stop.isSuccess && (list.data ? list.data.some((x) => x.id === w.id) : true);
-  const what = w.target === 'ticket' ? <Key value={w.label} /> : <span className="font-medium text-foreground">{w.label}</span>;
+  const what = w.target === 'ticket' ? <Key value={w.label} />
+    : w.target === 'document' && w.targetId ? <Link href={routePath({ view: 'documents', doc: w.targetId })} tone="quiet" className="font-medium text-foreground">{w.label}</Link>
+    : <span className="font-medium text-foreground">{w.label}</span>;
   return (
     <Card
       ref={card}

@@ -449,10 +449,11 @@ pub const DOCUMENT_EVENT_TYPES: &[EventType] = &[
         title: "Document changed",
         description: "A document's content changed, through PDT or at its provider (its version moved). Checked every \
                       minute for the documents a workflow watches: the one it names, else those linked to its \
-                      projects; the first look only records the version.",
+                      projects; the first look only records the version. `diff` says what changed since the last look \
+                      (paragraphs, or a sheet's cells), `modifiedBy` who edited it where the provider says.",
         schema: schema_of::<DocumentChanged>,
-        // A shared document's title is whoever named it: fenced for an agent.
-        outside: &["title"],
+        // A shared document's title, its text and its editors' names are whoever can edit it: fenced for an agent.
+        outside: &["title", "diff", "modifiedBy"],
     },
     EventType {
         id: DOCUMENT_COMMENT_ADDED,

@@ -33,6 +33,17 @@ describe('watches', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^Watch/ })).toHaveAttribute('aria-pressed', 'false'));
   });
 
+  it('watches a document', async () => {
+    const calls = stubApi({
+      'GET /api/watches': () => [],
+      'POST /api/watches': () => watch({ target: 'document', targetId: 'd1', targetLabel: 'Plan', events: ['changed', 'comment'], once: false }),
+    });
+    renderWithQuery(<WatchButton of={{ document: 'd1' }} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Watch: hear when it changes or someone comments' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ document: 'd1' }));
+    expect(calls[0].path).toBe('/api/watches?document=d1');
+  });
+
   it('lists who watches, and removes a PM’s watch', async () => {
     let watches = [watch({}), watch({ id: 'w2', sessionId: 's1', watcher: 'PM “Docs”' })];
     const calls = stubApi({

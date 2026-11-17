@@ -13,6 +13,7 @@ import { plural } from '../common/text';
 import { runAction } from '../common/useAction';
 import { stopWatch, useAllWatches } from '../common/Watch';
 import { watchEventsText } from '../conversation/pdtTools';
+import { routePath } from '../shell/route';
 import { RUN_STATUS } from '../workflows/runs';
 
 /** A conversation's watches, oldest first (empty while loading). */
@@ -20,8 +21,18 @@ export function useSessionWatches(sessionId: string): WatchInfo[] {
   return useAllWatches().data?.filter((w) => w.sessionId === sessionId) ?? [];
 }
 
-/** The watched ticket or run: its pill and title, or its workflow's name, with its stage or status. */
+/** The watched ticket, run or document: its pill and title, its workflow's name, or its title; with its stage or status. */
 function Target({ w }: { w: WatchInfo }) {
+  if (w.target === 'document') {
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="min-w-0 flex-1 truncate" title={w.targetLabel}>
+          <Link href={routePath({ view: 'documents', doc: w.targetId })} tone="quiet">{w.targetLabel}</Link>
+        </span>
+        <Badge>Document</Badge>
+      </span>
+    );
+  }
   if (w.target === 'ticket') {
     const stage = w.targetState as TicketStage | null;
     return (
@@ -49,7 +60,7 @@ function WatchRow({ w, title }: { w: WatchInfo; title: string }) {
   const confirm = useConfirm();
   const stop = () => runAction(async () => {
     const { ok } = await confirm({
-      title: `Stop watching ${w.target === 'ticket' ? w.targetLabel : `the run of ${w.targetLabel}`}?`,
+      title: `Stop watching ${w.target === 'ticket' ? w.targetLabel : w.target === 'document' ? `“${w.targetLabel}”` : `the run of ${w.targetLabel}`}?`,
       body: `“${title}” won't hear about it any more. The PM may be waiting on it.`,
       action: 'Stop watching',
     });

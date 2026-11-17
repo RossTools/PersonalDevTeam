@@ -1,4 +1,4 @@
-// Watches (PDT-319): the user's Watch toggle on a ticket or workflow run, and who watches it (the user, PM
+// Watches (PDT-319): the user's Watch toggle on a ticket, workflow run or document (PDT-616), and who watches it (the user, PM
 // conversations) with a way to remove each. A watch tells the user in the Inbox's Updates (and on the desktop, by the
 // `watch.event` notification's setting); a PM's tells its conversation. Every watch at once (PDT-555) marks watched
 // tickets on the board and backlog and watching conversations in the PM view, from one request per poll.
@@ -12,8 +12,8 @@ import { runAction } from './useAction';
 import { POLL } from './poll';
 import { listText } from './text';
 
-/** A watched target: a ticket's id or a workflow run's. */
-export type WatchOf = { ticket: string } | { run: string };
+/** A watched target: a ticket's id, a workflow run's or a document's. */
+export type WatchOf = { ticket: string } | { run: string } | { document: string };
 
 export const watchKeys = {
   /** Every query of watches: a change refreshes a target's list, a session's and the all-watches one alike. */
@@ -94,7 +94,7 @@ export function WatchButton({ of }: { of: WatchOf }) {
   const own = ownWatch(useWatches(of).data);
   return (
     <IconButton
-      label={own ? 'Stop watching' : 'Watch: hear when it finishes, fails or waits on you'}
+      label={own ? 'Stop watching' : 'document' in of ? 'Watch: hear when it changes or someone comments' : 'Watch: hear when it finishes, fails or waits on you'}
       pressed={!!own}
       onClick={() => void runAction(() => toggle(qc, of, own))}
     >

@@ -1,12 +1,12 @@
-//! Watches (PDT-319): who hears about a ticket or a workflow run, and how far each has looked.
+//! Watches (PDT-319): who hears about a ticket, a workflow run or a document, and how far each has looked.
 
 use crate::{Store, StoreError};
 use pdt_core::watch::{Watch, WatchEvent, WatchNote, WatchTarget};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-const COLUMNS: &str =
-    "id, target, target_id, session_id, events, once, cursor, inbox_since, run_status, pending, created_at, ended_at";
+const COLUMNS: &str = "id, target, target_id, session_id, events, once, cursor, inbox_since, run_status, pending, snapshot, created_at, \
+     ended_at";
 
 fn to_watch(r: &SqliteRow) -> Result<Watch, StoreError> {
     let target: String = r.try_get("target")?;
@@ -24,6 +24,7 @@ fn to_watch(r: &SqliteRow) -> Result<Watch, StoreError> {
         inbox_since: r.try_get("inbox_since")?,
         run_status: r.try_get("run_status")?,
         pending: serde_json::from_str::<Vec<WatchNote>>(&pending).unwrap_or_default(),
+        snapshot: r.try_get::<Option<String>, _>("snapshot")?.and_then(|s| serde_json::from_str(&s).ok()),
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
     })
@@ -61,7 +62,7 @@ impl Store {
             None => {
                 sqlx::query(
                     "INSERT INTO watches (id, target, target_id, session_id, events, once, cursor, inbox_since, \
-                     run_status, pending, created_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                     run_status, pending, snapshot, created_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
                 )
                 .bind(&w.id)
                 .bind(w.target.as_str())
@@ -73,6 +74,7 @@ impl Store {
                 .bind(w.inbox_since)
                 .bind(&w.run_status)
                 .bind(to_json(&w.pending))
+                .bind(w.snapshot.as_ref().map(to_json))
                 .bind(w.created_at)
                 .execute(&mut *tx)
                 .await?;
@@ -117,17 +119,18 @@ impl Store {
         rows.iter().map(to_watch).collect()
     }
 
-    /// Records how far a watch has looked and what it has to tell, in one write (so a restart neither repeats nor
-    /// misses an event). False when it ended meanwhile.
+    /// Records how far a watch has looked and what it has to tell (and a document's snapshot), in one write (so a
+    /// restart neither repeats nor misses an event). False when it ended meanwhile.
     pub async fn set_watch_progress(&self, w: &Watch) -> Result<bool, StoreError> {
         let r = sqlx::query(
-            "UPDATE watches SET cursor = ?, inbox_since = ?, run_status = ?, pending = ? \
+            "UPDATE watches SET cursor = ?, inbox_since = ?, run_status = ?, pending = ?, snapshot = ? \
              WHERE id = ? AND ended_at IS NULL",
         )
         .bind(w.cursor)
         .bind(w.inbox_since)
         .bind(&w.run_status)
         .bind(to_json(&w.pending))
+        .bind(w.snapshot.as_ref().map(to_json))
         .bind(&w.id)
         .execute(&self.pool)
         .await?;
@@ -185,6 +188,7 @@ mod tests {
             inbox_since: 10,
             run_status: None,
             pending: vec![],
+            snapshot: None,
             created_at: 1,
             ended_at: None,
         }
@@ -208,9 +212,11 @@ mod tests {
 
         let mut p = b.clone();
         p.cursor = 9;
-        p.pending = vec![WatchNote { event: WatchEvent::Comment, at: 5, line: "x".into(), ends: false }];
+        p.pending = vec![WatchNote { event: WatchEvent::Comment, at: 5, line: "x".into(), ends: false, outside: None }];
+        p.snapshot = Some(pdt_core::document::DocumentContent::Doc { markdown: "# A".into(), version: None });
         assert!(store.set_watch_progress(&p).await.unwrap());
-        assert_eq!(store.get_watch("a").await.unwrap().unwrap().pending, p.pending);
+        let got = store.get_watch("a").await.unwrap().unwrap();
+        assert_eq!((got.pending, got.snapshot), (p.pending.clone(), p.snapshot.clone()));
         assert!(store.end_watch("a", 7).await.unwrap());
         assert!(!store.end_watch("a", 8).await.unwrap());
         assert!(!store.set_watch_progress(&p).await.unwrap(), "an ended watch stays ended");

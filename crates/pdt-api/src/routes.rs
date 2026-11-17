@@ -234,6 +234,8 @@ pub struct AppState {
     /// How long a watch's notes wait for more before they are told, and the longest they wait (PDT-319; tests
     /// shorten them).
     pub watch_wait_ms: (i64, i64),
+    /// The same for a watched document's notes (PDT-616): longer, as its version is looked at once a minute.
+    pub document_watch_wait_ms: (i64, i64),
     /// How long a reset waits for the conversation's journal before it records none (PDT-308).
     pub pm_reset_wait_ms: i64,
     /// The PM conversations a reset is running for (PDT-308): one stays listed in place until its fresh one exists.
@@ -394,6 +396,7 @@ impl AppState {
             mcp_tools: Default::default(),
             personas_installed: Default::default(),
             watch_wait_ms: (pdt_core::watch::QUIET_MS, pdt_core::watch::MAX_WAIT_MS),
+            document_watch_wait_ms: (pdt_core::watch::DOCUMENT_QUIET_MS, pdt_core::watch::DOCUMENT_MAX_WAIT_MS),
             pm_reset_wait_ms: pdt_core::pm::RESET_WAIT_MS,
             pm_resets: Default::default(),
             notifier: Default::default(),

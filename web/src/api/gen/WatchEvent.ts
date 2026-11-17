@@ -3,4 +3,4 @@
 /**
  * What a watch tells about.
  */
-export type WatchEvent = "finished" | "outcome" | "comment" | "needs_you" | "failed";
+export type WatchEvent = "finished" | "outcome" | "comment" | "needs_you" | "failed" | "changed";

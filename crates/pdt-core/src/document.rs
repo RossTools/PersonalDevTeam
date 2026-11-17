@@ -337,6 +337,10 @@ pub struct ProviderFile {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub modified: Option<i64>,
+    /// Who changed it last (a name), from providers that say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub modified_by: Option<String>,
 }
 
 /// A provider's file as the import dialog lists it: with PDT's record of it, when PDT has one.

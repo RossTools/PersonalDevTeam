@@ -371,6 +371,10 @@ pub enum NotificationTarget {
     Workflow {
         id: String,
     },
+    /// A document's page (PDT-616).
+    Document {
+        id: String,
+    },
     Url {
         url: String,
     },
