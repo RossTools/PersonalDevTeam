@@ -70,8 +70,9 @@ pub struct Conversations {
     codex: Arc<std::sync::OnceLock<Arc<CodexServer>>>,
     /// Every conversation's stored events as they happen, with their session's id ([`subscribe_all`]).
     all: broadcast::Sender<(String, ConversationEvent)>,
-    /// The conversations whose log was checked for gaps since pdtd started ([`repair_gaps`]).
-    repaired: Arc<tokio::sync::Mutex<HashSet<String>>>,
+    /// The conversations whose log was checked for gaps since pdtd started ([`live::repair_gaps`]): claimed per
+    /// conversation, never held while one is checked.
+    repaired: Arc<Mutex<HashSet<String>>>,
     /// PDT's own requests waiting for the user ([`held`]).
     held: Arc<held::Held>,
 }
@@ -92,6 +93,14 @@ impl Default for Conversations {
             repaired: Default::default(),
             held: Default::default(),
         }
+    }
+}
+
+impl Conversations {
+    /// Whether this caller checks `session`'s log for gaps: the first since pdtd started. Other conversations' checks
+    /// never wait on it.
+    fn claim_repair(&self, session: &str) -> bool {
+        self.repaired.lock().unwrap_or_else(|e| e.into_inner()).insert(session.to_string())
     }
 }
 
@@ -680,4 +689,19 @@ async fn recover_one(st: &AppState, id: &str) -> Result<(), pdt_store::StoreErro
         st.store.upsert_session_event(id, ne).await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_conversation_is_claimed_for_its_gap_check_once_on_its_own() {
+        let c = Conversations::default();
+        assert!(c.claim_repair("a"));
+        // Another conversation's check doesn't wait for this one's, which is still going.
+        assert!(c.claim_repair("b"));
+        assert!(!c.claim_repair("a"), "checked once per pdtd");
+        assert!(!c.claim_repair("b"));
+    }
 }

@@ -28,9 +28,6 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
         return Ok(c.clone());
     }
     let has_history = st.store.last_session_event_seq(&session.id).await? > 0;
-    if has_history {
-        repair_gaps(st, session).await;
-    }
     let stopped_background = st.store.stopped_background(&session.id).await?;
     let c = Arc::new(Conv {
         id: session.id.clone(),
@@ -65,21 +62,23 @@ pub(crate) async fn conv(st: &AppState, session: &Session) -> Result<Arc<Conv>, 
         unstored: tokio::sync::Mutex::new(std::collections::VecDeque::new()),
         retrying: std::sync::atomic::AtomicBool::new(false),
     });
-    let mut map = st.conversations.map.lock().unwrap_or_else(|e| e.into_inner());
-    Ok(map.entry(session.id.clone()).or_insert(c).clone())
+    let c =
+        st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).entry(session.id.clone()).or_insert(c).clone();
+    // Never in the way of a load: its viewers see what it fills in as live events (PDT-619).
+    if has_history
+        && matches!(session.agent, None | Some(AgentKind::Claude))
+        && st.conversations.claim_repair(&session.id)
+    {
+        let (st, session, c) = (st.clone(), session.clone(), c.clone());
+        tokio::spawn(async move { repair_gaps(&st, &session, &c).await });
+    }
+    Ok(c)
 }
 
-/// Fills in the gaps in a Claude conversation's log from Claude's transcript, once per pdtd, as it loads (PDT-331):
-/// events PDT received but could not store (a full disk) before pdtd stopped. Loads of other conversations wait
-/// meanwhile, and a second load of this one finds it done.
-async fn repair_gaps(st: &AppState, session: &Session) {
-    if !matches!(session.agent, None | Some(AgentKind::Claude)) {
-        return;
-    }
-    let mut checked = st.conversations.repaired.lock().await;
-    if !checked.insert(session.id.clone()) {
-        return;
-    }
+/// Fills in the gaps in a Claude conversation's log from Claude's transcript, once per pdtd, after it loads (PDT-331):
+/// events PDT received but could not store (a full disk) before pdtd stopped. The rows it adds, and the ones that
+/// move down to make room for them, go to the conversation's viewers.
+async fn repair_gaps(st: &AppState, session: &Session, c: &Conv) {
     // A terminal's turns waiting to be imported are not a gap.
     if !matches!(st.store.history_from(&session.id).await, Ok(None)) {
         return;
@@ -108,6 +107,8 @@ async fn repair_gaps(st: &AppState, session: &Session) {
             return;
         }
     };
+    let Ok(top) = st.store.last_session_event_seq(&session.id).await else { return };
+    let mut filled = false;
     for gap in pdt_core::conversation::repair::gaps(&history, &stored) {
         let events: Vec<NewEvent> = gap
             .events
@@ -122,9 +123,34 @@ async fn repair_gaps(st: &AppState, session: &Session) {
             .collect();
         match st.store.insert_session_events_after(&session.id, &gap.after, &events).await {
             Ok(n) => {
+                filled |= n > 0;
                 tracing::info!(session = %session.id, after = %gap.after, events = n, "filled in a gap in the conversation")
             }
             Err(e) => tracing::warn!(session = %session.id, error = %e, "could not fill in a gap in the conversation"),
+        }
+    }
+    if filled {
+        send_since(st, c, top).await;
+    }
+}
+
+/// Sends the conversation's viewers its rows changed since `seq`, oldest first.
+async fn send_since(st: &AppState, c: &Conv, mut seq: i64) {
+    loop {
+        let page = match st.store.list_session_events(&c.id, seq, super::PAGE).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(session = %c.id, error = %e, "could not read the conversation's events");
+                return;
+            }
+        };
+        let n = page.len() as i64;
+        for event in page {
+            seq = event.seq;
+            let _ = c.tx.send(ConversationServerMessage::Event { event });
+        }
+        if n < super::PAGE {
+            return;
         }
     }
 }

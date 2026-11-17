@@ -1,7 +1,7 @@
 import { useCallback, useMemo, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
-import { EmptyState, type ApprovalAnswer } from '@ui';
+import { EmptyState, Skeleton, type ApprovalAnswer } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, type SessionPatch } from '../api/client';
 import { answerRequest } from '../common/answerRequest';
@@ -145,7 +145,8 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
         refs={refs}
         remember={`conversation:${session.id}`}
         empty={
-          !conv.ready ? null : empty ?? (
+          // Never a blank pane while the stored messages come in (PDT-619).
+          !conv.ready ? <Skeleton lines={6} label="Loading the conversation" /> : empty ?? (
             <EmptyState icon={<MessagesSquare />} className="mt-16 border-0">
               Ask {agentName} something. It works in {session.cwd}.
             </EmptyState>

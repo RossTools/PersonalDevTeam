@@ -49,10 +49,10 @@ afterEach(() => {
 });
 
 // What views remember when they're left (PDT-379), and what other modules keep for the page (drafts, toasts shown,
-// the phone Inbox's segment, the theme chosen, the router's history), starts empty in every test.
+// the phone Inbox's segment, the theme chosen, the router's history, the conversations shown), starts empty in every test.
 afterEach(async () => {
   if (typeof window === 'undefined') return;
-  const [{ clearViewStates }, { resetDrafts }, { resetClearToasts }, { resetPhoneInboxSegment }, { resetThemePref }, { resetRouter }] =
+  const [{ clearViewStates }, { resetDrafts }, { resetClearToasts }, { resetPhoneInboxSegment }, { resetThemePref }, { resetRouter }, { resetConversations }] =
     await Promise.all([
       import('./common/viewState'),
       import('./conversation/drafts'),
@@ -60,6 +60,7 @@ afterEach(async () => {
       import('./inbox/PhoneInboxList'),
       import('@ui/theme'),
       import('./shell/router'),
+      import('./conversation/useConversation'),
     ]);
   clearViewStates();
   resetDrafts();
@@ -67,6 +68,7 @@ afterEach(async () => {
   resetPhoneInboxSegment();
   resetThemePref();
   resetRouter();
+  resetConversations();
 });
 
 // A test that fakes timers and fails before it puts the real ones back doesn't leave them fake for the next.
