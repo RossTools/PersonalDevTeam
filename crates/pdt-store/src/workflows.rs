@@ -814,8 +814,9 @@ impl Store {
     /// Deletes finished runs that ended before `before`. Returns how many went.
     pub async fn prune_workflow_runs(&self, before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
+            // `+status`: by `workflow_runs_by_ended`, the runs old enough, not every finished run by status.
             "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < ? \
-             AND status IN ('succeeded', 'quiet', 'failed', 'cancelled')",
+             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled')",
         )
         .bind(before)
         .execute(&self.pool)
