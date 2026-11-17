@@ -229,6 +229,8 @@ pub mod testing {
         pub folders: Mutex<Vec<std::path::PathBuf>>,
         /// Each read, whether an agent's tool made it ([`crate::integrations::action::by_agent`]).
         pub reads_by_agent: Mutex<Vec<bool>>,
+        /// Who it says changed a file last (as Google names its last modifying user).
+        pub editor: Mutex<Option<String>>,
     }
 
     impl FakeProvider {
@@ -254,6 +256,7 @@ pub mod testing {
                 next: Mutex::new(0),
                 folders: Default::default(),
                 reads_by_agent: Default::default(),
+                editor: Default::default(),
             }
         }
 
@@ -328,6 +331,7 @@ pub mod testing {
                 url: None,
                 version: Some(s.version.to_string()),
                 modified: None,
+                modified_by: self.editor.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             }
         }
 

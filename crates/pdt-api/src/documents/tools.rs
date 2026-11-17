@@ -103,7 +103,7 @@ fn tool(decl: ToolDecl, title: &'static str, description: &'static str) -> ToolF
 }
 
 /// A document by id, or by its exact title when one has it.
-pub(super) async fn find(st: &AppState, given: &str) -> Result<Document, String> {
+pub(crate) async fn find(st: &AppState, given: &str) -> Result<Document, String> {
     let g = given.trim();
     if let Some(d) = st.store.get_document(g).await.map_err(|e| e.to_string())? {
         return Ok(d);

@@ -24,4 +24,8 @@ version: string | null,
 /**
  * When it last changed (ms since the epoch), from providers that know it.
  */
-modified: number | null, };
+modified: number | null, 
+/**
+ * Who changed it last (a name), from providers that say.
+ */
+modifiedBy?: string, };

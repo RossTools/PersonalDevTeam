@@ -138,6 +138,17 @@ with the conversation, and the panel's width and whether it is collapsed are rem
 
 On a phone, a **Conversation | Documents** switch at the top of the conversation flips between the two.
 
+## Watch a document
+
+To hear when a document changes, click the eye (**Watch**) at the top of its page (on a phone, **Watch** in the **⋯**
+menu). PDT looks at it every minute; once edits stop for a few minutes, an update in the Inbox's **Updates** says
+what changed (the paragraphs that changed, under their heading, or a sheet's changed cells) and who edited it, where
+the provider says. New comments from other people come too; your own don't. The watch goes on until you click the eye
+again, or the document is removed from PDT or deleted.
+
+Under the title, **Watched by** lists who watches it: you, and any PM conversation you asked to keep an eye on it.
+**×** beside one stops that watch.
+
 ## Rename or remove
 
 **Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can (a local

@@ -7,6 +7,7 @@ import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
 import { TicketKey } from '../common/TicketKey';
 import { useRememberedScroll } from '../common/viewState';
+import { WatchButton, Watchers, useWatches, watchEntry } from '../common/Watch';
 import { InlineRename } from '../common/InlineRename';
 import { cn } from '@ui/lib/utils';
 import { runAction } from '../common/useAction';
@@ -59,6 +60,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const [sheetHandle, setSheetHandle] = useState<SheetHandle | null>(null);
   const onSheet = useCallback((h: SheetHandle | null) => setSheetHandle(h), []);
   const content = useDocumentContent(id);
+  const watches = useWatches({ document: id }).data;
   // Where it was scrolled comes back when it is left and opened again (PDT-379).
   const scroll = useRememberedScroll(`document:${id}`);
   const d = doc.data;
@@ -96,6 +98,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
   const entries = (): MenuEntry[] => [
     { label: 'Rename', onSelect: () => setRenaming(true) },
     { label: 'Read again', onSelect: () => void qc.invalidateQueries({ queryKey: documentKeys.content(id) }) },
+    ...(phone ? [watchEntry(qc, { document: id }, watches)] : []),
     ...(d ? [openBesideEntry(besideTargets, d.id)] : []),
     ...exports(),
     { separator: true },
@@ -131,6 +134,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
             )}
             {!phone && !renaming && (
               <>
+                <WatchButton of={{ document: id }} />
                 <IconButton label="Rename" variant="ghost" size="sm" onClick={() => setRenaming(true)}><Pencil aria-hidden /></IconButton>
                 <MenuButton label="Document actions" entries={entries} placement="bottom end" />
               </>
@@ -149,6 +153,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
               </>
             )}
           </p>
+          <Watchers of={{ document: id }} />
         </header>
 
         <section aria-label="Links" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">

@@ -66,6 +66,8 @@ pub(crate) async fn emit_now(store: &Store, e: &NewLogEvent, now: i64) -> Result
 #[derive(Debug, Clone, Default)]
 pub struct EventFilter {
     pub kind: Option<String>,
+    /// Only events of these kinds (with `kind`, both apply).
+    pub kinds: Vec<String>,
     pub project_id: Option<String>,
     pub ticket_id: Option<String>,
     pub attempt_id: Option<String>,
@@ -109,6 +111,14 @@ impl Store {
         let mut qb = QueryBuilder::<Sqlite>::new(format!("SELECT {COLUMNS} FROM events WHERE 1 = 1"));
         if let Some(k) = &f.kind {
             qb.push(" AND type = ").push_bind(k.clone());
+        }
+        if !f.kinds.is_empty() {
+            qb.push(" AND type IN (");
+            let mut sep = qb.separated(", ");
+            for k in &f.kinds {
+                sep.push_bind(k.clone());
+            }
+            qb.push(")");
         }
         if let Some(p) = &f.project_id {
             qb.push(" AND project_id = ").push_bind(p.clone());

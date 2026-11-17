@@ -560,6 +560,7 @@ export function AppShell() {
       case 'ticket_key': openTicketByKey(t.key); break;
       case 'inbox': go({ view: 'inbox', itemId: t.id }); break;
       case 'workflow': setWorkflowTarget({ kind: 'workflow', id: t.id }); break;
+      case 'document': go({ view: 'documents', doc: t.id }); break;
       case 'url': if (isWebUrl(t.url)) openExternal(t.url); break;
       case 'connections': openSettings({ kind: 'connections' }); break;
       case 'todo':

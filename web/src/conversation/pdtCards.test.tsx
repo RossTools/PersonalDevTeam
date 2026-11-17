@@ -39,6 +39,7 @@ describe('PDT tool calls', () => {
     expect(watchEventsText([])).toBe('it finishes, fails or needs you');
     expect(watchEventsText(['comment'])).toBe('someone comments');
     expect(watchEventsText(['outcome', 'finished', 'comment'])).toBe('it finishes, an agent reports or someone comments');
+    expect(watchEventsText(['changed', 'comment'])).toBe('it changes or someone comments');
   });
 
   it('titles the approval of the tools that ask', () => {

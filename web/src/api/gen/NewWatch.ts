@@ -6,7 +6,7 @@ import type { WatchEvent } from "./WatchEvent";
  */
 export type NewWatch = { 
 /**
- * A ticket key (`ABC-12`) or id. Give this or `run`.
+ * A ticket key (`ABC-12`) or id. Give this, `run` or `document`.
  */
 ticket?: string, 
 /**
@@ -14,11 +14,15 @@ ticket?: string,
  */
 run?: string, 
 /**
- * What to hear about: `finished`, `outcome` (an agent step reported), `comment`, `needs_you`, `failed`.
- * Default: `finished`, `failed` and `needs_you`.
+ * A document's id, or its exact title (`documents_list` gives them). Import or link one outside PDT first.
+ */
+document?: string, 
+/**
+ * What to hear about. A ticket or run: `finished`, `outcome` (an agent step reported), `comment`, `needs_you`,
+ * `failed` (default `finished`, `failed` and `needs_you`). A document: `changed`, `comment` (both by default).
  */
 events?: Array<WatchEvent>, 
 /**
- * End the watch once the target finishes (default true).
+ * End the watch once the target finishes (default true; false for a document, which never finishes).
  */
 once?: boolean, };

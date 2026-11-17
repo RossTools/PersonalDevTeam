@@ -39,6 +39,15 @@ pub struct DocumentChanged {
     pub version: String,
     /// The version PDT saw before.
     pub previous_version: String,
+    /// What changed, as short text (PDT-616): a doc's changed headings and paragraphs (`-` before, `+` after), a sheet's
+    /// changed ranges and a few cells; cut to about 4 KB. Null when PDT had no earlier read to compare with.
+    #[serde(default)]
+    #[ts(optional)]
+    pub diff: Option<String>,
+    /// Who edited it last, where the provider says (Google's last modifying user).
+    #[serde(default)]
+    #[ts(optional)]
+    pub modified_by: Option<String>,
 }
 
 /// `document.comment_added` (PDT-318).

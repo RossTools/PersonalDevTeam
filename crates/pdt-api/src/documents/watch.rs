@@ -1,10 +1,15 @@
 //! The documents' sensor (PDT-318): every minute (the poll pass) PDT looks at the documents enabled workflows'
-//! `document.changed` and `document.comment_added` triggers watch, asks each one's provider for its version and its
-//! comments, and logs an event for each change and each new comment or reply. Providers are polled the same way,
-//! local or not. The first look at a document only records where it is (`sensor.document_version.<id>`,
-//! `sensor.document_comments.<id>`), so turning a watcher on never replays its history. A document nothing watches
-//! (its workflows turned off, it unlinked, its provider gone) has that state forgotten, so watching it again starts
-//! with a first look too.
+//! `document.changed` and `document.comment_added` triggers watch, and those a watch follows (PDT-616), once each
+//! however many watch it. It asks each one's provider for its version and its comments, and logs an event for each
+//! change and each new comment or reply. Providers are polled the same way, local or not. The first look at a document
+//! only records where it is (`sensor.document_version.<id>`, `sensor.document_comments.<id>`), so turning a watcher on
+//! never replays its history. A document nothing watches (its workflows turned off, it unlinked, its provider gone, its
+//! watches ended) has that state forgotten, so watching it again starts with a first look too.
+//!
+//! For changes, the sensor also keeps the document's content as last read (`sensor.document_text.<id>`): a change's
+//! event carries the diff from it (`diff`), and who edited it where the provider says (`modifiedBy`). A watch diffs
+//! its own snapshot against it, so a burst of edits is told as one diff. A document its provider no longer has is
+//! marked (`sensor.document_missing.<id>`), which ends its watches.
 //!
 //! An event is logged once for each project the document is linked to, or once without a project when it has none
 //! (each trigger takes one copy: [`pdt_core::document_watch::accepts_copy`]). What PDT itself wrote (a workflow's
@@ -15,7 +20,7 @@ use super::nodes::DocumentTriggerConfig;
 use super::{DocumentProvider, provider};
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::parse;
-use pdt_core::document::{Document, DocumentFilter};
+use pdt_core::document::{Document, DocumentContent, DocumentFilter};
 use pdt_core::document_watch::{comment_ids, new_comments};
 use pdt_core::workflow::api::{NewLogEvent, Scope};
 use pdt_core::workflow::events::{
@@ -37,6 +42,10 @@ struct Watch {
 
 const VERSION_PREFIX: &str = "sensor.document_version.";
 const COMMENTS_PREFIX: &str = "sensor.document_comments.";
+const TEXT_PREFIX: &str = "sensor.document_text.";
+const MISSING_PREFIX: &str = "sensor.document_missing.";
+/// The largest content kept to diff against (its JSON); a larger document's changes come without a diff.
+const TEXT_MAX: usize = 2 * 1024 * 1024;
 
 fn version_key(id: &str) -> String {
     format!("{VERSION_PREFIX}{id}")
@@ -44,6 +53,35 @@ fn version_key(id: &str) -> String {
 
 fn comments_key(id: &str) -> String {
     format!("{COMMENTS_PREFIX}{id}")
+}
+
+fn text_key(id: &str) -> String {
+    format!("{TEXT_PREFIX}{id}")
+}
+
+fn missing_key(id: &str) -> String {
+    format!("{MISSING_PREFIX}{id}")
+}
+
+/// The document's content as the sensor last read it (to diff a watch's snapshot against); None before its first
+/// look, or for one too large to keep.
+pub(crate) async fn last_read(st: &AppState, id: &str) -> Option<DocumentContent> {
+    let v = st.store.get_host_value(&text_key(id)).await.ok().flatten()?;
+    serde_json::from_value(v["content"].clone()).ok()
+}
+
+/// Whether the provider said it has no such document at the last look (deleted, or access taken away).
+pub(crate) async fn missing(st: &AppState, id: &str) -> bool {
+    matches!(st.store.get_host_value(&missing_key(id)).await, Ok(Some(_)))
+}
+
+/// Its content as a provider reads it, without the version (which a diff ignores).
+pub(crate) async fn read_content(p: &Arc<dyn DocumentProvider>, reference: &str) -> Option<DocumentContent> {
+    let mut c = p.read(reference).await.ok()?;
+    match &mut c {
+        DocumentContent::Doc { version, .. } | DocumentContent::Sheet { version, .. } => *version = None,
+    }
+    Some(c)
 }
 
 fn ours_key(id: &str) -> String {
@@ -111,6 +149,14 @@ async fn watched(st: &AppState) -> Result<BTreeMap<String, Watch>, pdt_store::St
             }
         }
     }
+    for w in st.store.active_watches().await? {
+        if w.target != pdt_core::watch::WatchTarget::Document {
+            continue;
+        }
+        let e = out.entry(w.target_id).or_default();
+        e.changes |= w.events.contains(&pdt_core::watch::WatchEvent::Changed);
+        e.comments |= w.events.contains(&pdt_core::watch::WatchEvent::Comment);
+    }
     Ok(out)
 }
 
@@ -157,25 +203,67 @@ async fn emit(st: &AppState, e: NewLogEvent) -> bool {
     }
 }
 
+/// Marks the document missing at its provider (or not).
+async fn mark_missing(st: &AppState, id: &str, gone: bool) {
+    let key = missing_key(id);
+    let r = match (gone, missing(st, id).await) {
+        (true, false) => st.store.put_host_value(&key, &json!({"at": now_ms()})).await,
+        (false, true) => st.store.delete_host_value(&key).await.map(|_| ()),
+        _ => Ok(()),
+    };
+    if let Err(e) = r {
+        tracing::warn!(document = id, error = %e, "could not record whether a document is missing");
+    }
+}
+
+/// Reads the document and keeps its content to diff the next change against: what changed since the last read kept.
+async fn keep_text(st: &AppState, d: &Document, p: &Arc<dyn DocumentProvider>) -> Option<String> {
+    let now = read_content(p, &d.provider_ref).await?;
+    let before = last_read(st, &d.id).await;
+    let diff = before.and_then(|b| pdt_core::document_diff::diff(&b, &now, pdt_core::document_diff::BUDGET));
+    let mut kept = json!({"content": now});
+    if kept.to_string().len() > TEXT_MAX {
+        kept = json!({"tooLarge": true});
+    }
+    if let Err(e) = st.store.put_host_value(&text_key(&d.id), &kept).await {
+        tracing::warn!(document = %d.id, error = %e, "could not keep a document's text");
+    }
+    diff
+}
+
 /// One look at whether the document changed.
 async fn look_at_version(st: &AppState, d: &Document, p: &Arc<dyn DocumentProvider>) {
     let version = match p.version(&d.provider_ref).await {
         Ok(Some(v)) => v,
         Ok(None) => return,
+        Err(super::ProviderError::NotFound) => return mark_missing(st, &d.id, true).await,
         Err(e) => return tracing::debug!(document = %d.id, error = %e, "could not read a document's version"),
     };
+    mark_missing(st, &d.id, false).await;
     let key = version_key(&d.id);
     let before = match st.store.get_host_value(&key).await {
         Ok(v) => v.and_then(|v| v["version"].as_str().map(String::from)),
         Err(e) => return tracing::warn!(document = %d.id, error = %e, "could not read a document's last version"),
     };
     if before.as_deref() == Some(version.as_str()) {
+        // Kept since the first look; one whose read failed is read again.
+        if matches!(st.store.get_host_value(&text_key(&d.id)).await, Ok(None)) {
+            keep_text(st, d, p).await;
+        }
         return;
     }
+    let diff = keep_text(st, d, p).await;
     if let Some(prev) = before {
+        let modified_by = p.file(&d.provider_ref).await.ok().and_then(|f| f.modified_by);
         for doc in copies(d) {
             let key = format!("{}:{prev}:{version}:{}", d.id, doc.project_id);
-            let payload = DocumentChanged { document: doc, version: version.clone(), previous_version: prev.clone() };
+            let payload = DocumentChanged {
+                document: doc,
+                version: version.clone(),
+                previous_version: prev.clone(),
+                diff: diff.clone(),
+                modified_by: modified_by.clone(),
+            };
             if !emit(st, NewLogEvent::new(DOCUMENT_CHANGED, key, "documents", payload)).await {
                 return;
             }
@@ -197,6 +285,7 @@ async fn look_at_comments(st: &AppState, d: &Document, p: &Arc<dyn DocumentProvi
     }
     let list = match p.comments(&d.provider_ref).await {
         Ok(l) => l,
+        Err(super::ProviderError::NotFound) => return mark_missing(st, &d.id, true).await,
         Err(e) => return tracing::debug!(document = %d.id, error = %e, "could not read a document's comments"),
     };
     let key = comments_key(&d.id);
@@ -237,7 +326,7 @@ pub async fn refresh(st: &AppState) {
         Ok(w) => w,
         Err(e) => return tracing::warn!(error = %e, "could not read which documents workflows watch"),
     };
-    let (mut versions, mut comments) = (HashSet::new(), HashSet::new());
+    let (mut versions, mut comments, mut looked) = (HashSet::new(), HashSet::new(), HashSet::new());
     for (id, w) in watched {
         if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
             return;
@@ -249,6 +338,7 @@ pub async fn refresh(st: &AppState) {
             Err(e) => return tracing::warn!(document = %id, error = %e, "could not read a watched document"),
         };
         let Some(p) = provider(st, &d.provider) else { continue };
+        looked.insert(id.clone());
         if w.changes {
             look_at_version(st, &d, &p).await;
             versions.insert(id.clone());
@@ -259,5 +349,7 @@ pub async fn refresh(st: &AppState) {
         }
     }
     forget_unwatched(st, VERSION_PREFIX, &versions).await;
+    forget_unwatched(st, TEXT_PREFIX, &versions).await;
+    forget_unwatched(st, MISSING_PREFIX, &looked).await;
     forget_unwatched(st, COMMENTS_PREFIX, &comments).await;
 }

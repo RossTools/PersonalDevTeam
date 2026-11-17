@@ -3,4 +3,4 @@
 /**
  * What is watched.
  */
-export type WatchTarget = "ticket" | "run";
+export type WatchTarget = "ticket" | "run" | "document";

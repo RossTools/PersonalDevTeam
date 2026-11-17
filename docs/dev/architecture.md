@@ -300,8 +300,8 @@ through the SDK's `pm` and `conversations` modules (start, send, close; every co
 `conversations::subscribe_all`; answering a request as the user). Its bot holds a Gateway websocket (`gateway.rs`) in
 an integration service (`Integration::services`, started once by pdtd, idle while the plugin is off).
 
-**Watches.** A ticket or workflow run that a PM conversation (its `watch` tool) or the user (the Watch toggle) wants to
-hear about (pdt-core `watch.rs`, pdt-store and pdt-api `watches.rs`, table `watches`). Each engine tick reads what
+**Watches.** A ticket, workflow run or document that a PM conversation (its `watch` tool) or the user (the Watch toggle)
+wants to hear about (pdt-core `watch.rs`, pdt-store and pdt-api `watches.rs`, table `watches`). Each engine tick reads what
 happened to each watched target since its stored cursor: the event log (outcomes, comments, stage changes, merges, CI
 failures, queue drops), new Inbox items about it, and a run's status. It notes what the watch asked for, and tells a
 burst once it has been quiet for 15 s (at most a minute after the first). A conversation is told through the outbox
@@ -310,6 +310,14 @@ notification. A `once` watch ends when its target finishes. A PM Reset moves the
 conversation's watches to the fresh one (`watches::follow`); a tick during the reset waits for it. The web shows them from
 `GET /api/watches` with no filter (every active watch, each with its target's title and stage or status), one shared
 query (`useAllWatches`) for the board's and backlog's eyes, the PM list's and the conversation header's watch list.
+A document's watch (`once` false by default: a document never finishes) reads the `document.changed` and
+`document.comment_added` events the documents sensor logs (one copy each: the first linked project's), so the sensor
+polls the documents watches follow alongside the ones triggers do, once each. It waits longer for quiet (3 minutes, at
+most 10: the sensor looks once a minute) and keeps the content as last told (`watches.snapshot`); a burst is told with
+one diff (pdt-core `document_diff`, about 4 KB, "N more changes") from that snapshot to the sensor's latest read
+(`sensor.document_text.<id>`), and the snapshot moves on. The title, editors, comments and diff go to a conversation in
+a fence; the user gets a `watch.event` notification targeting the document. It ends, saying why, when the document is
+removed from PDT or its provider answers "not found" (`sensor.document_missing.<id>`).
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
@@ -597,8 +605,10 @@ and its two templates (`documents/templates.rs`). The triggers `document.changed
 fed by a poller (`documents/watch.rs`, the 60 s pass): it looks only at the documents an enabled trigger watches
 (the one it names, else those linked to the workflow's projects), compares the provider's `version` and its comment
 ids with what it saw last (host values `sensor.document_version.<id>`, `sensor.document_comments.<id>`; the first look
-only records; the state of a document no trigger watches now is deleted, so watching it again starts with a first
-look), and logs one event per linked project. Each trigger takes one copy of an event (pdt-core
+only records; the state of a document no trigger or watch follows now is deleted, so watching it again starts with a
+first look), and logs one event per linked project. For a change it also reads the document and keeps that read
+(`sensor.document_text.<id>`, up to 2 MB of JSON), so `document.changed` carries `diff` from the previous read and
+`modifiedBy` from the provider's file (Google's `lastModifyingUser`); both are outside fields. Each trigger takes one copy of an event (pdt-core
 `document_watch::accepts_copy`), so a document linked to two projects starts a host workflow once. Comments an agent or
 a workflow wrote never count: the provider's `actor` on a comment says so where it knows, and the ids of replies PDT
 posted are kept (`sensor.document_ours.<id>`) for providers that write them as the user (Google). A comment's text is

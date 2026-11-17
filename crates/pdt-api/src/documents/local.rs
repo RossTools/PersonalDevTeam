@@ -522,7 +522,10 @@ impl Files {
         let reference = path.to_string_lossy().into_owned();
         let version = self.wrote(&reference, &data);
         let modified = modified_ms(&path);
-        Ok((ProviderFile { reference, title, kind, url: None, version: Some(version), modified }, dropped))
+        Ok((
+            ProviderFile { reference, title, kind, url: None, version: Some(version), modified, modified_by: None },
+            dropped,
+        ))
     }
 
     fn save_image(&self, reference: &str, name: &str, bytes: &[u8]) -> ProviderResult<String> {
@@ -691,6 +694,7 @@ impl Files {
             url: None,
             version: Some(version),
             modified,
+            modified_by: None,
         })
     }
 
@@ -745,7 +749,10 @@ impl Files {
                 }
                 let when = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
                 let modified = ms_of(when);
-                found.push((when, ProviderFile { reference, title, kind: k, url: None, version: None, modified }));
+                found.push((
+                    when,
+                    ProviderFile { reference, title, kind: k, url: None, version: None, modified, modified_by: None },
+                ));
             }
         }
         found.sort_by_key(|f| std::cmp::Reverse(f.0));
@@ -949,6 +956,7 @@ impl DocumentProvider for LocalProvider {
                 url: None,
                 version: self.version_now(reference).await,
                 modified: modified_ms(&path),
+                modified_by: None,
             })
         })
     }

@@ -28,6 +28,7 @@ mod delivery;
 mod devin;
 mod devin_conversations;
 mod document_tools;
+mod document_watches;
 mod document_workflows;
 mod documents;
 mod folders;

@@ -230,7 +230,9 @@ run; a new release, a PDT update, low disk space, a failing connection or a todo
 
 These ones react to [documents](../using-pdt/documents.md):
 
-- **Document changed**: its content changed, in PDT or at its provider (Google, say).
+- **Document changed**: its content changed, in PDT or at its provider (Google, say). It carries what changed since
+  PDT last looked (the changed paragraphs, or a sheet's changed cells, cut to a few KB) and who edited it where the
+  provider says; both reach agents marked as outside input.
 - **New comment on a document**: someone commented on it or replied in a comment's thread. It carries who wrote it,
   the text, and the text it's on. Your own comments count; agents' and workflows' don't, so an agent answering
   comments never answers itself. What other people wrote reaches agents marked as outside input.

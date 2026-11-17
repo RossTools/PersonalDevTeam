@@ -20,8 +20,8 @@ looked yet.
 - **Talk to an agent**: "Tell the agent on ABC-12 to rebase before it pushes again." A comment the PM adds to a
   ticket that is being worked on reaches its agent too, with any screenshots or files attached, as yours do
   (**Ticket comments to the agent**, in [Workflows](workflows.md)), so the PM asks you before it adds one.
-- **Keep an eye on something**: "Tell me when ABC-12's agent reports", "Let me know when the release run finishes."
-  See [Watch a ticket or run](#watch-a-ticket-or-run).
+- **Keep an eye on something**: "Tell me when ABC-12's agent reports", "Let me know when the release run finishes",
+  "Tell me when someone edits the design doc." See [Watch a ticket, run or document](#watch-a-ticket-run-or-document).
 - **Run or write a workflow**: "Cut a minor release", "Write a workflow that posts merged tickets to Discord." A
   workflow it writes is a proposal you accept or discard in the workflow's **Versions**.
 - **Put a screenshot on a ticket**: paste it into the chat and say "Make a ticket for this bug, with the screenshot."
@@ -120,7 +120,7 @@ keeps the table as a record: each row with where its ticket went, the rows you u
 couldn't be decided with the reason. Only the PM can propose these decisions:
 the agents working on tickets aren't given a way to decide proposals, theirs or anyone else's.
 
-## Watch a ticket or run
+## Watch a ticket, run or document
 
 Ask the PM to keep an eye on a ticket or a workflow run, and it hears when something happens instead of checking
 again and again: the ticket's agent reports, the ticket is done or closed, its work merges, CI fails, it waits on you,
@@ -136,7 +136,13 @@ conversations). Click it to see each ticket or run it watches, what it listens f
 finishes, and since when; **Stop watching** ends one. Watched tickets have a small eye on the board and in the backlog:
 hover it to see who watches.
 
-To watch something yourself, see [Watch a ticket](../using-pdt/tickets-and-the-board.md#watch-a-ticket).
+The PM can watch a document too (one PDT has: import or link it first). It hears when the document changes, with what
+changed (the paragraphs, or a sheet's cells) and who edited it where the provider says (Google does), and when someone
+comments. Edits a few minutes apart arrive as one message with one combined change, so someone typing doesn't send a
+message a minute. A document's watch goes on until you stop it, or the document is removed from PDT or deleted.
+
+To watch something yourself, see [Watch a ticket](../using-pdt/tickets-and-the-board.md#watch-a-ticket) and
+[Watch a document](../using-pdt/documents.md#watch-a-document).
 
 ## Notes and the PM's memory
 
