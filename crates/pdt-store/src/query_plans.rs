@@ -37,8 +37,10 @@ async fn the_engines_periodic_queries_search_indexes() {
             &[],
         ),
         (
-            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < ? \
-             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled')",
+            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < MAX(?, ?) \
+             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled') \
+             AND (ended_at < ? OR (status = 'quiet' AND ended_at < ? AND trigger_event_id IS NOT NULL \
+                  AND run_key = trigger_node || ':' || trigger_event_id))",
             &[],
         ),
         (

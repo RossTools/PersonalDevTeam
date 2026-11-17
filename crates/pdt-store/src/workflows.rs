@@ -14,6 +14,11 @@ use sqlx::{QueryBuilder, Row, Sqlite};
 /// How long finished runs are kept.
 pub const RUN_RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
+/// How long a run an event started that ended with nothing to do (`quiet`) is kept (PDT-615): "Pick up tickets" makes
+/// thousands a day. Quiet runs with their own run key keep [`RUN_RETENTION_MS`]: the key stops the workflow running
+/// again for it.
+pub const QUIET_RUN_RETENTION_MS: i64 = 2 * 24 * 60 * 60 * 1000;
+
 const WF_COLUMNS: &str = "id, name, description, scope, project_id, enabled, builtin, source, repo_file, version, \
                           (SELECT MAX(v.version) FROM workflow_versions v WHERE v.workflow_id = workflows.id \
                            AND v.status = 'proposed') AS proposed, created_at, updated_at";
@@ -811,14 +816,21 @@ impl Store {
         rows.iter().map(|r| Ok((r.try_get("tk")?, to_step(r)?))).collect()
     }
 
-    /// Deletes finished runs that ended before `before`. Returns how many went.
-    pub async fn prune_workflow_runs(&self, before: i64) -> Result<u64, StoreError> {
+    /// Deletes finished runs that ended before `before`, and quiet runs keyed by their trigger event (the default run
+    /// key, `<node>:<event>`) that ended before `quiet_before`. Returns how many went.
+    pub async fn prune_workflow_runs(&self, before: i64, quiet_before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
-            // `+status`: by `workflow_runs_by_ended`, the runs old enough, not every finished run by status.
-            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < ? \
-             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled')",
+            // `+status`: by `workflow_runs_by_ended`, the runs old enough for either cut-off, not every finished run
+            // by status.
+            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < MAX(?, ?) \
+             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled') \
+             AND (ended_at < ? OR (status = 'quiet' AND ended_at < ? AND trigger_event_id IS NOT NULL \
+                  AND run_key = trigger_node || ':' || trigger_event_id))",
         )
         .bind(before)
+        .bind(quiet_before)
+        .bind(before)
+        .bind(quiet_before)
         .execute(&self.pool)
         .await?;
         Ok(r.rows_affected())
@@ -1433,8 +1445,45 @@ mod tests {
         r.status = RunStatus::Succeeded;
         r.ended_at = Some(20);
         store.update_workflow_run(&r).await.unwrap();
-        assert_eq!(store.prune_workflow_runs(21).await.unwrap(), 1);
+        assert_eq!(store.prune_workflow_runs(21, 0).await.unwrap(), 1);
         assert!(store.list_steps("r1").await.unwrap().is_empty(), "steps go with their run");
+    }
+
+    #[tokio::test]
+    async fn quiet_runs_keyed_by_their_event_go_sooner() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        store.insert_workflow(&wf("w", Scope::Host, None), &doc("w"), Author::User, "").await.unwrap();
+        let ended = |id: &str, key: &str, event: Option<&str>, status: RunStatus| Run {
+            status,
+            trigger_event_id: event.map(String::from),
+            ended_at: Some(20),
+            ..run(id, key)
+        };
+        let runs = [
+            ended("quiet_event", "t:e1", Some("e1"), RunStatus::Quiet),
+            ended("quiet_keyed", "tk", Some("e2"), RunStatus::Quiet),
+            ended("quiet_manual", "manual:1", None, RunStatus::Quiet),
+            ended("acted", "t:e3", Some("e3"), RunStatus::Succeeded),
+            ended("failed", "t:e4", Some("e4"), RunStatus::Failed),
+        ];
+        for r in &runs {
+            assert!(store.start_workflow_run(r, &[step(&format!("{}_s", r.id), &r.id, 1)]).await.unwrap());
+        }
+        let left = |store: &Store| {
+            let f = RunFilter { limit: 10, ..Default::default() };
+            let store = store.clone();
+            async move {
+                let mut ids: Vec<_> = store.list_workflow_runs(&f).await.unwrap().into_iter().map(|r| r.id).collect();
+                ids.sort();
+                ids
+            }
+        };
+        assert_eq!(store.prune_workflow_runs(0, 20).await.unwrap(), 0, "not ended before the cut-off");
+        assert_eq!(store.prune_workflow_runs(0, 21).await.unwrap(), 1);
+        assert_eq!(left(&store).await, ["acted", "failed", "quiet_keyed", "quiet_manual"]);
+        assert!(store.list_steps("quiet_event").await.unwrap().is_empty(), "steps go with their run");
+        assert_eq!(store.prune_workflow_runs(21, 21).await.unwrap(), 4, "the rest keep the full retention");
     }
 
     #[tokio::test]
