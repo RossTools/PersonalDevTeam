@@ -6,6 +6,7 @@ use crate::common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use common::watchdog::Watchdog;
 use common::{call, call_raw};
 use http_body_util::BodyExt;
 use pdt_api::documents::local::DocEvent;
@@ -53,9 +54,22 @@ fn next_event(rx: &mut tokio::sync::broadcast::Receiver<DocEvent>) -> DocEvent {
     rx.try_recv().expect("an event")
 }
 
-#[tokio::test]
-async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
+/// Run under a [`Watchdog`] (PDT-620): it once hung on Windows CI until nextest's timeout, with no request slow, so
+/// a hang now names its step, setup and the runtime's shutdown (which waits for blocking file work) included.
+#[test]
+fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
+    let dog =
+        Watchdog::start("a_local_doc_is_a_markdown_file_edited_commented_on_and_exported", Duration::from_secs(60));
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    rt.block_on(a_local_doc(&dog));
+    dog.step("the runtime's shutdown");
+    drop(rt);
+}
+
+async fn a_local_doc(dog: &Watchdog) {
+    dog.step("setup");
     let env = setup().await;
+    dog.step("providers and create");
     let (_, providers) = call(&env.app, "GET", "/api/documents/providers", None).await;
     assert_eq!(providers["default"], "local", "{providers}");
     assert_eq!(providers["providers"][0]["capabilities"]["live"], true);
@@ -71,6 +85,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let again = create(&env, json!({"title": "Launch plan", "kind": "doc"})).await;
     assert!(again["providerRef"].as_str().unwrap().ends_with("Launch plan 2.md"), "{again}");
 
+    dog.step("edits");
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     let v1 = c["content"]["version"].as_str().unwrap().to_string();
     let mut rx = env.state.local.subscribe(&path.to_string_lossy());
@@ -110,12 +125,14 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     assert!(matches!(next_event(&mut rx), DocEvent::Changed { .. }));
 
     // The file changed outside PDT: an open view hears of it.
+    dog.step("a change outside PDT");
     std::fs::write(&path, "# Edited by hand\n").unwrap();
     env.state.local.check_external(&path.to_string_lossy()).await;
     assert!(matches!(next_event(&mut rx), DocEvent::Changed { .. }));
     let (_, c) = call(&env.app, "GET", &format!("/api/documents/{id}/content"), None).await;
     assert_eq!(c["content"]["markdown"], "# Edited by hand\n");
 
+    dog.step("comments");
     // Comments: on a heading and on some text, a reply, resolved.
     let (s, c1) = call(
         &env.app,
@@ -153,6 +170,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let (s, _) = call(&env.app, "POST", &format!("/api/documents/{id}/comments"), Some(json!({"body": " "}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
+    dog.step("images");
     // An image goes beside the doc, and is served from where its Markdown points.
     let (s, _, img) =
         call_raw(&env.app, "POST", &format!("/api/documents/{id}/images?name=shot.png"), b"\x89PNG".to_vec()).await;
@@ -168,6 +186,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let (s, _, _) = call_raw(&env.app, "POST", &format!("/api/documents/{id}/images?name=x.exe"), b"MZ".to_vec()).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
+    dog.step("export");
     // Export as .md.
     let (s, h, bytes) = raw(&env, "GET", &format!("/api/documents/{id}/export?format=md"), vec![]).await;
     assert_eq!(s, StatusCode::OK);
@@ -176,6 +195,7 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     let (s, _, _) = raw(&env, "GET", &format!("/api/documents/{id}/export?format=xlsx"), vec![]).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
 
+    dog.step("search and import");
     // The local provider finds its files to import, and deleting removes the file and its images.
     let (_, files) = call(&env.app, "GET", "/api/documents/providers/local/files?q=launch", None).await;
     assert_eq!(files.as_array().unwrap().len(), 2, "{files}");
@@ -201,9 +221,12 @@ async fn a_local_doc_is_a_markdown_file_edited_commented_on_and_exported() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
+    dog.step("delete");
     let (s, _) = call(&env.app, "DELETE", &format!("/api/documents/{id}?file=true"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
     assert!(!path.exists() && !path.with_file_name("Launch plan.assets").exists());
+    dog.step("dropping the app and its folder");
+    drop(env);
 }
 
 #[tokio::test]

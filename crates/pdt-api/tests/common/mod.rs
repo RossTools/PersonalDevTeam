@@ -10,6 +10,7 @@ use tower::ServiceExt;
 
 #[path = "../../../../test-support/wait.rs"]
 pub mod wait;
+pub mod watchdog;
 
 /// Sends one request through the router and returns the status and the JSON body (`Null` when it is not JSON).
 pub async fn call(app: &axum::Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
