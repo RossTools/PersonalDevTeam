@@ -820,11 +820,15 @@ impl Store {
     /// key, `<node>:<event>`) that ended before `quiet_before`. Returns how many went.
     pub async fn prune_workflow_runs(&self, before: i64, quiet_before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
-            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL \
-             AND status IN ('succeeded', 'quiet', 'failed', 'cancelled') \
+            // `+status`: by `workflow_runs_by_ended`, the runs old enough for either cut-off, not every finished run
+            // by status.
+            "DELETE FROM workflow_runs WHERE ended_at IS NOT NULL AND ended_at < MAX(?, ?) \
+             AND +status IN ('succeeded', 'quiet', 'failed', 'cancelled') \
              AND (ended_at < ? OR (status = 'quiet' AND ended_at < ? AND trigger_event_id IS NOT NULL \
                   AND run_key = trigger_node || ':' || trigger_event_id))",
         )
+        .bind(before)
+        .bind(quiet_before)
         .bind(before)
         .bind(quiet_before)
         .execute(&self.pool)
