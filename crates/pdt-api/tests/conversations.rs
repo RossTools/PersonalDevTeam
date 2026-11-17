@@ -936,11 +936,31 @@ async fn a_gap_left_by_lost_writes_is_filled_in_from_claudes_transcript() {
         let e = pdt_store::NewEvent { ts: 5, item_id: Some(item), turn_id: Some(turn), event, raw: None };
         st.upsert_session_event(&id, e).await.unwrap();
     }
-    // The next pdtd fills the gap in as the conversation loads, once.
+    // The next pdtd fills the gap in once the conversation loads, without holding up its first viewer, who gets what
+    // it fills in as live events (PDT-619).
     let mut fresh = common::app_state(st.clone(), tmp.path());
     fresh.platform = env.state.platform.clone();
     let port = serve(&fresh).await;
-    replayed(port, &id).await;
+    let url = format!("ws://127.0.0.1:{port}/api/sessions/{id}/events?after=0");
+    let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    // As the web client keeps them: the latest version of each row, in `pos` order.
+    let mut seen: std::collections::HashMap<String, Value> = Default::default();
+    let shown = |seen: &std::collections::HashMap<String, Value>| {
+        let mut rows: Vec<&Value> = seen.values().collect();
+        rows.sort_by_key(|e| e["pos"].as_i64());
+        rows.iter().map(|e| e["itemId"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+    };
+    while seen.len() < 10 {
+        let m = tokio::time::timeout(Duration::from_secs(10), ws.next()).await.unwrap().unwrap().unwrap();
+        let v: Value = serde_json::from_str(m.to_text().unwrap()).unwrap();
+        if v["type"] == "event" {
+            let e = v["event"].clone();
+            let key = e["itemId"].as_str().unwrap().to_string();
+            if seen.get(&key).is_none_or(|old| old["seq"].as_i64() < e["seq"].as_i64()) {
+                seen.insert(key, e);
+            }
+        }
+    }
     replayed(port, &id).await;
     let all = events(&env, &id).await;
     let items: Vec<&str> = all.iter().map(|e| e["itemId"].as_str().unwrap()).collect();
@@ -972,4 +992,5 @@ async fn a_gap_left_by_lost_writes_is_filled_in_from_claudes_transcript() {
     let by_pos: Vec<&str> = sorted.iter().map(|f| f["event"]["itemId"].as_str().unwrap()).collect();
     assert_eq!(replay.len(), 10);
     assert_eq!(by_pos, items);
+    assert_eq!(shown(&seen), items, "the first viewer has every row in its place");
 }

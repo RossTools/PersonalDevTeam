@@ -107,6 +107,13 @@ function Images({ images }: { images: string[] }) {
 const ROW = '[content-visibility:auto] [contain-intrinsic-size:auto_3rem]';
 /** How close to the bottom (px) still counts as "at the bottom". */
 const STICK_PX = 48;
+/**
+ * How many blocks a conversation opens with, and how many more each step up shows (PDT-619): its latest messages paint
+ * at once however long it is.
+ */
+export const WINDOW = 50;
+/** How close to the top (px) of what is shown brings in the blocks before it. */
+const EARLIER_PX = 600;
 
 /** The time, updated every second while `on`. */
 function useTicker(on: boolean): number {
@@ -472,6 +479,14 @@ function useLatest<A extends unknown[], R>(f: ((...args: A) => R) | undefined) {
   return f ? stable : undefined;
 }
 
+/** Where block `key` is on screen (its top), if it is shown. */
+function blockTop(content: HTMLElement | null, key: string): number | null {
+  for (const el of content?.children ?? []) {
+    if (el instanceof HTMLElement && el.dataset.block === key) return el.getBoundingClientRect().top;
+  }
+  return null;
+}
+
 /** The last row matching `f`, without copying the rows. */
 function findLast(rows: ConversationEvent[], f: (r: ConversationEvent) => boolean): ConversationEvent | undefined {
   for (let i = rows.length - 1; i >= 0; i--) if (f(rows[i])) return rows[i];
@@ -507,12 +522,21 @@ export function MessageList({
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const scrollKey = useViewKey(remember ?? '');
-  // Scrolled up when it was left: back there once the rows are in (else the latest message, as always).
-  const [savedTop] = useState(() => (remember ? readViewState<number>(scrollKey) : undefined));
-  const restored = useRef(savedTop === undefined);
-  const stick = useRef(savedTop === undefined);
-  const [atBottom, setAtBottom] = useState(savedTop === undefined);
+  // Scrolled up when it was left: back there once the rows are in (else the latest message, as always). Kept as the
+  // distance from the bottom, which stays put as earlier blocks come in above.
+  const [saved] = useState(() => (remember ? readViewState<{ fromBottom: number }>(scrollKey)?.fromBottom : undefined));
+  const restored = useRef(saved === undefined);
+  const stick = useRef(saved === undefined);
+  const [atBottom, setAtBottom] = useState(saved === undefined);
   const blocks = useBlocks(rows, turnRunning);
+  // The blocks before `first` are not shown yet: the latest WINDOW at first, more as the reader scrolls up. Fixed once
+  // there are blocks, so new ones at the end don't push the earliest shown out.
+  const [start, setStart] = useState<number | null>(null);
+  if (start === null && blocks.length > 0) setStart(Math.max(0, blocks.length - WINDOW));
+  const first = Math.min(start ?? Math.max(0, blocks.length - WINDOW), blocks.length);
+  const shown = first > 0 ? blocks.slice(first) : blocks;
+  // The block that stays in place while earlier ones come in above it, and where it was.
+  const anchor = useRef<{ key: string; top: number } | null>(null);
   const answer = useLatest(onAnswer);
   const continueLatest = useLatest(onContinue);
   // y / n go to the newest open request only.
@@ -549,19 +573,42 @@ export function MessageList({
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
+  /** Shows the WINDOW blocks before the earliest shown, keeping what the reader sees where it is. */
+  const showEarlier = useCallback(() => {
+    if (first === 0) return;
+    const key = shown[0]?.key;
+    const top = key === undefined ? null : blockTop(content.current, key);
+    anchor.current = key !== undefined && top !== null ? { key, top } : null;
+    setStart(Math.max(0, first - WINDOW));
+  }, [first, shown]);
+  // Earlier blocks came in: the one that was first stays where it was on screen.
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (restored.current || !el || rows.length === 0 || savedTop === undefined) return;
+    const a = anchor.current;
+    anchor.current = null;
+    const top = a ? blockTop(content.current, a.key) : null;
+    if (el && a && top !== null && !stick.current) el.scrollTop += top - a.top;
+  }, [first]);
+  // Back where it was left: the blocks it needs shown first.
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (restored.current || !el || rows.length === 0 || saved === undefined) return;
+    if (el.scrollHeight < saved + el.clientHeight && first > 0) {
+      setStart(Math.max(0, first - WINDOW));
+      return;
+    }
     restored.current = true;
-    el.scrollTop = savedTop;
-  }, [rows.length, savedTop]);
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - saved);
+  }, [rows.length, saved, first]);
   const onScroll = () => {
     const el = scroller.current;
     if (!el || !restored.current) return;
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_PX;
+    const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const bottom = fromBottom <= STICK_PX;
     stick.current = bottom;
     setAtBottom(bottom);
-    if (remember) writeViewState(scrollKey, bottom ? undefined : el.scrollTop);
+    if (remember) writeViewState(scrollKey, bottom ? undefined : { fromBottom });
+    if (el.scrollTop < EARLIER_PX && first > 0 && !anchor.current) showEarlier();
   };
   // After every render (new rows, deltas): follow the bottom when pinned.
   useLayoutEffect(() => {
@@ -591,8 +638,13 @@ export function MessageList({
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto" role="log" aria-label="Conversation" aria-live="off">
         <div ref={content} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-gutter py-4">
           {nothing && empty}
-          {blocks.map((b) => (
-            <div key={b.key} className={ROW}>
+          {first > 0 && (
+            <Button variant="ghost" size="sm" onClick={showEarlier} className="self-center text-meta text-muted-foreground">
+              Show earlier messages
+            </Button>
+          )}
+          {shown.map((b) => (
+            <div key={b.key} className={ROW} data-block={b.key}>
               <BlockView block={b} streams={streams} keyboardFor={keyboardFor} onAnswer={answer} />
             </div>
           ))}

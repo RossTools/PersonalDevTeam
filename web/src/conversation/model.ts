@@ -132,9 +132,13 @@ function reduceBatch(m: ConversationModel, msgs: ConversationServerMessage[]): C
   return cur;
 }
 
-/** The rows in conversation order (`pos`; seq breaks ties). */
+/**
+ * The rows in conversation order (`pos`). Each place holds one row: a row without an item id that moved (a gap filled
+ * in before it, PDT-331) comes again under its new seq, and the newer row in a place replaces the one from before.
+ */
 export function sortedRows(m: ConversationModel): ConversationEvent[] {
-  return Object.values(m.rows).sort((a, b) => a.pos - b.pos || a.seq - b.seq);
+  const all = Object.values(m.rows).sort((a, b) => a.pos - b.pos || a.seq - b.seq);
+  return all.filter((r, i) => i + 1 === all.length || all[i + 1].pos !== r.pos);
 }
 
 /** Agent messages that are streaming but have no stored event yet, in the order they started. */
