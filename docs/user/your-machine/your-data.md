@@ -98,7 +98,7 @@ in `documents/`; if you keep them in another folder (**Settings â€º This host â€
 folder up too. Their comments and charts are in the database.
 
 Old history is pruned as PDT goes: finished workflow runs, ended Inbox items, notifications and the event log after
-30 days. Tickets, comments and conversations' messages stay.
+30 days; workflow runs that had nothing to do after two days. Tickets, comments and conversations' messages stay.
 
 ## Move to another machine
 

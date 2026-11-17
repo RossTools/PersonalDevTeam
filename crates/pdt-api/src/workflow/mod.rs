@@ -48,7 +48,9 @@ pub async fn maintain_workflows(st: &AppState) {
     if let Err(e) = st.store.prune_events(now - pdt_store::EVENT_RETENTION_MS).await {
         tracing::warn!(error = %e, "could not prune old events");
     }
-    if let Err(e) = st.store.prune_workflow_runs(now - pdt_store::RUN_RETENTION_MS).await {
+    if let Err(e) =
+        st.store.prune_workflow_runs(now - pdt_store::RUN_RETENTION_MS, now - pdt_store::QUIET_RUN_RETENTION_MS).await
+    {
         tracing::warn!(error = %e, "could not prune old workflow runs");
     }
     if let Err(e) = st.store.prune_session_messages(now - pdt_store::EVENT_RETENTION_MS).await {
