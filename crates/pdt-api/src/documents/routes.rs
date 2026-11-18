@@ -925,18 +925,7 @@ pub(crate) async fn export(
             _ => return Err(ApiError::invalid(format!("{} can't export this as {format}", p.label()))),
         }
     };
-    let disposition = format!(
-        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
-        out.file_name.replace(|c: char| !c.is_ascii() || c == '"', "_"),
-        out.file_name
-            .bytes()
-            .map(|b| if b.is_ascii_alphanumeric() || b"-_.".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            })
-            .collect::<String>()
-    );
+    let disposition = crate::files_download::disposition("attachment", &out.file_name);
     Ok(bytes_response(out.bytes, out.mime, &[("content-disposition", disposition)]))
 }
 

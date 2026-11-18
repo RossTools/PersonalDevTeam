@@ -59,7 +59,8 @@ when you read it; click it to show the image.
 
 Limits: PNG, JPEG, GIF and WebP images up to 10 MB; plain-text files (`.txt`, `.log`, `.md`, `.json`, `.csv`,
 `.yaml`, `.toml` and similar) up to 1 MB; 50 per ticket. The ticket's **Attachments** list shows them all, with
-**Attach** and a remove button. Deleting the ticket deletes them.
+**Attach**, and a download and a remove button on each. An image opened full size, and a text file's viewer, have
+**Download** too. Deleting the ticket deletes them.
 
 Agents working on the ticket can open its attachments, QA can attach screenshots of what it tried, and
 [the PM](../automation/the-pm.md) can attach an image you paste into its chat.

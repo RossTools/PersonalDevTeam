@@ -46,6 +46,17 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 **Files** shows a checkout's files as git sees them (ignored files are left out): pick the project or worktree at the
 top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves.
 
+### Download files
+
+- **A file**: the download button at the top of an open file, or **Download** in its menu (right-click it in the
+  tree; on a phone, press and hold it). Binary files and files too large to show have a **Download** button too.
+- **A folder**: **Download as .zip** in its menu. The `.zip` holds what the tree shows, so files `.gitignore` leaves
+  out stay out; **Download as .zip, including ignored files** puts them in too (never the `.git` folder). A folder's
+  files may add up to at most 2 GB; past that PDT says so and downloads nothing.
+
+Nothing outside the checkout downloads, including what a link inside it points to elsewhere. Downloads work from a
+phone over [remote access](../your-machine/remote-access.md) too.
+
 ### Search in files
 
 Type in **Search in files** above the tree to search the text of the checkout's files. Ignored and binary files are
@@ -87,6 +98,7 @@ An agent session is one of:
   PDT's own actions show as cards, below) while the agent's text stays outside them, each edit's diff, and a **Changes** summary per turn. Questions and permission requests show as cards with
   **Allow** and **Deny**. Type `@` to mention a file, `/` for the agent's commands; paste or attach images. A long
   conversation opens on its latest messages; scroll up (or choose **Show earlier messages**) for the ones before.
+  An image on a message has a download button in its corner (always shown on a phone, on hover elsewhere).
 - **A terminal**: the agent's own interface, as in your terminal app.
 
 Conversation is the default; change it in **Settings › This host › Agents**, or per session when you start one.

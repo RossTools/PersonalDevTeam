@@ -91,18 +91,30 @@ pub(crate) fn resolve(st: &AppState, session_id: &str, ids: &[String]) -> Result
         .collect()
 }
 
-/// `GET /api/sessions/{id}/attachments/{attachmentId}`: the image, for the conversation's thumbnails.
+#[derive(serde::Deserialize)]
+pub(crate) struct GetQuery {
+    /// `1`: save it (`Content-Disposition: attachment`) rather than show it.
+    #[serde(default)]
+    download: Option<String>,
+}
+
+/// `GET /api/sessions/{id}/attachments/{attachmentId}`: the image, for the conversation's thumbnails; `?download=1`
+/// sends it to be saved (as `image-<id>.<ext>`).
 pub(crate) async fn get(
     State(st): State<AppState>,
     Path((id, aid)): Path<(String, String)>,
+    ApiQuery(q): ApiQuery<GetQuery>,
 ) -> Result<Response, ApiError> {
     st.store.get_session(&id).await?.or_404("session")?;
     let img = find(&st, &id, &aid).or_404("attachment")?;
     let bytes =
         tokio::fs::read(&img.path).await.map_err(|e| ApiError::io_404("attachment", "reading the attachment", e))?;
+    let kind = if crate::files_download::flag(&q.download) { "attachment" } else { "inline" };
+    let name = format!("image-{aid}.{}", image_extension(&img.media_type));
     Ok((
         [
             (header::CONTENT_TYPE, img.media_type),
+            (header::CONTENT_DISPOSITION, crate::files_download::disposition(kind, &name)),
             // Ids are never reused, so the bytes never change.
             (header::CACHE_CONTROL, "private, max-age=31536000, immutable".to_string()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),

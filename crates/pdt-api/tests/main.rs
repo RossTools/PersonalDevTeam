@@ -31,6 +31,7 @@ mod document_tools;
 mod document_watches;
 mod document_workflows;
 mod documents;
+mod files_download;
 mod folders;
 mod forge;
 mod git_integration;

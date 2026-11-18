@@ -82,6 +82,14 @@ pub async fn call_raw(
     (status, ct, bytes)
 }
 
+/// A `GET` whose response is not JSON (a download): the status, the headers and the body bytes.
+pub async fn get_bytes(app: &axum::Router, uri: &str) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let req = Request::builder().method("GET").uri(uri).body(Body::empty()).unwrap();
+    let res = app.clone().oneshot(req).await.unwrap();
+    let (status, headers) = (res.status(), res.headers().clone());
+    (status, headers, res.into_body().collect().await.unwrap().to_bytes().to_vec())
+}
+
 /// pdt-api's `fake-agent`: cargo's path to it in pdt-api's own tests; elsewhere (an integration crate's tests, which
 /// cargo builds no pdt-api binary for) the one in this build's target folder, built first when it is missing.
 pub fn fake_agent() -> String {

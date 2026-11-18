@@ -1,16 +1,18 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, File, FilePlus, FileQuestion, Folder, FolderOpen } from 'lucide-react';
+import { ChevronRight, Download, File, FilePlus, FileQuestion, Folder, FolderOpen } from 'lucide-react';
 import {
   Alert, Banner, Button, Chip, Dialog, EmptyState, IconButton, List, ListRow, MenuButton, SegmentedControl, Skeleton, toast, TreeView,
   useConfirm, useMenuAt, ViewHeader, type MenuEntry, type TreeChildren, type TreeNode,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, ApiError } from '../api/client';
+import type { DownloadOptions } from '../api/files';
 import type { FileContent } from '../api/gen/FileContent';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
+import { download } from '../common/download';
 import { useRememberedScroll, useViewState } from '../common/viewState';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
@@ -81,7 +83,7 @@ function Files({ state, place }: { state: FolderViewState; place: Place }) {
         onExpandedChange={state.setOpen}
         selectedKey={state.file}
         onAction={(n) => state.setFile(n.id)}
-        onMenu={(n, at) => openMenu(at, `${n.entry.name} actions`, () => ops.entries(n.entry))}
+        onMenu={(n, at) => openMenu(at, `${n.entry.name} actions`, () => [...ops.downloads(n.entry), { separator: true }, ...ops.entries(n.entry)])}
         renderEmpty={() => <p className="px-2 py-1 text-xs text-muted-foreground">This checkout has no files.</p>}
       />
       {menu}
@@ -101,7 +103,10 @@ function NewFileButton({ state, place }: { state: FolderViewState; place: Place 
 
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
-/** Making, renaming and deleting files in the shown checkout; `entries` is a file's or folder's menu. */
+/**
+ * Making, renaming, deleting and downloading files in the shown checkout; `entries` is a file's or folder's menu,
+ * `downloads` its Download entries.
+ */
 function useFileOps(state: FolderViewState, place: Place) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -143,6 +148,19 @@ function useFileOps(state: FolderViewState, place: Place) {
       if (state.file === path) state.setFile(null);
     } catch (e) { fail(e); }
   };
+  // Checked first, so a folder over the size cap (or a file gone since) says why rather than saving an error.
+  const save = async (path: string, o: DownloadOptions = {}) => {
+    try {
+      await api.checkFileDownload(place.projectId, place.worktreeId, path, o);
+      download(api.fileDownloadUrl(place.projectId, place.worktreeId, path, o));
+    } catch (e) { fail(e); }
+  };
+  const downloads = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => (e.dir
+    ? [
+        { label: 'Download as .zip', onSelect: () => void save(e.path, { zip: true }) },
+        { label: 'Download as .zip, including ignored files', onSelect: () => void save(e.path, { zip: true, ignored: true }) },
+      ]
+    : [{ label: 'Download', onSelect: () => void save(e.path) }]);
   const entries = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => {
     const held = !!state.unsaved && (state.unsaved === e.path || state.unsaved.startsWith(`${e.path}/`));
     return [
@@ -161,7 +179,7 @@ function useFileOps(state: FolderViewState, place: Place) {
           ]),
     ];
   };
-  return { create, rename, remove, entries };
+  return { create, rename, remove, save, downloads, entries };
 }
 
 /** The left column of the Files view: which checkout, then its files (as git sees them, `.gitignore` honoured). */
@@ -202,24 +220,30 @@ export function FolderList({ state, dir }: { state: FolderViewState; dir: string
 
 function FolderEntries({ state, place, dir }: { state: FolderViewState; place: Place; dir: string }) {
   const q = useFolder(place, dir);
+  const ops = useFileOps(state, place);
+  const { openMenu, menu } = useMenuAt();
   if (q.isPending) return <Skeleton lines={6} label="Loading files" className="px-2" />;
   if (q.isError) return <div className="px-1"><Alert tone="error">{q.error.message}</Alert></div>;
   const dirs = new Set(q.data.filter((e) => e.dir).map((e) => e.path));
   return (
-    <List aria-label={dir ? `Files in ${dir}` : 'Files'} onAction={(path) => state.setFile(dirs.has(path) ? `${path}/` : path)}
-      renderEmpty={() => <p className="px-2 py-1 text-xs text-muted-foreground">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</p>}>
-      {q.data.map((e) => (
-        <ListRow key={e.path} id={e.path} title={e.name} textValue={e.name}
-          className={e.status === 'D' ? 'line-through text-muted-foreground' : undefined}
-          leading={e.dir ? <Folder size={15} aria-hidden /> : <File size={15} aria-hidden />}
-          trailing={(e.status || e.dir) ? (
-            <span className="flex items-center gap-1">
-              <StatusMark status={e.status} />
-              {e.dir && <ChevronRight aria-hidden className="size-4 text-muted-foreground" />}
-            </span>
-          ) : undefined} />
-      ))}
-    </List>
+    <>
+      <List aria-label={dir ? `Files in ${dir}` : 'Files'} onAction={(path) => state.setFile(dirs.has(path) ? `${path}/` : path)}
+        renderEmpty={() => <p className="px-2 py-1 text-xs text-muted-foreground">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</p>}>
+        {q.data.map((e) => (
+          <ListRow key={e.path} id={e.path} title={e.name} textValue={e.name}
+            className={e.status === 'D' ? 'line-through text-muted-foreground' : undefined}
+            leading={e.dir ? <Folder size={15} aria-hidden /> : <File size={15} aria-hidden />}
+            onMenu={(at) => openMenu(at, `${e.name} actions`, () => ops.downloads(e))}
+            trailing={(e.status || e.dir) ? (
+              <span className="flex items-center gap-1">
+                <StatusMark status={e.status} />
+                {e.dir && <ChevronRight aria-hidden className="size-4 text-muted-foreground" />}
+              </span>
+            ) : undefined} />
+        ))}
+      </List>
+      {menu}
+    </>
   );
 }
 
@@ -380,6 +404,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   const editable = readable && !readOnly;
   const markdown = isMarkdownPath(f.path) && readable;
   const name = f.path.split('/').pop() ?? f.path;
+  const downloadButton = <Button size="sm" variant="secondary" onClick={() => void ops.save(f.path)}><Download aria-hidden /> Download</Button>;
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <ViewHeader
@@ -422,6 +447,9 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
             ) : (
               editable && <Button size="sm" variant="secondary" onClick={() => { setEditView('edit'); setEdit(editOf(f)); }}>Edit</Button>
             )}
+            <IconButton label={`Download ${name}`} size="sm" variant="ghost" onClick={() => void ops.save(f.path)}>
+              <Download aria-hidden />
+            </IconButton>
             <MenuButton
               label="File actions"
               size="sm"
@@ -473,9 +501,9 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
         </Dialog>
       )}
       {f.tooLarge ? (
-        <EmptyState icon={<FileQuestion />}>This file is over 1 MB, too large to show or edit here.</EmptyState>
+        <EmptyState icon={<FileQuestion />} action={downloadButton}>This file is over 1 MB, too large to show or edit here.</EmptyState>
       ) : f.binary || f.text === null ? (
-        <EmptyState icon={<FileQuestion />}>This is a binary file.</EmptyState>
+        <EmptyState icon={<FileQuestion />} action={downloadButton}>This is a binary file.</EmptyState>
       ) : edit ? (
         <>
           {/* The editor stays mounted under the preview: it holds the text and its undo history. */}

@@ -92,6 +92,35 @@ describe('folder view', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('permission denied');
   });
 
+  it('downloads a file, and a folder as a .zip, after checking it would', async () => {
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.getAttribute('href')!); });
+    const calls = stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/files?path=': [entry('build', true), entry('blob.bin')],
+      'GET /api/projects/p/files/content?path=blob.bin': { path: 'blob.bin', size: 3, status: null, text: null, binary: true, tooLarge: false, hash: 'x' },
+      'GET /api/projects/p/files/download?path=blob.bin&check=1': undefined,
+      'GET /api/projects/p/files/download?path=build&zip=1&check=1': undefined,
+      'GET /api/projects/p/files/download?path=build&zip=1&ignored=1&check=1': new Reply(413, { code: 'too_large', message: 'this folder holds 3.1 GB of files; a download is at most 2 GB' }),
+    });
+    renderWithQuery(<Harness />);
+    await userEvent.click(await screen.findByRole('row', { name: /blob\.bin/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(saved).toEqual(['/api/projects/p/files/download?path=blob.bin']));
+    await userEvent.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Download blob.bin' }));
+    await waitFor(() => expect(saved).toHaveLength(2));
+
+    await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByRole('row', { name: /build/ }) });
+    await userEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Download as .zip' }));
+    await waitFor(() => expect(saved.at(-1)).toBe('/api/projects/p/files/download?path=build&zip=1'));
+    await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByRole('row', { name: /build/ }) });
+    await userEvent.click(within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Download as .zip, including ignored files' }));
+    expect(await screen.findByText(/at most 2 GB/)).toBeInTheDocument();
+    expect(saved).toHaveLength(3);
+    expect(calls.filter((c) => c.path.includes('/download')).length).toBe(4);
+    vi.restoreAllMocks();
+  });
+
   it('shows an error when the checkout cannot be listed', async () => {
     stubApi({ 'GET /api/projects/p/worktrees': [], 'GET /api/projects/p/files?path=': new Reply(404, { code: 'not_found', message: 'checkout is missing' }) });
     renderWithQuery(<Harness />);
