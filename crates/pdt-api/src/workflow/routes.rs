@@ -552,7 +552,7 @@ pub(crate) async fn answer(
         .await
         .map_err(|e| ApiError::conflict(codes::CANNOT_ANSWER, e))?;
     for item in &items {
-        crate::workflow::sensors::inbox_answered(&st, item, Some(&a.choice), a.text.as_deref(), "user").await;
+        crate::workflow::sensors::inbox_answered(&st, item, Some(&a.choice), a.text.as_deref(), "user", None).await;
     }
     Ok(Json(run_detail(&st, &id).await?))
 }

@@ -24,6 +24,27 @@ it beside the list, laid out the same for every kind:
 Keys: **j** / **k** down and up, **Enter** the main action, **o** open its ticket, **e** dismiss, **1**–**9** pick a
 question's choice, **y** / **n** allow or deny an approval.
 
+## Undo, and answers that ask twice
+
+Answering shows the next item at once. For a moment after, its buttons are off and fade back in, so a double-click
+or a click meant for the item you just answered doesn't answer the next one too. The same goes for the approval cards
+in a conversation.
+
+A few answers ask for a second press, because they act outside PDT or can't be taken back: **Request changes** and
+**Close** on a pull request's review, **Always allow**, and **Allow** on a call that posts outside PDT as you (a pull
+request comment, an issue, a Jira comment, a chat message). The first press turns the button red and reads
+**Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
+
+Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up. Undo puts the item back
+as it was, and nothing it would have done happens: no review is posted, no pull request closed, no ticket made. If
+you close PDT within those seconds, the answer isn't sent and the item still waits for you.
+
+## Recently answered
+
+Under **Needs you**, **Recently answered** lists your last answers, newest first: what each was about, what you
+chose (and what you wrote), and how you gave it (a click or a key, on a computer or a phone), or that an agent
+answered. Answers still waiting out their five seconds are at the top, with **Undo**. Pick a row to open its ticket.
+
 ## What lands in Needs you
 
 Items are listed in five sections, most urgent first.
@@ -119,7 +140,7 @@ however old they are.
 
 ## From your phone
 
-The Inbox is a list with **Needs you** and **Updates**. **Review all** goes through the items one at a time, each with
+The Inbox is a list with **Needs you** (and **Recently answered** under it) and **Updates**. **Review all** goes through the items one at a time, each with
 the same layout as on a computer, and its choices in a bar at the bottom (the main one on the right). Answering shows the
 next; swipe sideways to skip; "All clear" means you're done. The bell in the top bar shows the count and opens the
 Inbox from anywhere.

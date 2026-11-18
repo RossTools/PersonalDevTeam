@@ -516,6 +516,16 @@ the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuc
 makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the
 transient kind.
 
+**Answering safely.** Every answer from the web goes through `web/src/common/answerGuard.ts`: one at a time, and none
+for a cool-down after one, so a double-click or a click on what slid into place does nothing (the Inbox's item
+actions show as off meanwhile; a conversation's cards go through `guardedAnswer`). `needsConfirm` in
+`web/src/inbox/model.ts` names the actions that arm on a first press and act on a second (a gate's Request changes and
+Close, Always allow, Allow on PDT's tools that post outside it); `ApprovalCard` does the same for Always allow. An Inbox
+answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and only then sent, so nothing it causes
+(a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. The client says
+how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,
+`inbox::AnswerSource`), which `inbox.answered` carries as `source`; Recently answered reads those events.
+
 **Ticket proposals.** A ticket an agent session makes (source `agent`, not via Make into parts) is held for the user
 while the "Ticket proposals" built-in is on (`workflow::nodes::ticket_proposal::proposals_on`): `create_ticket` and
 `POST /api/projects/{id}/tickets` make it in Draft without `agentic` (pdt-core `ticket_proposal::hold`), held

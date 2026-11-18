@@ -59,7 +59,7 @@ function ActionButton({ a }: { a: ItemAction }) {
   const key = a.kbd ?? (a.primary ? '↵' : null);
   return (
     <Button
-      variant={a.primary ? 'primary' : a.danger ? 'danger' : a.end ? 'ghost' : 'secondary'}
+      variant={a.confirming ? 'danger' : a.primary ? 'primary' : a.danger ? 'danger' : a.end ? 'ghost' : 'secondary'}
       pending={a.pending}
       disabled={a.disabled}
       aria-expanded={a.expanded}

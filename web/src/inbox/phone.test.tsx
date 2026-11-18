@@ -239,7 +239,9 @@ describe('phone triage', () => {
   it('has Deny · Always · Allow for an approval, answered in its session', async () => {
     const { calls } = triage([approval], 'approval:sess:r1', { 'POST /api/sessions/sess/requests/r1': undefined });
     expect(barLabels()).toEqual(['Deny', 'Always', 'Allow']);
+    // Always allow asks for a second press (PDT-623).
     await userEvent.click(bar().getByRole('button', { name: 'Always' }));
+    await userEvent.click(bar().getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r1')?.body)
       .toEqual({ answer: { type: 'approve', always: true } }));
     expect(await screen.findByText('All clear')).toBeInTheDocument();

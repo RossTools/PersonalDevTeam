@@ -540,6 +540,9 @@ describe('inbox', () => {
     const region = screen.getByRole('region', { name: 'Agent call' });
     expect(region).toHaveTextContent('PM (Codex) wants to call jira_comment');
     expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"body": "The board flickers"');
+    // A comment on a Jira issue goes out as the user: Allow asks for a second press (PDT-623).
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: /^Confirm allow/ })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Enter' });
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.path === '/api/inbox/c/answer')?.body).toEqual({ choice: 'allow' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Reason (optional)' }), 'Not now');
@@ -699,7 +702,7 @@ describe('inbox', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('g'));
   });
 
-  it('says so when an approval was answered elsewhere or expired, and stays on it', async () => {
+  it('says so when an approval was answered elsewhere or expired', async () => {
     const calls = stubApi({
       'POST /api/sessions/sess/requests/r3': new Reply(409, { code: 'request_closed', message: 'closed' }),
       'GET /api/inbox': { items: [], total: 0 },
@@ -709,10 +712,9 @@ describe('inbox', () => {
     await userEvent.click(screen.getByRole('button', { name: /^Deny/ }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r3')?.body).toEqual({ answer: { type: 'deny' } }));
     expect(await screen.findByText('That request was already answered or has expired.')).toBeInTheDocument();
-    expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it('says so when someone already answered an item, and stays on it', async () => {
+  it('says so when someone already answered an item', async () => {
     stubApi({
       'POST /api/inbox/g/answer': new Reply(409, { code: 'conflict', message: 'Someone already answered this.' }),
       'GET /api/inbox': { items: [], total: 0 },
@@ -721,7 +723,6 @@ describe('inbox', () => {
     renderWithQuery(<InboxView items={[gate, stalled]} selectedId="g" onSelect={onSelect} />);
     fireEvent.keyDown(window, { key: 'Enter' });
     expect(await screen.findByText('Someone already answered this.')).toBeInTheDocument();
-    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('asks to connect GitHub: Enter opens GitHub’s plugin page, and it is not dismissed', async () => {

@@ -6,6 +6,7 @@ import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
 import { grouped, KIND_LABEL, selectedUpdate, shownKind, updateSelection } from './model';
 import { KindIcon } from './kinds';
+import { RecentlyAnswered } from './RecentlyAnswered';
 
 /** Rows a Needs-you section shows before its Show all. */
 const GROUP_ROWS = 50;
@@ -153,7 +154,7 @@ export function UpdatesList({ updates, selectedId, onSelect, onClear, loading, f
 }
 
 /**
- * The Inbox's list column (PDT-108): **Needs you**, then **Updates**, with Mark all read, Clear all
+ * The Inbox's list column (PDT-108): **Needs you**, **Recently answered** (PDT-623), then **Updates**, with Mark all read, Clear all
  * (and Clear on each Update) and a way to the notification settings.
  */
 export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll, onClear, onClearAll, onSettings, loading, failed, updatesFailed }: {
@@ -174,6 +175,7 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
     <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
       <ListHeading>Needs you</ListHeading>
       <NeedsYouGroups items={items} selectedId={selectedId} onSelect={onSelect} loading={loading} failed={failed} />
+      <RecentlyAnswered />
       <section aria-label="Updates">
         <div className="flex items-center gap-1 pt-1 pr-2">
           <ListHeading className="flex-1">Updates</ListHeading>
