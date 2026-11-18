@@ -19,3 +19,10 @@ minimumReleaseAgeExclude:
   - '@tauri-apps/cli-win32-ia32-msvc@2.12.3'
   - '@tauri-apps/cli-win32-x64-msvc@2.12.3'
   - '@tauri-apps/cli@2.12.3'
+# Advisories `pnpm audit` skips (.github/workflows/audit.yml), each with why it can't be fixed yet and when to remove it.
+auditConfig:
+  ignoreGhsas:
+    # picomatch <= 4.0.7 ReDoS through repeated extglobs, with no patched release. Only the website's build uses it
+    # (astro > unstorage > anymatch), on globs in the repository, never untrusted input. Remove it
+    # and override picomatch to the patched version once one is published.
+    - GHSA-fc5q-39xc-vjpf

@@ -304,14 +304,15 @@ each. `rust-toolchain.toml` is bumped by hand.
 
 `audit.yml` checks the dependencies against published advisories: `cargo deny check advisories` over `Cargo.lock`
 (vulnerable, unsound, unmaintained and yanked crates) and `pnpm audit --audit-level high` over `pnpm-lock.yaml`. It
-runs daily on `main`, by hand, and on a PR that changes a lockfile or `deny.toml`. It is not a required check: a new
+runs daily on `main`, by hand, and on a PR that changes a lockfile, `deny.toml` or `pnpm-workspace.yaml`. It is not a required check: a new
 advisory is about the dependencies, not the PR that meets it.
 
 - Run it locally with `cargo deny check advisories` (`cargo install --locked cargo-deny`) and
   `pnpm audit --audit-level high`.
 - A failed daily run is new work: update the crate (`cargo update -p <crate>`) or package, or, when there is no fix
   (an unmaintained crate deep in tauri's or keyring's Linux stack), add its id to `[advisories] ignore` in
-  `deny.toml` with the reason.
+  `deny.toml` with the reason; for an npm package, add its GHSA id to `auditConfig.ignoreGhsas` in
+  `pnpm-workspace.yaml` with a comment giving the reason. Either way, say when to remove it.
 
 ## Releases
 
