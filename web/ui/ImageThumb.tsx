@@ -1,4 +1,4 @@
-import { ImageOff, X } from 'lucide-react';
+import { Download, ImageOff, X } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Spinner } from './Spinner';
 
@@ -14,12 +14,14 @@ export interface ImageThumbProps {
   error?: string;
   /** Opens the full image in a new tab. */
   href?: string;
+  /** Shows a download button that saves the image from here. */
+  downloadHref?: string;
   size?: 'sm' | 'md';
   className?: string;
 }
 
 /** A square image preview: an attachment in the composer (removable) or on a sent message (opens full size). */
-export function ImageThumb({ src, alt, onRemove, pending = false, error, href, size = 'md', className }: ImageThumbProps) {
+export function ImageThumb({ src, alt, onRemove, pending = false, error, href, downloadHref, size = 'md', className }: ImageThumbProps) {
   const box = size === 'sm' ? 'size-12' : 'size-20';
   const img = src ? (
     <img src={src} alt={alt} className="size-full object-cover" draggable={false} />
@@ -32,7 +34,7 @@ export function ImageThumb({ src, alt, onRemove, pending = false, error, href, s
     <div
       title={error ?? alt}
       className={cn(
-        'relative shrink-0 overflow-hidden rounded-md border bg-muted',
+        'group relative shrink-0 overflow-hidden rounded-md border bg-muted',
         error ? 'border-destructive' : 'border-border',
         box,
         className,
@@ -49,6 +51,17 @@ export function ImageThumb({ src, alt, onRemove, pending = false, error, href, s
         <span className="absolute inset-0 flex items-center justify-center bg-backdrop">
           <Spinner label="Uploading" className="size-4" />
         </span>
+      )}
+      {downloadHref && (
+        <a
+          href={downloadHref}
+          download
+          aria-label={`Download ${alt}`}
+          title={`Download ${alt}`}
+          className="absolute right-0.5 bottom-0.5 flex size-5 items-center justify-center rounded-full bg-card text-foreground opacity-0 shadow-card outline-none group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7 pointer-coarse:opacity-100"
+        >
+          <Download aria-hidden className="size-3" />
+        </a>
       )}
       {onRemove && (
         <button

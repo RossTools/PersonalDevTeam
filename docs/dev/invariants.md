@@ -347,7 +347,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The Files view never leaves its checkout or touches `.git`.** Paths are cleaned (`files::clean_path`: no `..`,
   no `.git` however spelt, `.git.` and `GIT~1` included), checked, and then read and written only through a handle
   on the checkout (`files::checkout_dir`, cap-std), never by plain path, so a folder swapped for a symlink after
-  the check still can't lead out. The review diff reads the same way.
+  the check still can't lead out. The review diff reads the same way. Downloads (`files_download`) too: a `.zip`
+  never holds a `.git` folder's files or follows a linked folder, and both stream (a file through a reader, a zip
+  written on the blocking pool into a bounded channel), so neither ever sits whole in memory.
 - **Nothing runs `gh` or `glab`.** Forges go through their crates over HTTP (`pdt_forge::transport`); agents use
   pdt-mcp's forge tools.
 

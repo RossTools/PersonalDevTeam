@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Paperclip, Trash2, X } from 'lucide-react';
+import { Download, Paperclip, Trash2, X } from 'lucide-react';
 import { Button, EmptyState, IconButton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { TicketAttachment } from '../api/gen/TicketAttachment';
 import { AttachmentImage, AttachmentLink } from '../common/AttachmentViews';
+import { download, downloadUrl } from '../common/download';
 import { actionError, runAction } from '../common/useAction';
 import { POLL } from '../common/poll';
 import { OverviewSection } from './TicketParts';
@@ -171,6 +172,9 @@ export function TicketAttachments({ ticketId }: { ticketId: string }) {
                     {a.mediaType.startsWith('image/') && `${a.name} · `}{sizeText(Number(a.size))}
                   </p>
                 </div>
+                <IconButton label={`Download ${a.name}`} size="sm" variant="ghost" onClick={() => download(downloadUrl(src))}>
+                  <Download aria-hidden />
+                </IconButton>
                 <IconButton label={`Remove ${a.name}`} size="sm" variant="ghost" onClick={() => remove(a)}>
                   <Trash2 aria-hidden />
                 </IconButton>

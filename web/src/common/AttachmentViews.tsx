@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { Alert, Button, Dialog } from '@ui';
+import { downloadUrl } from './download';
 import { ticketKeys } from '../tickets/queries';
 
 /** A ticket attachment's URL (`/api/tickets/<ticket>/attachments/<id>`), as Markdown links to it: its ids, or null. */
@@ -29,7 +30,12 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
           onOpenChange={setOpen}
           title={alt || 'Image'}
           size="full"
-          headerActions={<a href={src} target="_blank" rel="noreferrer" className="ml-auto text-xs text-link hover:underline">Open in a new tab</a>}
+          headerActions={
+            <span className="ml-auto flex gap-3 text-xs">
+              <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
+              <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open in a new tab</a>
+            </span>
+          }
         >
           <img src={src} alt={alt} className="mx-auto max-w-full" />
         </Dialog>
@@ -79,7 +85,10 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
           size="xl"
           footer={
             <>
-              <a href={src} target="_blank" rel="noreferrer" className="mr-auto self-center text-xs text-link hover:underline">Open raw</a>
+              <span className="mr-auto flex gap-3 self-center text-xs">
+                <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
+                <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open raw</a>
+              </span>
               <Button onClick={() => setOpen(false)}>Close</Button>
             </>
           }

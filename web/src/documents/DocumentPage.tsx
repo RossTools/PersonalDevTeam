@@ -22,16 +22,7 @@ import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
 import { useProjects } from '../projects/queries';
 import { LoadError } from '../common/QueryStatus';
-
-/** Downloads a file pdtd serves. */
-function download(url: string) {
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = '';
-  document.body.append(a);
-  a.click();
-  a.remove();
-}
+import { download } from '../common/download';
 
 /** The ids of the tickets a document is linked to (their conversations are where it can open beside). */
 const linkedTickets = (d: Document | null | undefined) => d?.tickets.map((t) => t.id) ?? [];

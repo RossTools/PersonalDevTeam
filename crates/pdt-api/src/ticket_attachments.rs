@@ -281,10 +281,19 @@ pub(crate) async fn list(
     Ok(Json(st.store.ticket_attachments(&id).await?))
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct GetQuery {
+    /// `1`: save it (`Content-Disposition: attachment`) rather than show it.
+    #[serde(default)]
+    download: Option<String>,
+}
+
 /// `GET /api/tickets/{id}/attachments/{aid}`: the file. Text is always `text/plain` (never rendered as a page).
+/// `?download=1` sends it to be saved under its name.
 pub(crate) async fn get(
     State(st): State<AppState>,
     Path((id, aid)): Path<(String, String)>,
+    ApiQuery(q): ApiQuery<GetQuery>,
 ) -> Result<Response, ApiError> {
     let id = ticket_id(&st, &id).await?;
     let a = st.store.get_ticket_attachment(&id, &aid).await?.or_404("attachment")?;
@@ -292,12 +301,11 @@ pub(crate) async fn get(
         .await
         .map_err(|e| ApiError::io_404("attachment", "reading the attachment", e))?;
     let media_type = if a.is_image() { a.media_type.clone() } else { "text/plain; charset=utf-8".into() };
-    let ascii: String =
-        a.name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' { c } else { '_' }).collect();
+    let kind = if crate::files_download::flag(&q.download) { "attachment" } else { "inline" };
     Ok((
         [
             (header::CONTENT_TYPE, media_type),
-            (header::CONTENT_DISPOSITION, format!("inline; filename=\"{ascii}\"")),
+            (header::CONTENT_DISPOSITION, crate::files_download::disposition(kind, &a.name)),
             // Ids are never reused, so the bytes never change.
             (header::CACHE_CONTROL, "private, max-age=31536000, immutable".to_string()),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),

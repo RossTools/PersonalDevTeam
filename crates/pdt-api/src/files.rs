@@ -116,7 +116,7 @@ pub(crate) fn clean_path(raw: &str) -> Result<String, ApiError> {
 
 /// Whether a path segment names a `.git` folder on some file system: any case, with trailing dots and spaces (Windows
 /// drops them, so `.git.` is `.git` there), or as its Windows short name (`GIT~1`).
-fn is_git_name(seg: &str) -> bool {
+pub(crate) fn is_git_name(seg: &str) -> bool {
     let seg = seg.trim_end_matches(['.', ' ']);
     if seg.eq_ignore_ascii_case(".git") {
         return true;
@@ -224,7 +224,7 @@ pub(crate) fn io_err(e: std::io::Error) -> ApiError {
 }
 
 /// `rel` as a [`Dir`] takes it: the checkout itself is `.`.
-fn at(rel: &str) -> &str {
+pub(crate) fn at(rel: &str) -> &str {
     if rel.is_empty() { "." } else { rel }
 }
 

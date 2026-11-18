@@ -723,6 +723,9 @@ async fn images_are_attached_and_shown_on_the_message() {
     assert_eq!(user["event"]["images"], json!([aid]), "the row names the attachment, for its thumbnail");
     let (s, ct, bytes) = call_raw(&env.app, "GET", &format!("{up}/{aid}"), vec![]).await;
     assert_eq!((s.as_u16(), ct.as_deref(), bytes.as_slice()), (200, Some("image/png"), PNG));
+    let (_, h, bytes) = crate::common::get_bytes(&env.app, &format!("{up}/{aid}?download=1")).await;
+    let saved = format!("attachment; filename=\"image-{aid}.png\"; filename*=UTF-8''image-{aid}.png");
+    assert_eq!((h["content-disposition"].to_str().unwrap(), bytes.as_slice()), (saved.as_str(), PNG));
     let (s, _, _) = call_raw(&env.app, "GET", &format!("{up}/..%2F..%2Fpdt.db"), vec![]).await;
     assert_eq!(s.as_u16(), 404);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;

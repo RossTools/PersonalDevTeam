@@ -11,6 +11,7 @@ import type { DecideRow } from '../api/gen/DecideRow';
 import type { MessageSource } from '../api/gen/MessageSource';
 import type { PdtMessage } from '../api/gen/PdtMessage';
 import type { PendingMessage } from '../api/gen/PendingMessage';
+import { downloadUrl } from '../common/download';
 import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
 import { readViewState, useViewKey, writeViewState } from '../common/viewState';
@@ -97,7 +98,7 @@ function Images({ images }: { images: string[] }) {
     <>
       {images.map((img, i) => {
         const src = isAttachment(img) && imageUrl ? imageUrl(img) : undefined;
-        return <ImageThumb key={`${img}-${i}`} src={src} href={src} alt={`Image ${i + 1}`} />;
+        return <ImageThumb key={`${img}-${i}`} src={src} href={src} downloadHref={src && downloadUrl(src)} alt={`Image ${i + 1}`} />;
       })}
     </>
   );

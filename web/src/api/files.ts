@@ -10,6 +10,20 @@ function filesQuery(worktreeId: string | null, path: string): string {
   return new URLSearchParams({ ...(worktreeId ? { worktreeId } : {}), path }).toString();
 }
 
+/** How a download goes: `zip` sends a folder as a `.zip`, `ignored` puts the files `.gitignore` leaves out in it. */
+export interface DownloadOptions {
+  zip?: boolean;
+  ignored?: boolean;
+}
+
+function downloadQuery(worktreeId: string | null, path: string, o: DownloadOptions, check = false): string {
+  const params = new URLSearchParams(filesQuery(worktreeId, path));
+  if (o.zip) params.set('zip', '1');
+  if (o.ignored) params.set('ignored', '1');
+  if (check) params.set('check', '1');
+  return params.toString();
+}
+
 /** What to search the files for: the text (a regular expression with `regex`), and the files to look in (`glob`). */
 export interface FileSearchQuery {
   q: string;
@@ -42,6 +56,12 @@ export const filesApi = {
   /** The checkout's files whose names best match `q`, best first (at most 20; none in a plain folder). */
   findFiles: (projectId: string, worktreeId: string | null, q: string, signal?: AbortSignal) =>
     request<string[]>(`/api/projects/${enc(projectId)}/files/find?${new URLSearchParams({ ...(worktreeId ? { worktreeId } : {}), q })}`, { signal }),
+  /** Where a file (or, with `zip`, a folder) downloads from: pdtd streams it with its name. */
+  fileDownloadUrl: (projectId: string, worktreeId: string | null, path: string, o: DownloadOptions = {}) =>
+    `/api/projects/${enc(projectId)}/files/download?${downloadQuery(worktreeId, path, o)}`,
+  /** Fails with why a download would (a folder over the size cap, a file gone), before the browser saves an error. */
+  checkFileDownload: (projectId: string, worktreeId: string | null, path: string, o: DownloadOptions = {}) =>
+    request<void>(`/api/projects/${enc(projectId)}/files/download?${downloadQuery(worktreeId, path, o, true)}`),
   /** Tells an agent session which files the user changed (it gets it once it is free). */
   tellFilesChanged: (projectId: string, t: TellFilesChanged) =>
     request<void>(`/api/projects/${enc(projectId)}/files/tell`, { method: 'POST', body: JSON.stringify(t) }),
