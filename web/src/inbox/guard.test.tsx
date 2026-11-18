@@ -55,21 +55,31 @@ describe('the guard on answers', () => {
   });
 
   it('answers only the first item on a fast double-click; the item that slid into place waits a moment', async () => {
+    // On fake timers: the cool-down can't run out while a slow runner is still clicking, or outlast a wait for it.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const settle = () => act(() => vi.advanceTimersByTimeAsync(0));
     answerTiming.cooldownMs = 400;
     const calls = stubApi({ 'POST /api/inbox/a/answer': {}, 'POST /api/inbox/b/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<Inbox items={[item('a', { title: 'First' }), item('b', { title: 'Second' })]} />);
-    await userEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    await settle();
+    expect(answers(calls).map((c) => c.path)).toEqual(['/api/inbox/a/answer']);
     // The second click lands on the next item, which slid into place: its actions are off, and Enter does nothing.
     expect(screen.getByRole('heading', { name: 'Second' })).toBeInTheDocument();
     const ship = screen.getByRole('button', { name: /^Ship/ });
     expect(ship).toBeDisabled();
-    await userEvent.click(ship);
+    fireEvent.click(ship);
     fireEvent.keyDown(window, { key: 'Enter' });
-    await waitFor(() => expect(answers(calls).map((c) => c.path)).toEqual(['/api/inbox/a/answer']));
+    await settle();
+    expect(answers(calls).map((c) => c.path)).toEqual(['/api/inbox/a/answer']);
     // A moment later it is answerable.
-    await waitFor(() => expect(screen.getByRole('button', { name: /^Ship/ })).toBeEnabled());
-    await userEvent.click(screen.getByRole('button', { name: /^Ship/ }));
-    await waitFor(() => expect(answers(calls).map((c) => c.path)).toEqual(['/api/inbox/a/answer', '/api/inbox/b/answer']));
+    await act(() => vi.advanceTimersByTimeAsync(399));
+    expect(screen.getByRole('button', { name: /^Ship/ })).toBeDisabled();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(screen.getByRole('button', { name: /^Ship/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    await settle();
+    expect(answers(calls).map((c) => c.path)).toEqual(['/api/inbox/a/answer', '/api/inbox/b/answer']);
   });
 
   it('answers one request when a conversation card is double-clicked', async () => {
