@@ -108,12 +108,14 @@ pub(crate) async fn get(
     let name = name_of(&checkout, &rel);
     let (file, len) = tokio::task::spawn_blocking(move || -> Result<(std::fs::File, u64), ApiError> {
         contained(&checkout, &rel)?;
-        let file = checkout_dir(&checkout)?.open(&rel).map_err(not_found)?;
-        let meta = file.metadata().map_err(io_err)?;
-        if meta.is_dir() {
+        let dir = checkout_dir(&checkout)?;
+        // Asked before opening: Windows refuses to open a folder as a file, as access denied.
+        if dir.metadata(&rel).map_err(not_found)?.is_dir() {
             return Err(ApiError::invalid("that is a folder: download it as a .zip"));
         }
-        Ok((file.into_std(), meta.len()))
+        let file = dir.open(&rel).map_err(not_found)?;
+        let len = file.metadata().map_err(io_err)?.len();
+        Ok((file.into_std(), len))
     })
     .await
     .map_err(ApiError::internal)??;
