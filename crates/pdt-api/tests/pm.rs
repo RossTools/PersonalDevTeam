@@ -1207,6 +1207,17 @@ async fn a_reset_conversation_carries_on_fresh_with_its_name_settings_and_journa
     assert!(said.contains("\"written\": true"), "{said}");
     let (s, _) = call(&env.app, "PATCH", &format!("/api/pm/sessions/{first}"), Some(json!({"title": "Cutover"}))).await;
     assert_eq!(s, StatusCode::OK);
+    // Its turn over and its activity time settled first (PDT-626): the rest of the turn can land after its reply, and
+    // on a slow runner after the newer conversation's, listing it first.
+    let mut seen = Value::Null;
+    wait_until("the first conversation to settle", async || {
+        let info = pm_info(&env, &first).await;
+        let at = info["lastActivity"].clone();
+        let settled = info["session"]["activity"] != "working" && at == seen;
+        seen = at;
+        if settled { Ok(()) } else { Err(info) }
+    })
+    .await;
     // Another conversation, more recently active, and the PM persona since switched to Codex.
     let other = start_pm(&env, "Something newer").await;
     wait_said(&env, &other, 1).await;
