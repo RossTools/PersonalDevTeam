@@ -5,6 +5,8 @@ import { EmptyState, Skeleton, type ApprovalAnswer } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, type SessionPatch } from '../api/client';
 import { answerRequest } from '../common/answerRequest';
+import { guardedAnswer } from '../common/answerGuard';
+import { answerSource } from '../common/answerSource';
 import type { Delivery } from '../api/gen/Delivery';
 import type { Session } from '../api/gen/Session';
 import type { MarkdownRefs } from '../common/markdownRefs';
@@ -119,7 +121,9 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
     // A parked or ended session comes back to life; the list shows it sooner.
     if (session.status !== 'running') void refreshSessions();
   };
-  const answer = (requestId: string, a: ApprovalAnswer, rows?: number[]) => answerRequest(session.id, requestId, a, rows);
+  // A double-click answers one card, and a click on the card that moved up after an answer does nothing (PDT-623).
+  const answer = (requestId: string, a: ApprovalAnswer, rows?: number[]) =>
+    guardedAnswer(() => answerRequest(session.id, requestId, a, rows, answerSource()));
   const interrupt = () => void runAction(() => api.interruptSession(session.id));
   const usage = latestUsage(conv.rows);
   const background = backgroundLine(state?.backgroundTasks ?? []);

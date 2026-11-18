@@ -679,6 +679,53 @@ pub struct InboxAnswer {
     pub rows: Option<Vec<u32>>,
 }
 
+/// How an answer was given (PDT-623): a click (or tap) or a key, on which kind of device. PDT's web client says so in
+/// the [`ANSWER_SOURCE_HEADER`] of an answer's request; `inbox.answered` and the Inbox's Recently answered carry it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AnswerSource {
+    pub via: AnswerVia,
+    pub device: AnswerDevice,
+}
+
+/// The header with an answer's [`AnswerSource`]: `<via>/<device>`, e.g. `keyboard/desktop`.
+pub const ANSWER_SOURCE_HEADER: &str = "x-pdt-answer-source";
+
+impl AnswerSource {
+    /// The header's value, or None for anything else.
+    pub fn parse(value: &str) -> Option<Self> {
+        let (via, device) = value.trim().split_once('/')?;
+        let via = match via {
+            "click" => AnswerVia::Click,
+            "keyboard" => AnswerVia::Keyboard,
+            _ => return None,
+        };
+        let device = match device {
+            "desktop" => AnswerDevice::Desktop,
+            "phone" => AnswerDevice::Phone,
+            _ => return None,
+        };
+        Some(Self { via, device })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AnswerVia {
+    Click,
+    Keyboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AnswerDevice {
+    Desktop,
+    Phone,
+}
+
 /// Never shows a secret's value.
 impl std::fmt::Debug for InboxAnswer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -772,6 +819,16 @@ pub fn valid_questions(questions: Vec<Question>) -> Result<Vec<Question>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn answer_sources_read_from_their_header() {
+        let s = AnswerSource::parse("keyboard/phone").unwrap();
+        assert_eq!((s.via, s.device), (AnswerVia::Keyboard, AnswerDevice::Phone));
+        assert_eq!(AnswerSource::parse(" click/desktop ").map(|s| s.via), Some(AnswerVia::Click));
+        for bad in ["", "click", "click/tablet", "tap/desktop", "click/desktop/x"] {
+            assert_eq!(AnswerSource::parse(bad), None, "{bad}");
+        }
+    }
 
     fn item(id: &str, group: InboxGroup, at: i64) -> InboxItem {
         InboxItem::new(id, InboxKind::Gate, group, "", Value::Null, at)

@@ -5,6 +5,7 @@ import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { NeedsYouGroups, UpdatesList } from './InboxList';
 import { step } from './model';
+import { RecentlyAnswered } from './RecentlyAnswered';
 
 type Segment = 'needs' | 'updates';
 // The segment shown last, so coming back from an item (or an update) shows the same one.
@@ -63,6 +64,7 @@ export function PhoneInboxList({ items, updates, loading, failed, updatesFailed,
         {segment === 'needs' ? (
           <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
             <NeedsYouGroups items={items} selectedId={null} onSelect={onOpen} loading={loading} failed={failed} />
+            <RecentlyAnswered />
           </nav>
         ) : (
           <section aria-label="Updates" className="flex flex-col gap-0.5 py-1">

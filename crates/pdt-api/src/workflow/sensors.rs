@@ -107,13 +107,15 @@ pub(crate) async fn inbox_open(st: &AppState, items: &[InboxItem]) {
     }
 }
 
-/// Someone answered `item` (`by`: `user` or `agent`): `inbox.answered`, once per item.
+/// Someone answered `item` (`by`: `user` or `agent`; `source`: how, when PDT's client said): `inbox.answered`, once
+/// per item.
 pub(crate) async fn inbox_answered(
     st: &AppState,
     item: &InboxItem,
     choice: Option<&str>,
     answer: Option<&str>,
     by: &str,
+    source: Option<pdt_core::inbox::AnswerSource>,
 ) {
     let mut items = [item.clone()];
     if let Err(e) = crate::inbox::decorate(st, &mut items).await {
@@ -126,6 +128,7 @@ pub(crate) async fn inbox_answered(
         choice: choice.map(String::from),
         answer: answer.filter(|a| !a.trim().is_empty()).map(String::from),
         by: by.into(),
+        source,
     };
     emit(st, NewLogEvent::new(ev::INBOX_ANSWERED, key, "inbox", payload)).await;
 }

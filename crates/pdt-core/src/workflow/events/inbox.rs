@@ -54,4 +54,7 @@ pub struct InboxAnswered {
     pub answer: Option<String>,
     /// `user` (in PDT) or `agent` (through the API).
     pub by: String,
+    /// How the user gave it (a click or a key, on which device), when PDT's own client said (PDT-623).
+    #[serde(default)]
+    pub source: Option<crate::inbox::AnswerSource>,
 }
