@@ -371,6 +371,11 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
     Ok(out)
 }
 
+/// How the user gave an answer, when PDT's web client said (PDT-623).
+pub(crate) fn answer_source(headers: &HeaderMap) -> Option<inbox::AnswerSource> {
+    headers.get(inbox::ANSWER_SOURCE_HEADER)?.to_str().ok().and_then(inbox::AnswerSource::parse)
+}
+
 async fn load(st: &AppState, id: &str) -> Result<InboxItem, ApiError> {
     let item = st.store.get_inbox_item(id).await?.or_404("inbox item")?;
     if item.status != InboxStatus::Open {
@@ -398,7 +403,15 @@ pub(crate) async fn answer(
         let item = proposals(&st, None).await?.into_iter().find(|i| i.id == id);
         let r = answer_proposal(&st, &id, a.choice.as_deref()).await?;
         if let Some(item) = item {
-            crate::workflow::sensors::inbox_answered(&st, &item, a.choice.as_deref(), None, by).await;
+            crate::workflow::sensors::inbox_answered(
+                &st,
+                &item,
+                a.choice.as_deref(),
+                None,
+                by,
+                answer_source(&headers),
+            )
+            .await;
         }
         return Ok(r);
     }
@@ -443,7 +456,15 @@ pub(crate) async fn answer(
     };
     // What was written (never a secret's value).
     let text = a.text.clone().or_else(|| a.answers.as_ref().map(|all| all.join("\n")));
-    crate::workflow::sensors::inbox_answered(&st, &item, a.choice.as_deref(), text.as_deref(), by).await;
+    crate::workflow::sensors::inbox_answered(
+        &st,
+        &item,
+        a.choice.as_deref(),
+        text.as_deref(),
+        by,
+        answer_source(&headers),
+    )
+    .await;
     crate::notifications::kick(&st);
     Ok(Json(r))
 }

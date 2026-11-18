@@ -62,6 +62,9 @@ export interface ApprovalCardProps {
   className?: string;
 }
 
+/** How soon a confirming press counts after the first (ms): never the second click of a double-click. Tests set 0. */
+export const approvalTiming = { confirmAfterMs: 500 };
+
 /** Keys typed into a field, or with an overlay or menu open, are not ours. */
 function isForeign(e: KeyboardEvent): boolean {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return true;
@@ -99,6 +102,10 @@ export function ApprovalCard({
   const [pending, setPending] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState('');
+  // Always allow asks for a second press (PDT-623): when it was first pressed.
+  const [alwaysArmed, setAlwaysArmed] = useState<number | null>(null);
+  // An answer in flight, set before React re-renders: the second click of a double-click finds it.
+  const inFlight = useRef(false);
   // Each question's answer, by its text: the choices picked and the user's own words.
   const [picked, setPicked] = useState<Record<string, QuestionAnswer>>({});
   const idBase = useId();
@@ -106,16 +113,29 @@ export function ApprovalCard({
   const busy = disabled || pending !== null;
 
   const answer = async (key: string, a: ApprovalAnswer) => {
-    if (busy) return;
+    if (busy || inFlight.current) return;
+    inFlight.current = true;
     setPending(key);
     try {
       await onAnswer(a);
     } catch {
       // The caller reports it; the card stays answerable.
     } finally {
+      inFlight.current = false;
       setPending(null);
     }
   };
+  const always = () => {
+    if (alwaysArmed === null) return setAlwaysArmed(Date.now());
+    if (Date.now() - alwaysArmed < approvalTiming.confirmAfterMs) return;
+    setAlwaysArmed(null);
+    void answer('always', { type: 'approve', always: true });
+  };
+  useEffect(() => {
+    if (alwaysArmed === null) return;
+    const t = setTimeout(() => setAlwaysArmed(null), 4000);
+    return () => clearTimeout(t);
+  }, [alwaysArmed]);
   const approve = () => {
     if (kind === 'approval' && approveDisabled) return;
     void answer('approve', kind === 'plan' ? { type: 'plan', approve: true } : { type: 'approve', always: false });
@@ -278,8 +298,8 @@ export function ApprovalCard({
                 {kind === 'plan' ? 'Keep planning' : 'Deny'}{hint('n')}
               </Button>
               {canAlways && kind === 'approval' && (
-                <Button variant="ghost" pending={pending === 'always'} disabled={busy} onClick={() => void answer('always', { type: 'approve', always: true })} className="max-md:order-3 max-md:col-span-2">
-                  Always allow in this session
+                <Button variant={alwaysArmed === null ? 'ghost' : 'danger'} pending={pending === 'always'} disabled={busy} onClick={always} className="max-md:order-3 max-md:col-span-2">
+                  {alwaysArmed === null ? 'Always allow in this session' : 'Confirm: always allow in this session'}
                 </Button>
               )}
             </>

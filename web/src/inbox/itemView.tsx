@@ -1,6 +1,6 @@
 // What an Inbox item shows and offers (PDT-361), whatever the screen: one line on why it waits, its content in the
 // kind's style, the note box and the actions. The desktop and the phone lay the same spec out their own way.
-import { Fragment, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
@@ -21,8 +21,9 @@ import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
   CHECKS_PATH, commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  inboxTargets, loginStepsOf, longTitle, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
+import { answerTiming, useAnswersHeld } from '../common/answerGuard';
 import { answerApproval } from './approval';
 import { DecideRows, useRowsDecision } from '../common/DecideRows';
 import { pdtApproval } from '../conversation/PdtProposal';
@@ -51,6 +52,8 @@ export interface ItemAction {
   pending?: boolean;
   /** A toggle (Take over): whether what it opens is open. */
   expanded?: boolean;
+  /** Pressed once, it waits for a second press to act (PDT-623). */
+  confirming?: boolean;
   run: () => void;
 }
 
@@ -103,14 +106,17 @@ function diskFacts(item: InboxItem) {
 
 /**
  * The spec for `item`, with its own state (the note, the answers, Take over): give each item its own instance (key it).
- * `answer` and `dismiss` act on it; `onApproved` runs once an approval went through in its session.
+ * `answer` and `dismiss` act on it; `onApproved` runs once an approval is answered (held for Undo, PDT-623), `onUndo`
+ * once that answer is undone. An action that acts outside PDT or can't be taken back asks for a second press
+ * (`needsConfirm`), and every action is off for a moment after an answer (`useAnswersHeld`).
  */
-export function useItemView({ item, busy, answer, dismiss, onApproved, phone = false }: {
+export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, phone = false }: {
   item: InboxItem;
   busy: boolean;
   answer: (a: InboxAnswer) => Promise<void>;
   dismiss: () => void;
   onApproved: () => void;
+  onUndo?: () => void;
   phone?: boolean;
 }): { spec: ItemSpec; note: string; setNote: (s: string) => void } {
   const [note, setNote] = useState('');
@@ -120,7 +126,6 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const [active, setActive] = useState(0);
   const [takingOver, setTakingOver] = useState(false);
   const [secret, setSecret] = useState('');
-  const [approving, setApproving] = useState(false);
   const [clean, cleaning] = useCleanFinished();
   // A ticket proposal's edits, the agentic box and Duplicate of… (PDT-366).
   const [proposed] = useState(() => ticketProposalOf(item));
@@ -141,6 +146,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
   const persona = item.personaName ?? 'The agent';
   // A command waiting on the user's approval is approved in place (PDT-611); approving closes the notice.
   const qc = useQueryClient();
+  const approve = (a: ApprovalAnswer, rows?: number[]) =>
+    answerApproval(item, a, onApproved, { rows, phone, onUndo, then: () => qc.invalidateQueries({ queryKey: inboxKey }) });
   const waitingCommand = commandNoticeOf(item);
   const [approveCommand, approvingCommand] = useAction(async () => {
     if (!waitingCommand) return;
@@ -257,18 +264,15 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           return {
             region: 'Question', why: `${who} asks you in its conversation; the answer goes back to it.`, actions: [],
             content: <ApprovalCard kind="question" title="A question for you" questions={questions} keyboard={!phone}
-              onAnswer={(a) => answerApproval(item, a, onApproved)} />,
+              onAnswer={(a) => approve(a)} />,
           };
         }
-        const send = (a: ApprovalAnswer, kept?: number[]) => {
-          setApproving(true);
-          void answerApproval(item, a, onApproved, kept).finally(() => setApproving(false));
-        };
+        const send = approve;
         const allow = () => send({ type: 'approve', always: false });
         const deny = () => send({ type: 'deny', ...(note.trim() ? { message: note.trim() } : {}) });
         if (rows) {
           // The PM's decisions, asked on its conversation's card (PDT-502): the same table, answered there too.
-          return decideSpec(rows, (kept) => send({ type: 'approve', always: false }, kept), () => send({ type: 'deny' }), approving,
+          return decideSpec(rows, (kept) => send({ type: 'approve', always: false }, kept), () => send({ type: 'deny' }), false,
             nonBlank(item.body.sessionTitle));
         }
         const where = [tool, nonBlank(item.body.sessionTitle)].filter(Boolean).join(' · ');
@@ -291,14 +295,13 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
           ),
           note: { label: 'Reason (optional)', placeholder: 'Why not (optional): the agent gets it with Deny' },
           actions: [
-            { id: 'allow', title: 'Allow once', short: 'Allow', primary: true, kbd: 'y', pending: approving, disabled: approving, run: allow },
+            { id: 'allow', title: 'Allow once', short: 'Allow', primary: true, kbd: 'y', run: allow },
             ...(item.choices.some((c) => c.id === 'allow_always')
-              ? [{ id: 'always', title: 'Always allow', short: 'Always', disabled: approving, run: () => send({ type: 'approve', always: true }) }]
+              ? [{ id: 'always', title: 'Always allow', short: 'Always', run: () => send({ type: 'approve', always: true }) }]
               : []),
-            { id: 'deny', title: 'Deny', kbd: 'n', end: true, danger: true, disabled: approving, run: deny },
+            { id: 'deny', title: 'Deny', kbd: 'n', end: true, danger: true, run: deny },
           ],
           onKey: (key) => {
-            if (approving) return false;
             if (key === 'y') allow();
             else if (key === 'n') deny();
             else return false;
@@ -604,5 +607,35 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, phone = f
       }
     }
   })();
-  return { spec: { ...spec, enter: spec.enter ?? true }, note, setNote };
+
+  // An action that acts outside PDT or can't be taken back (Request changes, Close, Always allow) arms on its first
+  // press and acts on a second (PDT-623), not one inside a double-click. It disarms after a few seconds.
+  const [armed, setArmed] = useState<{ id: string; at: number } | null>(null);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(null), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  // Right after an answer the actions are off: a click meant for the answered item does nothing on this one.
+  const held = useAnswersHeld();
+  const actions = spec.actions.map((a): ItemAction => {
+    const disabled = a.disabled || held;
+    if (!needsConfirm(item, a.id)) return { ...a, disabled };
+    if (armed?.id !== a.id) return { ...a, disabled, run: () => setArmed({ id: a.id, at: Date.now() }) };
+    const confirm = () => {
+      if (Date.now() - armed.at < answerTiming.cooldownMs) return;
+      setArmed(null);
+      a.run();
+    };
+    return { ...a, title: `Confirm ${a.title.charAt(0).toLowerCase()}${a.title.slice(1)}`, short: 'Confirm', danger: true, confirming: true, disabled, run: confirm };
+  });
+  const hint = armed ? 'Press again to confirm: this acts outside PDT or can’t be taken back.' : spec.hint;
+  // Its key asks twice too (`y` on an Allow that posts outside PDT).
+  const onKey = (key: string) => {
+    const a = actions.find((x) => x.kbd === key && needsConfirm(item, x.id));
+    if (!a) return spec.onKey?.(key) ?? false;
+    if (!a.disabled) a.run();
+    return true;
+  };
+  return { spec: { ...spec, actions, hint, onKey, enter: spec.enter ?? true }, note, setNote };
 }

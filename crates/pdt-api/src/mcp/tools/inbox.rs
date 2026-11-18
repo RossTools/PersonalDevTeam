@@ -112,6 +112,7 @@ async fn apply(cx: &Cx<'_>, a: &InboxDecide) -> Result<Value, String> {
                     answer.choice.as_deref(),
                     row.note.as_deref(),
                     "user",
+                    None,
                 )
                 .await;
                 decided.push(json!({"ticket": row.ticket_key, "decision": row.decision, "stage": v.get("stage")}));

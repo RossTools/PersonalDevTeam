@@ -68,10 +68,12 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
 /** One item, keyed by it: its note, answers and Take over are its own. */
 function ItemPane({ item, items, onSelect }: { item: InboxItem; items: InboxItem[]; onSelect: (id: string | null) => void }) {
   const openTicket = useOpenTicket();
-  const { busy, answer, dismiss, refresh } = useAnswer(item, (done) => onSelect(after(items, done.id)));
+  // Undo shows the item again (PDT-623).
+  const { busy, answer, dismiss } = useAnswer(item, (done) => onSelect(after(items, done.id)), { onUndo: (i) => onSelect(i.id) });
   const { spec, note, setNote } = useItemView({
     item, busy, answer, dismiss: () => void dismiss(),
-    onApproved: () => { onSelect(after(items, item.id)); void refresh(); },
+    onApproved: () => onSelect(after(items, item.id)),
+    onUndo: () => onSelect(item.id),
   });
 
   // The handlers change every render; the listener reads the latest through a ref.

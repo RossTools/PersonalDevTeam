@@ -31,6 +31,8 @@ interface Decision {
   title: string;
   primary?: boolean;
   disabled?: boolean;
+  /** Waits for a second press (PDT-623). */
+  confirming?: boolean;
 }
 
 /**
@@ -44,7 +46,7 @@ function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy:
   const folded = ordered.length > 3 && main ? ordered.slice(0, -1) : [];
   const shown = folded.length > 0 && main ? [main] : ordered;
   const button = (d: Decision) => (
-    <Button key={d.id} variant={d.primary ? 'primary' : 'secondary'} size="lg" className="min-w-0 flex-1" pending={busy && d.primary}
+    <Button key={d.id} variant={d.confirming ? 'danger' : d.primary ? 'primary' : 'secondary'} size="lg" className="min-w-0 flex-1" pending={busy && d.primary}
       disabled={busy || d.disabled} onClick={() => onPick(d.id)}>
       <span className="truncate">{d.title}</span>
     </Button>
@@ -114,10 +116,15 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
     setDir(by);
     onMove(id);
   };
-  const { busy, answer, dismiss } = useAnswer(item, (d) => finish(d));
+  // Undo shows the item again (PDT-623).
+  const { busy, answer, dismiss } = useAnswer(item, (d) => finish(d), { phone: true, onUndo: (d) => undone(d) });
   const finish = (d: InboxItem) => {
     setDone((s) => new Set(s).add(d.id));
     move(after(live, d.id), 1);
+  };
+  const undone = (d: InboxItem) => {
+    setDone((s) => new Set([...s].filter((id) => id !== d.id)));
+    move(d.id, -1);
   };
   const openTicket = useOpenTicket();
   const openSession = useOpenSession();
@@ -183,6 +190,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
           className={cn('animate-in duration-200 motion-reduce:animate-none', dir === 1 ? 'slide-in-from-right' : 'slide-in-from-left')}
           onAnswer={answer}
           onApproved={() => finish(item)}
+          onUndo={() => undone(item)}
           onDismiss={() => void dismiss()}
         />
       </ErrorBoundary>
@@ -194,21 +202,22 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
  * One item in the one item layout (PDT-361): its header and links, the line on why, its content and note box
  * (scrolling), and its actions in the bottom bar. Keyed by item, so its state is its own.
  */
-function TriageItem({ item, busy, className, onAnswer, onApproved, onDismiss }: {
+function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDismiss }: {
   item: InboxItem;
   busy: boolean;
   className?: string;
   onAnswer: (a: InboxAnswer) => Promise<void>;
   onApproved: () => void;
+  onUndo: () => void;
   onDismiss: () => void;
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
-  const { spec, note, setNote } = useItemView({ item, busy, answer: onAnswer, dismiss: onDismiss, onApproved, phone: true });
+  const { spec, note, setNote } = useItemView({ item, busy, answer: onAnswer, dismiss: onDismiss, onApproved, onUndo, phone: true });
   // The bar's order: the rest first, the primary one on the right; Dismiss and the like before them. Dismiss is in ⋯,
   // except for a notice, whose bar has it as its one other way out.
   const actions = [...spec.actions.filter((a) => a.end), ...spec.actions.filter((a) => !a.end)]
     .filter((a) => a.id !== 'dismiss' || item.kind === 'notice');
-  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.short ?? a.title, primary: a.primary, disabled: a.disabled }));
+  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming }));
   const pick = (id: string) => {
     // Merge (and Accept) asks first.
     if (merges(item, id)) return setConfirming(id);

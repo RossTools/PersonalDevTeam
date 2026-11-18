@@ -108,6 +108,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   the request is answered, so a wrong pick leaves it open). It refuses non-PM sessions even when a
   persona lists it. Each row goes through `ticket_proposal::decide` as `By::user_via(<the PM>)`: the user's events,
   with the PM as `proposedBy`.
+- **The web answers through the guard, and the Inbox's answers wait for Undo** (`web/src/common/answerGuard.ts`,
+  `web/src/inbox/held.ts`): a new way to answer an Inbox item or a request goes through `useAnswer`, `answerApproval`
+  or `guardedAnswer`, never `api.answerInbox` / `answerRequest` directly, or a double-click answers twice and Undo
+  can't stop it. An action that posts outside PDT or can't be taken back is in `needsConfirm` (`inbox/model.ts`).
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
   only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless it is a
   PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event

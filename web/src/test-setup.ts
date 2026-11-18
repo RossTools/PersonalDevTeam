@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
@@ -70,6 +70,25 @@ afterEach(async () => {
   resetRouter();
   resetConversations();
 });
+
+// Answers go out at once in tests, with no cool-down between them or wait for a confirming press (PDT-623); the tests
+// of the guard, Undo and confirm steps set the real timings. Nothing is held from one test to the next.
+if (typeof window !== 'undefined') {
+  const [{ answerTiming, resetAnswerGuard }, { holdTiming, resetHeldAnswers }, { approvalTiming }] = await Promise.all([
+    import('./common/answerGuard'),
+    import('./inbox/held'),
+    import('@ui/ApprovalCard'),
+  ]);
+  beforeEach(() => {
+    answerTiming.cooldownMs = 0;
+    holdTiming.undoMs = 0;
+    approvalTiming.confirmAfterMs = 0;
+  });
+  afterEach(() => {
+    resetAnswerGuard();
+    resetHeldAnswers();
+  });
+}
 
 // A test that fakes timers and fails before it puts the real ones back doesn't leave them fake for the next.
 afterEach(() => {

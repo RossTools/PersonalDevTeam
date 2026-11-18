@@ -201,7 +201,15 @@ pub(crate) async fn post_answer(
             _ => ("answer", None),
         };
         let by = if from_ui { "user" } else { "agent" };
-        crate::workflow::sensors::inbox_answered(&st, &item, Some(choice), text.as_deref(), by).await;
+        crate::workflow::sensors::inbox_answered(
+            &st,
+            &item,
+            Some(choice),
+            text.as_deref(),
+            by,
+            crate::inbox::answer_source(&headers),
+        )
+        .await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
