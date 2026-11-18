@@ -169,7 +169,11 @@ impl NodeKind for Gate {
                 .ticket(ticket.clone())
                 .attempt(cx.run.attempt_id.clone())
                 .choices(
-                    c.choices.iter().enumerate().map(|(i, x)| InboxChoice::new(x, choice_title(x), i == 0)).collect(),
+                    c.choices
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| InboxChoice::new(x, choice_title(x), i == 0).outward(cx.port_outward(x)))
+                        .collect(),
                 );
             cx.st.store.open_inbox_item(&item).await.map_err(crate::workflow::err)?;
             let mut wait = json!({"answer": {"question": c.question, "choices": c.choices, "approve": c.approve,

@@ -711,6 +711,13 @@ async fn every_core_asking_tool_asks() {
         .await;
         let rid = req["id"].as_str().unwrap().to_string();
         assert_eq!(req["tool"], format!("mcp__pdt__{tool}"), "{tool} asked: {req}");
+        // Its Inbox item marks Allow as acting outside PDT when the tool writes outside it (PDT-625): of the core
+        // tools, linking an issue (which can close it in its tracker on Done).
+        let items = inbox(&env).await;
+        let item = items.iter().find(|i| i["body"]["requestId"] == rid.as_str()).expect("its Inbox item");
+        let allow = item["choices"].as_array().unwrap().iter().find(|c| c["id"] == "allow").unwrap();
+        let outward = ["link_issue"].contains(&tool);
+        assert_eq!(allow["outward"].as_bool().unwrap_or(false), outward, "{tool}: {allow}");
         answer(&env, &id, &rid, json!({"type": "deny", "message": "Not this one"})).await;
         let said = said_after(&env, &id, n, &format!("mcp {tool}")).await;
         assert!(said.contains("denied") && said.contains("Not this one"), "{tool}: {said}");

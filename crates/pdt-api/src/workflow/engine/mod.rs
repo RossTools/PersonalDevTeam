@@ -686,6 +686,7 @@ async fn advance(st: &AppState, run_id: &str) -> R<()> {
                 run: &run,
                 step: &job.step,
                 node: job.node,
+                doc,
                 ctx: &job.ctx,
                 origin: job.origin.as_ref(),
                 dry_run: false,

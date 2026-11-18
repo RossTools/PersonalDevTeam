@@ -7,7 +7,6 @@ import type { InboxSection } from '../api/gen/InboxSection';
 import type { Priority } from '../api/gen/Priority';
 import { routePath } from '../shell/route';
 import { nonBlank } from '../common/guards';
-import { pdtTool } from '../conversation/pdtTools';
 
 /** Where each group is listed (PDT-361): a few sections, as the API sorts them. */
 export const SECTION_OF: Record<InboxGroup, InboxSection> = {
@@ -297,28 +296,15 @@ export function merges(item: InboxItem, choice: string): boolean {
   return item.group === 'accept' && item.choices.find((c) => c.id === choice)?.primary === true;
 }
 
-/** PDT's tools that post outside PDT, as the user (a pull request, an issue, a public channel): Allow asks again. */
-const OUTWARD_TOOLS = new Set([
-  'change_request_comment', 'change_request_merge', 'change_request_open', 'issue_comment', 'issue_create', 'report_bug',
-  'jira_comment', 'jira_create', 'jira_edit', 'jira_transition', 'discord_webhook', 'discord_change',
-]);
-
-/** A gate's choices that post a review on a pull request or close it, as the user. */
-const OUTWARD_CHOICES = /^(request_changes|changes_requested|close|close_pr|reject_pr)$/i;
-
 /**
- * Whether the action `action` of `item` asks again before it acts (PDT-623): it acts outside PDT or can't be taken
- * back. Always allow (a grant for the rest of the session), a gate's Request changes and Close, and Allow on one of
- * PDT's tools that posts outside it. Plain Allow and Deny stay one press.
+ * Whether the action `action` of `item` asks again before it acts (PDT-623): Always allow (a grant for the rest of the
+ * session, which can't be taken back), and a choice the server marks as acting outside PDT (PDT-625): a gate's choice
+ * that leads to a step posting a review or closing a pull request, Allow on a tool that posts on a forge or a tracker.
+ * Plain Allow and Deny stay one press.
  */
 export function needsConfirm(item: InboxItem, action: string): boolean {
   if (action === 'always' || action === 'allow_always') return true;
-  if (item.kind === 'gate') return OUTWARD_CHOICES.test(action);
-  if (action !== 'allow') return false;
-  const tool = typeof item.body.tool === 'string' ? item.body.tool : '';
-  // An Inbox confirmation names the tool bare; an approval by the agent's name for it.
-  const name = pdtTool(tool) ?? (item.kind === 'confirm' ? tool : '');
-  return OUTWARD_TOOLS.has(name);
+  return item.choices.some((c) => c.id === action && c.outward === true);
 }
 
 /** What an answer says in its Undo toast and Recently answered: the choice's title, else what kind of answer it is. */

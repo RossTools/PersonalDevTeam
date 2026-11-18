@@ -111,7 +111,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The web answers through the guard, and the Inbox's answers wait for Undo** (`web/src/common/answerGuard.ts`,
   `web/src/inbox/held.ts`): a new way to answer an Inbox item or a request goes through `useAnswer`, `answerApproval`
   or `guardedAnswer`, never `api.answerInbox` / `answerRequest` directly, or a double-click answers twice and Undo
-  can't stop it. An action that posts outside PDT or can't be taken back is in `needsConfirm` (`inbox/model.ts`).
+  can't stop it. Which answers ask twice comes from the server: an `InboxChoice` that acts outside PDT is `outward`
+  (a gate's or a manual step's choice whose port leads to a node whose kind says `NodeKind::outward`; Allow on a tool
+  `ToolTable::outward` names: public, or open-world and not read-only). A node kind that posts or closes something
+  outside PDT as the user overrides `outward`; `needsConfirm` (`inbox/model.ts`) reads the flag, and keeps no list.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
   only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless it is a
   PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event

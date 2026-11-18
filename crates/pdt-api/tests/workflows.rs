@@ -1312,6 +1312,28 @@ async fn a_gate_is_titled_by_its_first_line_and_has_no_pull_request_of_its_own()
 }
 
 #[tokio::test]
+async fn a_custom_gates_choice_that_closes_a_pull_request_is_marked_outward() {
+    let env = setup().await;
+    let id = create(
+        &env,
+        json!({"name": "triage", "nodes": [
+        {"id": "t", "kind": "manual", "version": 1},
+        {"id": "g", "kind": "gate", "version": 1, "config": {"question": "Keep it?", "choices": ["keep", "drop"]}},
+        {"id": "close", "kind": "github.pr.close", "version": 1, "config": {"repo": "o/r", "number": 1}},
+        {"id": "kept", "kind": "end", "version": 1}],
+        "edges": [{"from": "t", "to": "g"}, {"from": "g", "port": "drop", "to": "close"},
+                  {"from": "g", "port": "keep", "to": "kept"}]}),
+    )
+    .await;
+    let run = run_now(&env, &id, json!({})).await;
+    assert_eq!(settle(&env, &run).await["status"], "waiting");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let choices = &inbox["items"][0]["choices"];
+    assert_eq!(choices[0]["id"], "keep", "{choices}");
+    assert_eq!((&choices[0]["outward"], &choices[1]["outward"]), (&Value::Null, &json!(true)), "{choices}");
+}
+
+#[tokio::test]
 async fn the_runtime_limit_ends_a_waiting_run_and_counts_from_a_retry() {
     // Long enough that a tick on a busy machine stays well inside it: the test waits it out once, not tick by tick.
     const LIMIT: i64 = 3000;

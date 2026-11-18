@@ -77,6 +77,10 @@ impl NodeKind for Discord {
         )
     }
 
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: DiscordConfig = parse(config)?;
         if c.connection.trim().is_empty() {

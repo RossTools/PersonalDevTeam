@@ -378,6 +378,10 @@ impl NodeKind for PrReview {
         )
     }
 
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// Submitted twice, it shows twice.
     fn rerun_safe(&self, _input: &Value) -> bool {
         false
@@ -441,6 +445,10 @@ impl NodeKind for PrClose {
             &[("out", "Then")],
             false,
         )
+    }
+
+    fn outward(&self, _config: &Value) -> bool {
+        true
     }
 
     /// A comment added before it was cut short would be added again.

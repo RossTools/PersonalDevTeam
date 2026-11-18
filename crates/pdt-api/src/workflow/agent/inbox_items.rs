@@ -193,7 +193,13 @@ pub(crate) async fn ask(st: &AppState, s: &Session, kind: InboxKind, title: Stri
     let group = if kind == InboxKind::Confirm { InboxGroup::Approval } else { InboxGroup::Question };
     let choices = match kind {
         InboxKind::Confirm => {
-            vec![InboxChoice::new(inbox::ALLOW, "Allow", true), InboxChoice::new(inbox::DENY, "Deny", false)]
+            // Allow on a tool that posts outside PDT asks again (PDT-625).
+            let tool = body["tool"].as_str().unwrap_or_default();
+            let outward = st.registry().tool_table().outward(tool);
+            vec![
+                InboxChoice::new(inbox::ALLOW, "Allow", true).outward(outward),
+                InboxChoice::new(inbox::DENY, "Deny", false),
+            ]
         }
         _ => vec![],
     };

@@ -328,9 +328,11 @@ pub(crate) async fn approvals(st: &AppState, project: Option<&str>) -> Result<Ve
             if *state != RequestState::Open || !ids.contains(id) {
                 continue;
             }
-            let mut choices = vec![InboxChoice::new("allow", "Allow", true)];
+            // Allow on one of PDT's tools that posts outside it asks again (PDT-625).
+            let outward = st.registry().tool_table().outward(tool);
+            let mut choices = vec![InboxChoice::new("allow", "Allow", true).outward(outward)];
             if *can_always {
-                choices.push(InboxChoice::new("allow_always", "Always allow in this session", false));
+                choices.push(InboxChoice::new("allow_always", "Always allow in this session", false).outward(outward));
             }
             choices.push(InboxChoice::new("deny", "Deny", false));
             let mut body = json!({"requestId": id, "sessionTitle": s.title, "request": e.event, "tool": tool,
