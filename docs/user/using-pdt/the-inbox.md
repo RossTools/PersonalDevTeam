@@ -31,8 +31,9 @@ or a click meant for the item you just answered doesn't answer the next one too.
 in a conversation.
 
 A few answers ask for a second press, because they act outside PDT or can't be taken back: **Request changes** and
-**Close** on a pull request's review, **Always allow**, and **Allow** on a call that posts outside PDT as you (a pull
-request comment, an issue, a Jira comment, a chat message). The first press turns the button red and reads
+**Close** on a pull request's review (and any workflow's choice that leads to posting or closing something outside
+PDT), **Always allow**, and **Allow** on a call that changes something outside PDT as you (a pull request comment, an
+issue, a Jira comment, a chat message). The first press turns the button red and reads
 **Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
 
 Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up. Undo puts the item back

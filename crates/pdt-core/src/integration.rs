@@ -120,6 +120,13 @@ impl ToolTable {
         self.get(tool).is_some_and(|t| t.public)
     }
 
+    /// Whether a call to `tool` (by the agent's name for it, `mcp__pdt__<tool>`, or bare) acts outside PDT: it posts
+    /// publicly, or it changes something it reaches outside PDT (an issue, a Jira ticket, a Discord channel). Allow on
+    /// it asks twice in the Inbox (PDT-625).
+    pub fn outward(&self, tool: &str) -> bool {
+        self.get(crate::mcp::pdt_tool(tool)).is_some_and(|t| t.public || (t.open_world && !t.read_only))
+    }
+
     /// Whether Claude asks before a call to `tool` (its permission prompt): an asking tool that doesn't ask in PDT's
     /// Inbox instead, so it stays out of `--allowedTools`.
     pub fn claude_asks(&self, tool: &str) -> bool {
@@ -663,6 +670,18 @@ mod tests {
         assert_eq!(t.asking_tools(), ["prompted", "inbox"]);
         assert!(t.claude_asks("prompted") && !t.claude_asks("inbox") && !t.claude_asks("plain"));
         assert!(t.asks_in_inbox("inbox") && !t.asks_in_inbox("prompted") && !t.asks_in_inbox("missing"));
+    }
+
+    #[test]
+    fn a_tool_that_posts_or_writes_outside_pdt_is_outward_by_any_name() {
+        let t = ToolTable::new([
+            ToolDecl::new("local", "").asks(),
+            ToolDecl::new("read", "").read_only().open_world(),
+            ToolDecl::new("post", "").open_world().public(),
+            ToolDecl::new("write", "").asks().open_world(),
+        ]);
+        assert!(!t.outward("local") && !t.outward("read") && !t.outward("missing"));
+        assert!(t.outward("post") && t.outward("mcp__pdt__write") && t.outward("mcp:pdt/post"));
     }
 
     fn map(v: Value) -> IntegrationSettings {

@@ -339,11 +339,21 @@ pub struct InboxChoice {
     pub title: String,
     /// Enter takes it.
     pub primary: bool,
+    /// It acts outside PDT, as the user (posts a review, closes a pull request, calls a tool that posts on a forge or
+    /// a tracker): the Inbox asks again before it acts (PDT-625).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub outward: bool,
 }
 
 impl InboxChoice {
     pub fn new(id: impl Into<String>, title: impl Into<String>, primary: bool) -> Self {
-        Self { id: id.into(), title: title.into(), primary }
+        Self { id: id.into(), title: title.into(), primary, outward: false }
+    }
+
+    /// The choice, marked as acting outside PDT when `outward`.
+    pub fn outward(self, outward: bool) -> Self {
+        Self { outward, ..self }
     }
 }
 

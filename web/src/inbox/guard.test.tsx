@@ -22,13 +22,13 @@ const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
   resolution: null, createdAt: 1, resolvedAt: null, ...over,
 });
 
-/** A pull request's review gate, as the outside-PR workflow asks it. */
+/** A pull request's review gate, as the outside-PR workflow asks it: the server marks the choices that post on it. */
 const review = item('pr', {
   title: 'Review #613', createdAt: 0,
   choices: [
     { id: 'approve_merge', title: 'Approve merge', primary: true },
-    { id: 'request_changes', title: 'Request changes', primary: false },
-    { id: 'close', title: 'Close', primary: false },
+    { id: 'request_changes', title: 'Request changes', primary: false, outward: true },
+    { id: 'close', title: 'Close', primary: false, outward: true },
   ],
 });
 
@@ -85,17 +85,23 @@ describe('the guard on answers', () => {
 });
 
 describe('answers that act outside PDT ask for a second press', () => {
-  it('knows which: Request changes and Close on a gate, Always allow, Allow on a tool that posts outside', () => {
+  it('knows which: the choices the server marks as acting outside PDT, and Always allow', () => {
     expect(needsConfirm(review, 'request_changes')).toBe(true);
     expect(needsConfirm(review, 'close')).toBe(true);
     expect(needsConfirm(review, 'approve_merge')).toBe(false);
-    const approval = item('approval:s:r', { kind: 'approval', group: 'approval', body: { tool: 'mcp__pdt__issue_create' } });
+    // A custom gate's choice is marked by where it leads, whatever it is called.
+    const custom = item('g', { choices: [{ id: 'keep', title: 'Keep', primary: true }, { id: 'drop', title: 'Drop', primary: false, outward: true }] });
+    expect(needsConfirm(custom, 'drop')).toBe(true);
+    expect(needsConfirm(custom, 'keep')).toBe(false);
+    const approval = item('approval:s:r', {
+      kind: 'approval', group: 'approval', body: { tool: 'mcp__pdt__issue_create' },
+      choices: [{ id: 'allow', title: 'Allow', primary: true, outward: true }, { id: 'deny', title: 'Deny', primary: false }],
+    });
     expect(needsConfirm(approval, 'allow')).toBe(true);
     expect(needsConfirm(approval, 'deny')).toBe(false);
     expect(needsConfirm(approval, 'always')).toBe(true);
-    const local = item('approval:s:q', { kind: 'approval', group: 'approval', body: { tool: 'Bash' } });
+    const local = item('approval:s:q', { kind: 'approval', group: 'approval', body: { tool: 'Bash' }, choices: [{ id: 'allow', title: 'Allow', primary: true }] });
     expect(needsConfirm(local, 'allow')).toBe(false);
-    expect(needsConfirm(item('c', { kind: 'confirm', body: { tool: 'change_request_comment' } }), 'allow')).toBe(true);
   });
 
   it('arms Request changes on the first press and sends it on the second, not on a double-click', async () => {
@@ -116,7 +122,7 @@ describe('answers that act outside PDT ask for a second press', () => {
     const calls = stubApi({ 'POST /api/sessions/s/requests/r': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const approval = item('approval:s:r', {
       kind: 'approval', group: 'approval', sessionId: 's', title: 'Create an issue', body: { requestId: 'r', tool: 'mcp__pdt__issue_create', input: { title: 'Bug' } },
-      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+      choices: [{ id: 'allow', title: 'Allow', primary: true, outward: true }, { id: 'deny', title: 'Deny', primary: false }],
     });
     renderWithQuery(<Inbox items={[approval]} />);
     fireEvent.keyDown(window, { key: 'y' });

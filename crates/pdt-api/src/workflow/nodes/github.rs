@@ -325,6 +325,10 @@ impl NodeKind for GithubComment {
         )
     }
 
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
     fn rerun_safe(&self, _input: &Value) -> bool {
         false
@@ -406,6 +410,10 @@ impl NodeKind for GithubClose {
             &[("out", "Then"), ("unlinked", "No linked issue")],
             false,
         )
+    }
+
+    fn outward(&self, _config: &Value) -> bool {
+        true
     }
 
     /// A comment added before it was cut short would be added again.

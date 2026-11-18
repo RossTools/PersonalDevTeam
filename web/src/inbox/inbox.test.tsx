@@ -532,7 +532,7 @@ describe('inbox', () => {
     const call = item('c', {
       kind: 'confirm', group: 'approval', runId: null, stepId: null, title: 'Comment on Jira issues',
       body: { tool: 'jira_comment', toolTitle: 'Comment on Jira issues', agent: 'Codex', sessionTitle: 'PM', input: { body: 'The board flickers' } },
-      choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+      choices: [{ id: 'allow', title: 'Allow', primary: true, outward: true }, { id: 'deny', title: 'Deny', primary: false }],
     });
     expect(dismissable(call)).toBe(false);
     const calls = stubApi({ 'POST /api/inbox/c/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
@@ -540,7 +540,7 @@ describe('inbox', () => {
     const region = screen.getByRole('region', { name: 'Agent call' });
     expect(region).toHaveTextContent('PM (Codex) wants to call jira_comment');
     expect(screen.getByLabelText("The call's arguments")).toHaveTextContent('"body": "The board flickers"');
-    // A comment on a Jira issue goes out as the user: Allow asks for a second press (PDT-623).
+    // A comment on a Jira issue goes out as the user (the server marks its Allow): Allow asks for a second press.
     fireEvent.keyDown(window, { key: 'Enter' });
     expect(screen.getByRole('button', { name: /^Confirm allow/ })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: 'Enter' });

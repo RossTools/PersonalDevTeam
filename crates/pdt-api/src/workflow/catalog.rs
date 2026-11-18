@@ -106,6 +106,8 @@ pub struct StepCx<'a> {
     pub step: &'a Step,
     /// The node being run (its title and settings), for kinds that need more than their config.
     pub node: &'a Node,
+    /// The run's workflow document (the version it runs), for kinds that look at where their ports lead.
+    pub doc: &'a WorkflowDoc,
     /// The run's context (`trigger`, `steps`, `state`, `run`), for kinds that resolve more later.
     pub ctx: &'a Value,
     /// For a sub-workflow's run, the trigger of the run that called it first (PDT-415): what its input may carry.
@@ -122,6 +124,18 @@ impl StepCx<'_> {
     /// The node's title, else its id.
     pub fn node_title(&self) -> &str {
         if self.node.title.is_empty() { &self.node.id } else { &self.node.title }
+    }
+
+    /// Whether leaving the node by `port` acts outside PDT: a node it leads to does ([`NodeKind::outward`]). A gate's
+    /// choice that leads to one is marked, so the Inbox asks again before it acts (PDT-625).
+    pub fn port_outward(&self, port: &str) -> bool {
+        let reg = self.st.registry();
+        let catalog = reg.catalog();
+        self.doc
+            .next(&self.node.id, port)
+            .into_iter()
+            .filter_map(|id| self.doc.node(id))
+            .any(|n| catalog.get(&n.kind).is_some_and(|k| catalog.current_config(n).is_ok_and(|c| k.outward(&c))))
     }
 
     /// Records what the step has done so far (as its output), so running it again after a restart or a retry picks up
@@ -227,6 +241,13 @@ pub trait NodeKind: Send + Sync {
     /// Whether a node with this (unresolved) config works on the run's project (a GitHub step without `repo`): a
     /// workflow with one needs a project to run in, which Run now asks for when its scope gives none (PDT-301).
     fn needs_project(&self, _config: &Value) -> bool {
+        false
+    }
+
+    /// Whether a node with this (unresolved) config acts outside PDT as the user, where it can't be taken back: posts
+    /// where others read it (a review, a comment, a message), or closes something on a forge. A gate's choice that
+    /// leads to one asks twice in the Inbox (PDT-625). Merging is not one: merging is what an Accept gate is for.
+    fn outward(&self, _config: &Value) -> bool {
         false
     }
 }

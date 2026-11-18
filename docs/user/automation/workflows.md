@@ -354,7 +354,9 @@ with that message.
 
 **Ask the user** asks you something and waits. The question shows in the Inbox under **Ready to accept** with a
 box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
-after a time, or close by itself when something else happens first (the ticket merged, say).
+after a time, or close by itself when something else happens first (the ticket merged, say). A choice whose exit
+leads straight to a step that acts outside PDT as you (posting a pull request review or a comment, closing a pull
+request or an issue, posting to Discord) asks for a second press in the Inbox.
 
 ### Agent steps and outcomes
 

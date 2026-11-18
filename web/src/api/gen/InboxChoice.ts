@@ -7,4 +7,9 @@ export type InboxChoice = { id: string, title: string,
 /**
  * Enter takes it.
  */
-primary: boolean, };
+primary: boolean, 
+/**
+ * It acts outside PDT, as the user (posts a review, closes a pull request, calls a tool that posts on a forge or
+ * a tracker): the Inbox asks again before it acts (PDT-625).
+ */
+outward?: boolean, };

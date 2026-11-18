@@ -448,7 +448,7 @@ async fn manual_item(cx: &StepCx<'_>, c: &AgentConfig, a: &AgentStep) -> R<()> {
         .outcomes
         .iter()
         .enumerate()
-        .map(|(i, o)| InboxChoice::new(inbox::outcome_choice(&o.id), &o.id, i == 0))
+        .map(|(i, o)| InboxChoice::new(inbox::outcome_choice(&o.id), &o.id, i == 0).outward(cx.port_outward(&o.id)))
         .collect();
     let body = json!({"prompt": c.prompt, "outcomes": c.outcomes, "node": cx.node.id, "persona": a.persona_name,
                       "workflow": cx.workflow.name});
