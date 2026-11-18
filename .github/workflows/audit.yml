@@ -1,6 +1,7 @@
 name: audit
 # Known advisories in the dependencies (docs/SDLC.md "CI"): `cargo deny check advisories` over Cargo.lock (deny.toml
-# lists the ignored ones, each with its reason) and `pnpm audit --audit-level high` over pnpm-lock.yaml.
+# lists the ignored ones, each with its reason) and `pnpm audit --audit-level high` over pnpm-lock.yaml
+# (pnpm-workspace.yaml's auditConfig lists its ignored ones).
 # Not a required check: a new advisory is about the dependencies, not about the PR that meets it, so it shouldn't
 # block unrelated merges. It runs on a PR that changes the lockfiles or this config, and daily on main, so an advisory
 # published between Dependabot runs turns up as a failed scheduled run.
@@ -9,6 +10,7 @@ on:
     paths:
       - Cargo.lock
       - pnpm-lock.yaml
+      - pnpm-workspace.yaml
       - deny.toml
       - .github/workflows/audit.yml
   schedule:
