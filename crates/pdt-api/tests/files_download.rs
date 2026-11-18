@@ -65,7 +65,7 @@ fn read(z: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str) -> String
 #[tokio::test]
 async fn a_file_downloads_with_its_name_type_and_bytes() {
     let env = setup().await;
-    std::fs::write(env.repo.join("src").join("Résumé \"v2\".txt"), "bonjour\n").unwrap();
+    std::fs::write(env.repo.join("src").join("Résumé v2.txt"), "bonjour\n").unwrap();
     let (s, h, body) = get_bytes(&env.app, &env.url("path=README.md")).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body, b"hello\n");
@@ -74,12 +74,12 @@ async fn a_file_downloads_with_its_name_type_and_bytes() {
     assert_eq!(header(&h, "content-disposition"), "attachment; filename=\"README.md\"; filename*=UTF-8''README.md");
     assert_eq!(header(&h, "x-content-type-options"), "nosniff");
 
-    let (s, h, body) = get_bytes(&env.app, &env.url("path=src/R%C3%A9sum%C3%A9%20%22v2%22.txt")).await;
+    let (s, h, body) = get_bytes(&env.app, &env.url("path=src/R%C3%A9sum%C3%A9%20v2.txt")).await;
     assert_eq!((s, body.as_slice()), (StatusCode::OK, b"bonjour\n".as_slice()));
     assert_eq!(header(&h, "content-type"), "text/plain");
     assert_eq!(
         header(&h, "content-disposition"),
-        "attachment; filename=\"R_sum_ _v2_.txt\"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22.txt"
+        "attachment; filename=\"R_sum_ v2.txt\"; filename*=UTF-8''R%C3%A9sum%C3%A9%20v2.txt"
     );
 
     // From a ticket's worktree: its own copy.

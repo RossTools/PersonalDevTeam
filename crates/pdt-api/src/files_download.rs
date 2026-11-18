@@ -301,3 +301,18 @@ fn gb(n: u64) -> String {
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     axum::Router::new().route("/projects/{id}/files/download", axum::routing::get(self::get))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Quotes and backslashes can't be in a file name on Windows, but an attachment's name may carry them.
+    #[test]
+    fn a_name_is_quoted_safely_and_kept_exactly_in_filename_star() {
+        assert_eq!(
+            disposition("attachment", "Résumé \"v2\"\\x.txt"),
+            "attachment; filename=\"R_sum_ _v2__x.txt\"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22%5Cx.txt"
+        );
+        assert_eq!(disposition("inline", "a.png"), "inline; filename=\"a.png\"; filename*=UTF-8''a.png");
+    }
+}
