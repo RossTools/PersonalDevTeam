@@ -18,6 +18,8 @@ pub struct CiCapabilities {
     pub logs: bool,
     /// [`CiProvider::retry`].
     pub retry: bool,
+    /// [`CiProvider::retry_jobs`] runs only the jobs named (else it runs every failed job again).
+    pub retry_jobs: bool,
     /// [`CiProvider::trigger`].
     pub trigger: bool,
     /// [`CiProvider::queue_runs`]: the forge's merge queue runs here.
@@ -26,8 +28,14 @@ pub struct CiCapabilities {
 
 impl CiCapabilities {
     /// Runs and jobs only.
-    pub const NONE: CiCapabilities =
-        CiCapabilities { branches: false, logs: false, retry: false, trigger: false, merge_queue: false };
+    pub const NONE: CiCapabilities = CiCapabilities {
+        branches: false,
+        logs: false,
+        retry: false,
+        retry_jobs: false,
+        trigger: false,
+        merge_queue: false,
+    };
 }
 
 /// Whether a repository has a provider's CI ([`CiProvider::config_paths`]).
@@ -62,6 +70,11 @@ pub trait CiProvider: Send + Sync {
     /// Runs `run` again: only its failed jobs with `failed_only` ([`CiCapabilities::retry`]).
     fn retry(&self, _repo: &str, _run: &CiRun, _failed_only: bool) -> Result<(), ForgeError> {
         unsupported(self.label(), "runs to retry")
+    }
+    /// Runs jobs of `run` again, by their ids ([`CiJob::id`], each [`CiJob::retryable`]): only those with
+    /// [`CiCapabilities::retry_jobs`], else every failed job of the run ([`CiProvider::retry`]).
+    fn retry_jobs(&self, repo: &str, run: &CiRun, _job_ids: &[String]) -> Result<(), ForgeError> {
+        self.retry(repo, run, true)
     }
     /// Starts `workflow` (an Actions workflow's file, a Buildkite pipeline) on `git_ref` with `inputs`
     /// ([`CiCapabilities::trigger`]).
@@ -134,6 +147,8 @@ pub mod testing {
         pub triggered: Mutex<Vec<Triggered>>,
         /// Runs retried: id, failed only.
         pub retried: Mutex<Vec<(String, bool)>>,
+        /// Jobs retried on their own: the run's id and the jobs' ids.
+        pub retried_jobs: Mutex<Vec<(String, Vec<String>)>>,
         /// Workflow runs, whatever their branch ([`CiProvider::workflow_runs`]): the newest attempt of each.
         pub workflow_runs: Mutex<Vec<WorkflowRun>>,
         pub calls: Mutex<Vec<String>>,
@@ -154,7 +169,14 @@ pub mod testing {
             Self::new(
                 pdt_core::pr::GITHUB_ACTIONS,
                 "GitHub Actions",
-                CiCapabilities { branches: false, logs: true, retry: true, trigger: true, merge_queue: true },
+                CiCapabilities {
+                    branches: false,
+                    logs: true,
+                    retry: true,
+                    retry_jobs: true,
+                    trigger: true,
+                    merge_queue: true,
+                },
                 CiConfig::Paths(&[".github/workflows"]),
             )
         }
@@ -172,6 +194,7 @@ pub mod testing {
                 error: Default::default(),
                 triggered: Default::default(),
                 retried: Default::default(),
+                retried_jobs: Default::default(),
                 workflow_runs: Default::default(),
                 calls: Default::default(),
             }
@@ -239,6 +262,8 @@ pub mod testing {
                     name: name.to_string(),
                     state: CiState::Failed,
                     url: format!("https://ci.example/{}/jobs/{run_id}-{i}", self.id),
+                    key: None,
+                    retryable: true,
                 })
                 .collect::<Vec<_>>();
             let mut logs = self.logs.lock().unwrap();
@@ -294,6 +319,14 @@ pub mod testing {
             self.call(format!("retry {repo} {}", run.id));
             self.can(|c| c.retry, "runs to retry")?;
             self.retried.lock().unwrap().push((run.id.clone(), failed_only));
+            Ok(())
+        }
+        fn retry_jobs(&self, repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
+            if !self.capabilities().retry_jobs {
+                return self.retry(repo, run, true);
+            }
+            self.call(format!("retry jobs {repo} {} {}", run.id, job_ids.join(",")));
+            self.retried_jobs.lock().unwrap().push((run.id.clone(), job_ids.to_vec()));
             Ok(())
         }
         fn trigger(
@@ -361,6 +394,10 @@ mod tests {
         let run = ci.run("1", "ci", "b", "h", CiState::Failed, "t");
         assert!(matches!(ci.queue_runs("o/r"), Err(ForgeError::Unsupported(_))));
         assert!(matches!(ci.retry("o/r", &run, true), Err(ForgeError::Unsupported(_))));
+        assert!(
+            matches!(ci.retry_jobs("o/r", &run, &["1-0".into()]), Err(ForgeError::Unsupported(_))),
+            "without job retries: the run's failed jobs, which it can't either"
+        );
         assert!(matches!(ci.trigger("o/r", "main", "release.yml", &BTreeMap::new()), Err(ForgeError::Unsupported(_))));
         ci.set_jobs("1", &["test"]);
         let job = &ci.jobs("o/r", &run).unwrap()[0];
@@ -379,5 +416,8 @@ mod tests {
         assert_eq!(ci.job_log_tail("o/r", &run, job, 10).unwrap(), "lint failed");
         ci.trigger("o/r", "main", "release.yml", &BTreeMap::new()).unwrap();
         assert_eq!(ci.triggered.lock().unwrap()[0].1, "release.yml");
+        ci.retry_jobs("o/r", &run, std::slice::from_ref(&job.id)).unwrap();
+        assert_eq!(*ci.retried_jobs.lock().unwrap(), [("7".to_string(), vec!["7-0".to_string()])]);
+        assert!(ci.retried.lock().unwrap().is_empty(), "only that job");
     }
 }

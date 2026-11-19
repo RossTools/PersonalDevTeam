@@ -4,4 +4,8 @@ export type RetryConfig = { connection: string,
 /**
  * The build: its URL (`{{trigger.url}}`), or its number with `pipeline`.
  */
-build: string | number, pipeline: string | null, };
+build: string | number, pipeline: string | null, 
+/**
+ * Only these steps (each its name, key or job id); the build's failed jobs when empty.
+ */
+jobs?: Array<string>, };

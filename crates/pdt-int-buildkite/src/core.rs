@@ -86,7 +86,32 @@ pub fn job_of(j: &Value) -> Option<CiJob> {
         name,
         state,
         url: j["web_url"].as_str().unwrap_or_default().into(),
+        key: j["step_key"].as_str().filter(|k| !k.is_empty()).map(String::from),
+        // Buildkite says whether it can be retried; without that, a finished job that didn't pass can be.
+        retryable: j["retryable"].as_bool().unwrap_or(matches!(state, CiState::Failed | CiState::Cancelled)),
     })
+}
+
+/// The jobs of `build` with these ids, or why one can't be retried on its own (no such job, retried already, or
+/// Buildkite won't): `(id, name)`.
+pub fn jobs_to_retry(build: &Value, ids: &[String]) -> Result<Vec<(String, String)>, String> {
+    let jobs = build["jobs"].as_array().map(Vec::as_slice).unwrap_or_default();
+    ids.iter()
+        .map(|id| {
+            let j = jobs
+                .iter()
+                .find(|j| j["id"].as_str() == Some(id.as_str()))
+                .ok_or_else(|| format!("the build has no job {id}"))?;
+            let name = j["name"].as_str().or(j["label"].as_str()).or(j["step_key"].as_str()).unwrap_or("job");
+            if j["retried"].as_bool() == Some(true) {
+                return Err(format!("{name} was retried already: retry its newest job"));
+            }
+            if j["type"].as_str() != Some("script") || j["retryable"].as_bool() == Some(false) {
+                return Err(format!("Buildkite can't retry {name}"));
+            }
+            Ok((id.clone(), name.to_string()))
+        })
+        .collect()
 }
 
 /// The builds of `pipeline` as CI runs: `id` `pipeline/number`, `attempt` 1 plus its jobs' retries (so a retried build
@@ -164,9 +189,33 @@ mod tests {
         ];
         let got: Vec<CiJob> = jobs.iter().filter_map(job_of).collect();
         assert_eq!(got.iter().map(|j| j.id.as_str()).collect::<Vec<_>>(), ["j1", "j2", "j5"]);
+        assert!(got[0].retryable && !got[2].retryable, "a failed job can be retried, a scheduled one not yet");
         assert_eq!((got[0].state, got[0].url.as_str()), (CiState::Failed, "u1"));
         assert_eq!((got[1].name.as_str(), got[1].state), ("lint", CiState::Passed), "a soft failure passes");
         assert_eq!(got[2].state, CiState::Queued);
+    }
+
+    #[test]
+    fn a_jobs_step_key_and_whether_buildkite_retries_it() {
+        let j = json!({"id": "j1", "type": "script", "name": "Test :windows:", "step_key": "test-windows",
+            "state": "failed", "retryable": false});
+        let got = job_of(&j).unwrap();
+        assert_eq!((got.key.as_deref(), got.retryable), (Some("test-windows"), false));
+    }
+
+    #[test]
+    fn jobs_to_retry_respect_retried_and_retryable() {
+        let b = json!({"jobs": [
+            {"id": "j1", "type": "script", "name": "test", "state": "failed", "retryable": true},
+            {"id": "j2", "type": "script", "name": "lint", "state": "failed", "retryable": false},
+            {"id": "j3", "type": "script", "name": "old", "state": "failed", "retried": true},
+            {"id": "j4", "type": "waiter"}]});
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(jobs_to_retry(&b, &ids(&["j1"])), Ok(vec![("j1".into(), "test".into())]));
+        assert_eq!(jobs_to_retry(&b, &ids(&["j2"])).unwrap_err(), "Buildkite can't retry lint");
+        assert!(jobs_to_retry(&b, &ids(&["j3"])).unwrap_err().contains("retried already"));
+        assert!(jobs_to_retry(&b, &ids(&["j4"])).is_err());
+        assert_eq!(jobs_to_retry(&b, &ids(&["j9"])).unwrap_err(), "the build has no job j9");
     }
 
     #[test]

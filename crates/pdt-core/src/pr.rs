@@ -90,6 +90,14 @@ pub struct CiJob {
     pub name: String,
     pub state: CiState,
     pub url: String,
+    /// Its step's key, where the provider has one (Buildkite's `key`), which names it like its name does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub key: Option<String>,
+    /// The provider can run it again on its own (`CiProvider::retry_jobs`): it has finished, and wasn't retried
+    /// already.
+    #[serde(default)]
+    pub retryable: bool,
 }
 
 impl CiRun {

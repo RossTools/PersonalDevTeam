@@ -799,7 +799,14 @@ impl CiProvider for LocalCi {
         let found = self.block(async { self.store.local_ci_run(id).await.map_err(failed) })?;
         Ok(found
             .map(|r| {
-                vec![CiJob { id: r.id.to_string(), name: r.command, state: r.state, url: log_url(self.port, r.id) }]
+                vec![CiJob {
+                    id: r.id.to_string(),
+                    name: r.command,
+                    state: r.state,
+                    url: log_url(self.port, r.id),
+                    key: None,
+                    retryable: false,
+                }]
             })
             .unwrap_or_default())
     }

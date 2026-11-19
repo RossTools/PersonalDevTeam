@@ -5,7 +5,7 @@
 //! `ci.run_failed` / `ci.run_passed` with `provider: buildkite`. A failing connection is reported once
 //! ([`pdt_api::sdk::connections`]).
 
-use crate::core::{API_URL, BUILDKITE, BuildkiteSettings, job_of, retryable_jobs, runs_of};
+use crate::core::{API_URL, BUILDKITE, BuildkiteSettings, job_of, jobs_to_retry, retryable_jobs, runs_of};
 use pdt_api::sdk::AppState;
 use pdt_api::sdk::http::{CallAuth, CallOpts, call_json_with};
 use pdt_core::pr::{CiJob, CiRun};
@@ -158,7 +158,7 @@ impl CiProvider for BuildkiteCi {
     }
 
     fn capabilities(&self) -> CiCapabilities {
-        CiCapabilities { branches: true, logs: true, retry: true, trigger: true, merge_queue: false }
+        CiCapabilities { branches: true, logs: true, retry: true, retry_jobs: true, trigger: true, merge_queue: false }
     }
 
     /// Set up for the project: its pipelines build every branch.
@@ -205,6 +205,17 @@ impl CiProvider for BuildkiteCi {
             }
             for (id, _) in &jobs {
                 c.retry_job(&pipeline, number, id).await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Each job on its own (PDT-629), once the build says each can be.
+    fn retry_jobs(&self, _repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
+        let (pipeline, number) = build_of(run)?;
+        self.with_client(async |c| {
+            for (id, _) in jobs_to_retry(&c.build(&pipeline, number).await?, job_ids)? {
+                c.retry_job(&pipeline, number, &id).await?;
             }
             Ok(())
         })

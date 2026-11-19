@@ -360,6 +360,34 @@ async fn retry_and_trigger() {
     assert!(v.to_string().contains("needs its pipeline"), "{v}");
 }
 
+/// PDT-629: the retry action retries only the steps it names (by name or key), and refuses one that didn't fail.
+#[tokio::test]
+async fn retry_chosen_steps() {
+    let env = setup().await;
+    let mut b = build(4, "failed", "c", 0);
+    b["jobs"].as_array_mut().unwrap().push(json!({"id": "job-win", "type": "script", "name": "test (windows)",
+        "step_key": "test-windows", "state": "failed", "retryable": true}));
+    env.bk.lock().unwrap().builds = vec![b];
+    let out = run_once(
+        &env,
+        json!({"id": "r", "kind": "buildkite.retry", "version": 1,
+            "config": {"connection": "bk", "build": 4, "pipeline": "app", "jobs": ["test-windows"]}}),
+    )
+    .await;
+    assert_eq!(out["retried"], json!(["test (windows)"]), "{out}");
+    let retried: Vec<String> = env
+        .bk
+        .lock()
+        .unwrap()
+        .seen
+        .iter()
+        .filter(|(m, p, _)| m == "PUT" && p.ends_with("/retry"))
+        .map(|(_, p, _)| p.clone())
+        .collect();
+    assert_eq!(retried.len(), 1, "only that step: {retried:?}");
+    assert!(retried[0].ends_with("/builds/4/jobs/job-win/retry"), "{retried:?}");
+}
+
 /// PDT-242: Buildkite through the `CiProvider` trait: its builds' jobs and logs (what `ci_failed_logs` reads), retries
 /// and new builds.
 #[tokio::test]
@@ -378,6 +406,9 @@ async fn the_provider_reads_jobs_and_logs_retries_and_triggers() {
         let log = p.job_log_tail("", &runs[0], &jobs[0], 2).unwrap();
         p.retry("", &runs[0], true).unwrap();
         p.retry("", &runs[1], false).unwrap();
+        // PDT-629: one job on its own; a job Buildkite says it can't retry is refused.
+        p.retry_jobs("", &runs[0], &["job-build".into()]).unwrap();
+        assert!(p.retry_jobs("", &runs[0], &["job-gone".into()]).unwrap_err().to_string().contains("no job job-gone"));
         let inputs = std::collections::BTreeMap::from([("DEPLOY".to_string(), "1".to_string())]);
         p.trigger("", "main", "app", &inputs).unwrap();
         (runs, jobs, log)
@@ -396,6 +427,8 @@ async fn the_provider_reads_jobs_and_logs_retries_and_triggers() {
     let seen = env.bk.lock().unwrap().seen.clone();
     let did = |m: &str, end: &str| seen.iter().any(|(x, p, _)| x == m && p.ends_with(end));
     assert!(did("PUT", "/builds/4/jobs/job-test/retry"), "the failed jobs again: {seen:?}");
+    assert!(did("PUT", "/builds/4/jobs/job-build/retry"), "one job: {seen:?}");
+    assert_eq!(seen.iter().filter(|(m, p, _)| m == "PUT" && p.ends_with("/jobs/job-build/retry")).count(), 1);
     assert!(did("PUT", "/builds/5/rebuild"), "the whole build");
     let (_, _, body) = seen.iter().find(|(m, _, _)| m == "POST").unwrap();
     assert_eq!((body["branch"].clone(), body["env"]["DEPLOY"].clone()), (json!("main"), json!("1")));

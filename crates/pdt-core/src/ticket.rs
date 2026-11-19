@@ -249,6 +249,9 @@ pub enum EventKind {
     /// An agent changed a document without asking, as the project let it (PDT-618), on the ticket it works on:
     /// `{agent, documentId, title, tool, summary, version, changeId}`, a text document's diff as the body.
     Document,
+    /// An agent retried CI jobs on its attempt's head (PDT-629): `{attemptId, head, provider, providerLabel, runId,
+    /// jobs}` ([`crate::ci_retry::event_data`]), with the agent.
+    CiRetry,
 }
 str_enum!(EventKind {
     Created => "created", Edited => "edited", Moved => "moved", Linked => "linked", Unlinked => "unlinked",
@@ -256,6 +259,7 @@ str_enum!(EventKind {
     Unblocked => "unblocked", Overlap => "overlap", Comment => "comment", Waiting => "waiting", Pr => "pr",
     Parted => "parted", Feedback => "feedback", Review => "review", Outcome => "outcome",
     OutsideInput => "outside_input", MergeUpdate => "merge_update", Document => "document",
+    CiRetry => "ci_retry",
 });
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

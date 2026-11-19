@@ -34,6 +34,8 @@ impl Integration for ForgeTools {
             Arc::new(ChangeRequestMerge),
             Arc::new(CiRuns),
             Arc::new(CiFailedLogs),
+            Arc::new(super::ci_jobs::CiJobs),
+            Arc::new(super::ci_jobs::CiRetry),
             Arc::new(IssueView),
             Arc::new(IssueComment),
         ]
@@ -42,17 +44,17 @@ impl Integration for ForgeTools {
 
 /// The calling session's project forge and branch, and its own ticket attempt (not a workflow step's: a Reviewer's
 /// session reads that attempt's CI but opens and merges nothing).
-struct Here {
+pub(super) struct Here {
     forge: ProjectForge,
     /// The project's CI providers (PDT-242).
-    ci: Vec<Arc<dyn CiProvider>>,
+    pub(super) ci: Vec<Arc<dyn CiProvider>>,
     branch: Option<String>,
     /// The branch is the session's own (its attempt's or its worktree's), not a workflow step's attempt's.
     own_branch: bool,
-    attempt: Option<AttemptInfo>,
+    pub(super) attempt: Option<AttemptInfo>,
 }
 
-async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
+pub(super) async fn here(cx: &ActionCx<'_>) -> Result<Here, String> {
     let s = cx.session.ok_or("only an agent session can use this tool")?;
     let st = cx.st;
     let project =
@@ -87,7 +89,7 @@ impl Here {
     }
 
     /// The forge's name for the repository.
-    fn repo(&self) -> String {
+    pub(super) fn repo(&self) -> String {
         self.forge.repo.clone()
     }
 
@@ -116,7 +118,7 @@ impl Here {
     }
 }
 
-fn tool(decl: ToolDecl, title: &'static str, description: &'static str) -> ToolFace {
+pub(super) fn tool(decl: ToolDecl, title: &'static str, description: &'static str) -> ToolFace {
     ToolFace { decl, title, description }
 }
 
@@ -721,7 +723,7 @@ pub struct RunsOutput {
 pub struct CiRuns;
 
 /// The project's CI providers, or only `provider`.
-fn providers_of(h: &Here, provider: Option<&str>) -> Result<Vec<Arc<dyn CiProvider>>, String> {
+pub(super) fn providers_of(h: &Here, provider: Option<&str>) -> Result<Vec<Arc<dyn CiProvider>>, String> {
     let all = h.ci.clone();
     let Some(id) = provider.map(str::trim).filter(|p| !p.is_empty()) else {
         return if all.is_empty() { Err("this project has no CI provider".into()) } else { Ok(all) };
@@ -813,7 +815,7 @@ pub enum RunId {
 }
 
 impl RunId {
-    fn text(&self) -> String {
+    pub(super) fn text(&self) -> String {
         match self {
             RunId::Number(n) => n.to_string(),
             RunId::Text(s) => s.trim().to_string(),

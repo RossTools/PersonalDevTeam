@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 /// What Actions can do: everything but report on branches without a pull request (PDT reads it for one's head).
 pub const CAPABILITIES: CiCapabilities =
-    CiCapabilities { branches: false, logs: true, retry: true, trigger: true, merge_queue: true };
+    CiCapabilities { branches: false, logs: true, retry: true, retry_jobs: true, trigger: true, merge_queue: true };
 
 pub struct GithubActions {
     api: Arc<GithubApi>,
@@ -54,7 +54,15 @@ pub fn parse_job(j: &Value) -> Option<CiJob> {
         CiState::Failed if !failed(j) => CiState::Cancelled,
         st => st,
     };
-    Some(CiJob { id: j["id"].as_u64()?.to_string(), name: s(j, "name"), state, url: s(j, "html_url") })
+    Some(CiJob {
+        id: j["id"].as_u64()?.to_string(),
+        name: s(j, "name"),
+        state,
+        url: s(j, "html_url"),
+        key: None,
+        // GitHub re-runs a finished job of a finished run (with the jobs it needs).
+        retryable: j["status"].as_str() == Some("completed"),
+    })
 }
 
 impl CiProvider for GithubActions {
@@ -91,6 +99,14 @@ impl CiProvider for GithubActions {
     fn retry(&self, repo: &str, run: &CiRun, failed_only: bool) -> Result<(), ForgeError> {
         let what = if failed_only { "rerun-failed-jobs" } else { "rerun" };
         self.api.send_json("POST", &format!("repos/{repo}/actions/runs/{}/{what}", run.id), json!({}))?;
+        Ok(())
+    }
+    /// Each job on its own (`POST /actions/jobs/{id}/rerun`): GitHub runs it again with the jobs it needs, in a new
+    /// attempt of its run.
+    fn retry_jobs(&self, repo: &str, _run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
+        for id in job_ids {
+            self.api.send_json("POST", &format!("repos/{repo}/actions/jobs/{}/rerun", encode(id)), json!({}))?;
+        }
         Ok(())
     }
     /// `workflow_dispatch`: the workflow must declare it, and the token needs the Actions write permission.

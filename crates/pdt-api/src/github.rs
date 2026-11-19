@@ -519,7 +519,7 @@ pub(crate) async fn refresh_attempt(st: &AppState, info: &AttemptInfo) -> bool {
 }
 
 /// The commit a branch's CI builds before it has a pull request: the pushed branch's head, else the local one.
-async fn branch_head(info: &AttemptInfo) -> Option<String> {
+pub(crate) async fn branch_head(info: &AttemptInfo) -> Option<String> {
     let repo = std::path::PathBuf::from(&info.repo_path);
     let branch = info.attempt.branch.clone();
     tokio::task::spawn_blocking(move || {

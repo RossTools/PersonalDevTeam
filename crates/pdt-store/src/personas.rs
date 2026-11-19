@@ -315,7 +315,10 @@ mod tests {
             .execute(&store.pool)
             .await
             .unwrap();
-        let defaults: Vec<String> = pdt_core::persona::DEFAULT_TOOLS.map(String::from).to_vec();
+        // The default set as the migration has it: the CI job tools came later (PDT-629).
+        let later = ["ci_jobs", "ci_retry"];
+        let defaults: Vec<String> =
+            pdt_core::persona::DEFAULT_TOOLS.iter().filter(|t| !later.contains(t)).map(|t| t.to_string()).collect();
         assert_eq!(store.get_persona("p1").await.unwrap().unwrap().setup.tools, defaults);
         assert_eq!(store.persona_template("p1").await.unwrap().unwrap().tools, defaults);
         assert_eq!(
