@@ -148,6 +148,7 @@ pub mod codes {
     pub const PROVIDER_BUSY: &str = "provider_busy";
     pub const PROVIDER_FAILED: &str = "provider_failed";
     pub const PR_UNREADABLE: &str = "pr_unreadable";
+    pub const QUESTION_OPEN: &str = "question_open";
     pub const READ_FAILED: &str = "read_failed";
     pub const REFINE_RUNNING: &str = "refine_running";
     pub const REGISTRY_UNAVAILABLE: &str = "registry_unavailable";

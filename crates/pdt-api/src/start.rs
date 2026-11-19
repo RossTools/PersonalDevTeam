@@ -678,6 +678,10 @@ pub(crate) async fn end_for_close(
         let pr = crate::github::watched_pr(st, &info.attempt.id).map(|p| p.number);
         st.store.end_attempt(&info.attempt.id, state, by, via, pr, now_ms()).await?;
     }
+    // Its agents' open questions have nothing left to hold (PDT-628): what they held looks again.
+    if st.store.close_ticket_questions(ticket_id, now_ms()).await? > 0 {
+        crate::workflow::hold::wake(st, None);
+    }
     Ok(())
 }
 

@@ -537,7 +537,7 @@ describe('ChangesView on a phone', () => {
 });
 
 const preview = (over: Partial<MergePreview> = {}): MergePreview => ({
-  method: 'local', branch: 'pdt/ALP-1-fix-login', base: 'main', commits: 2, problem: null, conflicts: [], baseCheckout: null, pr: null,
+  method: 'local', branch: 'pdt/ALP-1-fix-login', base: 'main', commits: 2, problem: null, conflicts: [], baseCheckout: null, pr: null, held: null,
   ...over,
 });
 
@@ -548,6 +548,15 @@ describe('MergeDialog', () => {
     renderWithQuery(<MergeDialog ticket={t1} attemptId="a1" onClose={onClose} />);
     return { calls, onClose };
   };
+
+  it('says when an open question holds the merge, and still merges (PDT-628)', async () => {
+    const { calls } = open(preview({ held: 'ALP-1 is waiting on your answer to an agent\'s question: “Ship it?”' }), {
+      'POST /api/attempts/a1/merge': { outcome: 'merged', commit: 'abc' },
+    });
+    expect(await screen.findByText(/waiting on your answer to an agent's question: “Ship it\?”\. PDT holds the merge/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/attempts/a1/merge')).toBe(true));
+  });
 
   it('shows the commits and the cleanup choices for a clean local merge', async () => {
     open(preview());

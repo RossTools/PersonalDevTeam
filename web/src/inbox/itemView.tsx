@@ -21,7 +21,7 @@ import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
   CHECKS_PATH, commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  holdsTicket, inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerTiming, useAnswersHeld } from '../common/answerGuard';
 import { answerApproval } from './approval';
@@ -198,7 +198,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
         };
         return {
           region: 'Questions',
-          why: `${persona} waits for your answers${item.ticketKey ? ` on ${item.ticketKey}` : ''}; its step carries on with them.`,
+          why: `${persona} waits for your answers${item.ticketKey ? ` on ${item.ticketKey}` : ''}; its step carries on with them.${
+            !item.ticketKey ? '' : holdsTicket(item) ? ` ${item.ticketKey} doesn't merge or move to Done until you answer.` : ` It doesn't hold ${item.ticketKey}'s merge.`}`,
           // The title shows a lone short question; the card repeats only a longer one (asked before PDT-476), which
           // the title clamps. Its context is the agent's message above it.
           content: qs.map((q, n) => (

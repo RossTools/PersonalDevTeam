@@ -7,17 +7,24 @@ use crate::routes::{AppState, now_ms};
 use pdt_core::conversation::SessionMode;
 use pdt_core::inbox::{self, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus, Question};
 use pdt_core::session::{Session, SessionStatus};
+use pdt_core::ticket::Actor;
 use pdt_core::workflow::agent::{AgentStepState, OutcomeSpec, STOPPED, nudge_message, resumable_step};
 use pdt_core::workflow::api::StepStatus;
 use serde_json::{Value, json};
 
-/// `ask_user` (pdt-mcp): an Inbox question; a step waits for the answers instead of stalling.
-pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question>) -> R<Value> {
+/// `ask_user` (pdt-mcp): an Inbox question; a step waits for the answers instead of stalling. A `blocking` question on
+/// a ticket holds its merge and move to Done until it is answered (PDT-628).
+pub(crate) async fn ask_user(st: &AppState, s: &Session, questions: Vec<Question>, blocking: bool) -> R<Value> {
     let questions = inbox::valid_questions(questions)?;
     let first = questions[0].question.clone();
-    let item = ask(st, s, InboxKind::Question, first, json!({"questions": questions})).await?;
-    Ok(json!({"asked": true, "inboxItemId": item.id,
-              "message": "Your questions are in the user's Inbox. Their answers will come as a message; end your turn now."}))
+    let body = json!({"questions": questions, (inbox::BLOCKING): blocking});
+    let item = ask(st, s, InboxKind::Question, first, body).await?;
+    let mut message =
+        "Your questions are in the user's Inbox. Their answers will come as a message; end your turn now.".to_string();
+    if item.holds_ticket() {
+        message.push_str(" The ticket doesn't merge or move to Done until they answer.");
+    }
+    Ok(json!({"asked": true, "inboxItemId": item.id, "blocking": item.holds_ticket(), "message": message}))
 }
 
 /// An asking tool's call from an agent that can't ask in its own prompt (PDT-256): an Inbox item with Allow and Deny,
@@ -381,13 +388,72 @@ async fn end_item(st: &AppState, item: &InboxItem, resolution: Value) -> R<()> {
     Ok(())
 }
 
-/// Sends the user's answers to the asking session; its step works again.
+/// Sends the user's answers to the asking session; its step works again. A question on a ticket whose step has moved
+/// on (it timed out, its session ended, PDT-628) is answered on the ticket instead: a comment, and the next agent
+/// step's first message. Either way a merge or a move to Done it held goes on.
 async fn answer_question(st: &AppState, item: &InboxItem, answer: &inbox::InboxAnswer) -> R<Value> {
     let questions: Vec<Question> =
         serde_json::from_value(item.body.get("questions").cloned().unwrap_or_default()).unwrap_or_default();
     let text = inbox::answers_message(&questions, answer)?;
-    reply(st, item, &text, json!({"answers": answer.answers, "text": answer.text})).await?;
-    Ok(json!({"answered": true}))
+    let resolution = json!({"answers": answer.answers, "text": answer.text});
+    let late = match &item.ticket_id {
+        Some(ticket) if !still_asking(st, item).await => Some(ticket.clone()),
+        _ => None,
+    };
+    let Some(ticket) = late else {
+        reply(st, item, &text, resolution).await?;
+        crate::workflow::hold::wake(st, item.ticket_id.clone());
+        return Ok(json!({"answered": true}));
+    };
+    let mut resolution = resolution;
+    resolution["late"] = json!(true);
+    end_item(st, item, resolution).await?;
+    let who = match item.step_id.as_deref() {
+        Some(id) => st.store.get_agent_step(id).await.ok().flatten().map(|a| a.persona_name),
+        None => None,
+    };
+    let answers = text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest).trim();
+    let body = format!(
+        "Answer to {}'s question, given after its step had ended:\n\n{answers}",
+        who.as_deref().unwrap_or("an agent")
+    );
+    let data = json!({"inboxItemId": item.id, "lateAnswer": true});
+    if let Err(e) = st.store.add_comment_by(&ticket, &body, Actor::User, Some(data), now_ms()).await {
+        tracing::warn!(ticket = %ticket, error = %e, "could not put a late answer on its ticket");
+    }
+    crate::workflow::hold::wake(st, Some(ticket));
+    Ok(json!({"answered": true, "late": true}))
+}
+
+/// Whether the session that asked with `item` still waits on it: it can be told, and the step it asked in (if any)
+/// is still going.
+async fn still_asking(st: &AppState, item: &InboxItem) -> bool {
+    if asker(st, item).await.is_err() {
+        return false;
+    }
+    let Some(step) = item.step_id.as_deref() else { return true };
+    let binding = matches!(st.store.get_agent_step(step).await, Ok(Some(a)) if a.state != AgentStepState::Done);
+    binding && matches!(st.store.get_step(step).await, Ok(Some(s)) if s.status == StepStatus::Waiting)
+}
+
+/// The first message's note of the ticket's questions answered after their step ended, which no step has seen yet
+/// (PDT-628); they count as seen once it is sent.
+pub(crate) async fn late_answers_note(st: &AppState, ticket: &str) -> Option<(String, Vec<String>)> {
+    let items = st.store.late_answers(ticket).await.ok()?;
+    if items.is_empty() {
+        return None;
+    }
+    let mut out = String::from("The user answered questions an earlier step asked after that step had ended:");
+    for item in &items {
+        let questions: Vec<Question> =
+            serde_json::from_value(item.body.get("questions").cloned().unwrap_or_default()).unwrap_or_default();
+        let answer: inbox::InboxAnswer = serde_json::from_value(item.resolution.clone()).unwrap_or_default();
+        if let Ok(text) = inbox::answers_message(&questions, &answer) {
+            out.push('\n');
+            out.push_str(text.split_once('\n').map_or(text.as_str(), |(_, rest)| rest).trim_end());
+        }
+    }
+    Some((out, items.into_iter().map(|i| i.id).collect()))
 }
 
 /// Ends an item the asking session waits on with `resolution`, and sends it `text`; its step works again.

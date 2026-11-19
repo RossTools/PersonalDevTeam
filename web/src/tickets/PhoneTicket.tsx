@@ -23,7 +23,7 @@ import { useTopBarActions, useTopBarEdit } from '../shell/PhoneTopBar';
 import {
   canRefine, canStart, patchTicket, refineTicket, ticketMenu, useOpenSession, useOpenTicket, useStartTicket,
 } from './actions';
-import { AttemptSection, MergedBanner } from './Attempt';
+import { AttemptSection, HeldBanner, MergedBanner } from './Attempt';
 import { agentLine } from './Board';
 import { isClosed } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
@@ -156,6 +156,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
         {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
       </header>
       <MergedBanner ticket={t} className="border-y" />
+      <HeldBanner ticket={t} className="border-y" />
       <HubTabs
         ticket={t}
         value={tab}

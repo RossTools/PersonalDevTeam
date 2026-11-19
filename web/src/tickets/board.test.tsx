@@ -353,6 +353,8 @@ describe('board pipeline stages', () => {
     expect(inColumn({ pipelineStage: 'review' }, review)).toBe(true);
     const a = { persona: 'Coder', sessionId: null, busy: false, runId: null, background: [] };
     expect(agentLine({ ...a, state: 'asking' }).text).toBe('Coder asks you');
+    expect(agentLine({ ...a, state: 'held' }).text).toBe('Waiting on your answer · Coder');
+    expect(agentLine({ ...a, persona: null, state: 'held' }).text).toBe('Waiting on your answer');
     expect(agentLine({ ...a, state: 'stalled' }).dot.dot).toBe('failed');
     expect(agentLine({ ...a, state: 'queued' }).text).toBe('Coder · waiting for a slot');
     expect(agentLine({ ...a, state: 'yours' }).text).toBe('Your turn · Coder');

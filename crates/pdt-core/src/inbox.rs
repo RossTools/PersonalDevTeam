@@ -589,6 +589,33 @@ impl InboxItem {
         self.choices = choices;
         self
     }
+
+    /// An agent's open question on a ticket that holds the ticket's merge and its move to Done (PDT-628): every
+    /// `ask_user` question is blocking unless the agent said `blocking: false`.
+    pub fn holds_ticket(&self) -> bool {
+        self.kind == InboxKind::Question
+            && self.status == InboxStatus::Open
+            && self.ticket_id.is_some()
+            && self.body.get(BLOCKING).and_then(Value::as_bool) != Some(false)
+    }
+
+    /// The first question of an agent's question item (its title when the body has none).
+    pub fn first_question(&self) -> &str {
+        self.body.pointer("/questions/0/question").and_then(Value::as_str).unwrap_or(&self.title)
+    }
+}
+
+/// A question item's body field: false when the agent marked its questions non-blocking (PDT-628).
+pub const BLOCKING: &str = "blocking";
+
+/// Why a ticket's merge or move to Done waits (PDT-628): `items` are its open blocking questions.
+pub fn held_reason(key: &str, items: &[&InboxItem]) -> String {
+    let first = items.first().map(|i| plain_line(i.first_question())).unwrap_or_default();
+    let more = match items.len() {
+        0 | 1 => String::new(),
+        n => format!(" (and {} more)", n - 1),
+    };
+    format!("{key} is waiting on your answer to an agent's question: “{first}”{more}")
 }
 
 /// A change request's page on its forge, for the Inbox's Open pull request button.
@@ -829,6 +856,7 @@ pub fn valid_questions(questions: Vec<Question>) -> Result<Vec<Question>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn answer_sources_read_from_their_header() {
@@ -838,6 +866,31 @@ mod tests {
         for bad in ["", "click", "click/tablet", "tap/desktop", "click/desktop/x"] {
             assert_eq!(AnswerSource::parse(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn open_ticket_questions_hold_unless_marked_non_blocking() {
+        let q = |body: Value| {
+            InboxItem::new("q", InboxKind::Question, InboxGroup::Question, "Which?", body, 1).ticket(Some("t".into()))
+        };
+        let asked = json!({"questions": [{"question": "Which **one**?"}]});
+        assert!(q(asked.clone()).holds_ticket(), "blocking by default");
+        assert!(q(json!({"questions": [], "blocking": true})).holds_ticket());
+        assert!(!q(json!({"questions": [], "blocking": false})).holds_ticket());
+        assert!(!q(asked.clone()).ticket(None).holds_ticket(), "no ticket to hold");
+        let mut answered = q(asked.clone());
+        answered.status = InboxStatus::Resolved;
+        assert!(!answered.holds_ticket());
+        let gate =
+            InboxItem::new("g", InboxKind::Gate, InboxGroup::Question, "", json!({}), 1).ticket(Some("t".into()));
+        assert!(!gate.holds_ticket(), "only an agent's question holds");
+        let (one, two) = (q(asked), q(json!({})));
+        assert_eq!(
+            held_reason("PDT-1", &[&one]),
+            "PDT-1 is waiting on your answer to an agent's question: “Which one?”"
+        );
+        assert!(held_reason("PDT-1", &[&one, &two]).ends_with("“Which one?” (and 1 more)"));
+        assert_eq!(two.first_question(), "Which?", "the title when the body has no questions");
     }
 
     fn item(id: &str, group: InboxGroup, at: i64) -> InboxItem {

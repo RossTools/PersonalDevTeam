@@ -110,7 +110,11 @@ pub(crate) async fn reopen_at(st: &AppState, step: &Step, resolution: Value) -> 
             end_step_extras(st, &s.id).await;
         }
     }
+    // An agent's question on a ticket stays open for its answer (PDT-628).
     for item in st.store.open_items_for_step(&step.id).await.map_err(err)? {
+        if item.kind == pdt_core::inbox::InboxKind::Question && item.ticket_id.is_some() {
+            continue;
+        }
         st.store
             .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &resolution, now)
             .await

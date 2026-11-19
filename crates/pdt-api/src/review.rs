@@ -449,11 +449,13 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         conflicts: vec![],
         base_checkout: None,
         pr: None,
+        held: None,
     };
     if info.attempt.state != AttemptState::Active {
         p.problem = Some(MergeProblem::Inactive);
         return Ok(p);
     }
+    p.held = crate::workflow::hold::held(st, &[&info.ticket_id]).await.map_err(ApiError::internal)?;
     let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|pr| pr.state == PrState::Open);
     let forge = match &pr {
         Some(_) => crate::forge::project_forge(st, &info.project_id, &info.repo_path).await,
@@ -570,7 +572,15 @@ pub(crate) async fn merge(
         None | Some("agent") => Merger::Automated,
         Some(other) => return Err(ApiError::invalid(format!("by is user or agent, not {other}"))),
     };
-    merge_attempt(&st, &id, &input, merger).await?.map(Json).map_err(Refusal::into_error)
+    let r = merge_attempt(&st, &id, &input, merger).await?.map_err(Refusal::into_error)?;
+    // The user's own merge of a ticket an open question holds (PDT-628): the run held at its merge follows.
+    if merger == Merger::User
+        && let Ok(Some(info)) = st.store.get_attempt(&id).await
+        && crate::workflow::hold::held(&st, &[&info.ticket_id]).await.is_ok_and(|h| h.is_some())
+    {
+        crate::workflow::hold::wake(&st, None);
+    }
+    Ok(Json(r))
 }
 
 /// Records that the attempt's pull request was set to merge, and what to do once it merges (not given, a merge again
@@ -620,6 +630,14 @@ pub(crate) async fn merge_attempt(
     if !standing && let Err(refusal) = may_merge(&policy, merger, approved, labels) {
         let reason = refusal.message(&policy).into();
         return Ok(Err(Refusal { code: refusal.code(), reason, fixable: false }));
+    }
+    // A workflow or an agent doesn't merge while an agent's question to the user about the ticket is open (PDT-628);
+    // the user's own merge is theirs to make.
+    if automated
+        && let Some(reason) = crate::workflow::hold::held(&st, &[&info.ticket_id]).await.map_err(ApiError::internal)?
+    {
+        let reason = format!("{reason}. Answer it in the Inbox, or merge it yourself");
+        return Ok(Err(Refusal { code: codes::QUESTION_OPEN, reason, fixable: false }));
     }
     let p = preview(&st, &info).await?;
     match p.problem {

@@ -62,6 +62,12 @@ token, a password) has a masked field, and the value goes straight to PDT's secr
 the question, and shows the same cards: answering it here or in the conversation answers both. Where the agent lets you
 pick several choices, they are tick boxes, and what you write under **Something else…** is added to them.
 
+An agent's question about a ticket holds that ticket: workflows don't merge it or move it to **Done** until you answer,
+and the item says so. An agent can mark a question as only nice to have; then the item says it doesn't hold the
+merge. The question stays in the Inbox even when the step that asked has moved on (it ran out of time, or its session
+ended). Answered then, your answer goes on the ticket as a comment and to the next agent step on it. **Dismiss**
+releases the hold without answering.
+
 ### Approvals
 
 An agent wants to run a command or edit a file, shown as it would run: **Allow once**, **Always allow**, or **Deny**

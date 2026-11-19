@@ -83,7 +83,8 @@ impl NodeKind for Merge {
              failing CI). With the project's `requireGreenCi` (on by default) a pull request merges only once CI on \
              its head passed: `code` `ci_failed` (fixable) or `ci_pending` otherwise; a repository with no CI \
              merges as before, noted on the ticket. Merging `again` before CI passed sets the pull request to merge, \
-             so CI passing merges it.",
+             so CI passing merges it. While an agent's question to the user about the ticket is open (unless it \
+             was asked as non-blocking), it waits and merges once the question is answered.",
             &[("merged", "Merged"), ("queued", "Set to merge"), ("refused", "Refused")],
             false,
         )
@@ -114,6 +115,16 @@ impl NodeKind for Merge {
                 return Ok(Outcome::next("queued", json!({"outcome": MergeOutcome::Queued, "already": true})));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
+            // An agent's question to the user still open on the ticket holds the merge until it is answered
+            // (PDT-628). The user may merge it by hand meanwhile.
+            if let Some(info) = cx.st.store.get_attempt(&c.attempt).await.map_err(crate::workflow::err)? {
+                if info.attempt.state == pdt_core::ticket::AttemptState::Merged {
+                    return Ok(Outcome::next("merged", json!({"outcome": MergeOutcome::Merged, "already": true})));
+                }
+                if let Some(wait) = crate::workflow::hold::wait_for_answers(cx.st, &[&info.ticket_id]).await? {
+                    return Ok(wait);
+                }
+            }
             let req = MergeRequest {
                 style: Some(c.style),
                 finish_on_merge: (!c.again).then(|| c.finish_on_merge.or(true)),

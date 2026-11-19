@@ -986,10 +986,10 @@ async fn an_answer_reopens_the_stopped_conversation_that_asked() {
     assert_eq!(v["status"], "running", "{v}");
 }
 
-/// PDT-93: removing the asking session closes its question (nothing can answer it) and stalls the step, whose item
-/// offers no session to open; taking it over still ends the step.
+/// PDT-93: removing the asking session stalls the step, whose item offers no session to open; taking it over still
+/// ends the step. A question on a ticket stays open (PDT-628): its answer goes to the ticket.
 #[tokio::test]
-async fn a_removed_sessions_question_closes_and_its_step_stalls() {
+async fn a_removed_sessions_step_stalls_and_its_question_on_the_ticket_stays_open() {
     let env = setup().await;
     let t = ticket(&env, "Unclear").await;
     let wf = create_workflow(
@@ -1004,7 +1004,8 @@ async fn a_removed_sessions_question_closes_and_its_step_stalls() {
     let session = q["sessionId"].as_str().unwrap();
     let (s, v) = call(&env.app, "DELETE", &format!("/api/sessions/{session}"), None).await;
     assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
-    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "question"), "the question closed");
+    let still = inbox(&env).await.into_iter().find(|i| i["kind"] == "question").expect("the question stays open");
+    assert!(still["sessionId"].is_null(), "{still}");
     let stalled =
         tick_until(&env, "the stall", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "stalled") })
             .await;
@@ -1020,6 +1021,108 @@ async fn a_removed_sessions_question_closes_and_its_step_stalls() {
     let r = run_ended(&env, &id).await;
     let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
     assert_eq!(step["port"].as_str(), Some("approved"));
+    // Answered after all: on the ticket.
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", q["id"].as_str().unwrap()),
+        Some(json!({"answers": ["a.txt"]})),
+    )
+    .await;
+    assert_eq!((s, v["late"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
+    let comments = user_comments(&env, &t).await;
+    assert!(comments.iter().any(|c| c.contains("Which file?") && c.contains("a.txt")), "{comments:?}");
+    assert!(inbox(&env).await.is_empty());
+}
+
+async fn user_comments(env: &Env, t: &str) -> Vec<String> {
+    let (_, v) = call(&env.app, "GET", &format!("/api/tickets/{t}/events?limit=200"), None).await;
+    v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["kind"] == "comment" && e["actor"] == "user")
+        .map(|e| e["body"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// PDT-628: a step that times out waiting for its answer leaves its question open; answered later, the answer goes on
+/// the ticket and into the next agent step's first message, once.
+#[tokio::test]
+async fn a_timed_out_steps_question_stays_open_and_its_late_answer_reaches_the_next_step() {
+    let env = setup().await;
+    let t = ticket(&env, "Unclear").await;
+    let mut doc = review_doc(
+        r#"mcp: ask_user {"questions": [{"question": "Which file?", "choices": ["a.txt"]}]}"#,
+        json!({"maxRuntimeMs": 1500}),
+    );
+    doc["nodes"].as_array_mut().unwrap().push(json!({"id": "gave_up", "kind": "end", "version": 1}));
+    doc["edges"].as_array_mut().unwrap().push(json!({"from": "review", "port": "timeout", "to": "gave_up"}));
+    let wf = create_workflow(&env, doc).await;
+    let id = run_now(&env, &wf, json!({"ticketId": t})).await;
+    let q =
+        tick_until(&env, "the question", || async { inbox(&env).await.into_iter().find(|i| i["kind"] == "question") })
+            .await;
+    assert_eq!(q["body"]["blocking"], true, "blocking by default: {q}");
+    let r = run_ended(&env, &id).await;
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").unwrap().clone();
+    assert_eq!(step["port"], "timeout", "{r:#}");
+    let still = inbox(&env).await.into_iter().find(|i| i["kind"] == "question");
+    assert_eq!(still.map(|i| i["id"].clone()), Some(q["id"].clone()), "the question outlives its step");
+    let (_, board) = call(&env.app, "GET", &format!("/api/tickets/{t}"), None).await;
+    assert_eq!(board["agent"]["state"], "held", "{board}");
+    // Later steps see it in `get_ticket`.
+    let reader = create_workflow(&env, review_doc("mcp: get_ticket {}", json!({}))).await;
+    let reading = run_now(&env, &reader, json!({"ticketId": t})).await;
+    let seen = tick_until(&env, "get_ticket's answer", || async {
+        let r = run(&env, &reading).await;
+        let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "review").cloned()?;
+        let session = step["wait"]["agent"]["session"].as_str()?.to_string();
+        agent_says(&env, &session).await.into_iter().find(|m| m.contains("openQuestions")).map(|m| json!(m))
+    })
+    .await;
+    let seen = seen.as_str().unwrap();
+    assert!(seen.contains("Which file?") && seen.contains("\"blocking\": true") && seen.contains("Reviewer"), "{seen}");
+    let (s, v) = call(&env.app, "POST", &format!("/api/workflow-runs/{reading}/cancel"), None).await;
+    assert!(s.is_success(), "{v}");
+
+    let (s, v) = call(
+        &env.app,
+        "POST",
+        &format!("/api/inbox/{}/answer", q["id"].as_str().unwrap()),
+        Some(json!({"answers": ["a.txt"]})),
+    )
+    .await;
+    assert_eq!((s, v["late"].as_bool()), (StatusCode::OK, Some(true)), "{v}");
+    let comments = user_comments(&env, &t).await;
+    assert!(
+        comments.iter().any(|c| c.starts_with("Answer to Reviewer's question") && c.contains("a.txt")),
+        "{comments:?}"
+    );
+    // The next step hears it in its first message; the one after doesn't again.
+    let next = create_workflow(&env, review_doc("Have a look.", json!({}))).await;
+    let first = |run_id: String| {
+        let env = &env;
+        async move {
+            let step = tick_until(env, "the step's session", || async {
+                let r = run(env, &run_id).await;
+                let steps = r["steps"].as_array().unwrap().clone();
+                steps.into_iter().find(|s| s["nodeId"] == "review" && s["wait"]["agent"]["session"].is_string())
+            })
+            .await;
+            let session = step["wait"]["agent"]["session"].as_str().unwrap().to_string();
+            let said = tick_until(env, "the first message", || async {
+                let said = agent_says(env, &session).await;
+                said.iter().find(|m| m.contains("Have a look.")).map(|m| json!(m))
+            })
+            .await;
+            said.as_str().unwrap().to_string()
+        }
+    };
+    let said = first(run_now(&env, &next, json!({"ticketId": t})).await).await;
+    assert!(said.contains("The user answered questions an earlier step asked") && said.contains("a.txt"), "{said}");
+    let said = first(run_now(&env, &next, json!({"ticketId": t})).await).await;
+    assert!(!said.contains("The user answered questions"), "told once: {said}");
 }
 
 #[tokio::test]

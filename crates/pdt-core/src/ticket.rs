@@ -578,6 +578,9 @@ pub enum TicketAgentState {
     Working,
     /// It asked the user something and waits for the answers.
     Asking,
+    /// An agent's question to the user is still open after the step that asked moved on (PDT-628): the ticket's
+    /// merge and its move to Done wait for the answer.
+    Held,
     /// Its turns ended without an outcome; the Inbox has it.
     Stalled,
     /// The user's turn: a manual step or a gate waits on them.

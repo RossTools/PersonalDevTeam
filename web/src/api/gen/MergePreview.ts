@@ -18,4 +18,9 @@ conflicts: Array<string>,
 /**
  * With `base_dirty`: the checkout.
  */
-baseCheckout: string | null, pr: MergePr | null, };
+baseCheckout: string | null, pr: MergePr | null, 
+/**
+ * Why PDT holds the ticket's merge (PDT-628): an agent's question to the user is open. A person's merge still goes
+ * through.
+ */
+held: string | null, };

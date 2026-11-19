@@ -62,7 +62,10 @@ For a workflow step's session, PDT takes the first of these that is set:
   the other agent's summary and comments, or your note.
 - **Outcome**: the agent finishes by handing in one of the step's outcomes with a summary. A Coder can't hand in work
   with uncommitted changes or unpushed commits; PDT tells it what's left.
-- **Questions**: an agent that needs you asks in the Inbox under **Questions**; the step waits for your answer.
+- **Questions**: an agent that needs you asks in the Inbox under **Questions**; the step waits for your answer. Until
+  you answer, the ticket doesn't merge or move to **Done**, even if the step moves on without it (see
+  [Waiting on your answer](../using-pdt/review-and-merge.md#waiting-on-your-answer)). The Reviewer and QA say in
+  their outcome when a question is still open.
 - **Stalls**: an agent that ends its turn without an outcome or a question, or whose session stops, is stuck. See
   [When an agent is stuck](#when-an-agent-is-stuck).
 - **Time limits**: a step that runs too long (four hours, or ten turns without an outcome) stops. It is restarted

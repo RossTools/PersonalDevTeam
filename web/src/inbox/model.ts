@@ -88,6 +88,12 @@ export function longTitle(item: InboxItem): boolean {
   return item.kind === 'question' && (item.title.length > 120 || item.title.includes('\n'));
 }
 
+/** An agent's question that holds its ticket's merge and move to Done until it is answered: every one on a ticket, but
+ * those the agent marked `blocking: false`. */
+export function holdsTicket(item: InboxItem): boolean {
+  return item.kind === 'question' && item.ticketId != null && item.body.blocking !== false;
+}
+
 export function questionsOf(item: InboxItem): InboxQuestion[] {
   const qs = item.body.questions;
   if (!Array.isArray(qs)) return [];

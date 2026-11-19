@@ -253,6 +253,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A stuck agent step is never left without anyone told.** A step handed to "When an agent is stuck" has no Inbox
   item until the workflow acts; `stuck::sweep` falls back to PDT's own handling when it is off, its run ends without
   acting, or no run starts in time. Code that ends or moves a step on takes its escalation (`take_escalation`).
+- **An agent's open question holds its ticket's merge and Done.** An `ask_user` item on a ticket
+  (`InboxItem::holds_ticket`: blocking unless `body.blocking` is false) outlives its step, its run, its workflow and
+  its session: every bulk close (`close_inbox_items`, `complete_workflow_step`, `close_workflow_inbox_items`,
+  `release_gone_sessions`, `reopen_at`) skips `kind = 'question' AND ticket_id IS NOT NULL`; only an answer, a
+  dismiss or the ticket closing (`start::end_for_close`) ends it. A node that merges or moves a ticket to Done waits
+  first with `workflow::hold::wait_for_answers`, and `review::merge_attempt` refuses an automated merge
+  (`question_open`); the user's own merge and move go through. Ending a held question calls `hold::wake`.
 - **A login failure is never nudged, and never waits without an item for long.** A step goes to `waiting_login`
   (under the agent's `agent_login_locks`) or is held with `wait.login` while its agent's `agent_login` item is open;
   closing that item (`agent_login::resume`) takes every such step up again, and the login watch takes up any left

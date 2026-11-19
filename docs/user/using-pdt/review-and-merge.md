@@ -67,6 +67,13 @@ branch**.
 Your own **Merge…** doesn't wait for anything. What workflows and agents may merge, and whether they wait for CI or
 your approval, is project policy: see [Personas and approvals](../automation/personas-and-approvals.md).
 
+### Waiting on your answer
+
+While an agent's question about the ticket is open in the Inbox, workflows and agents don't merge it or move it to
+**Done**: the ticket and its card on the board say **Waiting on your answer**, and the Pipeline waits at its merge.
+Once you answer (or dismiss the question), it merges and finishes by itself. You can still merge it yourself with
+**Merge…** (the dialog says the question is open) or move it to **Done**; moving it to **Done** closes the question.
+
 ## After the merge
 
 PDT checks every minute whether each ticket's branch has merged, whichever way it was merged. When it has:

@@ -509,6 +509,7 @@ pub fn ticket_state(t: &crate::ticket::TicketSummary) -> String {
         let what = match a.state {
             TicketAgentState::Working => "working",
             TicketAgentState::Asking => "waiting for the user's answers",
+            TicketAgentState::Held => "its question waits for the user's answer (merge and Done held)",
             TicketAgentState::Stalled => "stalled",
             TicketAgentState::Yours => "waiting for the user",
             TicketAgentState::Queued => "queued for a slot",

@@ -275,6 +275,14 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
     }
     let ticket = t.ticket.as_ref().map(|(_, key, title)| StepTicket { key, title });
     let mut message = first_message(&c.prompt, ticket, &c.outcomes);
+    // Answers to an earlier step's questions that came after it ended (PDT-628).
+    let late = match &t.ticket {
+        Some((id, _, _)) => inbox_items::late_answers_note(st, id).await,
+        None => None,
+    };
+    if let Some((note, _)) = &late {
+        message.push_str(&format!("\n\n{note}"));
+    }
     if resume_of.is_some()
         && let Some(n) = note.as_deref().map(str::trim).filter(|n| !n.is_empty())
     {
@@ -314,6 +322,10 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
             } else {
                 format!("{}\n\n{message}", step_section(&persona.name, &persona.setup.instructions, &c.outcomes))
             };
+            let text = match &late {
+                Some((n, _)) if by_user || again => format!("{text}\n\n{n}"),
+                _ => text,
+            };
             // Resume is the user's click: it reaches a stopped conversation too, like a Nudge. The step's own message
             // reopens one a restart interrupted (PDT-144): the user enabled the workflow, and the cap still holds it.
             let to = Delivery { by_user, reopens: true };
@@ -331,6 +343,11 @@ pub(crate) async fn start_step(cx: &StepCx<'_>, c: AgentConfig) -> R<Outcome> {
             new_session(st, at, &persona, &t, attempt_for_session, message).await?.id
         }
     };
+    if let Some((_, ids)) = &late
+        && let Err(e) = st.store.mark_late_answers_told(ids).await
+    {
+        tracing::warn!(run = %cx.run.id, error = %e, "could not mark late answers as told");
+    }
     binding.session_id = Some(session_id.clone());
     binding.updated_at = now_ms();
     st.store.put_agent_step(&binding).await.map_err(err)?;

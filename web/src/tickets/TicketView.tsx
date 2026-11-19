@@ -10,7 +10,7 @@ import { TicketKey } from '../common/TicketKey';
 import { WatchButton } from '../common/Watch';
 import { useAction } from '../common/useAction';
 import { useRememberedScroll } from '../common/viewState';
-import { AttemptSection, MergedBanner } from './Attempt';
+import { AttemptSection, HeldBanner, MergedBanner } from './Attempt';
 import { canStart, retryAutoStart, ticketMenu, useStartTicket } from './actions';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { PartsStepper } from '../common/PartsStepper';
@@ -209,6 +209,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
     <div className="flex min-h-0 flex-1 flex-col">
       <TicketHeader ticket={t} onDeleted={onDeleted} />
       {mergedBanner && <MergedBanner ticket={t} />}
+      <HeldBanner ticket={t} />
       <AutoStartFailedBanner ticket={t} />
       <HubTabs
         ticket={t}
