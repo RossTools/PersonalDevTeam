@@ -7,6 +7,7 @@ pub(crate) mod builtins;
 pub(crate) mod catalog;
 pub(crate) mod doc_build;
 pub(crate) mod engine;
+pub(crate) mod hold;
 pub(crate) mod idle;
 pub(crate) mod nodes;
 pub(crate) mod outbox;

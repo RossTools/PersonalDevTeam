@@ -2703,3 +2703,120 @@ async fn abandon_closes_the_pr_saying_the_attempt_was_abandoned() {
     assert!(notes.contains("Stopped 1 session") && notes.contains("1 workflow run"), "{notes}");
     assert!(notes.contains("Closed pull request #12."), "{notes}");
 }
+
+/// The Pipeline whose Coder asks the user a question (`blocking` as given, else left out), then hands in its work
+/// when the test tells its session; the Reviewer approves and QA passes.
+async fn asking_pipeline(env: &Env, blocking: Option<bool>) {
+    let id = pipeline(env, json!({}), &[("code", "submitted"), ("review", "approved"), ("qa", "pass")]).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{id}"), None).await;
+    let mut doc = w["doc"].clone();
+    let mut ask = json!({"questions": [{"question": "Ship the new format now?", "choices": ["Yes", "Later"]}]});
+    if let Some(b) = blocking {
+        ask["blocking"] = json!(b);
+    }
+    for n in doc["nodes"].as_array_mut().unwrap() {
+        if n["id"] == "code" {
+            n["config"]["prompt"] = json!(format!("mcp: ask_user {ask}"));
+        }
+    }
+    let (s, v) =
+        call(&env.app, "PUT", &format!("/api/workflows/{id}"), Some(json!({"doc": doc, "note": "asks"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+}
+
+/// Starts an `agentic` ticket (no Accept) with a commit; its Coder asks, then submits with the question still open,
+/// as an agent does when its step times out waiting (PDT-628). The question.
+async fn asked_then_submitted(env: &Env, title: &str) -> (String, Value, Value) {
+    let t = labelled(env, title, &["agentic"]).await;
+    let attempt = start_with_a_commit(env, &t, &format!("{}.txt", title.replace(' ', "_"))).await;
+    let q = inbox_item(env, "question", &t).await;
+    let session = q["sessionId"].as_str().unwrap();
+    let submit = r#"mcp: submit_outcome {"outcome": "submitted", "summary": "Built; the format question is open."}"#;
+    let (s, v) =
+        call(&env.app, "POST", &format!("/api/sessions/{session}/messages"), Some(json!({"text": submit}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    (t, attempt, q)
+}
+
+/// The run's merge step, once it waits on the open question.
+async fn held_merge(env: &Env, run: &str) -> Value {
+    tick_until(env, "the merge held", || async {
+        let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{run}"), None).await;
+        let steps = r["steps"].as_array().unwrap().clone();
+        steps
+            .into_iter()
+            .find(|s| s["nodeId"] == "merge" && s["status"] == "waiting" && s["wait"]["hold"] == "question")
+    })
+    .await
+}
+
+fn on_main(env: &Env, file: &str) -> bool {
+    let out =
+        std::process::Command::new("git").current_dir(&env.repo).args(["ls-tree", "--name-only", "main"]).output();
+    String::from_utf8_lossy(&out.unwrap().stdout).lines().any(|l| l == file)
+}
+
+/// PDT-628: the Coder asks a (blocking, by default) question and submits anyway; the Reviewer and QA pass, and the
+/// pipeline holds the merge and Done until the user answers, then merges and finishes by itself.
+#[tokio::test]
+async fn an_open_question_holds_the_merge_and_done_until_it_is_answered() {
+    let env = setup().await;
+    asking_pipeline(&env, None).await;
+    let (t, attempt, q) = asked_then_submitted(&env, "New format").await;
+    assert_eq!(q["body"]["blocking"], true, "{q}");
+    let merge = held_merge(&env, q["runId"].as_str().unwrap()).await;
+    assert!(merge["wait"]["waiting"].as_str().unwrap().contains("Ship the new format now?"), "{merge}");
+    assert_eq!(outcomes(&timeline(&env, &t).await), ["submitted", "approved", "pass"]);
+    // Nothing merges meanwhile: not the run, not an agent's merge, not on the next looks.
+    still_after("a merge", Duration::from_millis(300), async || {
+        pdt_api::run_workflows(&env.state).await;
+        get_ticket(&env, &t).await["stage"] != "in_progress"
+    })
+    .await;
+    assert!(!on_main(&env, "New_format.txt"));
+    let ticket = get_ticket(&env, &t).await;
+    assert_eq!((ticket["agent"]["state"].as_str(), ticket["agent"]["persona"].as_str()), (Some("held"), Some("Coder")));
+    let id = attempt["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("question_open")), "{v}");
+
+    answer(&env, &q, json!({"answers": ["Yes"]})).await;
+    until_done(&env, &t).await;
+    assert!(on_main(&env, "New_format.txt"), "merged once answered");
+}
+
+/// PDT-628: a question the agent marks non-blocking holds nothing; it closes with its ticket.
+#[tokio::test]
+async fn a_non_blocking_question_doesnt_hold_the_merge() {
+    let env = setup().await;
+    asking_pipeline(&env, Some(false)).await;
+    let (t, _, q) = asked_then_submitted(&env, "Nice to have").await;
+    assert_eq!(q["body"]["blocking"], false, "{q}");
+    until_done(&env, &t).await;
+    assert!(on_main(&env, "Nice_to_have.txt"));
+    assert!(inbox(&env).await.iter().all(|i| i["kind"] != "question"), "closed with its ticket");
+}
+
+/// PDT-628: the user can still merge a held ticket and move it to Done by hand; the run follows.
+#[tokio::test]
+async fn the_user_can_merge_and_finish_a_held_ticket_by_hand() {
+    let env = setup().await;
+    asking_pipeline(&env, None).await;
+    let (t, attempt, q) = asked_then_submitted(&env, "By hand").await;
+    let run = q["runId"].as_str().unwrap().to_string();
+    held_merge(&env, &run).await;
+    let id = attempt["id"].as_str().unwrap();
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{id}/merge"), Some(json!({"by": "user"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(on_main(&env, "By_hand.txt"), "the user's merge goes through");
+    // Done still waits for the answer, unless the user moves it there.
+    let (s, v) = call_as_ui(&env.app, "PATCH", &format!("/api/tickets/{t}"), Some(json!({"stage": "done"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert!(inbox(&env).await.iter().all(|i| i["kind"] != "question"), "its question closed with it");
+    tick_until(&env, "the run over", || async {
+        let (_, r) = call(&env.app, "GET", &format!("/api/workflow-runs/{run}"), None).await;
+        (!matches!(r["status"].as_str(), Some("running" | "waiting"))).then_some(r)
+    })
+    .await;
+    assert_eq!(get_ticket(&env, &t).await["stage"], "done");
+}

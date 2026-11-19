@@ -272,6 +272,9 @@ pub struct MergePreview {
     /// With `base_dirty`: the checkout.
     pub base_checkout: Option<String>,
     pub pr: Option<MergePr>,
+    /// Why PDT holds the ticket's merge (PDT-628): an agent's question to the user is open. A person's merge still goes
+    /// through.
+    pub held: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

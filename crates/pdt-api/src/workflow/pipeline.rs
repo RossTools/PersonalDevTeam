@@ -25,7 +25,8 @@ const REVIEW_PROMPT: &str = "Review this attempt's changes against the ticket: t
 When the project keeps a changelog, check the change's entry is written for its users and says accurately what \
 changed. Put each finding on its line (`comments` in `submit_outcome`). When the Coder's outcome says \"No \
 changes\", there is no diff to read: check the branch has no commits of its own, that the ticket needs none, and \
-say so in your outcome.";
+say so in your outcome. When `get_ticket` lists `openQuestions` (an agent's question the user hasn't answered yet), \
+say so in your outcome, and whether the change depends on the answer: the ticket doesn't merge until it is answered.";
 
 const FIX_PROMPT: &str = "QA passed, but the merge was refused: {{steps.merge.reason}}. Clear it on the branch: \
 for a conflict, merge the base branch in and resolve it; for uncommitted changes, commit them; for failing CI, read \
@@ -52,7 +53,9 @@ const CODE_TIME_LIMIT_MS: i64 = 8 * 60 * 60 * 1000;
 
 const QA_PROMPT: &str = "Check that this attempt's change works: run the project's tests and try each point of the \
 ticket's \"Done when\". When the Coder's outcome says \"No changes\", there is no change to try: check that the \
-ticket's \"Done when\" holds as it is, and say so in your outcome.";
+ticket's \"Done when\" holds as it is, and say so in your outcome. When `get_ticket` lists `openQuestions` (an \
+agent's question the user hasn't answered yet), say so in your outcome, and whether \"Done when\" depends on the \
+answer: the ticket doesn't merge until it is answered.";
 
 const ACCEPT_EMPTY_QUESTION: &str = "{{trigger.ticketKey}} passed with no changes to merge: {{steps.code.summary}} \
 Accept it and move it to Done?";

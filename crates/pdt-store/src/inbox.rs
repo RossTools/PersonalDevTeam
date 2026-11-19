@@ -257,7 +257,8 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Closes every open item of a step, or of a run's steps.
+    /// Closes every open item of a step, or of a run's steps, but an agent's question on a ticket: it stays open
+    /// until it is answered or its ticket closes (PDT-628), as it may hold the ticket's merge.
     pub async fn close_inbox_items(
         &self,
         step_id: Option<&str>,
@@ -266,7 +267,8 @@ impl Store {
     ) -> Result<u64, StoreError> {
         let r = sqlx::query(
             "UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND \
-             ((? IS NOT NULL AND step_id = ?) OR (? IS NOT NULL AND run_id = ?))",
+             ((? IS NOT NULL AND step_id = ?) OR (? IS NOT NULL AND run_id = ?)) AND \
+             NOT (kind = 'question' AND ticket_id IS NOT NULL)",
         )
         .bind(now)
         .bind(step_id)
@@ -278,6 +280,67 @@ impl Store {
         Ok(r.rows_affected())
     }
 
+    /// The open agent questions on any of `tickets`, oldest first.
+    pub async fn open_ticket_questions(&self, tickets: &[&str]) -> Result<Vec<InboxItem>, StoreError> {
+        if tickets.is_empty() {
+            return Ok(vec![]);
+        }
+        let marks = vec!["?"; tickets.len()].join(", ");
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS} FROM inbox_items WHERE status = 'open' AND kind = 'question' AND ticket_id IN \
+             ({marks}) ORDER BY created_at, id"
+        );
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for t in tickets {
+            q = q.bind(*t);
+        }
+        q.fetch_all(&self.pool).await?.iter().map(to_item).collect()
+    }
+
+    /// The open agent questions on any of `tickets` that hold their merge and move to Done (PDT-628), oldest first.
+    pub async fn questions_holding(&self, tickets: &[&str]) -> Result<Vec<InboxItem>, StoreError> {
+        let items = self.open_ticket_questions(tickets).await?;
+        Ok(items.into_iter().filter(InboxItem::holds_ticket).collect())
+    }
+
+    /// Closes a closed ticket's open agent questions (PDT-628): nothing is left for them to hold. How many closed.
+    pub async fn close_ticket_questions(&self, ticket_id: &str, now: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query(
+            "UPDATE inbox_items SET status = 'closed', resolution = '{\"ticketClosed\":true}', resolved_at = ? \
+             WHERE status = 'open' AND kind = 'question' AND ticket_id = ?",
+        )
+        .bind(now)
+        .bind(ticket_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected())
+    }
+
+    /// A ticket's questions answered after the step that asked had moved on (`resolution.late`) that no agent step has
+    /// been told yet (PDT-628), oldest first.
+    pub async fn late_answers(&self, ticket_id: &str) -> Result<Vec<InboxItem>, StoreError> {
+        let sql = format!(
+            "SELECT {ITEM_COLUMNS} FROM inbox_items WHERE ticket_id = ? AND kind = 'question' AND \
+             status = 'resolved' AND json_extract(resolution, '$.late') = 1 AND \
+             json_extract(resolution, '$.told') IS NULL ORDER BY resolved_at, id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(ticket_id).fetch_all(&self.pool).await?;
+        rows.iter().map(to_item).collect()
+    }
+
+    /// Marks late answers ([`Store::late_answers`]) as told to an agent step.
+    pub async fn mark_late_answers_told(&self, ids: &[String]) -> Result<(), StoreError> {
+        for id in ids {
+            sqlx::query(
+                "UPDATE inbox_items SET resolution = json_set(resolution, '$.told', json('true')) WHERE id = ?",
+            )
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Deletes items resolved or closed before `before` (open ones stay however old). Returns how many went.
     pub async fn prune_inbox_items(&self, before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query("DELETE FROM inbox_items WHERE status != 'open' AND resolved_at < ?")
@@ -287,16 +350,17 @@ impl Store {
         Ok(r.rows_affected())
     }
 
-    /// Lets go of sessions that no longer exist (PDT-93): their open questions close, as nothing can answer them,
-    /// and no item points at them any more (so "Open session" is never offered for one). Runs when a session is
-    /// deleted and when the store opens (items left by sessions deleted before this).
+    /// Lets go of sessions that no longer exist (PDT-93): their open questions close, as nothing can answer them
+    /// (but a question on a ticket, whose answer goes to the ticket, PDT-628), and no item points at them any more
+    /// (so "Open session" is never offered for one). Runs when a session is deleted and when the store opens (items
+    /// left by sessions deleted before this).
     pub async fn release_gone_sessions(&self) -> Result<(), StoreError> {
         const GONE: &str = "session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions)";
         let mut tx = self.write_tx().await?;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE inbox_items SET status = 'closed', resolution = '{{\"sessionGone\":true}}', \
              resolved_at = CAST(strftime('%s', 'now') AS INTEGER) * 1000 \
-             WHERE status = 'open' AND kind = 'question' AND {GONE}"
+             WHERE status = 'open' AND kind = 'question' AND ticket_id IS NULL AND {GONE}"
         )))
         .execute(&mut *tx)
         .await?;
@@ -557,6 +621,42 @@ mod tests {
         assert!(store.open_inbox_items(None).await.unwrap().is_empty());
     }
 
+    fn question(id: &str, ticket: &str, step: &str, body: Value) -> InboxItem {
+        InboxItem { kind: InboxKind::Question, group: InboxGroup::Question, body, ..item(id, Some(step), 1) }
+            .ticket(ticket.to_string())
+    }
+
+    #[tokio::test]
+    async fn a_tickets_questions_outlive_their_step_and_run_and_hold_it_until_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        store.open_inbox_item(&question("q", "t1", "s1", json!({"questions": []}))).await.unwrap();
+        store.open_inbox_item(&question("info", "t1", "s2", json!({"blocking": false}))).await.unwrap();
+        store.open_inbox_item(&question("other", "t2", "s3", json!({}))).await.unwrap();
+        store.open_inbox_item(&item("gate", Some("s4"), 1)).await.unwrap();
+        let held = |v: Vec<InboxItem>| v.into_iter().map(|i| i.id).collect::<Vec<_>>();
+        assert_eq!(held(store.questions_holding(&["t1"]).await.unwrap()), ["q"], "a non-blocking one doesn't hold");
+        assert_eq!(held(store.questions_holding(&["t1", "t2"]).await.unwrap()), ["other", "q"], "by age, then id");
+        assert!(store.questions_holding(&[]).await.unwrap().is_empty());
+
+        // The step timing out, or its run ending, leaves them open.
+        store.close_inbox_items(Some("s1"), None, 2).await.unwrap();
+        assert_eq!(store.close_inbox_items(None, Some("r1"), 3).await.unwrap(), 1, "only the gate closes");
+        assert_eq!(held(store.questions_holding(&["t1"]).await.unwrap()), ["q"]);
+
+        // Answered late: listed until an agent step is told.
+        store.end_inbox_item("q", InboxStatus::Resolved, &json!({"late": true, "answers": ["A"]}), 4).await.unwrap();
+        assert!(store.questions_holding(&["t1"]).await.unwrap().is_empty());
+        assert_eq!(held(store.late_answers("t1").await.unwrap()), ["q"]);
+        store.mark_late_answers_told(&["q".into()]).await.unwrap();
+        assert!(store.late_answers("t1").await.unwrap().is_empty());
+        assert_eq!(store.get_inbox_item("q").await.unwrap().unwrap().resolution["answers"][0], "A");
+
+        // The ticket closing closes its questions.
+        assert_eq!(store.close_ticket_questions("t2", 5).await.unwrap(), 1);
+        assert!(store.questions_holding(&["t2"]).await.unwrap().is_empty());
+    }
+
     #[tokio::test]
     async fn old_ended_items_are_pruned_and_open_ones_stay() {
         let dir = tempfile::tempdir().unwrap();
@@ -596,7 +696,12 @@ mod tests {
         store.open_inbox_item(&of("q", InboxKind::Question, "s")).await.unwrap();
         store.open_inbox_item(&of("stalled", InboxKind::Stalled, "s")).await.unwrap();
         store.open_inbox_item(&of("q2", InboxKind::Question, "other")).await.unwrap();
+        let on_ticket =
+            InboxItem { step_id: Some("st".into()), ..of("qt", InboxKind::Question, "s") }.ticket("t".to_string());
+        store.open_inbox_item(&on_ticket).await.unwrap();
         assert!(store.delete_session("s").await.unwrap());
+        let qt = store.get_inbox_item("qt").await.unwrap().unwrap();
+        assert_eq!((qt.status, qt.session_id), (InboxStatus::Open, None), "a ticket's question stays open (PDT-628)");
 
         let q = store.get_inbox_item("q").await.unwrap().unwrap();
         assert_eq!(

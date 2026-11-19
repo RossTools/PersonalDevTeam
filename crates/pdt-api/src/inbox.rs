@@ -472,7 +472,7 @@ pub(crate) async fn answer(
 }
 
 /// `POST /api/inbox/{id}/dismiss`: closes a question, a secret request or a stalled item without acting (its step keeps
-/// waiting), or an unheard notice.
+/// waiting), or an unheard notice. A dismissed question no longer holds its ticket's merge (PDT-628).
 pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let item = load(&st, &id).await?;
     if !matches!(item.kind, InboxKind::Question | InboxKind::Secret | InboxKind::Stalled | InboxKind::Notice) {
@@ -482,6 +482,10 @@ pub(crate) async fn dismiss(State(st): State<AppState>, Path(id): Path<String>) 
         ));
     }
     st.store.end_inbox_item(&id, InboxStatus::Closed, &json!({"dismissed": true}), now_ms()).await?;
+    // A dismissed question holds the ticket no longer (PDT-628).
+    if item.holds_ticket() {
+        crate::workflow::hold::wake(&st, item.ticket_id.clone());
+    }
     crate::notifications::kick(&st);
     Ok(StatusCode::NO_CONTENT)
 }

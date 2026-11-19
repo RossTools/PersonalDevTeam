@@ -30,6 +30,10 @@ pub(crate) struct SubmitOutcome {
 struct AskUser {
     /// Short, concrete questions; give choices where a few answers are likely.
     questions: Vec<Question>,
+    /// Whether the ticket waits for the answers: by default (true) its pull request doesn't merge and it doesn't move
+    /// to Done until the user answers, even after your step ends. False for a question that is only nice to have.
+    #[serde(default)]
+    blocking: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -72,7 +76,9 @@ pub(super) fn defs() -> Vec<Tool> {
                           after asking. In a workflow step the step waits for them instead of stalling. Keep each \
                           `question` to one line (at most 120 characters); put the background in `context` \
                           (Markdown), each option's meaning and trade-offs in its choice's `description`, and the \
-                          choice you recommend in `recommended` with `why`.",
+                          choice you recommend in `recommended` with `why`. A question on a ticket holds its merge and \
+                          its move to Done until it is answered; set `blocking: false` for one that is only nice to \
+                          have.",
             schema: schema::<AskUser>,
         },
         Tool {
@@ -108,7 +114,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         }
         "ask_user" => {
             let a: AskUser = args(a)?;
-            crate::workflow::agent::ask_user(st, cx.session, a.questions).await
+            crate::workflow::agent::ask_user(st, cx.session, a.questions, a.blocking.unwrap_or(true)).await
         }
         "add_ticket_comment" => {
             let a: AddTicketComment = args(a)?;
@@ -303,6 +309,15 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
             );
         }
     }
+    // Agents' questions to the user still open (PDT-628): a blocking one holds the merge and the move to Done.
+    let open = open_questions(st, id).await?;
+    if !open.is_empty() {
+        v["openQuestions"] = json!(open);
+        v["openQuestionsNote"] = json!(
+            "Agents asked the user these and the user hasn't answered yet. A `blocking` one holds the ticket's merge \
+             and its move to Done until it is answered: say so in your outcome, and whether your work depends on it."
+        );
+    }
     v["comments"] = json!(comments);
     v["history"] = json!(history);
     v["outcomes"] = json!(outcomes);
@@ -310,6 +325,20 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["step"] = step;
     }
     Ok(v)
+}
+
+/// A ticket's open agent questions for `get_ticket`: who asked, when, the questions and whether they hold it.
+async fn open_questions(st: &AppState, id: &str) -> Result<Vec<Value>, String> {
+    let mut out = vec![];
+    for i in st.store.open_ticket_questions(&[id]).await.map_err(store)? {
+        let by = match i.step_id.as_deref() {
+            Some(step) => st.store.get_agent_step(step).await.map_err(store)?.map(|a| a.persona_name),
+            None => None,
+        };
+        out.push(json!({"by": by.unwrap_or_else(|| "agent".into()), "at": i.created_at, "blocking": i.holds_ticket(),
+                        "questions": i.body.get("questions").cloned().unwrap_or_default()}));
+    }
+    Ok(out)
 }
 
 /// What `get_ticket` tells an agent its project lets it do to documents without asking; None when it lets nothing.
@@ -411,5 +440,9 @@ mod tests {
         // The old shape still fits.
         let a: AskUser = args(json!({"questions": [{"question": "Which?", "choices": ["A", "B"]}]})).unwrap();
         assert_eq!(a.questions[0].choices[0].description, None);
+        assert_eq!(a.blocking, None, "blocking unless the agent says otherwise");
+        let a: AskUser = args(json!({"questions": [{"question": "Which?"}], "blocking": false})).unwrap();
+        assert_eq!(a.blocking, Some(false));
+        assert!(s.contains("\"blocking\""));
     }
 }

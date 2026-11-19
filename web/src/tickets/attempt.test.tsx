@@ -164,6 +164,23 @@ describe('ticket attempt', () => {
   });
 });
 
+describe('held banner (PDT-628)', () => {
+  it('says the ticket waits on the user\'s answer while an agent\'s question is open', async () => {
+    const agent = { persona: 'Coder', sessionId: null, busy: false, runId: null, background: [] };
+    stub({ ...active, agent: { ...agent, state: 'held' } });
+    view();
+    const banner = (await screen.findByText(/Waiting on your answer: The Coder's question is open/)).closest<HTMLElement>('[role=status]')!;
+    expect(banner).toHaveTextContent('ALP-1 doesn’t merge or move to Done until you answer it');
+  });
+
+  it('is not there otherwise', async () => {
+    stub(active);
+    view();
+    await screen.findAllByText('Fix login');
+    expect(screen.queryByText(/Waiting on your answer/)).not.toBeInTheDocument();
+  });
+});
+
 describe('merged banner', () => {
   const merged = { ...active, attempt: attempt({ state: 'merged' }), attempts: [attempt({ state: 'merged' })] };
 

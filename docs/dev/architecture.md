@@ -516,6 +516,17 @@ the list shows a few sections (`InboxGroup::section`: Questions, Approvals, Stuc
 makes one spec per item that the desktop and the phone both render). Notifications (`notifications.rs`) are the
 transient kind.
 
+**Questions that hold a ticket.** An agent's `ask_user` question about a ticket holds the ticket's merge and its move
+to Done until it is answered (`body.blocking`, true unless the agent says otherwise; `InboxItem::holds_ticket`). It
+stays open when its step ends (a timeout, an outcome handed in anyway) or its session goes; answered then
+(`inbox_items::answer_question`), the answer is a comment on the ticket by the user, marked `late` in the item's
+resolution, and the next agent step on the ticket gets it in its first message (`late_answers_note`, then `told`).
+`workflow/hold.rs` is the hold: `attempt.merge`, `ticket.finish`, `ticket.move` to Done and `ticket.close_parent` wait
+(`wait.hold: question`, polling like other looks) while one is open, and `hold::wake` wakes them when an answer, a
+dismiss, the user's merge or the ticket closing ends it. `review::merge_attempt` refuses an automated merge with
+`question_open`; the merge preview's `held` tells the Merge dialog. The scheduler's `ticket_agents` shows such a
+ticket as `held` ("Waiting on your answer") once no step is asking, and `get_ticket` lists `openQuestions`.
+
 **Answering safely.** Every answer from the web goes through `web/src/common/answerGuard.ts`: one at a time, and none
 for a cool-down after one, so a double-click or a click on what slid into place does nothing (the Inbox's item
 actions show as off meanwhile; a conversation's cards go through `guardedAnswer`). `needsConfirm` in

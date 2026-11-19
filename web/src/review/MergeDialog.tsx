@@ -197,6 +197,11 @@ export function MergeDialog({ ticket, attemptId, onClose }: { ticket: Ticket; at
               </p>
             )
           )}
+          {p.held && (
+            <Alert tone="warning" title="Waiting on your answer">
+              {p.held}. PDT holds the merge and the move to Done until you answer it in the Inbox. Merging now is up to you: it goes through.
+            </Alert>
+          )}
           <Problem p={p} onAsk={() => void ask()} sending={sending} />
           {merge.error && <Alert tone="error" title="The merge didn’t go through">{merge.error}</Alert>}
           {viaForge && !p.problem && (

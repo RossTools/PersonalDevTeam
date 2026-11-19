@@ -142,6 +142,16 @@ describe('structured questions (PDT-476)', () => {
     expect(within(card).getByRole('radio', { name: 'Something else' })).toBeInTheDocument();
   });
 
+  it('says whether the question holds its ticket\'s merge (PDT-628)', () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    const { unmount } = renderWithQuery(<InboxView items={[asked]} selectedId="q401" onSelect={() => {}} />);
+    expect(screen.getByText(/PDT-401 doesn't merge or move to Done until you answer/)).toBeInTheDocument();
+    unmount();
+    const info = structuredQuestionItem({ body: { questions: [structuredQuestion], blocking: false } });
+    renderWithQuery(<InboxView items={[info]} selectedId="q401" onSelect={() => {}} />);
+    expect(screen.getByText(/It doesn't hold PDT-401's merge/)).toBeInTheDocument();
+  });
+
   it('pre-selects the recommended choice but sends nothing until the user does', async () => {
     const calls = stubApi({ 'POST /api/inbox/q401/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<InboxView items={[asked]} selectedId="q401" onSelect={() => {}} />);

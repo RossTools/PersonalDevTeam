@@ -38,7 +38,8 @@ impl NodeKind for CloseParent {
             "Makes a part's parent follow its parts. When the last open part reaches Done or Won't do, the parent moves \
              to Done (Won't do if every part was Won't do): `closed`. A parent with an active attempt or a running \
              session stays open: `held`. When a part opens again, a closed parent moves back to In progress: \
-             `reopened`. Otherwise (a ticket that is not a part, parts still open) `skipped`. Output: the parent's \
+             `reopened`. Otherwise (a ticket that is not a part, parts still open) `skipped`. A move to Done waits while an \
+             agent's question to the user about the parent is open (unless asked as non-blocking). Output: the parent's \
              `parentId`, `parentKey`, `parentTitle`, `stage` (`stageName`: `Won't do`), and its `parts` count.",
             &[("closed", "Closed"), ("held", "Has open work"), ("reopened", "Reopened"), ("skipped", "Nothing to do")],
             false,
@@ -84,6 +85,13 @@ impl NodeKind for CloseParent {
                 ParentFollow::Close(to) => ("closed", to),
                 ParentFollow::Reopen => ("reopened", TicketStage::InProgress),
             };
+            // Not to Done while an agent's question to the user about the parent is open (PDT-628).
+            if to == TicketStage::Done
+                && !cx.dry_run
+                && let Some(wait) = crate::workflow::hold::wait_for_answers(cx.st, &[&parent_ref.id]).await?
+            {
+                return Ok(wait);
+            }
             if cx.dry_run {
                 let would = format!("move {} to {}", parent_ref.key, to.as_str());
                 return Ok(Outcome::would(port, would));

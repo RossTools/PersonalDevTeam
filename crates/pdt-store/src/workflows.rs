@@ -687,8 +687,8 @@ impl Store {
     }
 
     /// Ends a step and queues what it leads to in one transaction (PDT-131), so a crash never leaves a run with the
-    /// step done and nothing after it: the step's open Inbox items close, its agent binding is done, and its run, if
-    /// waiting, wakes.
+    /// step done and nothing after it: the step's open Inbox items close (but an agent's question on a ticket, PDT-628),
+    /// its agent binding is done, and its run, if waiting, wakes.
     pub async fn complete_workflow_step(&self, step: &Step, next: &[Step], now: i64) -> Result<(), StoreError> {
         self.noted(self.complete_workflow_step_unnoted(step, next, now).await)
     }
@@ -699,11 +699,15 @@ impl Store {
         for n in next {
             put_step(&mut tx, &self.redactor, n).await?;
         }
-        sqlx::query("UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND step_id = ?")
-            .bind(now)
-            .bind(&step.id)
-            .execute(&mut *tx)
-            .await?;
+        // An agent's question on a ticket stays open for its answer (PDT-628).
+        sqlx::query(
+            "UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND step_id = ? AND \
+             NOT (kind = 'question' AND ticket_id IS NOT NULL)",
+        )
+        .bind(now)
+        .bind(&step.id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE agent_steps SET state = 'done', updated_at = ? WHERE step_id = ? AND state != 'done'")
             .bind(now)
             .bind(&step.id)
@@ -730,11 +734,13 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Closes the open Inbox items of every run of a workflow (it is being deleted: nothing could answer them).
+    /// Closes the open Inbox items of every run of a workflow (it is being deleted: nothing could answer them), but an
+    /// agent's question on a ticket, whose answer goes to the ticket (PDT-628).
     pub async fn close_workflow_inbox_items(&self, workflow_id: &str, now: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
             "UPDATE inbox_items SET status = 'closed', resolved_at = ? WHERE status = 'open' AND \
-             run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?)",
+             run_id IN (SELECT id FROM workflow_runs WHERE workflow_id = ?) AND \
+             NOT (kind = 'question' AND ticket_id IS NOT NULL)",
         )
         .bind(now)
         .bind(workflow_id)
@@ -801,6 +807,16 @@ impl Store {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(|r| Ok((r.try_get("tk")?, to_step(r)?))).collect()
+    }
+
+    /// The waiting steps held by an agent's open question (PDT-628: `wait.hold` is `question`).
+    pub async fn steps_held_for_questions(&self) -> Result<Vec<Step>, StoreError> {
+        let sql = format!(
+            "SELECT {STEP_COLUMNS} FROM workflow_steps WHERE status = 'waiting' AND \
+             json_extract(wait, '$.hold') = 'question' ORDER BY started_at, id"
+        );
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
+        rows.iter().map(to_step).collect()
     }
 
     /// The waiting steps held because their agent isn't logged in (PDT-604: `wait.login` names the agent), oldest

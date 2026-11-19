@@ -9,6 +9,7 @@ export function agentLine(a: TicketAgent): { text: string; dot: AgentStateValue 
   switch (a.state) {
     case 'working': return { text: `${who} · working`, dot: dot('running', a.busy) };
     case 'asking': return { text: `${who} asks you`, dot: dot('waiting') };
+    case 'held': return { text: a.persona ? `Waiting on your answer · ${a.persona}` : 'Waiting on your answer', dot: dot('waiting') };
     case 'stalled': return { text: `${who} stalled`, dot: dot('failed') };
     case 'yours': return { text: a.persona ? `Your turn · ${a.persona}` : 'Your turn', dot: dot('waiting') };
     case 'queued': return { text: `${who} · waiting for a slot`, dot: dot('idle') };

@@ -41,7 +41,9 @@ impl NodeKind for Finish {
             Category::Action,
             "Finish the ticket",
             "Moves the ticket to Done, stops and removes its sessions and runs, removes its worktree and workspace and \
-             pulls the base branch. Uncommitted changes are never discarded: then nothing changes (`blocked`).",
+             pulls the base branch. Uncommitted changes are never discarded: then nothing changes (`blocked`). While an \
+             agent's question to the user about the ticket is open (unless asked as non-blocking), it waits, and \
+             finishes once the question is answered.",
             &[("finished", "Finished"), ("blocked", "Blocked")],
             false,
         )
@@ -56,6 +58,10 @@ impl NodeKind for Finish {
             let c: FinishConfig = parse(&input)?;
             if cx.dry_run {
                 return Ok(Outcome::would("finished", format!("finish ticket {}", c.ticket)));
+            }
+            // Not to Done while an agent's question to the user about it is open (PDT-628).
+            if let Some(wait) = crate::workflow::hold::wait_for_answers(cx.st, &[&c.ticket]).await? {
+                return Ok(wait);
             }
             let req = FinishRequest {
                 stop_running: c.stop_running.or(true),
@@ -104,7 +110,8 @@ impl NodeKind for Move {
             1,
             Category::Action,
             "Move the ticket",
-            "Moves a ticket to a stage.",
+            "Moves a ticket to a stage. A move to Done waits while an agent's question to the user about the ticket \
+             is open (unless asked as non-blocking).",
             &[("out", "Then")],
             false,
         )
@@ -129,6 +136,11 @@ impl NodeKind for Move {
                 {
                     stage = instead;
                 }
+            }
+            if stage == TicketStage::Done
+                && let Some(wait) = crate::workflow::hold::wait_for_answers(cx.st, &[&c.ticket]).await?
+            {
+                return Ok(wait);
             }
             let data = cx.by().data();
             let since = now_ms();

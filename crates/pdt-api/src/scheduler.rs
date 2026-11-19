@@ -224,7 +224,7 @@ pub async fn run_pickup_watch(st: AppState) {
 pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent> {
     let rank = |s: TicketAgentState| match s {
         TicketAgentState::Asking => 0,
-        TicketAgentState::Stalled | TicketAgentState::LoggedOut => 1,
+        TicketAgentState::Held | TicketAgentState::Stalled | TicketAgentState::LoggedOut => 1,
         TicketAgentState::Yours => 2,
         TicketAgentState::Working | TicketAgentState::Background => 3,
         TicketAgentState::Queued => 4,
@@ -282,6 +282,26 @@ pub(crate) async fn ticket_agents(st: &AppState) -> HashMap<String, TicketAgent>
     }
     for item in st.store.open_inbox_items(None).await.unwrap_or_default() {
         let Some(ticket) = item.ticket_id.clone() else { continue };
+        // An agent's question still open after its step moved on (PDT-628): the ticket waits on the answer. (While
+        // its step asks, the step above says so.)
+        if item.holds_ticket() {
+            let step = match item.step_id.as_deref() {
+                Some(id) => st.store.get_agent_step(id).await.ok().flatten(),
+                None => None,
+            };
+            put(
+                ticket,
+                TicketAgent {
+                    persona: step.as_ref().map(|a| a.persona_name.clone()),
+                    state: TicketAgentState::Held,
+                    session_id: item.session_id.clone(),
+                    busy: false,
+                    run_id: item.run_id.clone(),
+                    background: vec![],
+                },
+            );
+            continue;
+        }
         if item.kind == InboxKind::Gate {
             // A gate about a stalled ticket (PDT-510: CI cancelled with nothing running, or idle) shows the ticket
             // stalled, named by what stalled (`who`: CI, the ticket).

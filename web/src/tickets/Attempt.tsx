@@ -99,6 +99,21 @@ function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: Attemp
 }
 
 /**
+ * An agent's question about the ticket is still open after its step moved on: PDT holds the merge and the move to Done
+ * until the user answers it in the Inbox (PDT-628). Their own merge or move goes through.
+ */
+export function HeldBanner({ ticket: t, className }: { ticket: Ticket; className?: string }) {
+  if (t.agent?.state !== 'held' || isClosed(t.stage)) return null;
+  const who = t.agent.persona ? `The ${t.agent.persona}'s` : 'An agent’s';
+  return (
+    <Banner tone="waiting" role="status" className={className}>
+      Waiting on your answer: {who} question is open in the Inbox. {t.key} doesn’t merge or move to Done until you answer it; you can
+      still merge it or move it yourself.
+    </Banner>
+  );
+}
+
+/**
  * True when the latest attempt is merged and the ticket is still open, or Done with the worktree still there (kept,
  * or a finish cut short, PDT-97): offer to finish it.
  */

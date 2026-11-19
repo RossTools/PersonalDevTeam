@@ -3,4 +3,4 @@
 /**
  * The state of whoever works on a ticket in a workflow now.
  */
-export type TicketAgentState = "working" | "asking" | "stalled" | "yours" | "queued" | "background" | "logged_out";
+export type TicketAgentState = "working" | "asking" | "held" | "stalled" | "yours" | "queued" | "background" | "logged_out";
