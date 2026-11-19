@@ -102,7 +102,7 @@ impl NodeKind for Retry {
             let build = client.build(&pipeline, number).await?;
             if !c.jobs.iter().all(|j| j.trim().is_empty()) {
                 let all: Vec<_> = build["jobs"].as_array().into_iter().flatten().filter_map(job_of).collect();
-                let picked = pdt_core::ci_retry::pick(&all, &c.jobs, false)?;
+                let picked = pdt_core::ci_retry::pick(&all, &c.jobs, false)?.jobs;
                 for &i in &picked {
                     client.retry_job(&pipeline, number, &all[i].id).await?;
                 }

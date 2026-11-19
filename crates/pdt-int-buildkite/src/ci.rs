@@ -9,7 +9,7 @@ use crate::core::{API_URL, BUILDKITE, BuildkiteSettings, job_of, jobs_to_retry, 
 use pdt_api::sdk::AppState;
 use pdt_api::sdk::http::{CallAuth, CallOpts, call_json_with};
 use pdt_core::pr::{CiJob, CiRun};
-use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError};
+use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError, JobsRetryError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -211,14 +211,17 @@ impl CiProvider for BuildkiteCi {
     }
 
     /// Each job on its own (PDT-629), once the build says each can be.
-    fn retry_jobs(&self, _repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
+    fn retry_jobs(&self, _repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), JobsRetryError> {
         let (pipeline, number) = build_of(run)?;
-        self.with_client(async |c| {
+        let mut retried = vec![];
+        let got = self.with_client(async |c| {
             for (id, _) in jobs_to_retry(&c.build(&pipeline, number).await?, job_ids)? {
                 c.retry_job(&pipeline, number, &id).await?;
+                retried.push(id);
             }
             Ok(())
-        })
+        });
+        got.map_err(|error| JobsRetryError { retried, error })
     }
 
     /// A build of pipeline `workflow` on branch `git_ref`'s newest commit, `inputs` as its environment.

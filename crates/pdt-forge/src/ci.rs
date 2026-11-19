@@ -72,9 +72,10 @@ pub trait CiProvider: Send + Sync {
         unsupported(self.label(), "runs to retry")
     }
     /// Runs jobs of `run` again, by their ids ([`CiJob::id`], each [`CiJob::retryable`]): only those with
-    /// [`CiCapabilities::retry_jobs`], else every failed job of the run ([`CiProvider::retry`]).
-    fn retry_jobs(&self, repo: &str, run: &CiRun, _job_ids: &[String]) -> Result<(), ForgeError> {
-        self.retry(repo, run, true)
+    /// [`CiCapabilities::retry_jobs`], else every failed job of the run ([`CiProvider::retry`]). Failing partway, the
+    /// error says which ran again all the same.
+    fn retry_jobs(&self, repo: &str, run: &CiRun, _job_ids: &[String]) -> Result<(), JobsRetryError> {
+        Ok(self.retry(repo, run, true)?)
     }
     /// Starts `workflow` (an Actions workflow's file, a Buildkite pipeline) on `git_ref` with `inputs`
     /// ([`CiCapabilities::trigger`]).
@@ -106,6 +107,20 @@ pub trait CiProvider: Send + Sync {
     /// One run by its id, as its newest attempt stands (PDT-292); None when there is no such run.
     fn workflow_run(&self, _repo: &str, _id: &str) -> Result<Option<WorkflowRun>, ForgeError> {
         unsupported(self.label(), "workflow runs to read")
+    }
+}
+
+/// A [`CiProvider::retry_jobs`] that failed, with the jobs it ran again before it did (by id).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{error}")]
+pub struct JobsRetryError {
+    pub retried: Vec<String>,
+    pub error: ForgeError,
+}
+
+impl From<ForgeError> for JobsRetryError {
+    fn from(error: ForgeError) -> Self {
+        JobsRetryError { retried: vec![], error }
     }
 }
 
@@ -149,6 +164,8 @@ pub mod testing {
         pub retried: Mutex<Vec<(String, bool)>>,
         /// Jobs retried on their own: the run's id and the jobs' ids.
         pub retried_jobs: Mutex<Vec<(String, Vec<String>)>>,
+        /// `retry_jobs` runs only the first job again, then fails with this.
+        pub retry_partway: Mutex<Option<String>>,
         /// Workflow runs, whatever their branch ([`CiProvider::workflow_runs`]): the newest attempt of each.
         pub workflow_runs: Mutex<Vec<WorkflowRun>>,
         pub calls: Mutex<Vec<String>>,
@@ -195,6 +212,7 @@ pub mod testing {
                 triggered: Default::default(),
                 retried: Default::default(),
                 retried_jobs: Default::default(),
+                retry_partway: Default::default(),
                 workflow_runs: Default::default(),
                 calls: Default::default(),
             }
@@ -321,11 +339,16 @@ pub mod testing {
             self.retried.lock().unwrap().push((run.id.clone(), failed_only));
             Ok(())
         }
-        fn retry_jobs(&self, repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
+        fn retry_jobs(&self, repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), JobsRetryError> {
             if !self.capabilities().retry_jobs {
-                return self.retry(repo, run, true);
+                return Ok(self.retry(repo, run, true)?);
             }
             self.call(format!("retry jobs {repo} {} {}", run.id, job_ids.join(",")));
+            if let Some(e) = self.retry_partway.lock().unwrap().clone() {
+                let first = job_ids[..1.min(job_ids.len())].to_vec();
+                self.retried_jobs.lock().unwrap().push((run.id.clone(), first.clone()));
+                return Err(JobsRetryError { retried: first, error: ForgeError::Failed(e) });
+            }
             self.retried_jobs.lock().unwrap().push((run.id.clone(), job_ids.to_vec()));
             Ok(())
         }
@@ -395,7 +418,10 @@ mod tests {
         assert!(matches!(ci.queue_runs("o/r"), Err(ForgeError::Unsupported(_))));
         assert!(matches!(ci.retry("o/r", &run, true), Err(ForgeError::Unsupported(_))));
         assert!(
-            matches!(ci.retry_jobs("o/r", &run, &["1-0".into()]), Err(ForgeError::Unsupported(_))),
+            matches!(
+                ci.retry_jobs("o/r", &run, &["1-0".into()]),
+                Err(JobsRetryError { error: ForgeError::Unsupported(_), .. })
+            ),
             "without job retries: the run's failed jobs, which it can't either"
         );
         assert!(matches!(ci.trigger("o/r", "main", "release.yml", &BTreeMap::new()), Err(ForgeError::Unsupported(_))));

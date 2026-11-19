@@ -13,7 +13,7 @@ pub mod login;
 pub mod oauth;
 pub mod rest;
 pub mod transport;
-pub use ci::{CiCapabilities, CiConfig, CiProvider};
+pub use ci::{CiCapabilities, CiConfig, CiProvider, JobsRetryError};
 pub use login::{ForgeAccount, ForgeLogin};
 
 pub use pdt_core::forge::{ForgeKind, ForgeLinks, ForgeNotes};

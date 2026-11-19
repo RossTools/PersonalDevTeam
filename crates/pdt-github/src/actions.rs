@@ -8,7 +8,7 @@ use crate::{
 };
 use pdt_core::pr::{CiJob, CiRun, CiState, GITHUB_ACTIONS};
 use pdt_core::workflow_runs::WorkflowRun;
-use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError};
+use pdt_forge::{CiCapabilities, CiConfig, CiProvider, ForgeError, JobsRetryError};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -101,12 +101,34 @@ impl CiProvider for GithubActions {
         self.api.send_json("POST", &format!("repos/{repo}/actions/runs/{}/{what}", run.id), json!({}))?;
         Ok(())
     }
-    /// Each job on its own (`POST /actions/jobs/{id}/rerun`): GitHub runs it again with the jobs it needs, in a new
-    /// attempt of its run.
-    fn retry_jobs(&self, repo: &str, _run: &CiRun, job_ids: &[String]) -> Result<(), ForgeError> {
-        for id in job_ids {
-            self.api.send_json("POST", &format!("repos/{repo}/actions/jobs/{}/rerun", encode(id)), json!({}))?;
+    /// One job on its own (`POST /actions/jobs/{id}/rerun`): GitHub runs it again with the jobs it needs, in a new
+    /// attempt of its run. Once that attempt runs, GitHub re-runs no other job of the run until it finishes, so more
+    /// than one job are the run's failed jobs together (`rerun-failed-jobs`), when they are exactly those; others are
+    /// refused.
+    fn retry_jobs(&self, repo: &str, run: &CiRun, job_ids: &[String]) -> Result<(), JobsRetryError> {
+        if let [id] = job_ids {
+            let path = format!("repos/{repo}/actions/jobs/{}/rerun", encode(id));
+            self.api.send_json("POST", &path, json!({})).map_err(ForgeError::from)?;
+            return Ok(());
         }
+        let jobs = self.jobs(repo, run)?;
+        let failed: Vec<&str> = jobs.iter().filter(|j| j.state == CiState::Failed).map(|j| j.id.as_str()).collect();
+        let mut asked: Vec<&str> = job_ids.iter().map(String::as_str).collect();
+        asked.sort_unstable();
+        asked.dedup();
+        let mut all_failed = failed.clone();
+        all_failed.sort_unstable();
+        if asked != all_failed {
+            let name = |id: &str| jobs.iter().find(|j| j.id == id).map_or(id.to_string(), |j| j.name.clone());
+            let names = job_ids.iter().map(|id| name(id)).collect::<Vec<_>>().join(", ");
+            return Err(ForgeError::Failed(format!(
+                "GitHub re-runs one job of run {} at a time (another waits until the run's new attempt finishes), or \
+                 all its failed jobs together: retry one of {names} now, or every failed job with `failed: true`",
+                run.id
+            ))
+            .into());
+        }
+        self.retry(repo, run, true)?;
         Ok(())
     }
     /// `workflow_dispatch`: the workflow must declare it, and the token needs the Actions write permission.

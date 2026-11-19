@@ -349,6 +349,45 @@ fn reads_runs_and_failed_jobs_from_actions() {
     assert_eq!(ci.config_paths(), pdt_forge::CiConfig::Paths(&[".github/workflows"]));
 }
 
+/// PDT-629: two jobs of one run are its failed jobs together (GitHub re-runs one job of a run at a time), and only
+/// when they are exactly those.
+#[test]
+fn two_jobs_of_one_run_are_its_failed_jobs_together() {
+    let (g, t) = forge();
+    let ci = GithubActions::new(g.clone());
+    let run = CiRun {
+        provider: "github_actions".into(),
+        id: "77".into(),
+        attempt: 1,
+        name: "ci".into(),
+        state: CiState::Failed,
+        url: "https://r/77".into(),
+        head_sha: "abc".into(),
+        branch: "pdt/x".into(),
+        created_at: "2026-10-19T02:00:10Z".into(),
+        failed_jobs: vec![],
+    };
+    let jobs = || {
+        t.ok(
+            "GET",
+            &format!("{API}/repos/o/r/actions/runs/77/attempts/1/jobs"),
+            r#"{"jobs":[{"id":1,"name":"lint","status":"completed","conclusion":"success"},
+              {"id":2,"name":"test (linux)","status":"completed","conclusion":"failure"},
+              {"id":5,"name":"test (windows)","status":"completed","conclusion":"failure"}]}"#,
+        )
+    };
+    jobs();
+    t.on("POST", &format!("{API}/repos/o/r/actions/runs/77/rerun-failed-jobs"), Response::new(201, "{}"));
+    ci.retry_jobs("o/r", &run, &["5".into(), "2".into()]).unwrap();
+    assert!(t.sent().last().unwrap().url.ends_with("/actions/runs/77/rerun-failed-jobs"));
+    let posts = || t.sent().iter().filter(|r| r.method == "POST").count();
+    assert_eq!(posts(), 1, "one request, no job on its own");
+    jobs();
+    let e = ci.retry_jobs("o/r", &run, &["2".into(), "1".into()]).unwrap_err();
+    assert!(e.retried.is_empty() && e.to_string().contains("one of test (linux), lint now"), "{e}");
+    assert_eq!(posts(), 1, "refused before asking GitHub");
+}
+
 #[test]
 fn failed_logs_are_the_tails_of_the_failed_jobs() {
     let (g, t) = forge();

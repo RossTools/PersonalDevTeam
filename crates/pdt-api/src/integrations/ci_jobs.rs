@@ -346,7 +346,7 @@ impl Action for CiRetry {
             let all: Vec<(usize, CiJob)> =
                 runs.iter().enumerate().flat_map(|(r, run)| run.jobs.iter().map(move |j| (r, j.clone()))).collect();
             let jobs: Vec<CiJob> = all.iter().map(|(_, j)| j.clone()).collect();
-            let picked = ci_retry::pick(&jobs, &i.jobs, i.failed)?;
+            let ci_retry::Picked { jobs: picked, skipped } = ci_retry::pick(&jobs, &i.jobs, i.failed)?;
             let events = retry_events(cx, &info.ticket_id).await?;
             for &k in &picked {
                 let (r, j) = &all[k];
@@ -354,36 +354,51 @@ impl Action for CiRetry {
                 ci_retry::check_cap(used, &j.name, &head)?;
             }
             let by = crate::mcp::tools::agent_by(cx.st, cx.session.ok_or("only an agent session retries CI")?).await;
-            let mut retried = vec![];
+            let mut retried: Vec<RetriedOut> = vec![];
             for (r, run) in runs.iter().enumerate() {
                 let chosen: Vec<&CiJob> = picked.iter().filter(|&&k| all[k].0 == r).map(|&k| &all[k].1).collect();
                 if chosen.is_empty() {
                     continue;
                 }
                 let ids: Vec<String> = chosen.iter().map(|j| j.id.clone()).collect();
-                let names: Vec<&str> = chosen.iter().map(|j| j.name.as_str()).collect();
                 let (p, ci_run, repo) = (run.provider.clone(), run.run.clone(), h.repo());
-                tokio::task::spawn_blocking(move || p.retry_jobs(&repo, &ci_run, &ids))
+                let got = tokio::task::spawn_blocking(move || p.retry_jobs(&repo, &ci_run, &ids))
                     .await
-                    .map_err(crate::workflow::err)?
-                    .map_err(|e| format!("{}: {e}", run.provider.label()))?;
+                    .map_err(crate::workflow::err)?;
+                // Failing partway, the jobs that ran again all the same are recorded (and count toward the cap).
+                let (done, failed): (Vec<&CiJob>, _) = match got {
+                    Ok(()) => (chosen, None),
+                    Err(e) => (chosen.into_iter().filter(|j| e.retried.contains(&j.id)).collect(), Some(e.error)),
+                };
                 let p = &run.provider;
-                let data = ci_retry::event_data(&info.attempt.id, &head, p.id(), p.label(), &run.run.id, &names);
-                let now = crate::routes::now_ms();
-                if let Err(e) = cx
-                    .st
-                    .store
-                    .add_ticket_event(&info.ticket_id, EventKind::CiRetry, by.clone(), None, Some(data), now)
-                    .await
-                {
-                    tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record a CI retry");
+                if !done.is_empty() {
+                    let names: Vec<&str> = done.iter().map(|j| j.name.as_str()).collect();
+                    let data = ci_retry::event_data(&info.attempt.id, &head, p.id(), p.label(), &run.run.id, &names);
+                    let now = crate::routes::now_ms();
+                    if let Err(e) = cx
+                        .st
+                        .store
+                        .add_ticket_event(&info.ticket_id, EventKind::CiRetry, by.clone(), None, Some(data), now)
+                        .await
+                    {
+                        tracing::warn!(ticket = %info.ticket_key, error = %e, "could not record a CI retry");
+                    }
+                    retried.push(RetriedOut {
+                        provider: p.id().to_string(),
+                        run_id: run.run.id.clone(),
+                        jobs: names.iter().map(|n| n.to_string()).collect(),
+                        all_failed: !p.capabilities().retry_jobs,
+                    });
                 }
-                retried.push(RetriedOut {
-                    provider: p.id().to_string(),
-                    run_id: run.run.id.clone(),
-                    jobs: names.iter().map(|n| n.to_string()).collect(),
-                    all_failed: !p.capabilities().retry_jobs,
-                });
+                if let Some(e) = failed {
+                    let names = retried.iter().flat_map(|r| r.jobs.iter().map(String::as_str)).collect::<Vec<_>>();
+                    let ran = if names.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({} ran again all the same)", names.join(", "))
+                    };
+                    return Err(format!("{}: {e}{ran}", p.label()));
+                }
             }
             let names = retried.iter().flat_map(|r| r.jobs.iter().map(String::as_str)).collect::<Vec<_>>();
             let mut message = format!(
@@ -391,6 +406,9 @@ impl Action for CiRetry {
                 names.join(", "),
                 ci_retry::short_sha(&head)
             );
+            if !skipped.is_empty() {
+                message.push_str(&format!(". Skipped {}: CI can't retry them on their own", skipped.join(", ")));
+            }
             if retried.iter().any(|r| r.all_failed) {
                 message.push_str(" (a provider without single-job retries runs every failed job of its run again)");
             }

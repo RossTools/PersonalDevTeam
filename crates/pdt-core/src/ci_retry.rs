@@ -20,41 +20,36 @@ pub fn names(job: &CiJob, wanted: &str) -> bool {
     job.id == w || job.key.as_deref() == Some(w) || job.name.eq_ignore_ascii_case(w)
 }
 
-/// The jobs to retry, as indexes into `jobs` (the head's jobs, from every run on it): those `wanted` names (each by id,
-/// step key or name), and with `failed` every failed one. Each must have failed or been cancelled, and be retryable.
-pub fn pick(jobs: &[CiJob], wanted: &[String], failed: bool) -> Result<Vec<usize>, String> {
+/// The jobs [`pick`] chose, as indexes into the jobs it was given, and the failed jobs `failed` would have taken that
+/// can't be retried (by name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picked {
+    pub jobs: Vec<usize>,
+    pub skipped: Vec<String>,
+}
+
+/// The jobs to retry (the head's jobs, from every run on it): those `wanted` names (each by id, step key or name), and
+/// with `failed` every failed one. A named job must have failed or been cancelled, and be retryable; a failed one
+/// `failed` takes that can't be retried is skipped.
+pub fn pick(jobs: &[CiJob], wanted: &[String], failed: bool) -> Result<Picked, String> {
     let wanted: Vec<&str> = wanted.iter().map(|w| w.trim()).filter(|w| !w.is_empty()).collect();
     if wanted.is_empty() && !failed {
         return Err("name the jobs to retry (`jobs`), or give `failed: true` for every failed one".into());
     }
-    let mut out: Vec<usize> = vec![];
+    let mut picked: Vec<usize> = vec![];
     for w in &wanted {
         let found: Vec<usize> = (0..jobs.len()).filter(|&i| names(&jobs[i], w)).collect();
-        match found.as_slice() {
+        let i = match found.as_slice() {
             [] => {
                 let all = jobs.iter().map(|j| j.name.as_str()).collect::<Vec<_>>().join(", ");
                 return Err(format!("no job on the head is {w:?} (its jobs: {all})"));
             }
-            [i] => out.push(*i),
+            [i] => *i,
             many => {
                 let ids = many.iter().map(|&i| jobs[i].id.as_str()).collect::<Vec<_>>().join(", ");
                 return Err(format!("{w:?} names {} jobs (ids {ids}): give the one's id", many.len()));
             }
-        }
-    }
-    if failed {
-        out.extend((0..jobs.len()).filter(|&i| jobs[i].state == CiState::Failed));
-        if out.is_empty() {
-            return Err("no job on the head has failed".into());
-        }
-    }
-    let mut picked: Vec<usize> = vec![];
-    for i in out {
-        if !picked.contains(&i) {
-            picked.push(i);
-        }
-    }
-    for &i in &picked {
+        };
         let j = &jobs[i];
         match j.state {
             CiState::Failed | CiState::Cancelled if j.retryable => {}
@@ -69,8 +64,31 @@ pub fn pick(jobs: &[CiJob], wanted: &[String], failed: bool) -> Result<Vec<usize
                 return Err(format!("{} passed (or only soft-failed): there is nothing to retry", j.name));
             }
         }
+        if !picked.contains(&i) {
+            picked.push(i);
+        }
     }
-    Ok(picked)
+    let mut skipped = vec![];
+    if failed {
+        for (i, j) in jobs.iter().enumerate().filter(|(_, j)| j.state == CiState::Failed) {
+            if picked.contains(&i) {
+                continue;
+            }
+            if j.retryable {
+                picked.push(i);
+            } else {
+                skipped.push(j.name.clone());
+            }
+        }
+        if picked.is_empty() {
+            return Err(if skipped.is_empty() {
+                "no job on the head has failed".into()
+            } else {
+                format!("no failed job on the head can be retried ({})", skipped.join(", "))
+            });
+        }
+    }
+    Ok(Picked { jobs: picked, skipped })
 }
 
 /// Refuses a run on another commit than the attempt's head.
@@ -150,10 +168,11 @@ mod tests {
     #[test]
     fn jobs_are_named_by_id_key_or_name() {
         let js = jobs();
-        assert_eq!(pick(&js, &w(&["j1"]), false), Ok(vec![0]));
-        assert_eq!(pick(&js, &w(&["test-windows"]), false), Ok(vec![0]));
-        assert_eq!(pick(&js, &w(&["Test (Linux)"]), false), Ok(vec![2]));
-        assert_eq!(pick(&js, &w(&["j1", "test (windows)"]), false), Ok(vec![0]), "once each");
+        let ok = |v: Vec<usize>| Ok(Picked { jobs: v, skipped: vec![] });
+        assert_eq!(pick(&js, &w(&["j1"]), false), ok(vec![0]));
+        assert_eq!(pick(&js, &w(&["test-windows"]), false), ok(vec![0]));
+        assert_eq!(pick(&js, &w(&["Test (Linux)"]), false), ok(vec![2]));
+        assert_eq!(pick(&js, &w(&["j1", "test (windows)"]), false), ok(vec![0]), "once each");
         assert!(pick(&js, &w(&["nope"]), false).unwrap_err().contains("its jobs: test (windows), lint"));
         assert!(pick(&js, &[], false).unwrap_err().contains("failed: true"));
     }
@@ -161,9 +180,13 @@ mod tests {
     #[test]
     fn failed_takes_every_failed_job_that_can_be_retried() {
         let mut js = jobs();
-        assert!(pick(&js, &[], true).unwrap_err().contains("old can't be retried"));
-        js.pop();
-        assert_eq!(pick(&js, &[], true), Ok(vec![0, 2]));
+        let got = pick(&js, &[], true).unwrap();
+        assert_eq!((got.jobs, got.skipped), (vec![0, 2], vec!["old".to_string()]), "the one that can't, skipped");
+        let named = pick(&js, &w(&["test (linux)"]), true).unwrap();
+        assert_eq!(named.jobs, [2, 0], "named first, once");
+        assert!(pick(&js, &w(&["old"]), true).unwrap_err().contains("old can't be retried"), "named: refused");
+        js.retain(|j| j.name == "old" || j.state != CiState::Failed);
+        assert_eq!(pick(&js, &[], true).unwrap_err(), "no failed job on the head can be retried (old)");
         js.retain(|j| j.state != CiState::Failed);
         assert_eq!(pick(&js, &[], true).unwrap_err(), "no job on the head has failed");
     }
@@ -175,7 +198,7 @@ mod tests {
         assert!(pick(&js, &w(&["deploy"]), false).unwrap_err().contains("hasn't finished"));
         let two = vec![job("a", "test", None, CiState::Failed, true), job("b", "test", None, CiState::Failed, true)];
         assert!(pick(&two, &w(&["test"]), false).unwrap_err().contains("ids a, b"));
-        assert_eq!(pick(&two, &w(&["b"]), false), Ok(vec![1]));
+        assert_eq!(pick(&two, &w(&["b"]), false).unwrap().jobs, [1]);
     }
 
     #[test]

@@ -938,3 +938,30 @@ async fn an_agent_retries_one_ci_job_on_its_pr_head() {
     );
     assert_eq!(retries[0]["agent"]["sessionId"], json!(s), "the agent's");
 }
+
+/// PDT-629: a retry that fails partway still records the jobs that ran again (on the timeline, toward the cap), and
+/// says so.
+#[tokio::test]
+async fn a_retry_failing_partway_records_the_jobs_that_ran() {
+    use pdt_core::pr::CiState;
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, branch) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+    gh.set_pr(&branch, Some(pr(12)));
+    gh.set_runs(&branch, vec![run(9, &branch, CiState::Failed, "2026-10-27T10:00:00Z")]);
+    gh.set_jobs(9, &["test (linux)", "test (windows)"]);
+    *gh.ci.retry_partway.lock().unwrap() = Some("the run is still in progress".into());
+
+    let said = say(&env, &s, "mcp: ci_retry {\"failed\": true}").await;
+    assert!(said.contains("the run is still in progress (test (linux) ran again all the same)"), "{said}");
+    let said = say(&env, &s, "mcp: ci_jobs {}").await;
+    let jobs: Value = serde_json::from_str(&said[said.find('{').unwrap()..=said.rfind('}').unwrap()]).unwrap();
+    let retries: Vec<(String, u64)> = jobs["runs"][0]["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| (j["name"].as_str().unwrap().to_string(), j["retries"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(retries, [("test (linux)".to_string(), 1), ("test (windows)".to_string(), 0)], "{said}");
+}
