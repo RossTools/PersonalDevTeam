@@ -97,7 +97,10 @@ warning and the details say when it last checked.
 
 When a pull request runs into trouble, PDT tells the agent working on it, which fixes it and pushes:
 
-- **CI failed**: the agent gets the failed jobs and reads their logs;
+- **CI failed**: the agent gets the failed jobs and reads their logs. A failure that isn't the change's (a flaky
+  step) it can retry: just that job (a Buildkite step or a GitHub Actions job), never the whole build, only on the
+  pull request's newest commit and at most twice per job and commit. Each retry shows on the ticket's timeline, and
+  the agent needs no confirmation for it;
 - **a conflict** with the base branch: resolved once, at merge time (see [Conflicts](#conflicts));
 - **dropped from the merge queue**, or **behind** its base while waiting to merge: PDT brings the branch up to date
   itself first, and the agent gets only what's left.

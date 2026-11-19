@@ -294,7 +294,25 @@ export function eventTitle(e: TicketEvent, trackerLabel: TrackerLabel = () => un
       const d = (e.data ?? {}) as { title?: string; summary?: string };
       return `${d.summary ?? 'Changed'} · “${d.title ?? 'a document'}”, without asking`;
     }
+    case 'ci_retry': return ciRetryTitle(e);
   }
+}
+
+/** What a `ci_retry` event records (crates/pdt-core/src/ci_retry.rs). */
+interface CiRetryData {
+  provider?: string;
+  providerLabel?: string;
+  head?: string;
+  jobs?: string[];
+}
+
+/** An agent's retry of CI jobs on its head: `Coder retried Buildkite step “test” on 1a2b3c4`. */
+function ciRetryTitle(e: TicketEvent): string {
+  const d = (e.data ?? {}) as CiRetryData;
+  const jobs = d.jobs ?? [];
+  const unit = d.provider === 'buildkite' ? 'step' : 'job';
+  const what = `${d.providerLabel ?? 'CI'} ${jobs.length === 1 ? unit : `${unit}s`} ${jobs.map((j) => `“${j}”`).join(', ')}`;
+  return `${e.agent?.persona ?? 'An agent'} retried ${what}${d.head ? ` on ${d.head.slice(0, 7)}` : ''}`;
 }
 
 /** What a `merge_update` event records (crates/pdt-api/src/workflow/nodes/conflicts.rs). */

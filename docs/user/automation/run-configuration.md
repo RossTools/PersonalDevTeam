@@ -210,7 +210,9 @@ providers = ["github_actions", "buildkite"]   # github_actions, gitlab_ci, local
 ```
 
 The pull request's CI badge rolls up every listed provider, each one's failures reach the agent, and an automated
-merge waits until each has passed. An empty list means no CI; the host overrides' list replaces the file's.
+merge waits until each has passed. Agents can retry one failed job on its own with Buildkite and GitHub Actions; with
+GitLab CI a retry runs all of a pipeline's failed jobs again, and the local `[ci]` command has no retries (push
+instead). An empty list means no CI; the host overrides' list replaces the file's.
 
 ## Storage
 

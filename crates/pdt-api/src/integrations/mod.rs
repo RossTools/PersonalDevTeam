@@ -15,6 +15,7 @@
 
 pub mod action;
 mod bug_reports;
+mod ci_jobs;
 mod core;
 mod forge;
 mod github;

@@ -69,6 +69,8 @@ fn the_tools_are_where_they_were() {
             "change_request_merge",
             "ci_runs",
             "ci_failed_logs",
+            "ci_jobs",
+            "ci_retry",
             "issue_view",
             "issue_comment",
             "documents_list",
@@ -161,6 +163,8 @@ fn the_tools_are_where_they_were() {
             "change_request_merge",
             "ci_runs",
             "ci_failed_logs",
+            "ci_jobs",
+            "ci_retry",
             "issue_comment",
         ],
         "the forge tools (PDT-177) work on the session's project and branch; the PM only reads issues (bug triage)"
@@ -170,7 +174,7 @@ fn the_tools_are_where_they_were() {
     let defaults: Vec<&str> = list.iter().filter(|x| x.default).map(|x| x.name.as_str()).collect();
     assert_eq!(defaults, pdt_core::persona::DEFAULT_TOOLS);
     let read_only: Vec<&str> = t.all().iter().filter(|d| d.read_only).map(|d| d.name).collect();
-    assert_eq!(read_only.len(), 38, "{read_only:?}");
+    assert_eq!(read_only.len(), 39, "{read_only:?}");
     let open: Vec<&str> = t.all().iter().filter(|d| d.open_world).map(|d| d.name).collect();
     let forge = [
         "change_request_view",
@@ -180,6 +184,8 @@ fn the_tools_are_where_they_were() {
         "change_request_merge",
         "ci_runs",
         "ci_failed_logs",
+        "ci_jobs",
+        "ci_retry",
         "issue_view",
         "issue_comment",
         "issue_create",
@@ -190,7 +196,7 @@ fn the_tools_are_where_they_were() {
         || *n == "report_bug"
         || *n == "link_issue"
         || forge.contains(n)));
-    assert_eq!(open.len(), 36);
+    assert_eq!(open.len(), 38);
     let pm = pdt_core::persona::builtin_persona("pm").unwrap().setup(t);
     assert_eq!(pm.tool_set(t).len(), 77);
 }

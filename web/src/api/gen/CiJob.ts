@@ -8,4 +8,13 @@ export type CiJob = {
 /**
  * The provider's id for it.
  */
-id: string, name: string, state: CiState, url: string, };
+id: string, name: string, state: CiState, url: string, 
+/**
+ * Its step's key, where the provider has one (Buildkite's `key`), which names it like its name does.
+ */
+key?: string, 
+/**
+ * The provider can run it again on its own (`CiProvider::retry_jobs`): it has finished, and wasn't retried
+ * already.
+ */
+retryable: boolean, };

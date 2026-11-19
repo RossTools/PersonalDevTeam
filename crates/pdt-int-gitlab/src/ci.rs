@@ -13,10 +13,10 @@ use std::sync::Arc;
 /// GitLab CI's provider id, which `[ci] providers` names.
 pub const GITLAB_CI: &str = "gitlab_ci";
 
-/// What GitLab CI can do: everything. Every pushed branch gets a pipeline, so its runs are read before the branch has
-/// a merge request.
+/// What GitLab CI can do: everything but retrying one job on its own. Every pushed branch gets a pipeline, so its runs
+/// are read before the branch has a merge request.
 pub const CAPABILITIES: CiCapabilities =
-    CiCapabilities { branches: true, logs: true, retry: true, trigger: true, merge_queue: true };
+    CiCapabilities { branches: true, logs: true, retry: true, retry_jobs: false, trigger: true, merge_queue: true };
 
 /// Where a project keeps its pipeline configuration.
 pub const CI_FILES: &[&str] = &[".gitlab-ci.yml"];
@@ -77,7 +77,15 @@ pub fn parse_job(v: &Value) -> Option<CiJob> {
         CiState::Failed if v["allow_failure"].as_bool() == Some(true) => CiState::Passed,
         st => st,
     };
-    Some(CiJob { id: v["id"].as_u64()?.to_string(), name: s(v, "name"), state, url: s(v, "web_url") })
+    Some(CiJob {
+        id: v["id"].as_u64()?.to_string(),
+        name: s(v, "name"),
+        state,
+        url: s(v, "web_url"),
+        key: None,
+        // Retried with its pipeline's other failed and cancelled jobs (no job on its own).
+        retryable: matches!(state, CiState::Failed | CiState::Cancelled),
+    })
 }
 
 /// The end of a job's log: its last `keep` lines (at most [`LOG_CHARS`] characters), without GitLab's section markers

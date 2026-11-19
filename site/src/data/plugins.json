@@ -594,7 +594,7 @@
       "projectSettings": "Builds of the tickets' branches show as their CI, and failures are told to the agent like GitHub's.",
       "steps": [
         {
-          "description": "Retries a Buildkite build's failed jobs, or rebuilds it when none can be retried.",
+          "description": "Retries chosen steps of a Buildkite build (`jobs`: names or keys), else its failed jobs, or rebuilds it when none can be retried.",
           "id": "buildkite.retry",
           "title": "Retry a Buildkite build"
         },

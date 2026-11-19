@@ -887,3 +887,81 @@ async fn an_agent_files_its_ticket_as_an_issue_with_issue_create() {
     let said = say_approved(&env, &s, "mcp: issue_create {}").await;
     assert!(said.contains("give a title, or a ticket to file"), "{said}");
 }
+
+/// PDT-629: an agent lists its pull request head's CI jobs and retries one job on its own, without asking; an older
+/// commit's run and a third retry of the job are refused, and each retry is on the ticket's timeline.
+#[tokio::test]
+async fn an_agent_retries_one_ci_job_on_its_pr_head() {
+    use pdt_core::pr::CiState;
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, branch) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+    gh.set_pr(&branch, Some(pr(12)));
+    let mut old = run(6, &branch, CiState::Failed, "2026-10-27T09:00:00Z");
+    old.head_sha = "0ld".into();
+    gh.set_runs(&branch, vec![old, run(7, &branch, CiState::Failed, "2026-10-27T10:00:00Z")]);
+    gh.set_jobs(6, &["test (linux)"]);
+    gh.set_jobs(7, &["test (linux)", "lint"]);
+
+    let said = say(&env, &s, "mcp: ci_jobs {}").await;
+    assert!(said.contains("\"head\": \"abc\"") && said.contains("\"pr\": 12"), "{said}");
+    assert!(said.contains("\"id\": \"7-0\"") && said.contains("\"retryable\": true"), "{said}");
+    assert!(said.contains("\"logTail\": \"test (linux) failed\""), "failed jobs' log tails: {said}");
+    assert!(!said.contains("\"6-0\""), "only the head's runs: {said}");
+
+    // No confirmation: `say`, not `say_allowed`.
+    let said = say(&env, &s, "mcp: ci_retry {\"jobs\": [\"test (linux)\"]}").await;
+    assert!(said.contains("Retried test (linux) on abc"), "{said}");
+    assert_eq!(*gh.ci.retried_jobs.lock().unwrap(), [("7".to_string(), vec!["7-0".to_string()])]);
+    assert!(gh.ci.retried.lock().unwrap().is_empty(), "not the whole run");
+
+    let said = say(&env, &s, "mcp: ci_retry {\"runId\": 6, \"jobs\": [\"test (linux)\"]}").await;
+    assert!(said.contains("not your branch's head abc"), "an older commit's run: {said}");
+    let said = say(&env, &s, "mcp: ci_retry {\"jobs\": [\"7-0\"]}").await;
+    assert!(said.contains("Retried"), "{said}");
+    let said = say(&env, &s, "mcp: ci_retry {\"failed\": true}").await;
+    assert!(said.contains("test (linux) was retried 2 times on abc already"), "the cap: {said}");
+    assert_eq!(gh.ci.retried_jobs.lock().unwrap().len(), 2);
+    let said = say(&env, &s, "mcp: ci_jobs {}").await;
+    assert!(said.contains("\"retries\": 2"), "{said}");
+
+    let (_, tickets) = call(&env.app, "GET", &format!("/api/tickets?project={}", env.project), None).await;
+    let ticket = tickets["items"][0]["id"].as_str().or(tickets[0]["id"].as_str()).unwrap().to_string();
+    let (_, page) = call(&env.app, "GET", &format!("/api/tickets/{ticket}/events"), None).await;
+    let retries: Vec<&Value> = page["items"].as_array().unwrap().iter().filter(|e| e["kind"] == "ci_retry").collect();
+    assert_eq!(retries.len(), 2, "{page}");
+    let d = &retries[0]["data"];
+    assert_eq!(
+        (d["provider"].clone(), d["head"].clone(), d["jobs"].clone()),
+        (json!("github_actions"), json!("abc"), json!(["test (linux)"]))
+    );
+    assert_eq!(retries[0]["agent"]["sessionId"], json!(s), "the agent's");
+}
+
+/// PDT-629: a retry that fails partway still records the jobs that ran again (on the timeline, toward the cap), and
+/// says so.
+#[tokio::test]
+async fn a_retry_failing_partway_records_the_jobs_that_ran() {
+    use pdt_core::pr::CiState;
+    let gh = Arc::new(FakeForge::default());
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, branch) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+    gh.set_pr(&branch, Some(pr(12)));
+    gh.set_runs(&branch, vec![run(9, &branch, CiState::Failed, "2026-10-27T10:00:00Z")]);
+    gh.set_jobs(9, &["test (linux)", "test (windows)"]);
+    *gh.ci.retry_partway.lock().unwrap() = Some("the run is still in progress".into());
+
+    let said = say(&env, &s, "mcp: ci_retry {\"failed\": true}").await;
+    assert!(said.contains("the run is still in progress (test (linux) ran again all the same)"), "{said}");
+    let said = say(&env, &s, "mcp: ci_jobs {}").await;
+    let jobs: Value = serde_json::from_str(&said[said.find('{').unwrap()..=said.rfind('}').unwrap()]).unwrap();
+    let retries: Vec<(String, u64)> = jobs["runs"][0]["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|j| (j["name"].as_str().unwrap().to_string(), j["retries"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(retries, [("test (linux)".to_string(), 1), ("test (windows)".to_string(), 0)], "{said}");
+}

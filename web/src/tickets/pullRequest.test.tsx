@@ -67,6 +67,14 @@ describe('pull request status', () => {
     expect(eventTitle(e)).toBe('Edited (2 edits) · “Spec”, without asking');
   });
 
+  it('names an agent’s CI retry and the head it ran on (PDT-629)', () => {
+    const data = { provider: 'buildkite', providerLabel: 'Buildkite', head: '1a2b3c4d5e', jobs: ['test (windows)'] };
+    const agent = { sessionId: 's1', projectId: null, persona: 'Coder', fromTicket: null, fromTicketId: null };
+    expect(eventTitle(event('e1', { kind: 'ci_retry', data, agent }))).toBe('Coder retried Buildkite step “test (windows)” on 1a2b3c4');
+    const gh = { provider: 'github_actions', providerLabel: 'GitHub Actions', jobs: ['lint', 'test'] };
+    expect(eventTitle(event('e1', { kind: 'ci_retry', data: gh }))).toBe('An agent retried GitHub Actions jobs “lint”, “test”');
+  });
+
   it('names how each update with the base went on the timeline (PDT-328)', () => {
     const title = (data: Record<string, unknown>) => eventTitle(event('e1', { kind: 'merge_update', data }));
     expect(title({ how: 'deferred', pr: 12 })).toBe('Conflicts with the base branch (PR #12) · resolved at merge time');

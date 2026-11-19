@@ -1,8 +1,8 @@
-//! Buildkite actions: `buildkite.retry` (a build's failed jobs, else the whole build) and
+//! Buildkite actions: `buildkite.retry` (chosen steps of a build, else its failed jobs, else the whole build) and
 //! `buildkite.trigger` (a new build), through a `buildkite` connection (pdt-api `buildkite.rs`).
 
 use crate::ci::BuildkiteClient;
-use crate::core::{parse_build_url, retryable_jobs};
+use crate::core::{job_of, parse_build_url, retryable_jobs};
 use pdt_api::sdk::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, spec};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,10 @@ pub struct RetryConfig {
     pub build: Value,
     #[serde(default)]
     pub pipeline: Option<String>,
+    /// Only these steps (each its name, key or job id); the build's failed jobs when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub jobs: Vec<String>,
 }
 
 impl RetryConfig {
@@ -67,7 +71,8 @@ impl NodeKind for Retry {
             1,
             Category::Action,
             "Retry a Buildkite build",
-            "Retries a Buildkite build's failed jobs, or rebuilds it when none can be retried.",
+            "Retries chosen steps of a Buildkite build (`jobs`: names or keys), else its failed jobs, or rebuilds it \
+             when none can be retried.",
             &[("out", "Then")],
             false,
         )
@@ -95,6 +100,16 @@ impl NodeKind for Retry {
             }
             let client = BuildkiteClient::named(cx.st, &c.connection).await?;
             let build = client.build(&pipeline, number).await?;
+            if !c.jobs.iter().all(|j| j.trim().is_empty()) {
+                let all: Vec<_> = build["jobs"].as_array().into_iter().flatten().filter_map(job_of).collect();
+                let picked = pdt_core::ci_retry::pick(&all, &c.jobs, false)?.jobs;
+                for &i in &picked {
+                    client.retry_job(&pipeline, number, &all[i].id).await?;
+                }
+                let mut out = serde_json::to_value(output(&build)).unwrap_or_default();
+                out["retried"] = json!(picked.iter().map(|&i| &all[i].name).collect::<Vec<_>>());
+                return Ok(Outcome::Next { port: "out".into(), output: out });
+            }
             let jobs = retryable_jobs(&build);
             if jobs.is_empty() {
                 let b = client.rebuild(&pipeline, number).await?;

@@ -33,7 +33,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 | `add_review_comment` | `{file, line, endLine?, body}`: a line comment on the attempt's changes |
 | `update_ticket` | `{title?, description?}`: rewrites this session's own ticket |
 | `list_secrets`, `request_secret`, `run_with_secrets`, `write_secret_file` | secrets (below) |
-| `ci_runs`, `ci_failed_logs`, `change_request_view`, `change_request_diff`, `change_request_comment`, `change_request_open`, `change_request_merge`, `issue_view`, `issue_comment`, `issue_create` | the project's forge and CI (see "CI and pull requests") |
+| `ci_runs`, `ci_failed_logs`, `ci_jobs`, `ci_retry`, `change_request_view`, `change_request_diff`, `change_request_comment`, `change_request_open`, `change_request_merge`, `issue_view`, `issue_comment`, `issue_create` | the project's forge and CI (see "CI and pull requests") |
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save`, `workflow_run`, `workflow_export`, `workflow_import` | workflows: the node catalog (each MCP server's tools are in it as `mcp:<server>/<tool>`), documents, runs and transfer. `workflow_save` proposes a new version for the person to accept, or saves a new workflow, which starts disabled |
 | `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs`, `list_todos` | the PM's view: every project's open tickets, work in flight with PR and CI, the Inbox and running sessions; ticket search; a session's state and last messages; workflow runs; the person's todo list (read-only) |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (pinned ones go in every briefing) and each PM conversation's journal entry |
@@ -213,10 +213,17 @@ Use PDT's forge tools rather than a forge CLI; they act as the person's forge lo
 - `change_request_open`: opens the pull request for your pushed branch (`title`, `body`, `base?`, `draft?`).
   `change_request_view`: it, with comments and reviews. `change_request_comment`: answers on it (`replyTo` answers a
   review comment in its thread). `change_request_diff`: a pull request's diff by number.
-- Re-running CI: re-run only the newest run on the pull request's head commit (match its commit to the head), or
-  push. Re-running an older commit's jobs cancels the head's run when CI keeps one run per branch, and the pull
-  request then waits on nothing. PDT re-runs a head whose CI was cancelled once by itself, then puts the ticket in the
-  Inbox as stalled.
+- `ci_jobs`: the jobs of the newest runs on your ticket attempt's head commit (the pull request's head, else the
+  pushed branch's): each job's `id`, name, step key, state, whether it is `retryable`, how many `retries` it had on
+  this head, and the end of a failed job's log. `ci_retry`: runs chosen jobs again (`jobs`: ids, step keys or names;
+  `failed: true` for every failed one; `provider` and `runId` to narrow it), a Buildkite step or a GitHub Actions job
+  on its own (GitLab CI retries the pipeline's failed jobs together). It needs no confirmation and shows on the
+  ticket's timeline.
+- Retrying CI: fix a real failure and push; retry only a flake outside your change, and only its job with
+  `ci_retry`, never a whole build, a CI CLI (`gh run rerun`, `bk`) or an older commit's run (re-running an older
+  commit's jobs cancels the head's run when CI keeps one run per branch, and the pull request then waits on nothing;
+  `ci_retry` refuses it). Each job gets at most two retries per head commit; then fix the cause or ask the person.
+  PDT re-runs a head whose CI was cancelled once by itself, then puts the ticket in the Inbox as stalled.
 - `change_request_merge`: asks for the merge again after it dropped out (the merge queue, failed CI) and you pushed
   the fix; only for a pull request that was already set to merge. The project's merge policy applies.
 - `issue_view`, `issue_comment`: read and comment on issues. `issue_create`: files one (with `ticket`, from that
