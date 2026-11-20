@@ -21,6 +21,7 @@ fn to_event(r: &SqliteRow) -> Result<ConversationEvent, StoreError> {
         item_id: r.try_get("item_id")?,
         turn_id: r.try_get("turn_id")?,
         event,
+        output_bytes: None,
     })
 }
 
@@ -115,7 +116,15 @@ impl Store {
                 .fetch_one(&mut *tx)
                 .await?;
         tx.commit().await?;
-        Ok(ConversationEvent { seq, pos, ts: e.ts, item_id: e.item_id.map(String::from), turn_id, event })
+        Ok(ConversationEvent {
+            seq,
+            pos,
+            ts: e.ts,
+            item_id: e.item_id.map(String::from),
+            turn_id,
+            event,
+            output_bytes: None,
+        })
     }
 
     /// An event as stored: redacted (the event, its body), and its raw frames capped and redacted.
@@ -226,6 +235,34 @@ impl Store {
         );
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).bind(limit).fetch_all(&self.pool).await?;
         rows.iter().map(to_event).collect()
+    }
+
+    /// The `limit` events just before `pos` (in conversation order), oldest first.
+    pub async fn session_events_before(
+        &self,
+        session_id: &str,
+        pos: i64,
+        limit: i64,
+    ) -> Result<Vec<ConversationEvent>, StoreError> {
+        let sql = format!(
+            "SELECT * FROM (SELECT {COLUMNS} FROM session_events WHERE session_id = ? AND pos < ? \
+             ORDER BY pos DESC LIMIT ?) ORDER BY pos"
+        );
+        let rows =
+            sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).bind(pos).bind(limit).fetch_all(&self.pool).await?;
+        rows.iter().map(to_event).collect()
+    }
+
+    /// The event of one item, as it is now.
+    pub async fn session_event_of_item(
+        &self,
+        session_id: &str,
+        item_id: &str,
+    ) -> Result<Option<ConversationEvent>, StoreError> {
+        let sql = format!("SELECT {COLUMNS} FROM session_events WHERE session_id = ? AND item_id = ?");
+        let row =
+            sqlx::query(sqlx::AssertSqlSafe(sql)).bind(session_id).bind(item_id).fetch_optional(&self.pool).await?;
+        row.as_ref().map(to_event).transpose()
     }
 
     /// Every event of one kind, in conversation order.
@@ -402,6 +439,13 @@ mod tests {
         let moved = all.iter().find(|e| e.pos == 3).unwrap();
         assert!(moved.seq > 3, "the moved row is sent again: {}", moved.seq);
         assert_eq!(store.list_session_events("s1", 3, 100).await.unwrap().len(), 2, "both the new and the moved row");
+        // Pages back from a place, oldest first; an item as it is now.
+        let page = |v: Vec<pdt_core::conversation::ConversationEvent>| v.iter().map(|e| e.pos).collect::<Vec<_>>();
+        assert_eq!(page(store.session_events_before("s1", 3, 100).await.unwrap()), [1, 2]);
+        assert_eq!(page(store.session_events_before("s1", 3, 1).await.unwrap()), [2]);
+        assert_eq!(page(store.session_events_before("s1", 1, 100).await.unwrap()), Vec::<i64>::new());
+        assert_eq!(store.session_event_of_item("s1", "t:t1").await.unwrap().map(|e| e.event), Some(done.clone()));
+        assert_eq!(store.session_event_of_item("s1", "nope").await.unwrap(), None);
         assert_eq!(store.insert_session_events_after("s1", "nope", &[ev(None, None, lost)]).await.unwrap(), 0);
         store.delete_session("s1").await.unwrap();
         assert!(store.list_session_events("s1", 0, 100).await.unwrap().is_empty(), "events go with the session");

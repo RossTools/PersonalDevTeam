@@ -1,7 +1,7 @@
 import { useCallback, useMemo, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessagesSquare } from 'lucide-react';
-import { EmptyState, Skeleton, type ApprovalAnswer } from '@ui';
+import { Button, EmptyState, Skeleton, type ApprovalAnswer } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, type SessionPatch } from '../api/client';
 import { answerRequest } from '../common/answerRequest';
@@ -131,6 +131,10 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
   const searchFiles = useCallback((q: string) => api.sessionFiles(session.id, q), [session.id]);
   const upload = useCallback((file: File) => api.uploadAttachment(session.id, file), [session.id]);
   const imageUrl = useCallback((id: string) => api.attachmentUrl(session.id, id), [session.id]);
+  const fullOutput = useCallback(async (item: string) => {
+    const [e] = await api.sessionEventOfItem(session.id, item);
+    return e?.event.kind === 'tool_call' ? e.event.output ?? null : null;
+  }, [session.id]);
   // Never automatic: a turn cut off by a restart or a crash waits for this click.
   const continueTurn = () => runAction(() => send(CONTINUE_PROMPT));
 
@@ -148,6 +152,9 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
         onContinue={continueTurn}
         refs={refs}
         remember={`conversation:${session.id}`}
+        hasEarlier={conv.hasEarlier}
+        onLoadEarlier={conv.loadEarlier}
+        fullOutput={fullOutput}
         empty={
           // Never a blank pane while the stored messages come in (PDT-619).
           !conv.ready ? <Skeleton lines={6} label="Loading the conversation" /> : empty ?? (
@@ -168,7 +175,13 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
           {stopped}
         </p>
       )}
-      {conv.status === 'reconnecting' && (
+      {conv.slow && !conv.ready ? (
+        // Never only a skeleton for long: what came so far shows, and Retry makes a new connection (PDT-630).
+        <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">
+          Still loading…{' '}
+          <Button variant="ghost" size="sm" compact onClick={conv.retry}>Retry</Button>
+        </p>
+      ) : conv.status === 'reconnecting' && (
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}
       <PinnedApprovalBar rows={conv.rows} />

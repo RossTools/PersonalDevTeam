@@ -250,11 +250,19 @@ ticket, on `@ui` `Chip`, also in the Inbox; `isTicketKey` in `tickets/model.ts` 
 inline-code file paths links to the file viewer once the session's folder has them, SHAs muted, tables framed with
 status chips. Without it (ticket descriptions, notes) Markdown only links ticket keys.
 
-Opening a conversation: `useConversation` holds the events socket's replay until `ready` and applies it as one
-action, showing a skeleton until then; the last few conversations' models stay in memory, so one opened again shows
-what it had at once and asks only for what came after. `MessageList` renders the latest `WINDOW` blocks, and earlier
-ones a window at a time as the reader scrolls near the top (or clicks Show earlier messages), keeping the block that
-was first in place on screen; the first block shown stays fixed as new ones arrive. Each block re-renders only when
+Opening a conversation: the events socket (`conversations/routes.rs` `replay`) sends the events after the client's
+`after`, unless there are more than `TAIL` (200) of them or `after` is 0: then a `tail` frame (`from`, the earliest
+`pos` it sends, and whether there are rows before it) and the latest `TAIL` events by place, in seq order, so a
+connection that drops part way asks for the rest by seq. Every event frame cuts a tool call's output to
+`OUTPUT_PREVIEW` (`outputBytes` says how long the whole is; `GET …/events?item=` reads it whole). The client's model
+drops rows before `from` and ignores events before it; `useConversation.loadEarlier` reads the page before it
+(`GET …/events?before=<pos>`). `useConversation` holds a replay until `ready` and applies it as one action, showing a
+skeleton until then; `EventsSocket` drops a connection that sends nothing for `stallMs` before `ready` (opening or
+replaying) and makes a new one, and after `readyMs` the hook applies what came so far and the view offers Retry. The
+last few conversations' models stay in memory, so one opened again shows what it had at once and asks only for what
+came after. `MessageList` renders the latest `WINDOW` blocks, and earlier ones a window at a time as the reader
+scrolls near the top (or clicks Show earlier messages), then the server's earlier pages, keeping the block that was
+first in place on screen; the first block shown stays fixed as new ones arrive. Each block re-renders only when
 its rows or streamed text change (`BlockView`, `reuseBlocks`). A scrolled-up position is kept as the distance from
 the bottom, and enough windows are shown to get back there.
 

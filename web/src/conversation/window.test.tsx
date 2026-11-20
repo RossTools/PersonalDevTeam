@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../api/gen/AgentEvent';
@@ -9,7 +9,7 @@ import { renderWithQuery, stubApi } from '../test-utils';
 import { ConversationView } from './ConversationView';
 import { FakeSocket } from './fakeSocket';
 import { MessageList, WINDOW, type MessageListProps } from './MessageList';
-import { useConversation } from './useConversation';
+import { EARLIER_PAGE, useConversation } from './useConversation';
 
 vi.mock('../common/Markdown', () => ({
   Markdown: ({ children }: { children: string }) => <p>{children}</p>,
@@ -73,6 +73,31 @@ describe('a long conversation opens on its latest messages', () => {
     expect(screen.queryByRole('button', { name: 'Show earlier messages' })).not.toBeInTheDocument();
   });
 
+  it('once every block held is shown, reads the page before them from the server (PDT-630)', async () => {
+    layout();
+    const onLoadEarlier = vi.fn();
+    const { rerender } = render(<MessageList {...props(messages(30), { hasEarlier: true, onLoadEarlier })} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Show earlier messages' }));
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+    rerender(<MessageList {...props(messages(30), { hasEarlier: false, onLoadEarlier })} />);
+    expect(screen.queryByRole('button', { name: 'Show earlier messages' })).not.toBeInTheDocument();
+  });
+
+  it('a tool call sent with a preview of its output reads the whole when asked', async () => {
+    const call: ConversationEvent = {
+      seq: 1, pos: 1, ts: 1, itemId: 't:1', outputBytes: 40_000,
+      event: { kind: 'tool_call', id: '1', tool: 'Bash', title: 'cat big', input: { command: 'cat big' }, status: 'done', output: 'the start' } as AgentEvent,
+    };
+    const fullOutput = vi.fn(async () => 'the start and the rest');
+    render(<MessageList {...props([call], { fullOutput })} />);
+    await userEvent.click(screen.getByRole('button', { name: /cat big/ }));
+    expect(screen.getByText('the start')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Show all output/ }));
+    expect(fullOutput).toHaveBeenCalledWith('t:1');
+    expect(await screen.findByText('the start and the rest')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Show all output/ })).not.toBeInTheDocument();
+  });
+
   it('keeps the earliest block shown as new ones arrive, and follows the latest while at the bottom', () => {
     layout();
     const { rerender } = render(<MessageList {...props(messages(60))} />);
@@ -129,6 +154,76 @@ describe('opening a conversation', () => {
     });
     expect(screen.queryByRole('status', { name: 'Loading the conversation' })).not.toBeInTheDocument();
     expect(screen.getByText('row 1')).toBeInTheDocument();
+  });
+
+  it('a replay that takes too long shows what came so far, with Retry; one that stalls is made again (PDT-630)', () => {
+    vi.useFakeTimers();
+    try {
+      stubApi({ 'GET /api/agents/claude/capabilities': { conversation: true, permissionModes: [], models: [], commands: [] } });
+      renderWithQuery(<ConversationView session={session} socketFactory={(u) => new FakeSocket(u)} />);
+      const server = FakeSocket.all[0];
+      act(() => {
+        server.open();
+        for (let i = 1; i <= 3; i++) {
+          vi.advanceTimersByTime(3000);
+          server.send({ type: 'event', event: message(i) });
+        }
+        vi.advanceTimersByTime(1000);
+      });
+      // Ten seconds and no `ready`: no skeleton, what came shows, and the rest applies as it comes.
+      expect(screen.queryByRole('status', { name: 'Loading the conversation' })).not.toBeInTheDocument();
+      expect(screen.getByText('row 3')).toBeInTheDocument();
+      expect(screen.getByText(/Still loading/)).toBeInTheDocument();
+      act(() => server.send({ type: 'event', event: message(4) }));
+      expect(screen.getByText('row 4')).toBeInTheDocument();
+      // Retry: a new connection at once, asking for what came after what it has.
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+        vi.advanceTimersByTime(0);
+      });
+      const again = FakeSocket.all[1];
+      expect(again.url).toMatch(/after=4$/);
+      // It stalls before opening: dropped and made again, with what came kept on screen.
+      act(() => vi.advanceTimersByTime(8000 + 1000));
+      expect(FakeSocket.all).toHaveLength(3);
+      expect(screen.getByText('row 4')).toBeInTheDocument();
+      act(() => {
+        FakeSocket.all[2].open();
+        FakeSocket.all[2].send({ type: 'ready' });
+      });
+      expect(screen.queryByText(/Still loading/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens on the latest events and reads earlier ones a page at a time (PDT-630)', async () => {
+    const calls = stubApi({ 'GET /api/sessions/s1/events': (c: { path: string }) => {
+      const before = Number(new URL(c.path, 'http://x').searchParams.get('before'));
+      return messages(before - 1).slice(-EARLIER_PAGE);
+    } });
+    const factory = (u: string) => new FakeSocket(u);
+    const h = renderHook(() => useConversation('s1', factory));
+    act(() => {
+      FakeSocket.all[0].open();
+      FakeSocket.all[0].send({ type: 'tail', from: 401, earlier: true });
+      for (const e of messages(450).slice(400)) FakeSocket.all[0].send({ type: 'event', event: e });
+      FakeSocket.all[0].send({ type: 'ready' });
+    });
+    expect(h.result.current.rows).toHaveLength(50);
+    expect(h.result.current.hasEarlier).toBe(true);
+    act(() => h.result.current.loadEarlier());
+    // Asked once while a page is being read.
+    act(() => h.result.current.loadEarlier());
+    await waitFor(() => expect(h.result.current.rows).toHaveLength(250));
+    expect(calls.map((c) => c.path)).toEqual([`/api/sessions/s1/events?before=401&limit=${EARLIER_PAGE}`]);
+    expect(h.result.current.rows[0].seq).toBe(201);
+    act(() => h.result.current.loadEarlier());
+    await waitFor(() => expect(h.result.current.rows).toHaveLength(450));
+    expect(h.result.current.hasEarlier).toBe(true);
+    act(() => h.result.current.loadEarlier());
+    await waitFor(() => expect(h.result.current.hasEarlier).toBe(false));
+    expect(h.result.current.rows).toHaveLength(450);
   });
 
   it('one opened lately shows what it had at once, and asks only for what came after', () => {

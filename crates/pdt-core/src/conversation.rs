@@ -26,6 +26,11 @@ pub const MAX_TOOL_OUTPUT: usize = 1024 * 1024;
 pub const MAX_RAW: usize = 64 * 1024;
 /// The longest message the composer sends (64 KB).
 pub const MAX_MESSAGE: usize = 64 * 1024;
+/// The most of a tool call's output a viewer is sent with the call (32 KB); the rest comes when asked for.
+pub const OUTPUT_PREVIEW: usize = 32 * 1024;
+/// How many of a conversation's latest events a viewer opening it is sent at first; earlier ones come a page at a
+/// time as it scrolls up.
+pub const TAIL: i64 = 200;
 
 /// How an agent session is shown and driven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
@@ -432,6 +437,28 @@ pub struct ConversationEvent {
     #[ts(optional)]
     pub turn_id: Option<String>,
     pub event: AgentEvent,
+    /// Sent with only a preview of its tool call's output (`preview`): the whole output's length in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub output_bytes: Option<u64>,
+}
+
+impl ConversationEvent {
+    /// The event as a viewer is sent it: a tool call's output longer than `max` cut to a preview, with
+    /// `output_bytes` saying how long the whole is.
+    pub fn preview(mut self, max: usize) -> Self {
+        if let AgentEvent::ToolCall { output: Some(out), .. } = &mut self.event
+            && out.len() > max
+        {
+            let mut cut = max;
+            while !out.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            self.output_bytes = Some(out.len() as u64);
+            out.truncate(cut);
+        }
+        self
+    }
 }
 
 /// Which text field a streaming delta extends.
@@ -558,6 +585,14 @@ pub enum ConversationServerMessage {
     },
     State {
         state: ConversationState,
+    },
+    /// Sent before a replay of only the latest events, instead of all those the client asked for: the events from
+    /// `from` (a `pos`) on follow. Rows the client has before `from` are not followed any more; `earlier`: there are
+    /// rows before it, read a page at a time (`GET …/events?before=<from>`).
+    Tail {
+        #[ts(type = "number")]
+        from: i64,
+        earlier: bool,
     },
     /// Sent once after the stored events the client asked for; live frames follow.
     Ready {},
@@ -687,6 +722,39 @@ pub fn valid_message(text: &str, images: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_tool_output_is_sent_as_a_preview_that_says_how_long_the_whole_is() {
+        let call = |output: &str| ConversationEvent {
+            seq: 1,
+            pos: 1,
+            ts: 0,
+            item_id: Some("t:1".into()),
+            turn_id: None,
+            event: AgentEvent::ToolCall {
+                id: "1".into(),
+                tool: "Bash".into(),
+                title: String::new(),
+                input: Value::Null,
+                status: ToolStatus::Done,
+                output: Some(output.into()),
+                exit_code: None,
+                diff: None,
+                parent_id: None,
+            },
+            output_bytes: None,
+        };
+        let short = call("ok").preview(4);
+        assert_eq!(short, call("ok"));
+        // Cut on a character boundary: "é" is two bytes.
+        let long = call("abcé-and-more").preview(4);
+        assert_eq!(long.output_bytes, Some(14));
+        let AgentEvent::ToolCall { output, .. } = &long.event else { unreachable!() };
+        assert_eq!(output.as_deref(), Some("abc"));
+        let json = serde_json::to_value(&long).unwrap();
+        assert_eq!(json["outputBytes"], 14);
+        assert!(serde_json::to_value(&short).unwrap().get("outputBytes").is_none());
+    }
 
     #[test]
     fn the_restart_notice_names_the_stopped_tasks() {

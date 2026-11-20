@@ -833,7 +833,12 @@ async fn serve(state: &AppState) -> u16 {
 
 /// What the events socket replays, up to `ready`.
 async fn replayed(port: u16, id: &str) -> Vec<Value> {
-    let url = format!("ws://127.0.0.1:{port}/api/sessions/{id}/events?after=0");
+    replayed_after(port, id, 0).await
+}
+
+/// What the events socket replays to a viewer that has seen up to seq `after`, up to `ready`.
+async fn replayed_after(port: u16, id: &str, after: i64) -> Vec<Value> {
+    let url = format!("ws://127.0.0.1:{port}/api/sessions/{id}/events?after={after}");
     let (mut ws, _) = tokio_tungstenite::connect_async(url).await.unwrap();
     let mut frames = Vec::new();
     loop {
@@ -845,6 +850,85 @@ async fn replayed(port: u16, id: &str) -> Vec<Value> {
             return frames;
         }
     }
+}
+
+#[tokio::test]
+async fn a_long_conversation_replays_only_its_latest_events_and_pages_back_from_there() {
+    use pdt_core::conversation::{AgentEvent, MessagePhase, OUTPUT_PREVIEW, TAIL, ToolStatus};
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let port = serve(&env.state).await;
+    let id = new_conversation(&env, json!({})).await["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    let st = &env.state.store;
+    let n = TAIL + 50;
+    for i in 1..=n {
+        let say =
+            AgentEvent::AgentMessage { id: format!("m{i}"), markdown: format!("row {i}"), phase: MessagePhase::Final };
+        let item = format!("m:{i}");
+        let e = pdt_store::NewEvent { ts: i, item_id: Some(&item), turn_id: None, event: &say, raw: None };
+        st.upsert_session_event(&id, e).await.unwrap();
+    }
+    let long = "x".repeat(OUTPUT_PREVIEW + 10);
+    let tool = AgentEvent::ToolCall {
+        id: "t1".into(),
+        tool: "Bash".into(),
+        title: "cat big".into(),
+        input: json!({}),
+        status: ToolStatus::Done,
+        output: Some(long.clone()),
+        exit_code: None,
+        diff: None,
+        parent_id: None,
+    };
+    let e = pdt_store::NewEvent { ts: n + 1, item_id: Some("t:t1"), turn_id: None, event: &tool, raw: None };
+    st.upsert_session_event(&id, e).await.unwrap();
+    // An early row changed late: newest by seq, but not among the latest by place.
+    let edited =
+        AgentEvent::AgentMessage { id: "m1".into(), markdown: "row 1, edited".into(), phase: MessagePhase::Final };
+    let e = pdt_store::NewEvent { ts: n + 2, item_id: Some("m:1"), turn_id: None, event: &edited, raw: None };
+    let top = st.upsert_session_event(&id, e).await.unwrap().seq;
+    let all = events(&env, &id).await;
+    let mut by_pos: Vec<i64> = all.iter().map(|e| e["pos"].as_i64().unwrap()).collect();
+    by_pos.sort();
+    let from = by_pos[by_pos.len() - TAIL as usize];
+
+    // Opened fresh: a `tail` frame, then the latest TAIL events by place (in seq order), then the state and `ready`.
+    let frames = replayed(port, &id).await;
+    assert_eq!(frames[0], json!({"type": "tail", "from": from, "earlier": true}));
+    let sent: Vec<&Value> = frames.iter().filter(|f| f["type"] == "event").map(|f| &f["event"]).collect();
+    assert_eq!(sent.len(), TAIL as usize);
+    assert!(sent.iter().all(|e| e["pos"].as_i64().unwrap() >= from), "only the latest by place");
+    let seqs: Vec<i64> = sent.iter().map(|e| e["seq"].as_i64().unwrap()).collect();
+    assert!(seqs.is_sorted(), "{seqs:?}");
+    assert_eq!(frames.last().unwrap()["type"], "ready");
+    // The long output is a preview that says how long the whole is.
+    let big = sent.iter().find(|e| e["itemId"] == "t:t1").unwrap();
+    assert_eq!(big["event"]["output"].as_str().unwrap().len(), OUTPUT_PREVIEW);
+    assert_eq!(big["outputBytes"], long.len());
+
+    // Earlier rows a page at a time, back from `from`, oldest first.
+    let (s, page) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?before={from}&limit=30"), None).await;
+    assert_eq!(s.as_u16(), 200, "{page}");
+    let pos: Vec<i64> = page.as_array().unwrap().iter().map(|e| e["pos"].as_i64().unwrap()).collect();
+    assert_eq!(pos, by_pos[by_pos.len() - TAIL as usize - 30..by_pos.len() - TAIL as usize]);
+    let (_, page) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?before={}", by_pos[2]), None).await;
+    assert_eq!(page.as_array().unwrap().len(), 2);
+    assert_eq!(page[0]["event"]["markdown"], "row 1, edited");
+    // The whole output, when asked for.
+    let (_, whole) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?item=t:t1"), None).await;
+    assert_eq!(whole[0]["event"]["output"].as_str().unwrap().len(), long.len());
+    assert!(whole[0].get("outputBytes").is_none());
+    let (_, none) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?item=nope"), None).await;
+    assert_eq!(none, json!([]));
+
+    // A viewer catching up on a few events gets just those; one that missed more than TAIL starts over from the tail.
+    let frames = replayed_after(port, &id, top - 2).await;
+    let types: Vec<&str> = frames.iter().map(|f| f["type"].as_str().unwrap()).collect();
+    assert_eq!(types, ["event", "event", "state", "ready"]);
+    let frames = replayed_after(port, &id, 3).await;
+    assert_eq!(frames[0]["type"], "tail");
+    assert_eq!(frames.iter().filter(|f| f["type"] == "event").count(), TAIL as usize);
 }
 
 #[tokio::test]

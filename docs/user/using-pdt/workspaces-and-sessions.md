@@ -98,6 +98,8 @@ An agent session is one of:
   PDT's own actions show as cards, below) while the agent's text stays outside them, each edit's diff, and a **Changes** summary per turn. Questions and permission requests show as cards with
   **Allow** and **Deny**. Type `@` to mention a file, `/` for the agent's commands; paste or attach images. A long
   conversation opens on its latest messages; scroll up (or choose **Show earlier messages**) for the ones before.
+  A very long tool output shows its start, with **Show all output** for the rest. When a conversation is slow to
+  load (a slow connection), what has come so far shows with **Still loading… Retry**.
   An image on a message has a download button in its corner (always shown on a phone, on hover elsewhere).
 - **A terminal**: the agent's own interface, as in your terminal app.
 
