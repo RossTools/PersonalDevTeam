@@ -45,6 +45,12 @@ export const sessionsApi = {
   /** A conversation's stored events after `after`, oldest first. */
   listSessionEvents: (id: string, q: { after?: number; limit?: number } = {}) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString(q)}`),
+  /** The `limit` stored events just before place `before` (a `pos`), oldest first; long tool output is a preview. */
+  sessionEventsBefore: (id: string, before: number, limit: number) =>
+    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ before, limit })}`),
+  /** One item's stored event, whole (`[]` when there is none). */
+  sessionEventOfItem: (id: string, item: string) =>
+    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ item })}`),
   /** A conversation's newest `last` stored events, oldest first. */
   lastSessionEvents: (id: string, last: number) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ last })}`),

@@ -14,6 +14,7 @@ import type { PendingMessage } from '../api/gen/PendingMessage';
 import { downloadUrl } from '../common/download';
 import { focusLost } from '../common/focusLost';
 import { Markdown } from '../common/Markdown';
+import { formatBytes } from '../common/text';
 import { readViewState, useViewKey, writeViewState } from '../common/viewState';
 import { MarkdownRefsContext, type MarkdownRefs } from '../common/markdownRefs';
 import { blockItemIds, buildBlocks, currentTool, reuseBlocks, turnStartedAt, type Block, type RowNode } from './blocks';
@@ -64,6 +65,11 @@ export interface MessageListProps {
   onContinue?: () => Promise<unknown>;
   /** Shown when there is nothing yet. */
   empty?: ReactNode;
+  /** There are rows before the first in `rows`, read with `onLoadEarlier` (PDT-630). */
+  hasEarlier?: boolean;
+  onLoadEarlier?: () => void;
+  /** A tool call's whole output, when the row has only a preview (`outputBytes`). */
+  fullOutput?: (itemId: string) => Promise<string | null>;
   /** Where the conversation is: its ticket keys, PRs, file paths and SHAs show as pills and links (PDT-382). */
   refs?: MarkdownRefs | null;
   /**
@@ -85,6 +91,7 @@ interface ListContext {
   imageUrl?: (attachmentId: string) => string;
   /** The rows each request with rows asked (`inbox_decide`), by its arguments (`inputKey`): its call's card shows them. */
   askedRows: Map<string, DecideRow[]>;
+  fullOutput?: (itemId: string) => Promise<string | null>;
 }
 const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude', askedRows: new Map() });
 
@@ -160,12 +167,35 @@ function pdtCall(node: RowNode, streams: Streams, askedRows?: ListContext['asked
   return { tool: ev.tool, input: ev.input, status: ev.status, output, ...(rows ? { rows } : {}) };
 }
 
+/** A tool call's output sent as a preview: the rest when asked for. */
+function MoreOutput({ itemId, bytes, onOutput }: { itemId: string; bytes: number; onOutput: (output: string) => void }) {
+  const { fullOutput } = useContext(ListCtx);
+  const [busy, setBusy] = useState(false);
+  if (!fullOutput) return null;
+  const more = () => {
+    setBusy(true);
+    fullOutput(itemId)
+      .then((o) => { if (o !== null) onOutput(o); })
+      .catch(() => {})
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Button variant="ghost" size="sm" onClick={more} disabled={busy} className="self-start text-meta text-muted-foreground">
+      Show all output ({formatBytes(bytes)})
+    </Button>
+  );
+}
+
 function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   const ev = node.row.event as Ev<'tool_call'>;
   const { askedRows } = useContext(ListCtx);
+  // The whole output, once read: the row came with a preview of it.
+  const [whole, setWhole] = useState<{ seq: number; output: string } | null>(null);
   // PDT's own actions show as cards (PDT-382); in a sub-agent, as rows like the rest.
   if (isCardTool(ev.tool) && !ev.parentId) return <PdtToolCard call={pdtCall(node, streams, askedRows)} />;
-  const output = (node.row.itemId && streams[node.row.itemId]?.output) || ev.output;
+  const streamed = node.row.itemId ? streams[node.row.itemId]?.output : undefined;
+  const cut = !streamed && node.row.outputBytes != null && whole?.seq !== node.row.seq;
+  const output = streamed || (whole?.seq === node.row.seq ? whole.output : ev.output);
   // A lookup names the tickets it read as pills (PDT-503).
   const read = ev.status === 'done' ? lookedUp([{ tool: ev.tool, input: ev.input, output }]) : null;
   // A file change shows its diff instead of the raw input, and its output only when it failed.
@@ -193,6 +223,9 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
             {input && <ToolOutput label="Input">{input}</ToolOutput>}
             {diff && <DiffViewer diff={diff} hideHeaders={!!ev.title && parseDiff(diff).length === 1} className="max-h-96 overflow-auto" />}
             {shownOutput && <ToolOutput label="Output" tone={ev.status === 'failed' ? 'error' : 'default'}>{shownOutput}</ToolOutput>}
+            {shownOutput && cut && node.row.itemId && (
+              <MoreOutput itemId={node.row.itemId} bytes={node.row.outputBytes ?? 0} onOutput={(o) => setWhole({ seq: node.row.seq, output: o })} />
+            )}
           </>
         ) : undefined
       }
@@ -518,6 +551,9 @@ export function MessageList({
   empty,
   refs = null,
   remember,
+  hasEarlier = false,
+  onLoadEarlier,
+  fullOutput,
   className,
 }: MessageListProps) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -566,30 +602,38 @@ export function MessageList({
     return asked.current;
   }, [rows]);
   const ctx = useMemo<ListContext>(
-    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl, askedRows }),
-    [turnDiffs, continueTurn, continueLatest, agent, imageUrl, askedRows],
+    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl, askedRows, fullOutput }),
+    [turnDiffs, continueTurn, continueLatest, agent, imageUrl, askedRows, fullOutput],
   );
+  // Earlier blocks than any held: read from the server (PDT-630). They show in full once in.
+  const earlier = first === 0 && hasEarlier && !!onLoadEarlier;
 
   const toBottom = useCallback(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, []);
-  /** Shows the WINDOW blocks before the earliest shown, keeping what the reader sees where it is. */
+  /**
+   * Shows the WINDOW blocks before the earliest shown (or reads the page before them), keeping what the reader sees
+   * where it is.
+   */
   const showEarlier = useCallback(() => {
-    if (first === 0) return;
+    if (first === 0 && !earlier) return;
     const key = shown[0]?.key;
     const top = key === undefined ? null : blockTop(content.current, key);
     anchor.current = key !== undefined && top !== null ? { key, top } : null;
-    setStart(Math.max(0, first - WINDOW));
-  }, [first, shown]);
+    if (first > 0) setStart(Math.max(0, first - WINDOW));
+    else onLoadEarlier?.();
+  }, [first, shown, earlier, onLoadEarlier]);
   // Earlier blocks came in: the one that was first stays where it was on screen.
+  const firstKey = shown[0]?.key;
   useLayoutEffect(() => {
     const el = scroller.current;
     const a = anchor.current;
+    if (!a || a.key === firstKey) return;
     anchor.current = null;
-    const top = a ? blockTop(content.current, a.key) : null;
-    if (el && a && top !== null && !stick.current) el.scrollTop += top - a.top;
-  }, [first]);
+    const top = blockTop(content.current, a.key);
+    if (el && top !== null && !stick.current) el.scrollTop += top - a.top;
+  }, [firstKey]);
   // Back where it was left: the blocks it needs shown first.
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -598,9 +642,13 @@ export function MessageList({
       setStart(Math.max(0, first - WINDOW));
       return;
     }
+    if (el.scrollHeight < saved + el.clientHeight && earlier) {
+      onLoadEarlier?.();
+      return;
+    }
     restored.current = true;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight - saved);
-  }, [rows.length, saved, first]);
+  }, [rows.length, saved, first, earlier, onLoadEarlier]);
   const onScroll = () => {
     const el = scroller.current;
     if (!el || !restored.current) return;
@@ -609,7 +657,8 @@ export function MessageList({
     stick.current = bottom;
     setAtBottom(bottom);
     if (remember) writeViewState(scrollKey, bottom ? undefined : { fromBottom });
-    if (el.scrollTop < EARLIER_PX && first > 0 && !anchor.current) showEarlier();
+    // A page being read keeps the anchor until it is in; asking again only moves the anchor to where it is now.
+    if (el.scrollTop < EARLIER_PX && ((first > 0 && !anchor.current) || earlier)) showEarlier();
   };
   // After every render (new rows, deltas): follow the bottom when pinned.
   useLayoutEffect(() => {
@@ -639,7 +688,7 @@ export function MessageList({
       <div ref={scroller} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto" role="log" aria-label="Conversation" aria-live="off">
         <div ref={content} className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-gutter py-4">
           {nothing && empty}
-          {first > 0 && (
+          {(first > 0 || earlier) && (
             <Button variant="ghost" size="sm" onClick={showEarlier} className="self-center text-meta text-muted-foreground">
               Show earlier messages
             </Button>

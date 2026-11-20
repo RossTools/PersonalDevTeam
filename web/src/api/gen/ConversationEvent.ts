@@ -5,4 +5,8 @@ import type { AgentEvent } from "./AgentEvent";
  * A stored event. An item that changes (a tool call finishing, a request answered) keeps its row and `pos` but gets
  * a new `seq`, so "events after seq N" includes every change while `pos` keeps conversation order.
  */
-export type ConversationEvent = { seq: number, pos: number, ts: number, itemId?: string, turnId?: string, event: AgentEvent, };
+export type ConversationEvent = { seq: number, pos: number, ts: number, itemId?: string, turnId?: string, event: AgentEvent, 
+/**
+ * Sent with only a preview of its tool call's output (`preview`): the whole output's length in bytes.
+ */
+outputBytes?: number, };

@@ -26,6 +26,38 @@ describe('conversation reducer', () => {
     expect(m.maxSeq).toBe(4);
   });
 
+  it('a tail holds only the latest rows; a page of earlier ones goes in before them (PDT-630)', () => {
+    const say = (n: number) => ({ kind: 'notice', level: 'info', text: `n${n}` }) as const;
+    // Had rows 1–3; reconnected after missing many: the server sends only the latest, from place 5.
+    let m = run([
+      { type: 'event', event: ev(1, 1, say(1), 'a') },
+      { type: 'event', event: ev(2, 2, say(2), 'b') },
+      { type: 'event', event: ev(3, 3, say(3), 'c') },
+      'open',
+      { type: 'tail', from: 5, earlier: true },
+      { type: 'event', event: ev(9, 5, say(5), 'e') },
+      { type: 'event', event: ev(10, 6, say(6), 'f') },
+      // An early row changed: not held, so not shown (it comes with its page), but the socket has seen it.
+      { type: 'event', event: ev(11, 2, say(22), 'b') },
+      { type: 'ready' },
+    ]);
+    expect(sortedRows(m).map((r) => r.itemId)).toEqual(['e', 'f']);
+    expect([m.from, m.earlier, m.maxSeq]).toEqual([5, true, 11]);
+    m = reduce(m, { type: 'earlier', events: [ev(4, 3, say(3), 'c'), ev(11, 2, say(22), 'b'), ev(7, 4, say(4), 'd')], more: true });
+    expect(sortedRows(m).map((r) => r.itemId)).toEqual(['b', 'c', 'd', 'e', 'f']);
+    expect([m.from, m.earlier, m.maxSeq]).toEqual([2, true, 11]);
+    // The same in one batch (a replay).
+    const batched = reduce(run([{ type: 'event', event: ev(1, 1, say(1), 'a') }]), {
+      type: 'batch',
+      msgs: [{ type: 'tail', from: 5, earlier: true }, { type: 'event', event: ev(9, 5, say(5), 'e') }, { type: 'event', event: ev(11, 2, say(22), 'b') }],
+    });
+    expect(sortedRows(batched).map((r) => r.itemId)).toEqual(['e']);
+    expect(batched.maxSeq).toBe(11);
+    // The first page: nothing before it.
+    expect(reduce(m, { type: 'earlier', events: [ev(1, 1, say(1), 'a')], more: false }).earlier).toBe(false);
+    expect(reduce(m, { type: 'earlier', events: [], more: true }).earlier).toBe(false);
+  });
+
   it('a gap filled in moves the rows after it: each place shows its newest row once', () => {
     const notice = { kind: 'notice', level: 'info', text: 'n' } as const;
     const m = run([

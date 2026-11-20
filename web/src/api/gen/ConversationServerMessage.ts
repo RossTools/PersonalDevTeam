@@ -6,4 +6,4 @@ import type { DeltaField } from "./DeltaField";
 /**
  * Server → client frames on `WS /api/sessions/{id}/events`.
  */
-export type ConversationServerMessage = { "type": "event", event: ConversationEvent, } | { "type": "delta", itemId: string, field: DeltaField, text: string, } | { "type": "state", state: ConversationState, } | { "type": "ready", };
+export type ConversationServerMessage = { "type": "event", event: ConversationEvent, } | { "type": "delta", itemId: string, field: DeltaField, text: string, } | { "type": "state", state: ConversationState, } | { "type": "tail", from: number, earlier: boolean, } | { "type": "ready", };

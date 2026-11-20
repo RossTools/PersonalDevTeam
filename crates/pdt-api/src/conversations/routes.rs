@@ -18,7 +18,8 @@ use axum::response::{IntoResponse, Response};
 use pdt_agents::adapter::{AdapterError, OpenSpec};
 use pdt_core::conversation::draft::{DRAFT_PROMPT, TicketDraft, draft_schema};
 use pdt_core::conversation::{
-    AgentCapabilities, AnswerRequest, ConversationServerMessage, PendingMessage, PermissionMode, SendMessage,
+    AgentCapabilities, AgentEvent, AnswerRequest, ConversationServerMessage, OUTPUT_PREVIEW, PendingMessage,
+    PermissionMode, SendMessage, TAIL,
 };
 use pdt_core::session::AcpAgentId;
 use pdt_core::session::{AgentKind, Session};
@@ -37,6 +38,13 @@ pub(crate) struct EventsQuery {
     /// The newest `last` events instead (oldest first); `after` and `limit` are ignored.
     #[serde(default)]
     last: Option<i64>,
+    /// The `limit` events just before this `pos` instead (oldest first), long tool output cut to a preview: a viewer
+    /// paging back from the latest.
+    #[serde(default)]
+    before: Option<i64>,
+    /// One item's event as it is now, whole (`[]` when there is none): a tool call's output a page cut.
+    #[serde(default)]
+    item: Option<String>,
 }
 
 /// `GET /api/sessions/{id}/events`: the stored events (JSON), or the live stream (WebSocket upgrade).
@@ -53,6 +61,13 @@ pub(crate) async fn events(
             let c = conv(&st, &session).await?;
             Ok(ws.on_upgrade(move |socket| stream(st, c, socket, after)).into_response())
         }
+        Err(_) if let Some(item) = q.item => {
+            Ok(Json(st.store.session_event_of_item(&id, &item).await?.into_iter().collect::<Vec<_>>()).into_response())
+        }
+        Err(_) if let Some(before) = q.before => {
+            let page = st.store.session_events_before(&id, before, q.limit.unwrap_or(TAIL).clamp(1, PAGE)).await?;
+            Ok(Json(page.into_iter().map(|e| e.preview(OUTPUT_PREVIEW)).collect::<Vec<_>>()).into_response())
+        }
         Err(_) if let Some(last) = q.last => {
             Ok(Json(st.store.recent_session_events(&id, last.clamp(1, PAGE)).await?).into_response())
         }
@@ -63,14 +78,27 @@ pub(crate) async fn events(
     }
 }
 
+/// A tool call whose output is sent as a preview.
+fn long_output(e: &AgentEvent) -> bool {
+    matches!(e, AgentEvent::ToolCall { output: Some(o), .. } if o.len() > OUTPUT_PREVIEW)
+}
+
+/// Sends a frame; an event's long tool output goes as a preview (`OUTPUT_PREVIEW`), the rest fetched when wanted.
 async fn send_frame(socket: &mut WebSocket, m: &ConversationServerMessage) -> bool {
-    match serde_json::to_string(m) {
+    let text = match m {
+        ConversationServerMessage::Event { event } if long_output(&event.event) => {
+            serde_json::to_string(&ConversationServerMessage::Event { event: event.clone().preview(OUTPUT_PREVIEW) })
+        }
+        _ => serde_json::to_string(m),
+    };
+    match text {
         Ok(text) => socket.send(Message::Text(text.into())).await.is_ok(),
         Err(_) => true,
     }
 }
 
-/// Replays stored events after `after`, then the state and any streaming text, then live frames.
+/// Replays stored events after `after` (only the latest `TAIL` when there are more, or `after` is 0), then the state
+/// and any streaming text, then live frames.
 async fn stream(st: AppState, c: Arc<Conv>, mut socket: WebSocket, after: i64) {
     // Subscribed before the replay, so nothing that happens during it is missed (duplicates are skipped by seq).
     let mut rx = c.tx.subscribe();
@@ -129,26 +157,46 @@ async fn stream(st: AppState, c: Arc<Conv>, mut socket: WebSocket, after: i64) {
     }
 }
 
+/// Sends the events after `last`, or, when there are more than `TAIL` of them or `last` is 0, a `tail` frame and the
+/// latest `TAIL` events by place (PDT-630: a long conversation opens on its latest messages, not its whole history).
 async fn replay(st: &AppState, id: &str, socket: &mut WebSocket, last: &mut i64) -> bool {
-    loop {
-        let page = match st.store.list_session_events(id, *last, PAGE).await {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!(session = %id, error = %e, "could not read conversation events");
-                return false;
-            }
-        };
-        let n = page.len() as i64;
-        for event in page {
-            *last = event.seq;
-            if !send_frame(socket, &ConversationServerMessage::Event { event }).await {
-                return false;
+    let read = async {
+        if *last > 0 {
+            let page = st.store.list_session_events(id, *last, TAIL + 1).await?;
+            if page.len() as i64 <= TAIL {
+                return Ok((None, page));
             }
         }
-        if n < PAGE {
-            return true;
+        let mut page = st.store.recent_session_events(id, TAIL + 1).await?;
+        let earlier = page.len() as i64 > TAIL;
+        if earlier {
+            page.remove(0);
+        }
+        let from = page.first().map_or(0, |e| e.pos);
+        // Sent in seq order, like any replay: a connection that drops part way asks again for what came after the
+        // highest seq it got, and gets the rest.
+        page.sort_by_key(|e| e.seq);
+        Ok::<_, pdt_store::StoreError>((Some(ConversationServerMessage::Tail { from, earlier }), page))
+    };
+    let (tail, page) = match read.await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(session = %id, error = %e, "could not read conversation events");
+            return false;
+        }
+    };
+    if let Some(tail) = tail
+        && !send_frame(socket, &tail).await
+    {
+        return false;
+    }
+    for event in page {
+        *last = (*last).max(event.seq);
+        if !send_frame(socket, &ConversationServerMessage::Event { event }).await {
+            return false;
         }
     }
+    true
 }
 
 /// `POST /api/sessions/{id}/messages`.

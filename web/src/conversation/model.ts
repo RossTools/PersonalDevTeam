@@ -21,15 +21,26 @@ export interface ConversationModel {
   state: ConversationState | null;
   /** The current connection has finished replaying. */
   ready: boolean;
+  /**
+   * The earliest place (`pos`) held: the socket sends only a conversation's latest events (PDT-630), and rows before
+   * this come a page at a time (`earlier`). 0: from the start.
+   */
+  from: number;
+  /** There are rows before `from` to page in. */
+  earlier: boolean;
 }
 
 export type ConversationAction =
   | { type: 'open' }
   | { type: 'message'; msg: ConversationServerMessage }
   /** Many messages at once (a connection's replay): one new model, not one per message. */
-  | { type: 'batch'; msgs: ConversationServerMessage[] };
+  | { type: 'batch'; msgs: ConversationServerMessage[] }
+  /** A page of the rows before `from`, oldest first; `more`: there are rows before it too. */
+  | { type: 'earlier'; events: ConversationEvent[]; more: boolean };
 
-export const emptyModel = (): ConversationModel => ({ rows: {}, maxSeq: 0, streams: {}, replayed: null, state: null, ready: false });
+export const emptyModel = (): ConversationModel => ({
+  rows: {}, maxSeq: 0, streams: {}, replayed: null, state: null, ready: false, from: 0, earlier: false,
+});
 
 export const rowKey = (e: ConversationEvent) => e.itemId ?? `#${e.seq}`;
 
@@ -54,10 +65,19 @@ function withoutMessageStreams(streams: Streams): Streams {
 export function reduce(m: ConversationModel, a: ConversationAction): ConversationModel {
   if (a.type === 'open') return { ...m, replayed: {}, ready: false };
   if (a.type === 'batch') return reduceBatch(m, a.msgs);
+  if (a.type === 'earlier') return reduceEarlier(m, a.events, a.more);
   const msg = a.msg;
   switch (msg.type) {
+    case 'tail': {
+      // Only the latest rows follow: the ones held before them are dropped, and paged in again when wanted.
+      const rows: Record<string, ConversationEvent> = {};
+      for (const [k, r] of Object.entries(m.rows)) if (r.pos >= msg.from) rows[k] = r;
+      return { ...m, rows, from: msg.from, earlier: msg.earlier };
+    }
     case 'event': {
       const e = msg.event;
+      // Before what is held (an early row changed): it comes with the page it is in.
+      if (e.pos < m.from) return e.seq > m.maxSeq ? { ...m, maxSeq: e.seq } : m;
       const key = rowKey(e);
       const old = m.rows[key];
       if (old && old.seq >= e.seq) return m;
@@ -116,9 +136,15 @@ function reduceBatch(m: ConversationModel, msgs: ConversationServerMessage[]): C
   for (const msg of msgs) {
     if (msg.type !== 'event') {
       cur = reduce(cur, { type: 'message', msg });
+      // A tail frame replaces the rows: copy them again before changing them.
+      if (msg.type === 'tail') rows = null;
       continue;
     }
     const e = msg.event;
+    if (e.pos < cur.from) {
+      cur = { ...cur, maxSeq: Math.max(cur.maxSeq, e.seq) };
+      continue;
+    }
     const key = rowKey(e);
     const old = cur.rows[key];
     if (old && old.seq >= e.seq) continue;
@@ -130,6 +156,22 @@ function reduceBatch(m: ConversationModel, msgs: ConversationServerMessage[]): C
     cur = { ...cur, rows, maxSeq: Math.max(cur.maxSeq, e.seq), streams };
   }
   return cur;
+}
+
+/**
+ * A page of rows before `from` added (the newer version of a row kept), and `from` moved back to the page's first.
+ * `maxSeq` stays: it says how far the socket got, which a page read from the store says nothing about.
+ */
+function reduceEarlier(m: ConversationModel, events: ConversationEvent[], more: boolean): ConversationModel {
+  const rows = { ...m.rows };
+  let from = m.from;
+  for (const e of events) {
+    const key = rowKey(e);
+    const old = rows[key];
+    if (!old || old.seq < e.seq) rows[key] = e;
+    from = Math.min(from, e.pos);
+  }
+  return { ...m, rows, from, earlier: more && events.length > 0 };
 }
 
 /**
