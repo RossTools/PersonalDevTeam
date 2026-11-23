@@ -4,7 +4,7 @@
 
 use crate::error::ApiError;
 use crate::extract::ApiQuery;
-use crate::files::{FilesQuery, resolve};
+use crate::files::{Checkout, FilesQuery, blocking, resolve};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -25,6 +25,8 @@ const TTL: Duration = Duration::from_secs(5);
 pub(crate) struct FindQuery {
     #[serde(default)]
     worktree_id: Option<String>,
+    #[serde(default)]
+    instance_id: Option<String>,
     #[serde(default)]
     q: String,
 }
@@ -70,19 +72,23 @@ pub(crate) async fn find(
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<FindQuery>,
 ) -> Result<Json<Vec<String>>, ApiError> {
-    let fq = FilesQuery { worktree_id: q.worktree_id, path: String::new() };
-    let (checkout, _, plain) = resolve(&st, &id, &fq).await?;
+    let fq = FilesQuery { worktree_id: q.worktree_id, instance_id: q.instance_id, path: String::new() };
     let query = q.q.trim().to_string();
-    if plain || query.is_empty() {
-        return Ok(Json(vec![]));
-    }
-    let found = tokio::task::spawn_blocking(move || -> Result<Vec<String>, ApiError> {
-        let files = LISTS.get(&checkout, Instant::now(), TTL, || Ok(pdt_git::list_files(&checkout, "")?))?;
-        Ok(rank_paths(&query, &files, MAX_FOUND).into_iter().map(String::from).collect())
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let found = match resolve(&st, &id, &fq).await? {
+        (Checkout::Here { plain: true, .. }, _) => vec![],
+        _ if query.is_empty() => vec![],
+        (Checkout::Here { path, .. }, _) => blocking(move || find_in(&path, &query)).await?,
+        (Checkout::Remote { instance, branch }, _) => {
+            crate::exec::files(&st, &instance, branch, crate::exec::FilesOp::Find { q: query }).await?
+        }
+    };
     Ok(Json(found))
+}
+
+/// The checkout's files best matching `query`, best first. Blocking.
+pub(crate) fn find_in(checkout: &FsPath, query: &str) -> Result<Vec<String>, ApiError> {
+    let files = LISTS.get(checkout, Instant::now(), TTL, || Ok(pdt_git::list_files(checkout, "")?))?;
+    Ok(rank_paths(query, &files, MAX_FOUND).into_iter().map(String::from).collect())
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

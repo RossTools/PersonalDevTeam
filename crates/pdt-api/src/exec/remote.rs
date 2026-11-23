@@ -93,7 +93,7 @@ impl RemoteSide {
 }
 
 /// A remote project's request from its owner, checked, with its body.
-async fn checked<T: serde::de::DeserializeOwned>(
+pub(super) async fn checked<T: serde::de::DeserializeOwned>(
     st: &AppState,
     method: &Method,
     uri: &OriginalUri,
@@ -540,6 +540,46 @@ pub(crate) async fn git_route(
                 .await
                 .map_err(ApiError::internal)?;
             serde_json::json!({ "head": head })
+        }
+        GitOp::Changes { base, fallback, known } => {
+            let (st, branch) = (st.clone(), req.branch.clone());
+            let reply = crate::files::blocking(move || {
+                let wt = super::files::place(&st, &link, Some(&branch))?;
+                super::review::changes_there(&wt, &base, &fallback, known.as_deref())
+            })
+            .await?;
+            serde_json::to_value(reply).map_err(ApiError::internal)?
+        }
+        GitOp::Sides { base, fallback, path, old_path } => {
+            let (st, branch) = (st.clone(), req.branch.clone());
+            let sides = crate::files::blocking(move || {
+                let wt = super::files::place(&st, &link, Some(&branch))?;
+                let (rel, old) = (crate::files::clean_path(&path)?, crate::files::clean_path(&old_path)?);
+                if rel.is_empty() || old.is_empty() {
+                    return Err(ApiError::invalid("name a file"));
+                }
+                crate::review::sides_in(&wt, &base, &fallback, rel, old)
+            })
+            .await?;
+            serde_json::to_value(sides).map_err(ApiError::internal)?
+        }
+        GitOp::ChangedFiles { base, fallback } => {
+            let (st, branch) = (st.clone(), req.branch.clone());
+            let files = crate::files::blocking(move || {
+                let wt = super::files::place(&st, &link, Some(&branch))?;
+                Ok(pdt_git::changed_files(&wt, &base, &fallback)?)
+            })
+            .await?;
+            serde_json::json!(files)
+        }
+        GitOp::MergeCheck { base } => {
+            let (st, branch) = (st.clone(), req.branch.clone());
+            let check = crate::files::blocking(move || {
+                let wt = super::files::place(&st, &link, Some(&branch))?;
+                super::review::merge_check_there(&repo, &wt, &branch, &base)
+            })
+            .await?;
+            serde_json::to_value(check).map_err(ApiError::internal)?
         }
         GitOp::UpdateBase { base, remote_pr } => {
             let (port, output) = crate::workflow::nodes::conflicts::update_without_rules(

@@ -84,11 +84,21 @@ For a ticket placed there:
   confirmations and cards work as usual.
 - **Git.** Bringing the branch up to date with its base at merge time, and removing the worktree when the ticket
   finishes, happen there too.
+- **Files.** In **Files**, pick the ticket's branch (marked **on win-box**) to browse, read, edit, search and download
+  its files on the remote instance, as you would locally.
+- **Changes.** The ticket's **Changes** show its diff on the remote instance, with review comments, **Send feedback**
+  and **Approve** as usual. Merge checks (commits to merge, conflicts with the base) are done there; a remote ticket
+  merges through its pull request.
+- **Overlaps.** The files a remote ticket changes count in overlap checks with the project's other tickets, wherever
+  those run.
 
-Terminals, runs and tests, and the Files and Changes views of a remote ticket aren't available yet: such a ticket's
-agents run as conversations.
+Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
+wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
 
-If the link between the instances drops, the agents keep working. Their PDT tool calls wait and go through once it is
+Terminals, and runs and tests, of a remote ticket aren't available yet: such a ticket's agents run as conversations.
+
+If the link between the instances drops, the agents keep working. Files and Changes of their tickets say the remote
+instance can't be reached until it is back. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
 until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
 left off.

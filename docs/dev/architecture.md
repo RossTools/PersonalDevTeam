@@ -139,8 +139,17 @@ running. An agent's pdt-mcp call to the remote instance (`mcp::post`, `exec::rel
 `/link/exec/mcp` with its token, retried while the owner can't be reached; the owner answers it as its own. Git for a
 remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (`/link/exec/git`, the base merged
 in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
-worktree until Clean up, since the owner can't see what it holds. Terminals, runs, Files and Changes of a remote
-attempt are not remote yet.
+worktree until Clean up, since the owner can't see what it holds. Files, Changes and overlaps of a remote attempt
+are read there (`exec/files.rs`, `exec/review.rs`): `files::resolve` says where a checkout is (`Checkout::Here` or
+`Checkout::Remote`, a remote worktree or `instanceId` for the remote project's checkout), and each Files request is
+one `/link/exec/files` call (downloads stream through `/link/exec/download`) that the remote instance runs with the
+same `files*::*_in` functions in a folder it picks (`exec::files::place`). Changes are one `/link/exec/git` call
+(`GitOp::Changes`) returning the diff and both sides of its files (up to 8 MB), kept on the owner by worktree and
+stamped with a hash of the diff; the next call sends the stamp and gets "unchanged". The merge preview's conflict check
+(`GitOp::MergeCheck`, against the fresher of `base` and `origin/<base>`), Approve's branch head, and
+`refresh_overlaps`' changed files (`GitOp::ChangedFiles`) go there too. Errors the views act on (`file_changed`,
+`path_outside`…) pass through as the remote instance gave them (`PeerError::passed_on`). Terminals and runs of a
+remote attempt are not remote yet.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.

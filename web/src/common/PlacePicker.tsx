@@ -32,7 +32,9 @@ function Places({ projects, place, onPick }: { projects: Project[]; place: Place
         .filter((w) => !w.missing)
         .map((w) => {
           const id = idOf({ projectId: p.id, worktreeId: w.id });
-          return { id, label: w.branch, group: p.name, keywords: [p.name, p.key], icon: icon(id, <GitBranch aria-hidden />) };
+          // A remote attempt's worktree: its files are read on that instance.
+          const detail = w.instance ? `on ${w.instance.name}` : undefined;
+          return { id, label: w.branch, detail, group: p.name, keywords: [p.name, p.key], icon: icon(id, <GitBranch aria-hidden />) };
         }),
     ];
   });
@@ -51,7 +53,10 @@ export function PlacePicker({ projects, place, onPick, className }: {
 }) {
   const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId });
   const project = projects.find((p) => p.id === place.projectId);
-  const where = place.worktreeId ? (worktrees.data?.find((w) => w.id === place.worktreeId)?.branch ?? '…') : REPOSITORY;
+  const worktree = place.worktreeId ? worktrees.data?.find((w) => w.id === place.worktreeId) : undefined;
+  const where = place.worktreeId
+    ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
+    : REPOSITORY;
   const projectName = project?.name ?? 'No project';
   return (
     <Popover

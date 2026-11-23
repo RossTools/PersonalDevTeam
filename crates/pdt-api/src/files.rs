@@ -3,6 +3,10 @@
 //! symlinks included, and `.git` is off limits. Every read and write goes through a handle on the checkout
 //! ([`checkout_dir`]), so a folder swapped for a symlink after the checks still can't lead out. A save names the hash of the text it started from, so a file that
 //! changed on disk since is never overwritten silently.
+//!
+//! A checkout on a remote instance (a remote attempt's worktree, or the remote project's checkout there, PDT-635) is
+//! read and written there: each request is one call over the project link (`exec::files`), and the remote instance
+//! runs the same operations (the `*_in` functions here) with the same checks on its own folders.
 
 use crate::error::{ApiError, OrNotFound, codes};
 use crate::extract::{ApiJson, ApiQuery};
@@ -24,11 +28,14 @@ pub const MAX_FILE_BYTES: u64 = 1024 * 1024;
 pub(crate) struct FilesQuery {
     #[serde(default)]
     pub(crate) worktree_id: Option<String>,
+    /// The remote project's checkout on this joined instance (instead of the project's own checkout).
+    #[serde(default)]
+    pub(crate) instance_id: Option<String>,
     #[serde(default)]
     pub(crate) path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileEntry {
@@ -40,7 +47,7 @@ pub struct FileEntry {
     pub status: Option<String>,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FileContent {
@@ -65,6 +72,10 @@ pub struct SaveFile {
     #[serde(default)]
     #[ts(optional)]
     pub worktree_id: Option<String>,
+    /// The remote project's checkout on this joined instance.
+    #[serde(default)]
+    #[ts(optional)]
+    pub instance_id: Option<String>,
     pub path: String,
     pub text: String,
     #[serde(default)]
@@ -80,6 +91,10 @@ pub struct RenameFile {
     #[serde(default)]
     #[ts(optional)]
     pub worktree_id: Option<String>,
+    /// The remote project's checkout on this joined instance.
+    #[serde(default)]
+    #[ts(optional)]
+    pub instance_id: Option<String>,
     pub from: String,
     pub to: String,
 }
@@ -93,7 +108,7 @@ pub struct TellFilesChanged {
     pub paths: Vec<String>,
 }
 
-fn outside() -> ApiError {
+pub(crate) fn outside() -> ApiError {
     ApiError::bad_request(codes::PATH_OUTSIDE, "that path is outside the checkout")
 }
 
@@ -127,7 +142,7 @@ pub(crate) fn is_git_name(seg: &str) -> bool {
 
 /// A path to write, as `clean_path` takes it but with no `.git` anywhere in it (a submodule's or a nested repo's),
 /// and naming something.
-fn clean_write_path(raw: &str) -> Result<String, ApiError> {
+pub(crate) fn clean_write_path(raw: &str) -> Result<String, ApiError> {
     let rel = clean_path(raw)?;
     if rel.is_empty() {
         return Err(ApiError::invalid("name a file"));
@@ -160,22 +175,32 @@ fn plain_files(dir: &Dir, rel: &str) -> Vec<String> {
     out
 }
 
-/// The checkout (project root or one of its worktrees), the cleaned path inside it, and whether it is a Personal
-/// project's plain folder (no git).
-pub(crate) async fn resolve(
-    st: &AppState,
-    project_id: &str,
-    q: &FilesQuery,
-) -> Result<(PathBuf, String, bool), ApiError> {
+/// Where a request's checkout is.
+pub(crate) enum Checkout {
+    /// A folder here; `plain` for a Personal project's (no git).
+    Here { path: PathBuf, plain: bool },
+    /// On a remote instance: a worktree's `branch` there, or (None) the remote project's checkout.
+    Remote { instance: Box<pdt_core::link::RemoteInstance>, branch: Option<String> },
+}
+
+/// The checkout (the project's, one of its worktrees, or the remote project's on a joined instance) and the cleaned
+/// path inside it.
+pub(crate) async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> Result<(Checkout, String), ApiError> {
     let project = st.project(project_id).await?;
-    let checkout = match q.worktree_id.as_deref().filter(|w| !w.is_empty()) {
-        Some(wid) => {
-            let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id);
-            PathBuf::from(wt.or_404("worktree")?.path)
-        }
-        None => PathBuf::from(&project.repo_path),
-    };
-    Ok((checkout, clean_path(&q.path)?, !project.has_repo()))
+    let rel = clean_path(&q.path)?;
+    if let Some(wid) = q.worktree_id.as_deref().filter(|w| !w.is_empty()) {
+        let wt = st.store.get_worktree(wid).await?.filter(|w| w.project_id == project.id).or_404("worktree")?;
+        let at = match crate::exec::worktree_instance(st, &wt).await? {
+            Some(i) => Checkout::Remote { instance: Box::new(i), branch: Some(wt.branch) },
+            None => Checkout::Here { path: PathBuf::from(wt.path), plain: false },
+        };
+        return Ok((at, rel));
+    }
+    if let Some(iid) = q.instance_id.as_deref().filter(|i| !i.is_empty()) {
+        let instance = Box::new(crate::exec::joined_instance(st, &project.id, iid).await?);
+        return Ok((Checkout::Remote { instance, branch: None }, rel));
+    }
+    Ok((Checkout::Here { path: PathBuf::from(&project.repo_path), plain: !project.has_repo() }, rel))
 }
 
 /// Refuses a path that resolves (through symlinks) outside the checkout. Missing paths pass: git may list a deleted
@@ -282,23 +307,44 @@ pub(crate) fn entries(dir: &str, files: &[String], status: &[(String, String)]) 
     out.into_values().collect()
 }
 
+/// The entries of the folder `rel`. Blocking.
+pub(crate) fn list_in(checkout: &FsPath, rel: &str, personal: bool) -> Result<Vec<FileEntry>, ApiError> {
+    contained(checkout, rel)?;
+    if personal {
+        return Ok(entries(rel, &plain_files(&checkout_dir(checkout)?, rel), &[]));
+    }
+    let files = pdt_git::list_files(checkout, rel)?;
+    let status = pdt_git::status(checkout, rel)?;
+    Ok(entries(rel, &files, &status))
+}
+
+/// The file `rel` as the view shows it. Blocking.
+pub(crate) fn content_in(checkout: &FsPath, rel: String, personal: bool) -> Result<FileContent, ApiError> {
+    if rel.is_empty() {
+        return Err(ApiError::invalid("name a file"));
+    }
+    contained(checkout, &rel)?;
+    read_file(checkout, &checkout_dir(checkout)?, rel, personal)
+}
+
+/// Runs `f` on the blocking pool.
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, ApiError> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(f).await.map_err(ApiError::internal)?
+}
+
 pub(crate) async fn list(
     State(st): State<AppState>,
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<Json<Vec<FileEntry>>, ApiError> {
-    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
-    let list = tokio::task::spawn_blocking(move || -> Result<Vec<FileEntry>, ApiError> {
-        contained(&checkout, &rel)?;
-        if personal {
-            return Ok(entries(&rel, &plain_files(&checkout_dir(&checkout)?, &rel), &[]));
+    let list = match resolve(&st, &id, &q).await? {
+        (Checkout::Here { path, plain }, rel) => blocking(move || list_in(&path, &rel, plain)).await?,
+        (Checkout::Remote { instance, branch }, rel) => {
+            crate::exec::files(&st, &instance, branch, crate::exec::FilesOp::List { path: rel }).await?
         }
-        let files = pdt_git::list_files(&checkout, &rel)?;
-        let status = pdt_git::status(&checkout, &rel)?;
-        Ok(entries(&rel, &files, &status))
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    };
     Ok(Json(list))
 }
 
@@ -307,16 +353,12 @@ pub(crate) async fn content(
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<Json<FileContent>, ApiError> {
-    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
-    if rel.is_empty() {
-        return Err(ApiError::invalid("name a file"));
-    }
-    let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
-        contained(&checkout, &rel)?;
-        read_file(&checkout, &checkout_dir(&checkout)?, rel, personal)
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let file = match resolve(&st, &id, &q).await? {
+        (Checkout::Here { path, plain }, rel) => blocking(move || content_in(&path, rel, plain)).await?,
+        (Checkout::Remote { instance, branch }, rel) => {
+            crate::exec::files(&st, &instance, branch, crate::exec::FilesOp::Content { path: rel }).await?
+        }
+    };
     Ok(Json(file))
 }
 
@@ -329,51 +371,70 @@ pub(crate) async fn save(
     ApiJson(b): ApiJson<SaveFile>,
 ) -> Result<Json<FileContent>, ApiError> {
     let rel = clean_write_path(&b.path)?;
-    let q = FilesQuery { worktree_id: b.worktree_id, path: rel.clone() };
-    let (checkout, rel, personal) = resolve(&st, &id, &q).await?;
+    let q = FilesQuery { worktree_id: b.worktree_id, instance_id: b.instance_id, path: rel.clone() };
+    let at = resolve(&st, &id, &q).await?;
     if b.text.len() as u64 > MAX_FILE_BYTES {
-        return Err(ApiError::new(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            codes::TOO_LARGE,
-            "files over 1 MB can't be edited here",
-        ));
+        return Err(too_large_to_save());
     }
-    let file = tokio::task::spawn_blocking(move || -> Result<FileContent, ApiError> {
-        writable(&checkout, &rel)?;
-        let dir = checkout_dir(&checkout)?;
-        match dir.symlink_metadata(&rel) {
-            Ok(_) => {
-                let meta = dir.metadata(&rel).map_err(io_err)?;
-                if meta.is_dir() {
-                    return Err(ApiError::conflict(codes::FILE_EXISTS, "a folder has that name"));
-                }
-                let Some(base) = b.base_hash.as_deref() else {
-                    return Err(ApiError::conflict(codes::FILE_EXISTS, "a file with that name exists"));
-                };
-                if meta.len() > MAX_FILE_BYTES {
-                    return Err(not_editable());
-                }
-                let bytes = dir.read(&rel).map_err(io_err)?;
-                if bytes.iter().take(8000).any(|b| *b == 0) || std::str::from_utf8(&bytes).is_err() {
-                    return Err(not_editable());
-                }
-                if hash_of(&bytes) != base {
-                    return Err(file_changed());
-                }
+    let file = match at {
+        (Checkout::Here { path, plain }, rel) => {
+            blocking(move || save_in(&path, rel, &b.text, b.base_hash.as_deref(), plain)).await?
+        }
+        (Checkout::Remote { instance, branch }, rel) => {
+            let op = crate::exec::FilesOp::Save { path: rel, text: b.text, base_hash: b.base_hash };
+            crate::exec::files(&st, &instance, branch, op).await?
+        }
+    };
+    Ok(Json(file))
+}
+
+fn too_large_to_save() -> ApiError {
+    ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, codes::TOO_LARGE, "files over 1 MB can't be edited here")
+}
+
+/// Writes `text` to `rel` (see [`save`]). Blocking.
+pub(crate) fn save_in(
+    checkout: &FsPath,
+    rel: String,
+    text: &str,
+    base_hash: Option<&str>,
+    personal: bool,
+) -> Result<FileContent, ApiError> {
+    let rel = clean_write_path(&rel)?;
+    if text.len() as u64 > MAX_FILE_BYTES {
+        return Err(too_large_to_save());
+    }
+    writable(checkout, &rel)?;
+    let dir = checkout_dir(checkout)?;
+    match dir.symlink_metadata(&rel) {
+        Ok(_) => {
+            let meta = dir.metadata(&rel).map_err(io_err)?;
+            if meta.is_dir() {
+                return Err(ApiError::conflict(codes::FILE_EXISTS, "a folder has that name"));
             }
-            Err(_) if b.base_hash.is_some() => return Err(file_changed()),
-            Err(_) => {
-                if let Some((parent, _)) = rel.rsplit_once('/') {
-                    dir.create_dir_all(parent).map_err(io_err)?;
-                }
+            let Some(base) = base_hash else {
+                return Err(ApiError::conflict(codes::FILE_EXISTS, "a file with that name exists"));
+            };
+            if meta.len() > MAX_FILE_BYTES {
+                return Err(not_editable());
+            }
+            let bytes = dir.read(&rel).map_err(io_err)?;
+            if bytes.iter().take(8000).any(|b| *b == 0) || std::str::from_utf8(&bytes).is_err() {
+                return Err(not_editable());
+            }
+            if hash_of(&bytes) != base {
+                return Err(file_changed());
             }
         }
-        dir.write(&rel, b.text.as_bytes()).map_err(io_err)?;
-        read_file(&checkout, &dir, rel, personal)
-    })
-    .await
-    .map_err(ApiError::internal)??;
-    Ok(Json(file))
+        Err(_) if base_hash.is_some() => return Err(file_changed()),
+        Err(_) => {
+            if let Some((parent, _)) = rel.rsplit_once('/') {
+                dir.create_dir_all(parent).map_err(io_err)?;
+            }
+        }
+    }
+    dir.write(&rel, text.as_bytes()).map_err(io_err)?;
+    read_file(checkout, &dir, rel, personal)
 }
 
 fn not_editable() -> ApiError {
@@ -388,29 +449,36 @@ pub(crate) async fn rename(
 ) -> Result<StatusCode, ApiError> {
     let from = clean_write_path(&b.from)?;
     let to = clean_write_path(&b.to)?;
-    let q = FilesQuery { worktree_id: b.worktree_id, path: from.clone() };
-    let (checkout, from, _) = resolve(&st, &id, &q).await?;
-    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        writable(&checkout, &from)?;
-        writable(&checkout, &to)?;
-        let dir = checkout_dir(&checkout)?;
-        if dir.symlink_metadata(&from).is_err() {
-            return Err(ApiError::not_found("file"));
+    let q = FilesQuery { worktree_id: b.worktree_id, instance_id: b.instance_id, path: from.clone() };
+    match resolve(&st, &id, &q).await? {
+        (Checkout::Here { path, .. }, from) => blocking(move || rename_in(&path, &from, &to)).await?,
+        (Checkout::Remote { instance, branch }, from) => {
+            let op = crate::exec::FilesOp::Rename { from, to };
+            crate::exec::files::<serde_json::Value>(&st, &instance, branch, op).await?;
         }
-        if dir.symlink_metadata(&to).is_ok() {
-            return Err(ApiError::conflict(codes::FILE_EXISTS, "something already has that name"));
-        }
-        if to.starts_with(&format!("{from}/")) {
-            return Err(ApiError::invalid("a folder can't move into itself"));
-        }
-        if let Some((parent, _)) = to.rsplit_once('/') {
-            dir.create_dir_all(parent).map_err(io_err)?;
-        }
-        dir.rename(&from, &dir, &to).map_err(io_err)
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Moves `from` to `to` (see [`rename`]). Blocking.
+pub(crate) fn rename_in(checkout: &FsPath, from: &str, to: &str) -> Result<(), ApiError> {
+    let (from, to) = (clean_write_path(from)?, clean_write_path(to)?);
+    writable(checkout, &from)?;
+    writable(checkout, &to)?;
+    let dir = checkout_dir(checkout)?;
+    if dir.symlink_metadata(&from).is_err() {
+        return Err(ApiError::not_found("file"));
+    }
+    if dir.symlink_metadata(&to).is_ok() {
+        return Err(ApiError::conflict(codes::FILE_EXISTS, "something already has that name"));
+    }
+    if to.starts_with(&format!("{from}/")) {
+        return Err(ApiError::invalid("a folder can't move into itself"));
+    }
+    if let Some((parent, _)) = to.rsplit_once('/') {
+        dir.create_dir_all(parent).map_err(io_err)?;
+    }
+    dir.rename(&from, &dir, &to).map_err(io_err)
 }
 
 /// Deletes a file (not a folder).
@@ -420,22 +488,29 @@ pub(crate) async fn delete(
     ApiQuery(q): ApiQuery<FilesQuery>,
 ) -> Result<StatusCode, ApiError> {
     clean_write_path(&q.path)?;
-    let (checkout, rel, _) = resolve(&st, &id, &q).await?;
-    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
-        writable(&checkout, &rel)?;
-        let dir = checkout_dir(&checkout)?;
-        let meta = dir.symlink_metadata(&rel).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => ApiError::not_found("file"),
-            _ => io_err(e),
-        })?;
-        if meta.is_dir() {
-            return Err(ApiError::invalid("only files can be deleted here"));
+    match resolve(&st, &id, &q).await? {
+        (Checkout::Here { path, .. }, rel) => blocking(move || delete_in(&path, &rel)).await?,
+        (Checkout::Remote { instance, branch }, rel) => {
+            let op = crate::exec::FilesOp::Delete { path: rel };
+            crate::exec::files::<serde_json::Value>(&st, &instance, branch, op).await?;
         }
-        dir.remove_file(&rel).map_err(io_err)
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes the file `rel` (see [`delete`]). Blocking.
+pub(crate) fn delete_in(checkout: &FsPath, rel: &str) -> Result<(), ApiError> {
+    let rel = clean_write_path(rel)?;
+    writable(checkout, &rel)?;
+    let dir = checkout_dir(checkout)?;
+    let meta = dir.symlink_metadata(&rel).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ApiError::not_found("file"),
+        _ => io_err(e),
+    })?;
+    if meta.is_dir() {
+        return Err(ApiError::invalid("only files can be deleted here"));
+    }
+    dir.remove_file(&rel).map_err(io_err)
 }
 
 /// The message an agent gets when the user changed files under it.

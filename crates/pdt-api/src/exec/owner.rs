@@ -78,7 +78,7 @@ pub(crate) fn is_routed(st: &AppState, session: &str) -> bool {
 }
 
 /// The joined instance `instance_id` of `project_id`, or why there is none.
-async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
+pub(crate) async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
     st.store
         .list_remote_instances(Some(project_id))
         .await?
@@ -95,8 +95,20 @@ pub(crate) async fn worktree_instance(st: &AppState, wt: &Worktree) -> Result<Op
     }
 }
 
+/// The instance the attempt's worktree is on, when it is a remote one.
+pub(crate) async fn attempt_instance(
+    st: &AppState,
+    info: &pdt_store::AttemptInfo,
+) -> Result<Option<RemoteInstance>, ApiError> {
+    let Some(id) = info.attempt.worktree_id.as_deref() else { return Ok(None) };
+    match st.store.get_worktree(id).await? {
+        Some(wt) => worktree_instance(st, &wt).await,
+        None => Ok(None),
+    }
+}
+
 /// A signed call to the remote instance `i`.
-async fn call<T: serde::de::DeserializeOwned>(
+pub(super) async fn call<T: serde::de::DeserializeOwned>(
     st: &AppState,
     i: &RemoteInstance,
     path: &str,

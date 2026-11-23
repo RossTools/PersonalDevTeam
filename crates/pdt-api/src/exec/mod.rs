@@ -9,20 +9,27 @@
 //!   token, to the owner (`/link/exec/mcp`), retrying while the link is down: the owner answers it as its own.
 //! - **Git.** The remote instance keeps the project's checkout (cloned on first use) and its worktrees; the owner asks
 //!   it to make and remove worktrees and to look at or update a branch.
+//! - **Files, Changes and overlaps** (PDT-635, [`files`], [`review`]): one call per request, each run there by the
+//!   functions a local one uses, in a folder the remote instance picks; Changes come whole and are kept on the owner
+//!   until the diff changes.
 //!
 //! Owner → remote calls are signed with the owner's key for the link and checked by `link::from_owner`; the remote's
 //! with its key, checked by `link::from_remote`.
 
+mod files;
 mod owner;
 mod remote;
+mod review;
 
+pub(crate) use files::{FilesOp, download, files};
 pub use owner::resume_pollers;
 pub(crate) use owner::{
-    branch_head, has_changes, is_routed, make_worktree, open as open_remote, remove_worktree, update_base,
-    worktree_instance,
+    attempt_instance, branch_head, has_changes, instance as joined_instance, is_routed, make_worktree,
+    open as open_remote, remove_worktree, update_base, worktree_instance,
 };
 pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
+pub(crate) use review::{changed_files, changes, file_sides, merge_check};
 
 use pdt_agents::adapter::{AdapterOutput, AgentInfo};
 use pdt_core::conversation::{
@@ -45,12 +52,16 @@ pub(crate) const WORKTREE_PATH: &str = "/api/link/exec/worktree";
 pub(crate) const REMOVE_WORKTREE_PATH: &str = "/api/link/exec/remove-worktree";
 pub(crate) const GIT_PATH: &str = "/api/link/exec/git";
 pub(crate) const MCP_PATH: &str = "/api/link/exec/mcp";
+pub(crate) const FILES_PATH: &str = "/api/link/exec/files";
+pub(crate) const DOWNLOAD_PATH: &str = "/api/link/exec/download";
 
 /// What the executor keeps in memory, on both ends.
 #[derive(Default)]
 pub struct ExecRuntime {
     owner: owner::OwnerSide,
     remote: remote::RemoteSide,
+    /// Remote worktrees' Changes, kept on the owner.
+    changes: review::ChangesCache,
 }
 
 impl ExecRuntime {
@@ -58,6 +69,11 @@ impl ExecRuntime {
     /// them).
     pub fn set_poll_timing(&self, wait: std::time::Duration, retry: std::time::Duration) {
         self.owner.set_timing(wait, retry);
+    }
+
+    /// Forgets the remote worktrees' Changes kept here (tests: reading without them).
+    pub fn forget_changes(&self) {
+        self.changes.forget();
     }
 }
 
@@ -307,6 +323,15 @@ pub(crate) enum GitOp {
     Head,
     /// Merges the base in and pushes (`attempt.update_base`): `{port, output}`.
     UpdateBase { base: String, remote_pr: bool },
+    /// The worktree's changes for the Changes view: "unchanged" when they stamp as `known`, else all of them with
+    /// the sides of their files ([`review::ChangesReply`]).
+    Changes { base: String, fallback: String, known: Option<String> },
+    /// One changed file's two sides ([`pdt_core::review::FileSides`]).
+    Sides { base: String, fallback: String, path: String, old_path: String },
+    /// The files the branch changed, for overlaps: `[path]`.
+    ChangedFiles { base: String, fallback: String },
+    /// What merging the branch into `base` would do ([`review::MergeCheck`]).
+    MergeCheck { base: String },
 }
 
 /// `/link/exec/mcp`: an agent's call to pdt-mcp, with its session's token.
@@ -341,6 +366,11 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/remove-worktree", post(remote::remove_worktree_route))
         .route("/link/exec/git", post(remote::git_route))
         .route("/link/exec/mcp", post(owner::mcp_route))
+        .route(
+            "/link/exec/files",
+            post(files::files_route).layer(axum::extract::DefaultBodyLimit::max(files::MAX_FILES_BODY)),
+        )
+        .route("/link/exec/download", post(files::download_route))
 }
 
 #[cfg(test)]
