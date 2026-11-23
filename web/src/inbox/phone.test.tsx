@@ -139,7 +139,7 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'POST /api/sessions/sess/requests/req-9': undefined });
     renderWithQuery(<PhoneInbox items={[asked, asking]} />);
     expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
-    expect(screen.getByText('PM · Question')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Questions' })).toHaveTextContent('Which library?');
     await userEvent.click(screen.getByText('Which library?'));
     // A question, as its conversation shows it, not a permission check on the tool.
     expect(screen.getByText('A question for you')).toBeInTheDocument();
