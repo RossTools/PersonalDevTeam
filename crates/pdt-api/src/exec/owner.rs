@@ -295,8 +295,12 @@ pub(super) fn ensure_poller(st: &AppState, link_id: &str) {
     });
 }
 
-/// After a restart: pollers for the instances that run sessions of this owner's, whose events waited for it.
+/// After a restart: pollers for the instances that run sessions of this owner's, whose events waited for it. (As a
+/// remote instance: the terminals it ran for owners ended with its previous run.)
 pub async fn resume_pollers(st: &AppState) {
+    if let Err(e) = st.store.end_open_exec_terminals(now_ms()).await {
+        tracing::warn!(error = %e, "could not end the owners' terminals the last run left open");
+    }
     match st.store.list_remote_instances(None).await {
         Ok(list) => {
             for i in list {
@@ -395,6 +399,8 @@ async fn route(st: &AppState, i: &RemoteInstance, e: WireEvent) {
         let delivered = {
             let mut routes = st.exec.owner.routes();
             match routes.get(&e.session_id) {
+                // A terminal being opened again: its process isn't known yet, so an exit now is an earlier run's.
+                Some(r) if r.sink.is_none() && r.proc.is_none() && r.opened_at == 0 && exited => Some(false),
                 Some(r) if r.proc.as_deref().is_none_or(|p| p == e.proc) => {
                     match &r.sink {
                         Some(sink) => {
@@ -416,6 +422,12 @@ async fn route(st: &AppState, i: &RemoteInstance, e: WireEvent) {
         if terminal_exit && let WireOut::Exited { code, .. } = &e.out {
             super::terminals::exited(st, &e.session_id, *code).await;
         }
+        if delivered == Some(true)
+            && let WireOut::ExternalId { id } = &e.out
+            && !st.exec.owner.routes().get(&e.session_id).is_some_and(|r| r.sink.is_some())
+        {
+            super::terminals::conversation_found(st, &e.session_id, id).await;
+        }
         if delivered.is_some() || attempt == 1 {
             return;
         }
@@ -425,8 +437,10 @@ async fn route(st: &AppState, i: &RemoteInstance, e: WireEvent) {
         }
         // A terminal the owner has no route for (it restarted before seeing the exit).
         if s.mode != pdt_core::conversation::SessionMode::Conversation {
-            if let WireOut::Exited { code, .. } = &e.out {
-                super::terminals::exited(st, &s.id, *code).await;
+            match &e.out {
+                WireOut::Exited { code, .. } => super::terminals::exited(st, &s.id, *code).await,
+                WireOut::ExternalId { id } => super::terminals::conversation_found(st, &s.id, id).await,
+                _ => {}
             }
             return;
         }

@@ -53,6 +53,8 @@ pub(super) struct RemoteSide {
     pub(super) ptys: Mutex<HashMap<String, super::remote_pty::PtyRun>>,
     /// One-time tickets for a terminal's WebSocket: by ticket, the session, its link and when it expires.
     pub(super) tickets: Mutex<HashMap<String, super::remote_pty::Ticket>>,
+    /// The Codex conversations found for the owners' terminals, so two never take the same one.
+    pub(super) codex_bound: Mutex<std::collections::HashSet<String>>,
     outbox: Mutex<Outbox>,
     added: tokio::sync::Notify,
     /// This process: an owner that read another one's events starts again from the first.
@@ -67,6 +69,7 @@ impl Default for RemoteSide {
             running: Default::default(),
             ptys: Default::default(),
             tickets: Default::default(),
+            codex_bound: Default::default(),
             outbox: Mutex::new(Outbox { next: 0, items: VecDeque::new() }),
             added: Default::default(),
             boot: uuid::Uuid::new_v4().to_string(),
@@ -238,6 +241,7 @@ pub(crate) async fn open_route(
         token: req.mcp.as_ref().map(|m| m.token.clone()).unwrap_or_default(),
         created_at: now_ms(),
         ended_at: None,
+        terminal: false,
     };
     st.store.put_exec_session(&row).await?;
     tokio::spawn(forward(st.clone(), req.session_id.clone(), proc.clone(), link.link_id.clone(), rx));

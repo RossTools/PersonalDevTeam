@@ -148,6 +148,15 @@ pub(super) async fn exited(st: &AppState, id: &str, code: Option<i32>) {
     crate::workflow::sensors::session_exited(st, id, code, stopped).await;
 }
 
+/// The remote instance found the Codex conversation a terminal ran (in its own Codex files): restarts resume it.
+pub(super) async fn conversation_found(st: &AppState, id: &str, conversation: &str) {
+    match st.store.bind_external_session_id(id, conversation).await {
+        Ok(true) => tracing::info!(session = %id, conversation, "bound a remote terminal to its Codex conversation"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!(session = %id, error = %e, "could not record a remote terminal's Codex conversation"),
+    }
+}
+
 /// After the owner restarts: the terminals still running on `i`, so their exits end them and typing reaches them.
 pub(super) async fn resume_routes(st: &AppState, i: &RemoteInstance) {
     let Ok(list) = st.store.list_sessions(&i.project_id).await else { return };

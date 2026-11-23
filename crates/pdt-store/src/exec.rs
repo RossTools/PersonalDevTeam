@@ -16,24 +16,28 @@ pub struct ExecSession {
     pub token: String,
     pub created_at: i64,
     pub ended_at: Option<i64>,
+    /// A terminal (a PTY, which ends with this instance), not a conversation.
+    pub terminal: bool,
 }
 
-type Row = (String, String, String, String, Option<String>, String, String, i64, Option<i64>);
+type Row = (String, String, String, String, Option<String>, String, String, i64, Option<i64>, bool);
 
-fn to_exec((session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at): Row) -> ExecSession {
-    ExecSession { session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at }
+fn to_exec(
+    (session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at, terminal): Row,
+) -> ExecSession {
+    ExecSession { session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at, terminal }
 }
 
-const COLUMNS: &str = "session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at";
+const COLUMNS: &str = "session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at, terminal";
 
 impl Store {
     /// Records (or, opened again, refreshes) a session this instance runs for an owner.
     pub async fn put_exec_session(&self, e: &ExecSession) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO exec_sessions (session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL) ON CONFLICT(session_id) DO UPDATE SET \
+            "INSERT INTO exec_sessions (session_id, link_id, agent, title, ticket_key, cwd, token, created_at, ended_at, \
+             terminal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?) ON CONFLICT(session_id) DO UPDATE SET \
              agent = excluded.agent, title = excluded.title, ticket_key = excluded.ticket_key, cwd = excluded.cwd, \
-             token = excluded.token, ended_at = NULL",
+             token = excluded.token, ended_at = NULL, terminal = excluded.terminal",
         )
         .bind(&e.session_id)
         .bind(&e.link_id)
@@ -43,6 +47,7 @@ impl Store {
         .bind(&e.cwd)
         .bind(&e.token)
         .bind(e.created_at)
+        .bind(e.terminal)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -72,6 +77,15 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Ends every terminal still open: this instance just started, so none of their PTYs runs.
+    pub async fn end_open_exec_terminals(&self, at: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query("UPDATE exec_sessions SET ended_at = ? WHERE terminal = 1 AND ended_at IS NULL")
+            .bind(at)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected())
     }
 
     pub async fn delete_exec_session(&self, session_id: &str) -> Result<(), StoreError> {
@@ -132,6 +146,7 @@ mod tests {
             token: "s.t".into(),
             created_at: 1,
             ended_at: None,
+            terminal: false,
         };
         store.put_exec_session(&e).await.unwrap();
         assert_eq!(store.get_exec_session("s").await.unwrap(), Some(e.clone()));
@@ -140,6 +155,13 @@ mod tests {
         store.put_exec_session(&e).await.unwrap();
         assert_eq!(store.get_exec_session("s").await.unwrap().unwrap().ended_at, None, "opened again");
         assert!(store.list_exec_sessions(Some("other")).await.unwrap().is_empty());
+
+        // At startup only the terminals end: a conversation is parked, and starts again when the owner sends to it.
+        let shell = ExecSession { session_id: "t".into(), agent: "shell".into(), terminal: true, ..e.clone() };
+        store.put_exec_session(&shell).await.unwrap();
+        assert_eq!(store.end_open_exec_terminals(9).await.unwrap(), 1);
+        assert_eq!(store.get_exec_session("t").await.unwrap().unwrap().ended_at, Some(9));
+        assert_eq!(store.get_exec_session("s").await.unwrap().unwrap().ended_at, None);
         store.delete_project("rp").await.unwrap();
         assert!(store.list_exec_sessions(None).await.unwrap().is_empty(), "gone with the remote project");
     }

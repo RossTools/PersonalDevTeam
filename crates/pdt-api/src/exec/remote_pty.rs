@@ -33,6 +33,9 @@ const RELAY_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) struct PtyRun {
     pub(super) proc: String,
     pub(super) link_id: String,
+    /// A Codex terminal launched without a conversation: when, its folder and the folder's key, so its conversation
+    /// can be found by start time once it ends.
+    codex_fresh: Option<(i64, String, String)>,
 }
 
 pub(super) struct Ticket {
@@ -147,6 +150,15 @@ pub(crate) async fn open_route(
             _ => Resume::Fresh,
         }
     };
+    // Codex, launched fresh: spaced from other fresh launches in the folder (on this instance), so its conversation can
+    // be told apart by start time when it ends.
+    let codex_fresh = match (s.agent, &resume) {
+        (Some(AgentKind::Codex), Resume::Fresh) if s.kind == SessionKind::AgentTui => {
+            let at = crate::sessions::wait_for_fresh_codex_slot(&st, &s.cwd).await;
+            Some((at, s.cwd.clone(), pdt_agents::launch::canonical_folder_key(&s.cwd)))
+        }
+        _ => None,
+    };
     let prompt = req
         .prompt
         .clone()
@@ -180,7 +192,7 @@ pub(crate) async fn open_route(
         .ptys
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(s.id.clone(), PtyRun { proc: proc.clone(), link_id: link.link_id.clone() });
+        .insert(s.id.clone(), PtyRun { proc: proc.clone(), link_id: link.link_id.clone(), codex_fresh });
     let row = pdt_store::ExecSession {
         session_id: s.id.clone(),
         link_id: link.link_id.clone(),
@@ -191,11 +203,16 @@ pub(crate) async fn open_route(
         token: req.mcp.as_ref().map(|m| m.token.clone()).unwrap_or_default(),
         created_at: now_ms(),
         ended_at: None,
+        terminal: true,
     };
     st.store.put_exec_session(&row).await?;
     let (st2, id, p, link_id) = (st.clone(), s.id.clone(), proc.clone(), link.link_id.clone());
     tokio::spawn(async move {
         let Ok(code) = exit.await else { return };
+        // The Codex conversation it ran, found here (its files are this instance's): the owner's row resumes it.
+        if let Some(found) = codex_conversation(&st2, &id, &p).await {
+            st2.exec.remote.push(&link_id, &id, &p, WireOut::ExternalId { id: found });
+        }
         let out = WireOut::Exited { code: Some(code), stderr_tail: String::new(), expected: false };
         st2.exec.remote.push(&link_id, &id, &p, out);
         let mine = {
@@ -225,6 +242,37 @@ pub(crate) async fn open_route(
     });
     tracing::info!(session = %s.id, owner = %link.owner_name, "started a terminal for the owner");
     Ok(Json(Opened { proc, cwd: cwd_text }))
+}
+
+/// The Codex conversation a fresh Codex terminal (`session`'s run `proc`) created, as a local pdtd finds it
+/// (`sessions::bind_codex`): in this instance's Codex home, in its folder, started at its launch time. None when it
+/// took no turn, or another fresh launch in the folder was too close in time to tell them apart.
+async fn codex_conversation(st: &AppState, session: &str, proc: &str) -> Option<String> {
+    let home = st.platform.codex_home.clone()?;
+    let (fresh, folder, peers, claimed) = {
+        let ptys = st.exec.remote.ptys.lock().unwrap_or_else(|e| e.into_inner());
+        let run = ptys.get(session).filter(|r| r.proc == proc)?;
+        let (fresh, folder, key) = run.codex_fresh.clone()?;
+        let peers: Vec<i64> = ptys
+            .iter()
+            .filter(|(id, _)| id.as_str() != session)
+            .filter_map(|(_, r)| r.codex_fresh.as_ref().filter(|(_, _, k)| *k == key).map(|(at, _, _)| *at))
+            .collect();
+        (fresh, folder, peers, st.exec.remote.codex_bound.lock().unwrap_or_else(|e| e.into_inner()).clone())
+    };
+    let gap = i64::try_from(st.codex_spawn_spacing.as_millis()).unwrap_or(i64::MAX);
+    if peers.iter().any(|p| (p - fresh).abs() < gap) {
+        tracing::warn!(session, "another Codex terminal in this folder was launched too close in time; not binding");
+        return None;
+    }
+    let cwd = PathBuf::from(&folder);
+    let found = tokio::task::spawn_blocking(move || {
+        pdt_agents::launch::find_codex_conversation(&home, &cwd, fresh, &peers, &claimed)
+    })
+    .await
+    .ok()??;
+    st.exec.remote.codex_bound.lock().unwrap_or_else(|e| e.into_inner()).insert(found.clone());
+    Some(found)
 }
 
 /// `/link/exec/pty/attach`: a one-time ticket for the session's terminal WebSocket.

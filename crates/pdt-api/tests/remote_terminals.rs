@@ -250,3 +250,41 @@ async fn a_remote_shell_opens_only_in_the_remote_projects_folders() {
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
+
+/// A Codex rollout file for a conversation that began at `began_ms` in `cwd`, as Codex writes after a turn.
+fn rollout(codex_home: &std::path::Path, id: &str, cwd: &std::path::Path, began_ms: i64) {
+    let began = jiff::Timestamp::from_millisecond(began_ms).unwrap();
+    let day = began.to_zoned(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
+    let dir = codex_home.join("sessions").join(day);
+    std::fs::create_dir_all(&dir).unwrap();
+    let began = began.to_string();
+    let meta = json!({"timestamp": began, "type": "session_meta",
+        "payload": {"id": id, "timestamp": began, "cwd": cwd.to_string_lossy()}});
+    std::fs::write(dir.join(format!("rollout-2026-11-23T00-00-00-{id}.jsonl")), format!("{meta}\n{{}}\n")).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_remote_codex_terminal_keeps_its_conversation_for_restarts() {
+    let p = paired().await;
+    // win-box's own Codex home (its Codex is `fake-agent`), where the conversation is saved.
+    let home = p.remote.state.platform.codex_home.clone().unwrap();
+    let remote = &p.remote;
+    let body = json!({"projectId": p.project, "kind": "agent_tui", "agent": "codex", "mode": "terminal",
+        "cols": 80, "rows": 24, "instanceId": p.instance_id});
+    let (s, row) = call(&p.owner.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{row}");
+    let id = row["id"].as_str().unwrap().to_string();
+    assert!(remote.state.ptys.is_running(&id));
+    // It took a turn: Codex saved the conversation there, in the checkout.
+    rollout(&home, "conv-remote", &p.checkout, now_ms() + 300);
+
+    // When it ends, win-box finds it in its own Codex files and the owner's row gets it.
+    let (s, v) = call(&p.owner.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+    assert!(s.is_success(), "{v}");
+    wait_until("the conversation recorded", async || {
+        let s = session(&p, &id).await;
+        (s["externalSessionId"] == "conv-remote" && s["status"] == "finished").then_some(()).ok_or(s)
+    })
+    .await;
+    remote.state.ptys.shutdown().await;
+}

@@ -148,7 +148,10 @@ the new-tab chooser: the remote project's checkout), starts with `exec::open_ter
 the owner's `Session` row, a branch (or none) and the launch's pieces (instructions, pdt-mcp, first prompt), and the
 remote runs `sessions::pty_spec` on its own PTY manager under the owner's session id, in the folder it picks itself
 (the row takes it), with an `exec_sessions` row. Restarts resume the agent's conversation when the remote has it
-saved (Claude), or by its external id (Codex, Devin). The owner keeps a route without a sink per running terminal
+saved (Claude), or by its external id: Devin's comes with its relayed hook, and a fresh Codex terminal's is found on
+the remote when it ends (`remote_pty::codex_conversation`, by launch time in its own Codex home, with fresh launches
+in a folder spaced as locally) and sent ahead of the exit as an `ExternalId` event. The remote ends its terminals'
+`exec_sessions` rows when it starts (`Store::end_open_exec_terminals`). The owner keeps a route without a sink per running terminal
 (`exec::is_remote_terminal`, `AppState::terminal_running`); its exit comes back with the instance's events and ends
 the session (`terminals::exited`), and `exec::resume_pollers` puts the routes back after an owner restart. The
 browser's `/api/sessions/{id}/pty` is bridged frame for frame (`exec::bridge_pty`) to the remote's
