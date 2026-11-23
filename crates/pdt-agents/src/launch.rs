@@ -194,7 +194,8 @@ pub fn find_codex_conversation(
 
 /// The day before the launch's UTC date: rollout folders are named by local date, which is at most a day off.
 fn oldest_rollout_day(fresh_started_at_ms: i64) -> Option<jiff::civil::Date> {
-    let day = jiff::Timestamp::from_millisecond(fresh_started_at_ms).ok()?.to_zoned(jiff::tz::TimeZone::UTC).date();
+    let day =
+        jiff::Timestamp::from_millisecond(fresh_started_at_ms).ok()?.to_zoned_datetime(jiff::tz::TimeZone::UTC).date();
     day.yesterday().ok()
 }
 
@@ -478,7 +479,7 @@ mod tests {
     /// folder of its start time.
     fn rollout(home: &Path, id: &str, cwd: &str, began_ms: i64) -> PathBuf {
         let began = jiff::Timestamp::from_millisecond(began_ms).unwrap();
-        let day = began.to_zoned(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
+        let day = began.to_zoned_datetime(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
         rollout_in(home, &day, id, cwd, began_ms)
     }
 
@@ -543,7 +544,7 @@ mod tests {
         let day = dir.path().join("sessions").join(
             jiff::Timestamp::from_millisecond(b)
                 .unwrap()
-                .to_zoned(jiff::tz::TimeZone::UTC)
+                .to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .strftime("%Y/%m/%d")
                 .to_string(),
         );

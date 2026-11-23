@@ -130,7 +130,7 @@ fn now() -> i64 {
 
 /// `HH:MM`, `d` minutes from now (this computer's time).
 fn clock(d: i32) -> String {
-    let t = jiff::Zoned::now();
+    let t = jiff::ZonedDateTime::now();
     let m = (i32::from(t.hour()) * 60 + i32::from(t.minute()) + d).rem_euclid(24 * 60);
     format!("{:02}:{:02}", m / 60, m % 60)
 }

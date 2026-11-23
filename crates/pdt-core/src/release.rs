@@ -134,30 +134,42 @@ pub enum ScheduledWatch {
 /// A day as `YYYYMMDD` (`20261030`) from `2026-10-30` or `20261030`.
 pub fn parse_day(s: &str) -> Option<u64> {
     let digits: String = s.trim().chars().filter(|c| *c != '-').collect();
-    if digits.len() != 8 {
+    date_of(&digits).map(day_of)
+}
+
+/// The date `YYYYMMDD` names, if it is one.
+fn date_of(digits: &str) -> Option<jiff::civil::Date> {
+    if digits.len() != 8 || !digits.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    let d = chrono::NaiveDate::parse_from_str(&digits, "%Y%m%d").ok()?;
-    d.format("%Y%m%d").to_string().parse().ok()
+    let part = |r: std::ops::Range<usize>| digits[r].parse::<i16>().ok();
+    jiff::civil::Date::new(part(0..4)?, i8::try_from(part(4..6)?).ok()?, i8::try_from(part(6..8)?).ok()?).ok()
+}
+
+/// A date as `YYYYMMDD`.
+fn day_of(d: jiff::civil::Date) -> u64 {
+    let n = i64::from(d.year()) * 10_000 + i64::from(d.month()) * 100 + i64::from(d.day());
+    u64::try_from(n).unwrap_or_default()
 }
 
 /// The UTC day of `ms` (`20261030`).
 pub fn utc_day(ms: i64) -> u64 {
-    let t = chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
-    t.format("%Y%m%d").to_string().parse().unwrap_or_default()
+    let t = jiff::Timestamp::from_millisecond(ms).unwrap_or_default();
+    day_of(t.to_zoned_datetime(jiff::tz::TimeZone::UTC).date())
 }
 
 /// The UTC day (`20261030`) of an RFC 3339 time (a release's `publishedAt`).
 pub fn rfc3339_day(s: &str) -> Option<u64> {
-    let t = chrono::DateTime::parse_from_rfc3339(s.trim()).ok()?;
-    Some(utc_day(t.timestamp_millis()))
+    let t: jiff::Timestamp = s.trim().parse().ok()?;
+    Some(utc_day(t.as_millisecond()))
 }
 
 /// When `day` (`20261030`) reaches `minutes` after midnight UTC, in ms.
 pub fn day_time_ms(day: u64, minutes: u32) -> i64 {
-    let Ok(d) = chrono::NaiveDate::parse_from_str(&day.to_string(), "%Y%m%d") else { return 0 };
+    let Some(d) = date_of(&day.to_string()) else { return 0 };
     let m = minutes.min(24 * 60 - 1);
-    d.and_hms_opt(m / 60, m % 60, 0).map_or(0, |t| t.and_utc().timestamp_millis())
+    let (h, m) = (i8::try_from(m / 60).unwrap_or_default(), i8::try_from(m % 60).unwrap_or_default());
+    d.at(h, m, 0, 0).to_zoned_datetime(jiff::tz::TimeZone::UTC).map_or(0, |t| t.timestamp().as_millisecond())
 }
 
 /// A time of day, `HH:MM` (or `H:MM`, or a bare hour), as minutes after midnight.
