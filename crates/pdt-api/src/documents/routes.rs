@@ -1124,6 +1124,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         )
         .route("/documents/{id}/events", get(events))
         .route("/documents/{id}/changes", get(super::access::changes))
+        .route("/documents/{id}/changes/{change}/restore", post(super::access::restore))
         .route("/documents/{id}/charts", get(charts))
         .route("/documents/{id}/export", get(export))
         .route(

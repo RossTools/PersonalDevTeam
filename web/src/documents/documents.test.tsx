@@ -166,8 +166,8 @@ describe('documents', () => {
       'GET /api/documents/d5': doc('d5', 'Spec'),
       'GET /api/documents/d5/content': { content: { kind: 'doc', version: '3', markdown: '# Spec\n' }, embedUrl: null },
       'GET /api/documents/d5/changes': [
-        { id: 'c2', documentId: 'd5', at: Date.now(), tool: 'doc_edit', summary: 'Edited (1 edit)', version: '3', diff: '-Old.\n+New.\n', agent },
-        { id: 'c1', documentId: 'd5', at: Date.now(), tool: 'document_create', summary: 'Created the document', version: null, diff: null, agent },
+        { id: 'c2', documentId: 'd5', at: Date.now(), tool: 'doc_edit', summary: 'Edited (1 edit)', version: '3', diff: '-Old.\n+New.\n', agent, restorable: false },
+        { id: 'c1', documentId: 'd5', at: Date.now(), tool: 'document_create', summary: 'Created the document', version: null, diff: null, agent, restorable: false },
       ],
       'GET /api/documents/providers': providers,
       'GET /api/projects': [project],
@@ -179,6 +179,30 @@ describe('documents', () => {
     expect(within(changes).getByText('version 3')).toBeInTheDocument();
     await userEvent.click(within(changes).getByRole('button', { name: 'Show the diff' }));
     expect(await within(changes).findByText(/\+New\./)).toBeInTheDocument();
+    expect(within(changes).queryByRole('button', { name: 'Restore' })).toBeNull();
+  });
+
+  it('restores a local sheet as it was before an agent’s change, once confirmed (PDT-709)', async () => {
+    const agent = { sessionId: 's1', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-7', fromTicketId: 't7' };
+    const calls = stubApi({
+      'GET /api/documents/d6': doc('d6', 'Budget', { kind: 'sheet' }),
+      'GET /api/documents/d6/content': {
+        content: { kind: 'sheet', version: '4', sheets: [{ name: 'Sheet1', rows: [[{ value: 'Rent' }]], charts: [] }] },
+        embedUrl: null,
+      },
+      'GET /api/documents/d6/changes': [
+        { id: 'c9', documentId: 'd6', at: Date.now(), tool: 'sheet_edit', summary: 'Edited (1 edit): sort', version: '4', diff: null, agent, restorable: true },
+      ],
+      'POST /api/documents/d6/changes/c9/restore': { version: '2', charts: [] },
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<DocumentPage id="d6" phone={false} onGone={() => {}} />);
+    const changes = await screen.findByRole('region', { name: 'Changes agents made without asking' });
+    await userEvent.click(within(changes).getByRole('button', { name: 'Restore' }));
+    const confirm = await screen.findByRole('alertdialog');
+    await userEvent.click(within(confirm).getByRole('button', { name: 'Restore' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/documents/d6/changes/c9/restore')).toBe(true));
   });
 
   it('a sheet shows as a table with its formulas', async () => {

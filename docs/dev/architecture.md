@@ -716,7 +716,11 @@ the document is linked to lets the PM act) or the project or ticket they name. T
 from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
 outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
-`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. A document's title, content and comments
+`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. Before an
+unasked `doc_edit` or `sheet_edit` of a local document, `access::backup` keeps its bytes (a sheet's from the live model,
+up to 10 MB) and its charts in the change's `backup` columns; the store clears all but the newest `KEPT_BACKUPS` per
+document, and `POST /api/documents/{id}/changes/{change}/restore` writes one back (`LocalProvider::restore`: open
+views reload, charts are replaced). Other providers keep no copy: their own history has the versions. A document's title, content and comments
 come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON
 in one block). The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's
