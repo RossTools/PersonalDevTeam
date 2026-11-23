@@ -108,3 +108,51 @@ async fn an_item_snoozed_for_a_while_comes_back_at_its_time_or_when_unsnoozed() 
         assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
     }
 }
+
+#[tokio::test]
+async fn an_item_its_own_ticket_waits_on_cannot_be_snoozed_until_that_ticket_is_done() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st, project) = setup(tmp.path()).await;
+    let ticket = |title: &'static str| {
+        let app = app.clone();
+        let project = project.clone();
+        async move {
+            let (_, t) =
+                call(&app, "POST", &format!("/api/projects/{project}/tickets"), Some(json!({"title": title}))).await;
+            (t["id"].as_str().unwrap().to_string(), t["key"].as_str().unwrap().to_string())
+        }
+    };
+    let (own, own_key) = ticket("Own").await;
+    let (_, other_key) = ticket("Other").await;
+    let open = |id: &str, kind: InboxKind, group: InboxGroup, body: Value| {
+        InboxItem::new(id, kind, group, "Which?", body, 1).project(project.clone()).ticket(own.clone())
+    };
+    st.store.open_inbox_item(&open("q", InboxKind::Question, InboxGroup::Question, json!({}))).await.unwrap();
+    st.store.open_inbox_item(&open("gate", InboxKind::Gate, InboxGroup::Gate, json!({}))).await.unwrap();
+    st.store
+        .open_inbox_item(&open("aside", InboxKind::Question, InboxGroup::Question, json!({"blocking": false})))
+        .await
+        .unwrap();
+
+    // Listed with the ticket waiting on them, the non-blocking question not.
+    let (s, v) = call(&app, "GET", "/api/inbox", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let waits =
+        |id: &str| v["items"].as_array().unwrap().iter().find(|i| i["id"] == id).unwrap()["ticketWaits"].clone();
+    assert_eq!((waits("q"), waits("gate"), waits("aside")), (json!(true), json!(true), Value::Null));
+
+    for id in ["q", "gate"] {
+        let (s, v) = call(&app, "POST", &format!("/api/inbox/{id}/snooze"), Some(json!({"ticket": own_key}))).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+        assert!(v["message"].as_str().unwrap().contains("is waiting on this"), "{v}");
+        let (s, v) = call(&app, "POST", &format!("/api/inbox/{id}/snooze"), Some(json!({"ticket": other_key}))).await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "another ticket is fine: {v}");
+    }
+    let (s, v) = call(&app, "POST", "/api/inbox/aside/snooze", Some(json!({"ticket": own_key}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "a non-blocking question can wait for its ticket: {v}");
+
+    // Snoozed, they still say their ticket waits on them.
+    let (_, snoozed, _) = inbox(&app).await;
+    let waiting: Vec<_> = snoozed.iter().filter(|i| i["ticketWaits"] == true).map(|i| i["id"].clone()).collect();
+    assert_eq!(waiting.len(), 2, "{snoozed:?}");
+}

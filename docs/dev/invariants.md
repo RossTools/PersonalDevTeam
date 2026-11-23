@@ -287,7 +287,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   waiting, and holds (`holds_ticket`), sensors and the Notifier see it as before. `GET /api/inbox` moves it to
   `snoozed` (out of `items` and `total`) while `InboxSnooze::hides`; a snooze whose time came, whose ticket closed or
   went, or whose stored item is no longer open is deleted as the list is read; so, on an unfiltered list, is one whose
-  item is no longer listed (a listed item's id is fixed, so a kept snooze would hide its next occurrence).
+  item is no longer listed (a listed item's id is fixed, so a kept snooze would hide its next occurrence). A snooze
+  until a ticket is done is refused on the item's own ticket when that ticket waits on it
+  (`InboxItem::ticket_waits_on`: a holding question or an open gate), which would hide it for good.
 - **A login failure is never nudged, and never waits without an item for long.** A step goes to `waiting_login`
   (under the agent's `agent_login_locks`) or is held with `wait.login` while its agent's `agent_login` item is open;
   closing that item (`agent_login::resume`) takes every such step up again, and the login watch takes up any left

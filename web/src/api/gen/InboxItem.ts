@@ -35,4 +35,9 @@ body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown,
  * Snoozed until a time or a ticket is closed: left out of the Inbox until then. Filled in by the API, never
  * stored with the item.
  */
-snooze?: InboxSnooze, };
+snooze?: InboxSnooze, 
+/**
+ * Its ticket waits on it ([`InboxItem::ticket_waits_on`], PDT-698): snoozing it until that ticket is done
+ * would hold both forever. Filled in by the API, never stored.
+ */
+ticketWaits?: boolean, };

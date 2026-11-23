@@ -535,6 +535,11 @@ pub struct InboxItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub snooze: Option<InboxSnooze>,
+    /// Its ticket waits on it ([`InboxItem::ticket_waits_on`], PDT-698): snoozing it until that ticket is done
+    /// would hold both forever. Filled in by the API, never stored.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub ticket_waits: bool,
 }
 
 /// An item put out of sight until a time, or until a ticket is Done or Won't do, whichever comes first (`POST
@@ -616,6 +621,7 @@ impl InboxItem {
             created_at,
             resolved_at: None,
             snooze: None,
+            ticket_waits: false,
         }
     }
     pub fn project(mut self, id: impl Into<Option<String>>) -> Self {
@@ -658,6 +664,14 @@ impl InboxItem {
             && self.status == InboxStatus::Open
             && self.ticket_id.is_some()
             && self.body.get(BLOCKING).and_then(Value::as_bool) != Some(false)
+    }
+
+    /// Whether its ticket can't go on until it is answered (PDT-698): an open question that
+    /// [holds](Self::holds_ticket) it, or an open gate of its ticket's workflow. Snoozing it until that ticket is done
+    /// would hide it for good.
+    pub fn ticket_waits_on(&self) -> bool {
+        self.holds_ticket()
+            || (self.kind == InboxKind::Gate && self.status == InboxStatus::Open && self.ticket_id.is_some())
     }
 
     /// The first question of an agent's question item (its title when the body has none).
@@ -970,6 +984,12 @@ mod tests {
         let gate =
             InboxItem::new("g", InboxKind::Gate, InboxGroup::Question, "", json!({}), 1).ticket(Some("t".into()));
         assert!(!gate.holds_ticket(), "only an agent's question holds");
+        assert!(
+            gate.ticket_waits_on() && q(asked.clone()).ticket_waits_on(),
+            "its ticket waits on a gate or a question"
+        );
+        assert!(!q(json!({"blocking": false})).ticket_waits_on(), "not on a non-blocking question");
+        assert!(!gate.clone().ticket(None).ticket_waits_on(), "nor on a gate about no ticket");
         let (one, two) = (q(asked), q(json!({})));
         assert_eq!(
             held_reason("PDT-1", &[&one]),
