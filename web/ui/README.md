@@ -118,7 +118,12 @@ so a page reads the same everywhere and nothing destructive sits next to somethi
   section names and the settings on them: `web/src/common/settingsSections.ts`). `SettingsScreens` (web/src/common)
   shows one in a `SettingsScreen`: a breadcrumb, then the `Section` whose label is the screen's `lead`, whose heading
   and description become the screen's title. More cards on the same screen (Agents' Programs) are `Section`s too,
-  under their own small headings. A single-screen page (Notifications, Secrets) is a `Page`.
+  under their own small headings. A screen whose settings are all in such groups (PM's Daily checkpoint) leads with a
+  `Section` that has no rows: its heading is the title, with no card. The screen's title is always the sidebar's name
+  for it. A single-screen page (Notifications, Secrets) is a `Page`, with a "Settings" breadcrumb and the same header
+  as a screen's. A header's actions sit beside its text, and under it on a phone.
+- **Empty says what next.** A section or page with nothing in it is an `EmptyState` with the step that fills it
+  (Open Plugins), never a bare card or a search over nothing.
 - **Section cards → rows.** A `Section` is a heading (and description) over a bordered card; each child of the card
   is a row, divided from the next. Group by what the user is configuring, not by API field.
 - **One setting per row.** `SettingsRow`: label (and a one-line description) on the left, the control on the right.

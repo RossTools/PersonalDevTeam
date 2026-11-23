@@ -3,9 +3,10 @@
 // happens when a disk is almost full.
 import { useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { Alert, Banner, Button, EmptyState, Section, SettingsRow, Skeleton, Switch } from '@ui';
+import { Alert, Banner, Button, EmptyState, Popover, Section, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
+import type { DiskView } from '../api/gen/DiskView';
 import type { ProjectStorage } from '../api/gen/ProjectStorage';
 import type { WorktreeStorage } from '../api/gen/WorktreeStorage';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
@@ -129,6 +130,52 @@ function ProjectWorktrees({ p }: { p: ProjectStorage }) {
   );
 }
 
+const fill = { ok: 'bg-muted-foreground', low: 'bg-waiting', critical: 'bg-failed' } as const;
+
+/**
+ * One disk (PDT-693): how full it is as a bar and in words, and what of PDT's is on it by name ("PDT data", the
+ * projects); the full paths open from the names.
+ */
+function DiskRow({ d }: { d: DiskView }) {
+  const used = d.space.total ? Math.min(1, Math.max(0, (d.space.total - d.space.free) / d.space.total)) : 0;
+  const paths = d.folders.map((f, i) => ({ path: f, label: d.labels[i] ?? f }));
+  return (
+    <SettingsRow
+      label={<span className="flex items-center gap-2">Disk <DiskBadge level={d.level} /></span>}
+      description={
+        <Popover
+          label="Folders on this disk"
+          placement="bottom start"
+          className="w-96"
+          trigger={
+            <button type="button" title={d.folders.join('\n')}
+              className="cursor-pointer rounded-sm text-left underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+              {paths.map((p) => p.label).join(' · ')}
+            </button>
+          }
+        >
+          <dl className="flex flex-col gap-2 text-xs">
+            {paths.map((p) => (
+              <div key={p.path} className="flex flex-col gap-0.5">
+                <dt className="font-medium">{p.label}</dt>
+                <dd className="font-mono break-all text-muted-foreground">{p.path}</dd>
+              </div>
+            ))}
+          </dl>
+        </Popover>
+      }
+    >
+      <span className="flex items-center gap-3">
+        <span role="meter" aria-label="Disk used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(used * 100)}
+          className="h-1.5 w-24 overflow-hidden rounded-full bg-muted max-sm:hidden">
+          <span className={`block h-full ${fill[d.level]}`} style={{ width: `${used * 100}%` }} />
+        </span>
+        <span className="text-sm whitespace-nowrap">{formatBytes(d.space.free)} free of {formatBytes(d.space.total)}</span>
+      </span>
+    </SettingsRow>
+  );
+}
+
 export function Storage() {
   const qc = useQueryClient();
   const storage = useStorage();
@@ -149,12 +196,7 @@ export function Storage() {
       >
         {storage.isPending && <Skeleton lines={2} label="Loading storage" />}
         <LoadError what="Storage" error={storage.error} />
-        {s?.disks.map((d) => (
-          <SettingsRow key={d.folders.join('\n')} label={<span className="flex items-center gap-2">Disk <DiskBadge level={d.level} /></span>}
-            description={<span className="font-mono">{d.folders.join(', ')}</span>}>
-            <span className="text-sm">{formatBytes(d.space.free)} free of {formatBytes(d.space.total)}</span>
-          </SettingsRow>
-        ))}
+        {s?.disks.map((d) => <DiskRow key={d.folders.join('\n')} d={d} />)}
         <SettingsRow label="Clean all finished" description="Removes the build output of every Done or Won't do ticket's worktree now.">
           <Button size="sm" pending={cleaning} onClick={() => void cleanAll()}>Clean all finished</Button>
         </SettingsRow>

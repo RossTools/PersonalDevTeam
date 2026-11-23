@@ -186,7 +186,6 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         <span className="font-mono">{r.link.ownerUrl}</span>
         <span>{owner} v{r.link.ownerVersion}</span>
         <span>{r.link.lastContactAt ? `last heard from ${ago(r.link.lastContactAt)}` : `waiting for ${owner}`}</span>
-        {r.running.length === 0 && <span>Nothing runs here for {owner} now.</span>}
       </span>
       {r.running.length > 0 && (
         <ul aria-label={`Running for ${owner}`} className="flex flex-col gap-0.5 text-meta">
@@ -217,7 +216,7 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
 export function RemoteProjectsPage() {
   const q = useRemoteProjects();
   return (
-    <Page title="Remote projects" description="Projects another instance owns, which this one works on for it. Their board, tickets and PM are on the owner.">
+    <Page crumb="Settings" title="Remote projects" description="Projects another instance owns, which this one works on for it. Their board, tickets and PM are on the owner.">
       <Section label="Joined">
         {q.isPending && <Skeleton lines={2} label="Loading remote projects" />}
         <LoadError what="Remote projects" error={q.error} />
@@ -228,7 +227,7 @@ export function RemoteProjectsPage() {
           </ul>
         )}
       </Section>
-      <Section label="Join a remote project" description="On the owner, open the project's settings → Remote instances → Add for a code.">
+      <Section label="Join a remote project" description="On the owner, open the project's settings → Remote instances → Add instance for a code.">
         <JoinRemoteProjectForm />
       </Section>
     </Page>

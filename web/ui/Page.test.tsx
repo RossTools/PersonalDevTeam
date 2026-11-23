@@ -15,6 +15,17 @@ describe('Page', () => {
     expect(page.className).toContain('max-w-3xl');
     expect((container.firstChild as HTMLElement).className).toContain('overflow-auto');
   });
+
+  it('has a breadcrumb, hidden on a phone, and its actions wrap under the text rather than squeeze it', () => {
+    render(<Page crumb="Settings" title="Notifications" description="What reaches you." actions={<button type="button">Reset</button>}><p>body</p></Page>);
+    const crumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(crumb).toHaveTextContent('Settings');
+    expect(crumb.className).toContain('max-md:hidden');
+    const text = screen.getByRole('heading', { name: 'Notifications' }).parentElement!;
+    expect(text.className).toContain('basis-64');
+    expect(text.className).not.toContain('flex-1');
+    expect(screen.getByText('What reaches you.').className).toContain('text-sm');
+  });
 });
 
 describe('Section', () => {
@@ -67,6 +78,12 @@ describe('Section', () => {
     const section = screen.getByRole('region', { name: 'Danger zone' });
     expect(section.querySelector('[data-slot="section-card"]')!.className).toContain('border-destructive/40');
     expect(within(section).getByRole('heading').className).toContain('text-destructive');
+  });
+  it('with no rows and no footer is only a heading: a screen title over sections of its own', () => {
+    render(<SettingsScreen lead="PM"><Section label="PM" description="What the PM does." /><Section label="Daily checkpoint"><p>x</p></Section></SettingsScreen>);
+    expect(screen.getByRole('heading', { name: 'PM' }).tagName).toBe('H2');
+    expect(screen.getByRole('region', { name: 'PM' }).querySelector('[data-slot="section-card"]')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Daily checkpoint' }).querySelector('[data-slot="section-card"]')).not.toBeNull();
   });
 });
 

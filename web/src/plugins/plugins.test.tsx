@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { githubLogin, renderWithQuery, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { plugins as built } from '../api/gen/plugins';
 import { AllConnectionsPage } from './AllConnectionsPage';
@@ -284,7 +284,7 @@ describe('plugins: All connections', () => {
       'GET /api/connections': [conn('alerts', 'discord_webhook'), conn('media', 'scryer', { url: 'http://nas:8080', lastError: 'refused' })],
     });
     const onOpen = vi.fn();
-    renderWithQuery(<AllConnectionsPage onOpen={onOpen} />);
+    renderWithQuery(<AllConnectionsPage onOpen={onOpen} onPlugins={() => {}} />);
     const row = (name: string) => screen.getByRole('row', { name: new RegExp(`^${name}`) });
     expect(await screen.findByRole('row', { name: /^alerts Discord/ })).toHaveTextContent('OK');
     expect(row('media')).toHaveTextContent('Scryer');
@@ -294,5 +294,15 @@ describe('plugins: All connections', () => {
     expect(screen.queryByRole('row', { name: /^alerts/ })).toBeNull();
     await userEvent.click(within(row('media')).getByRole('button', { name: 'media' }));
     expect(onOpen).toHaveBeenCalledWith('scryer');
+  });
+
+  it('with none, hides the search and points to the plugins', async () => {
+    stubApi({ 'GET /api/integrations': mixed(), 'GET /api/connections': [], 'GET /api/forges/github/login': githubLogin() });
+    const onPlugins = vi.fn();
+    renderWithQuery(<AllConnectionsPage onOpen={() => {}} onPlugins={onPlugins} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Plugins' }));
+    expect(onPlugins).toHaveBeenCalled();
+    expect(screen.getByText('No connections yet. Add them on a plugin’s page.')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Search connections' })).toBeNull();
   });
 });

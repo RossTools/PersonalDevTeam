@@ -13,16 +13,19 @@ ticket, marked **on win-box**.
 
 ## Before you start
 
-- **Name each instance** in **Settings › This host › Name** (or in **Get started**), so you can tell them apart.
+- **Name each instance** in **Settings › This host › Remote access** (or in **Get started**), so you can tell them apart.
 - **Turn on remote access on both**, with the same Tailscale owner. See
   [Remote access and your phone](remote-access.md). The two instances reach each other through it.
 
 ## Add a remote instance to a project
 
-1. **On the owner**, open the project's settings, then **Remote instances**, and click **Add**. PDT shows a pairing
-   code and this instance's address. The code works once, for 10 minutes.
+1. **On the owner**, open the project's settings, then **Remote instances**, and click **Add instance**. PDT shows a
+   pairing code and this instance's address, each with **Copy**. The code works once, for 10 minutes.
 2. **On the other instance**, click **Add project**, choose **Join a remote**, and enter the owner's address and the
    code. Click **Join project**.
+
+While remote access is off, neither instance offers pairing: they show **Turn on remote access**, which opens its
+setting.
 
 The project then shows on the other instance under **Settings › Remote projects**, as
 "**Valley · remote project of studio**", and on the owner under **Remote instances**.

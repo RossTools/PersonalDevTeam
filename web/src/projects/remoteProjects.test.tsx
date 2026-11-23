@@ -5,9 +5,9 @@ import type { Project } from '../api/gen/Project';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import { toast } from '@ui';
-import { renderWithQuery, Reply, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
-import { ago, RemoteInstances } from './RemoteInstances';
+import { ago, minutesLeft, RemoteInstances } from './RemoteInstances';
 import { RemoteProjectsPage } from './RemoteProjectsPage';
 
 afterEach(() => {
@@ -103,18 +103,46 @@ describe('Remote instances (the owner)', () => {
     expect(await screen.findByDisplayValue('3')).toBeInTheDocument();
   });
 
-  it('shows a pairing code with this instance\'s address on Add', async () => {
+  it('shows a pairing code and this instance\'s address on Add instance, each with Copy, and cancels it', async () => {
     let shown = view();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard({ writeText });
     const calls = stubApi({
       'GET /api/projects/p/remote-instances': () => shown,
-      'POST /api/projects/p/remote-instances/pairing': () => (shown = view({ pairing: { code: 'ABCD-EFGH', expiresAt: Date.now() + 600_000 } })),
+      'POST /api/projects/p/remote-instances/pairing': () => (shown = view({ pairing: { code: 'ABCD-EFGH', expiresAt: Date.now() + 9 * 60_000 } })),
+      'DELETE /api/projects/p/remote-instances/pairing': () => { shown = view(); return undefined; },
     });
     renderWithQuery(<RemoteInstances project={project} />);
     expect(await screen.findByText('No remote instances yet.')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Add instance' }));
     expect(await screen.findByText('ABCD-EFGH')).toBeInTheDocument();
     expect(screen.getByText('https://studio.example.ts.net')).toBeInTheDocument();
-    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/projects/p/remote-instances/pairing')).toBe(true);
+    expect(screen.getByText('Expires in 9 min')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Copy the code' }));
+    expect(writeText).toHaveBeenCalledWith('ABCD-EFGH');
+    await userEvent.click(screen.getByRole('button', { name: 'Copy the address' }));
+    expect(writeText).toHaveBeenCalledWith('https://studio.example.ts.net');
+    expect(screen.getByRole('button', { name: /New code/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel code' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p/remote-instances/pairing', body: undefined }));
+    expect(await screen.findByText('No remote instances yet.')).toBeInTheDocument();
+  });
+
+  it('offers no pairing while remote access is off, only a way to turn it on', async () => {
+    window.history.replaceState(null, '', '/projects/p');
+    stubApi({ 'GET /api/projects/p/remote-instances': view({ address: null, pairing: { code: 'ABCD-EFGH', expiresAt: Date.now() + 600_000 } }) });
+    renderWithQuery(<RemoteInstances project={project} />);
+    expect(await screen.findByText("Remote access is off, so other instances can't reach this one.")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add instance|New code/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Turn on remote access/ }));
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/host/remote-access'));
+  });
+
+  it('says how long a pairing code has left', () => {
+    expect(minutesLeft(10 * 60_000, 0)).toBe('10 min');
+    expect(minutesLeft(30_000, 0)).toBe('1 min');
+    expect(minutesLeft(0, 5_000)).toBe('1 min');
   });
 });
 
@@ -143,7 +171,7 @@ describe('Remote projects (the remote instance)', () => {
     const row = (await screen.findByText('Valley')).closest('li')!;
     expect(row).toHaveTextContent('· remote project of studio');
     expect(within(row).getByText('connected')).toBeInTheDocument();
-    expect(row).toHaveTextContent('Nothing runs here for studio now.');
+    expect(row).not.toHaveTextContent('Nothing runs here');
     await userEvent.click(within(row).getByRole('button', { name: 'Open on studio' }));
     expect(open).toHaveBeenCalledWith('https://studio.example.ts.net/tickets?view=board', '_blank', 'noopener,noreferrer');
     await userEvent.click(within(row).getByRole('button', { name: 'Pause' }));
@@ -230,18 +258,30 @@ describe('Remote projects (the remote instance)', () => {
     const onJoined = vi.fn();
     let n = 0;
     const calls = stubApi({
-      'GET /api/host/settings': { settings: {}, remote: { active: false } },
+      'GET /api/host/settings': { settings: {}, remote: { active: true } },
       'POST /api/remote-projects': () => (n++ === 0 ? new Reply(403, { code: 'pairing_code', message: 'that pairing code is wrong or has expired: show a new one' }) : remote),
     });
     renderWithQuery(<AddProjectForm initialMode="remote" onJoined={onJoined} />);
-    expect(await screen.findByText(/turn it on in Settings → This host → Remote access/)).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: "Owner's address" }), 'studio.example.ts.net');
     await userEvent.type(screen.getByRole('textbox', { name: 'Pairing code' }), 'abcd-efgh');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Join project' })).toBeEnabled());
     await userEvent.click(screen.getByRole('button', { name: 'Join project' }));
     expect(await screen.findByText(/that pairing code is wrong/)).toBeInTheDocument();
     expect(calls).toContainEqual({ method: 'POST', path: '/api/remote-projects', body: { ownerAddress: 'studio.example.ts.net', code: 'abcd-efgh' } });
     await userEvent.click(screen.getByRole('button', { name: 'Join project' }));
     await waitFor(() => expect(onJoined).toHaveBeenCalled());
+  });
+
+  it('offers no Join while remote access is off, only a way to turn it on, which closes the dialog', async () => {
+    window.history.replaceState(null, '', '/projects');
+    const onLeave = vi.fn();
+    stubApi({ 'GET /api/host/settings': { settings: {}, remote: { active: false } } });
+    renderWithQuery(<AddProjectForm initialMode="remote" onLeave={onLeave} />);
+    expect(await screen.findByText("Remote access is off, so other instances can't reach this one.")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Join project' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Turn on remote access/ }));
+    expect(onLeave).toHaveBeenCalled();
+    await waitFor(() => expect(window.location.pathname).toBe('/settings/host/remote-access'));
   });
 
   it('says how long ago', () => {

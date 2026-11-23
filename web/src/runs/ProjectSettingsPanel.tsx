@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { Alert, Button, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
+import { Alert, Button, EmptyState, Field, MenuButton, Section, Select, SettingsRow, Skeleton, Switch, Textarea } from '@ui';
 import { AutoSaveRow, AutoSaveText, SaveStatus } from '../common/AutoSave';
 import { api } from '../api/client';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { agentOf, byDefault, choiceFor, newSession } from '../sessions/newSession';
-import { useOpenSession } from '../common/open';
+import { openSettings, useOpenSession } from '../common/open';
 import { AreasEditor } from '../tickets/Areas';
 import { ConfigCommands } from './ApproveCommands';
 import { BranchNames } from './BranchNames';
@@ -231,7 +231,7 @@ function Instructions({ project, settings, writeEntries }: { project: Project; s
 /** The agent settings: selects, so each saves at once. */
 function Agents({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   return (
-    <Section label="Agents">
+    <Section label="Agents" description="How agents in this project sign in, and what workflow steps let them do without asking.">
       <Credentials project={project} settings={settings} />
       <StepPermissionMode project={project} settings={settings} />
     </Section>
@@ -292,7 +292,7 @@ function StepPermissionMode({ project, settings }: { project: Project; settings:
 function Merging({ project, settings }: { project: Project; settings: ProjectSettingsView | undefined }) {
   const save = useSaveProjectSettings(project, settings);
   return (
-    <Section label="Review">
+    <Section label="Review" description="How finished work reaches the base branch.">
       <AutoSaveRow
         label="Merge through pull requests"
         description="Merge… only turns on auto-merge for the ticket's pull request (or asks the agent to open one); it never merges into the base branch on this machine."
@@ -614,6 +614,11 @@ function Integrations({ project, settings, schemas }: { project: Project; settin
       label="Plugins"
       description="Link this project to the services its issues and CI live in. Kept on this host, never written to the repository."
     >
+      {schemas.length === 0 && (
+        <EmptyState action={<Button size="sm" variant="secondary" onClick={() => openSettings({ kind: 'plugins', id: null })}>Open Plugins</Button>}>
+          No plugin that links to projects is on. Jira and Buildkite can link this project to their issues and CI.
+        </EmptyState>
+      )}
       {schemas.map((s) => {
         const text = integrationText(s, stored(s.integration));
         return (
