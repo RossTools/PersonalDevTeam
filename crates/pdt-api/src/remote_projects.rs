@@ -188,7 +188,8 @@ async fn join(
         owner_url: owner_url.clone(),
         owner_version: reply.owner.version.clone(),
         owner_public_key: reply.public_key.clone(),
-        repo_url: reply.project.repo_url.clone(),
+        // An owner from before PDT-649 sends its origin as it is, credentials and all.
+        repo_url: reply.project.repo_url.as_deref().map(pdt_core::git_url::without_credentials),
         checkout_path: None,
         paused: false,
         own_update_channel: false,
