@@ -181,7 +181,7 @@ export function AppShell() {
   const [todoFocus, setTodoFocus] = useState<TodoFocus | null>(null);
   const clearTodoFocus = useCallback(() => setTodoFocus(null), []);
   const [addingProject, setAddingProject] = useState(false);
-  // The way of adding a project the dialog opens on (Get started's Clone from GitHub opens on Clone URL).
+  // The way of adding a project the dialog opens on (Get started's Clone from GitHub opens on Clone a URL).
   const [addMode, setAddMode] = useState<AddProjectMode>('path');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState('');
