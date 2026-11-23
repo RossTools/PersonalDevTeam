@@ -8,6 +8,8 @@ import { cn } from '@ui/lib/utils';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
+import { EmptyPane } from '../common/EmptyPane';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 import { isAcp, useAcpAgents, type AcpKind } from '../common/agents';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
@@ -231,7 +233,8 @@ export function AppShell() {
   const inboxItems = inbox.data?.items ?? NONE;
   // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path. On a
   // phone `/inbox` is the list, where a tap opens an item (a new entry).
-  const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
+  const snoozedItems = inbox.data?.snoozed ?? NONE;
+  const inboxShown = !!inboxId && (inboxItems.some((i) => i.id === inboxId) || snoozedItems.some((i) => i.id === inboxId));
   const autoPick = phone ? inboxId !== null && !inboxShown : !inboxShown;
   const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: autoPick }), [autoPick]);
   // A phone's item screen moves between items in place, so Back returns to the list.
@@ -689,7 +692,7 @@ export function AppShell() {
   ) : view === 'files' ? (
     phone ? <ScreenSuspense><FolderList state={folder} dir="" /></ScreenSuspense> : (
       <>
-        <ListHeading>{label}</ListHeading>
+        <ListColumnHeader title={label} />
         <ScreenSuspense><FolderTree state={folder} /></ScreenSuspense>
       </>
     )
@@ -869,7 +872,7 @@ export function AppShell() {
             theme={{ value: theme, onChange: setTheme }}
             onSearch={() => setPaletteOpen(true)}
           />
-          <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', (view === 'notes' || view === 'documents') && 'w-80')}>
+          <aside aria-label={`${label} list`} className="flex min-h-0 w-80 flex-col border-r border-border">
             <div className="flex-1 overflow-auto px-1">{list}</div>
           </aside>
         </>
@@ -987,10 +990,10 @@ export function AppShell() {
                 )}
               </div>
             ) : view === 'inbox' && phone && inboxId ? (
-              <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updateItems}
+              <ScreenSuspense><PhoneInboxItem items={inboxItems} snoozed={snoozedItems} updates={updateItems}
                 itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <ScreenSuspense><InboxView items={inboxItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} loading={inbox.isPending} failed={inboxFailed} /></ScreenSuspense>
+              <ScreenSuspense><InboxView items={inboxItems} snoozed={snoozedItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} loading={inbox.isPending} failed={inboxFailed} /></ScreenSuspense>
             ) : view === 'pm' ? (
               <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (
@@ -1005,9 +1008,9 @@ export function AppShell() {
                   onKind={setNotesWhose}
                 /></ScreenSuspense>
               ) : (
-                <EmptyState icon={<NotebookPen />} className="mt-16 border-0" action={<Button size="sm" onClick={newNote}>New note</Button>}>
+                <EmptyPane icon={<NotebookPen />} newLabel="New note" onNew={newNote}>
                   {notes.whose === 'note' ? 'Pick a note from the PM’s memory, or add one.' : 'Pick a note, or start a new one.'}
-                </EmptyState>
+                </EmptyPane>
               )
             ) : view === 'documents' ? (
               docId ? (
@@ -1018,9 +1021,9 @@ export function AppShell() {
                   onGone={() => (phone ? goBack(routePath(viewRoute('documents'))) : go(viewRoute('documents'), { replace: true }))}
                 /></ScreenSuspense>
               ) : (
-                <EmptyState icon={<FileText />} className="mt-16 border-0" action={<Button size="sm" onClick={() => setDocDialog('new')}>New document</Button>}>
+                <EmptyPane icon={<FileText />} newLabel="New document" onNew={() => setDocDialog('new')}>
                   Pick a document, or make one.
-                </EmptyState>
+                </EmptyPane>
               )
             ) : view === 'personas' ? (
               <ScreenSuspense><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></ScreenSuspense>

@@ -44,7 +44,7 @@ optional **Note**; a changed name, role or description alone is just **Save** an
 undoes them. **Versions** lists every save, newest first; tick two to compare them. A step that already started keeps the instructions it started with, but its PDT tools follow
 the newest version: an agent that supports it sees tools added or taken away without restarting.
 
-**New persona** (at the top of the list) makes your own: a **Name**, a **Role** (free text: refiner, coder,
+**New persona** (**＋ New** at the top of the list) makes your own: a **Name**, a **Role** (free text: refiner, coder,
 reviewer…), a **Description** and the same setup. Use it in an agent step or the Pipeline's settings.
 
 ### Which permission mode wins

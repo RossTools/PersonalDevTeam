@@ -79,10 +79,13 @@ describe('PersonasList', () => {
 });
 
 describe('PersonaPage', () => {
-  it('asks to choose a persona when none is chosen', () => {
+  it('asks to pick a persona when none is chosen, with New persona', async () => {
     stubApi({ ...TOOLS_ROUTE, 'GET /api/personas': [] });
-    renderWithQuery(<PersonaPage personaId={null} onSelect={() => {}} />);
-    expect(screen.getByText('Choose a persona')).toBeInTheDocument();
+    const onSelect = vi.fn();
+    renderWithQuery(<PersonaPage personaId={null} onSelect={onSelect} />);
+    expect(screen.getByText('Pick a persona, or make one.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'New persona' }));
+    expect(onSelect).toHaveBeenCalledWith('new');
   });
 
   it('creates a persona and selects it', async () => {

@@ -28,6 +28,8 @@ export function toolVerb(tool: string): string {
       return 'Agent:';
     case 'TodoWrite':
       return 'Update to-dos';
+    case 'AskUserQuestion':
+      return 'Question';
     default:
       return mcpName(tool) ?? tool;
   }
@@ -64,6 +66,7 @@ function category(tool: string): Category {
 
 /** A tool's own name: `mcp__pdt__search_tickets` → `search_tickets`. */
 export function shortTool(tool: string): string {
+  if (tool === 'AskUserQuestion') return 'Question';
   return /^mcp__.+?__(.+)$/.exec(tool)?.[1] ?? tool;
 }
 
@@ -96,6 +99,12 @@ export function summarizeTools(calls: { tool: string; title: string }[]): string
   ].filter(Boolean) as string[];
   const text = parts.join(', ');
   return text ? text[0].toUpperCase() + text.slice(1) : 'No tools';
+}
+
+/** "run", "edit": what an agent wants to do with a built-in tool ("Claude wants to run `npm test`"); null for others. */
+export function wantsVerb(tool: string): string | null {
+  const verb = toolVerb(tool);
+  return ['Run', 'Read', 'Edit', 'Write', 'Search', 'Fetch', 'Search the web'].includes(verb) ? verb.toLowerCase() : null;
 }
 
 /** The approval card's question for a tool ("Run this command?"). */

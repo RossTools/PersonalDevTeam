@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
+import { cn } from '@ui/lib/utils';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { DecideRow } from '../api/gen/DecideRow';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -291,7 +292,9 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
           content: pdt ? (
             <CodeCard aria-label={pdt.title} title={pdt.title} aside={nonBlank(item.body.sessionTitle) ?? undefined}><div className="p-2.5">{pdt.preview}</div></CodeCard>
           ) : (
-            <CodeCard aria-label={approvalTitle(tool)} title={where} aside={description} code={diff ? undefined : item.title}>
+            <CodeCard aria-label={approvalTitle(tool)} title={where} code={diff ? undefined : item.title}>
+              {/* What the agent says the call is for, under the command: in the header it read as a button (PDT-686). */}
+              {description && <p className={cn('px-3.5 text-xs text-muted-foreground break-words', diff ? 'border-b border-border py-2' : '-mt-1.5 pb-3')}>{description}</p>}
               {diff && <DiffViewer diff={diff} />}
               {/* Without a preview the arguments are all that says what the call does (PDT-541). */}
               {args && (

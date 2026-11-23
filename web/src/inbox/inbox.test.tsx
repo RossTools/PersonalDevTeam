@@ -704,6 +704,15 @@ describe('inbox', () => {
     choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
   });
 
+  it("shows an approval's description under the command, not in the card's header (PDT-686)", () => {
+    const described = item('approval:sess:r4', { ...bashApproval, id: 'approval:sess:r4', body: { ...bashApproval.body, description: 'Run it' } });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[described]} selectedId={described.id} onSelect={() => {}} />);
+    const line = screen.getByText('Run it');
+    expect(line.tagName).toBe('P');
+    expect(line.previousElementSibling?.tagName).toBe('PRE');
+  });
+
   it('answers an approval in its session and moves on to the next item', async () => {
     const calls = stubApi({ 'POST /api/sessions/sess/requests/r3': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();
@@ -940,6 +949,45 @@ describe('inbox', () => {
   });
 });
 
+describe('inbox rows (PDT-686)', () => {
+  it('names the asking session, its agent and the project instead of the kind', async () => {
+    stubApi({
+      'GET /api/projects': [{ id: 'p', key: 'SA', name: 'Sample App' }],
+      'GET /api/projects/p/sessions': [{ id: 's1', projectId: 'p', title: 'Fix login sessions', agent: 'claude' }],
+    });
+    const asked = item('q1', {
+      kind: 'question', group: 'question', sessionId: 's1', ticketId: null, ticketKey: null, ticketTitle: null, runId: null, stepId: null,
+      title: 'Which database should the login form store sessions in?',
+    });
+    const bare = item('q2', { kind: 'question', group: 'question', projectId: null, ticketId: null, ticketKey: null, ticketTitle: null, runId: null, stepId: null, title: 'Split it?' });
+    renderWithQuery(<InboxList items={[asked, bare]} selectedId={null} onSelect={() => {}} />);
+    expect(await screen.findByText('Claude · Fix login sessions · SA')).toBeInTheDocument();
+    // Nothing to name: the kind, as before.
+    expect(screen.getByText('Question')).toBeInTheDocument();
+  });
+
+  it('opens a snoozed item read-only, with Unsnooze where Snooze sits', async () => {
+    const user = userEvent.setup();
+    const away = item('g', {
+      title: 'Merge #633?', body: { question: 'Merge #633?' },
+      snooze: { itemId: 'g', until: null, ticketId: 't9', ticketKey: 'PDT-639', createdAt: 1 },
+    });
+    const calls = stubApi({ 'GET /api/inbox': { items: [], snoozed: [away], total: 0 }, 'DELETE /api/inbox/g/snooze': undefined });
+    const onSelect = vi.fn();
+    const { unmount } = renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={onSelect} />);
+    await user.click(await screen.findByText('Merge #633?'));
+    expect(onSelect).toHaveBeenCalledWith('g');
+    unmount();
+
+    renderWithQuery(<InboxView items={[]} snoozed={[away]} selectedId="g" onSelect={() => {}} />);
+    expect(screen.getByText('Snoozed until PDT-639 is done. Unsnooze it to answer.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Snooze' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Your choice' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Unsnooze' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/inbox/g/snooze')).toBe(true));
+  });
+});
+
 describe('inbox sections (PDT-108)', () => {
   it("says the lists can't load, not that they are empty, when they failed", () => {
     renderWithQuery(<InboxList items={[]} updates={[]} selectedId={null} onSelect={() => {}} failed updatesFailed />);
@@ -993,8 +1041,10 @@ describe('inbox sections (PDT-108)', () => {
     expect(onClearAll).toHaveBeenCalled();
     unmount();
 
-    renderWithQuery(<InboxList items={[]} updates={[]} selectedId={null} onSelect={() => {}} onClearAll={onClearAll} />);
-    expect(screen.getByRole('button', { name: 'Clear all' })).toBeDisabled();
+    // With no updates there is nothing to read or clear: Mark all read and Clear all go (PDT-686).
+    renderWithQuery(<InboxList items={[]} updates={[]} selectedId={null} onSelect={() => {}} onReadAll={() => {}} onClearAll={onClearAll} />);
+    expect(screen.queryByRole('button', { name: 'Clear all' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull();
     cleanup();
 
     const calls = stubApi({ 'POST /api/notifications/u1/read': null, 'POST /api/notifications/u1/clear': null, 'GET /api/notifications': { items: [], unreadUpdates: 0 }, 'GET /api/inbox': { items: [], total: 0 } });

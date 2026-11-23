@@ -9,9 +9,10 @@ Open **Inbox** in the rail (or **Ctrl+]** then **i**). The number on its icon is
 
 - **Needs you**: things waiting for your answer. Nothing moves on until you deal with them.
 - **Updates**: news, newest first, unread in bold (an agent finished its turn, CI failed, a pull request merged, a
-  workflow failed). **Mark all read**, **Clear all**, or **Clear** one.
+  workflow failed). **Mark all read** and **Clear all** show while there are updates; **Clear** removes one.
 
-Each row shows the kind's icon, the item's title, its ticket and who asks, and how long it has waited. Pick one to see
+Each row shows the kind's icon, the item's title (up to two lines), how long it has waited, and under the title what
+tells it from the others: its ticket and who asks, or the conversation that asks, its agent and the project. Pick one to see
 it beside the list, laid out the same for every kind:
 
 - at the top, the kind, the ticket, who asks and when, the title, and links to the **Ticket**, the agent's **session**,
@@ -67,8 +68,9 @@ Something you can't act on yet (a pull request waiting for another fix to land, 
   which can't be done until you answer it: snooze it until a time, or until another ticket.
 
 A snoozed item isn't counted on the rail. It is listed under **Snoozed**, below **Needs you**, with when it comes
-back, and whether its ticket is waiting on it; **Unsnooze** brings it back now. It comes back by itself when its time comes or its ticket closes. One that is
-answered or goes away meanwhile (its workflow moved on) stays gone.
+back, and whether its ticket is waiting on it. Pick one to read it (you can't answer it while it's snoozed);
+**Unsnooze**, in its row or at the top of the item, brings it back now. It comes back by itself when its time comes or
+its ticket closes. One that is answered or goes away meanwhile (its workflow moved on) stays gone.
 
 ## What lands in Needs you
 

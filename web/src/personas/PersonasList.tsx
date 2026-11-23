@@ -1,9 +1,9 @@
-import { Plus } from 'lucide-react';
-import { Badge, EmptyState, IconButton, List, ListHeading, ListRow, Skeleton } from '@ui';
+import { Badge, EmptyState, List, ListRow, Skeleton } from '@ui';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { useAgents } from '../common/agents';
 import { agentLine, sortPersonas, usePersonas } from './model';
 import { LoadError } from '../common/QueryStatus';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 
 /**
  * The list column of the Personas view: a heading with New persona, then every persona (name; role,
@@ -16,16 +16,8 @@ export function PersonasList({ selectedId, onSelect }: { selectedId: string | nu
   const list = sortPersonas(personas.data ?? []);
   const phone = useMediaQuery(PHONE_QUERY);
   return (
-    <div className="flex flex-col gap-0.5 py-1">
-      <ListHeading
-        trailing={!phone && (
-          <IconButton label="New persona" size="sm" noTooltip className="size-5" onClick={() => onSelect('new')}>
-            <Plus aria-hidden />
-          </IconButton>
-        )}
-      >
-        Personas
-      </ListHeading>
+    <div className="flex flex-col gap-0.5 pb-1">
+      <ListColumnHeader title="Personas" newLabel="New persona" {...(phone ? {} : { onNew: () => onSelect('new') })} />
       {personas.isPending && <Skeleton lines={4} label="Loading personas" />}
       <LoadError what="Personas" error={personas.error} />
       {personas.isSuccess && (

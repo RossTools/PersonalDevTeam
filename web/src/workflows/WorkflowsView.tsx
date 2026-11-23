@@ -1,7 +1,8 @@
 // The Workflows view's work area: a workflow's page, one of the user's templates' page (from Save
 // as template or the gallery's Edit this template), or a start.
 import { useQuery } from '@tanstack/react-query';
-import { Button, EmptyState, Skeleton } from '@ui';
+import { Workflow } from 'lucide-react';
+import { Skeleton } from '@ui';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
 import { NewWorkflowDialog } from './NewWorkflowDialog';
@@ -10,6 +11,7 @@ import { WorkflowPage } from './WorkflowPage';
 import type { WorkflowTarget } from './WorkflowsList';
 import { workflowKeys } from './queries';
 import { LoadError } from '../common/QueryStatus';
+import { EmptyPane } from '../common/EmptyPane';
 
 export function WorkflowsView({ target, onOpen, projects, projectInView, creating, onCreate }: {
   target: WorkflowTarget;
@@ -28,9 +30,9 @@ export function WorkflowsView({ target, onOpen, projects, projectInView, creatin
           view={{ tab: target.tab, runId: target.runId ?? null, onChange: (tab, runId) => onOpen({ kind: 'workflow', id: target.id, tab, ...(runId ? { runId } : {}) }) }} />
         : target?.kind === 'template' ? <TemplatePage key={target.id} id={target.id} catalog={catalog.data} onUse={(templateId) => onCreate({ templateId })} onDeleted={() => onOpen(null)} />
           : (
-            <EmptyState action={<Button variant="primary" onClick={() => onCreate({})}>New workflow</Button>}>
-              Workflows are what PDT does by itself when something happens. Pick one, or make one from a template.
-            </EmptyState>
+            <EmptyPane icon={<Workflow />} newLabel="New workflow" onNew={() => onCreate({})}>
+              Pick a workflow, or make one from a template.
+            </EmptyPane>
           );
   return (
     <div className="flex min-h-0 flex-1 flex-col">

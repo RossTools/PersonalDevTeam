@@ -10,6 +10,7 @@ import { capitalize } from '../common/text';
 import { parseChoice, RunMenu, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
 import { prHref } from '../tickets/PullRequest';
+import { useAllSessions } from '../tickets/queries';
 import { useTicketTabs } from '../workspaces/ticketTabs';
 
 /** A link the item's kind adds to the row (Storage settings, the workflow's versions). */
@@ -37,6 +38,7 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
   const openChanges = useOpenChanges();
   const tabs = useTicketTabs();
   const { attempt, coder } = useItemAttempt(item);
+  const sessions = useAllSessions();
   const worktreeId = item.ticketId ? attempt?.worktreeId ?? null : null;
   const projectId = item.projectId ?? '';
   const size = useChangeSize(worktreeId);
@@ -51,7 +53,10 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
   };
   const targets = inboxTargets(item);
   const ownSession = item.kind !== 'session' ? targets.session : null;
-  const persona = item.personaName ? `${item.personaName} session` : 'Session';
+  // A persona's session says whose it is; any other is the conversation that asks (its title in the tooltip).
+  const persona = item.personaName ? `${item.personaName} session` : 'Open conversation';
+  const sessionTitle = sessions.find((s) => s.id === ownSession?.id)?.title
+    ?? (typeof item.body.sessionTitle === 'string' && item.body.sessionTitle ? item.body.sessionTitle : undefined);
   const cr = item.changeRequest;
   const any = targets.ticket || ownSession || coder || worktreeId || cr || pr || extra.length > 0;
   if (!any) return null;
@@ -63,11 +68,11 @@ export function ItemLinks({ item, extra = [] }: { item: InboxItem; extra?: ItemL
         </LinkButton>
       )}
       {ownSession ? (
-        <LinkButton onClick={() => openSession(ownSession)}>{persona}</LinkButton>
+        <LinkButton title={sessionTitle} onClick={() => openSession(ownSession)}>{persona}</LinkButton>
       ) : coder && item.ticketId && (
         <LinkButton aria-label="Open coder session" title={coder.title}
           onClick={() => tabs.openNear({ kind: 'session', id: coder.id }, projectId, item.ticketId!)}>
-          {coder.persona ? `${coder.persona} session` : 'Session'}
+          {coder.persona ? `${coder.persona} session` : 'Open conversation'}
         </LinkButton>
       )}
       {worktreeId && (
