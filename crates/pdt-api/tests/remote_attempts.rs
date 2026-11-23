@@ -104,6 +104,9 @@ pub(crate) async fn paired_with(
 ) -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
+    // The tests heartbeat themselves: one sent a while after joining could land after a test took win-box offline
+    // and mark it connected again (PDT-731).
+    owner.state.link.set_no_join_heartbeat(true);
     let remote = instance_with("win-box", None, tailscale, update).await;
     let main = owner.tmp.path().join("valley");
     repo(&main);
