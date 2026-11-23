@@ -720,6 +720,31 @@ function TriageCaps({ v }: { v: HostSettingsView }) {
   );
 }
 
+/** This instance's name (PDT-631): shown wherever another instance mentions this one. */
+function InstanceName({ v }: { v: HostSettingsView }) {
+  const qc = useQueryClient();
+  const instance = useInstance();
+  const save = useSaveSettings();
+  const id = useId();
+  const picked = v.settings.instanceName;
+  const shown = picked ?? instance.data?.instanceName ?? '';
+  return (
+    <Section label="Name" description="This instance of PDT's name, shown wherever another instance mentions it (e.g. studio, win-box).">
+      <SettingsRow
+        label="Instance name"
+        htmlFor={id}
+        description={picked ? 'Letters, digits, - _ and . (no spaces).' : `Not picked yet: it goes by ${shown}, from this machine's host name.`}
+      >
+        <AutoSaveText id={id} aria-label="Instance name" mono className="w-56 max-w-full" maxLength={32} value={shown}
+          onSave={async (instanceName) => {
+            await save.saveText({ instanceName });
+            await qc.invalidateQueries({ queryKey: hostKeys.health });
+          }} />
+      </SettingsRow>
+    </Section>
+  );
+}
+
 function ProjectsFolder({ v }: { v: HostSettingsView }) {
   const saved = v.settings.projectsDir ?? '';
   const save = useSaveSettings();
@@ -942,6 +967,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<string, ReactNode> = {
+    'Name': <InstanceName v={v} />,
     'Setup': <Setup />,
     'Updates': <><Updates v={v} /><InstallUpdates policy={v.settings.updatePolicy} /></>,
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,

@@ -269,6 +269,8 @@ pub struct AppState {
     pub toolchains: std::sync::Arc<dyn crate::toolchains::ToolchainSource>,
     /// Serializes installs.
     pub(crate) toolchain_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// The project link to other instances (PDT-631): pairing codes on show, nonces seen, its HTTP client.
+    pub link: std::sync::Arc<crate::link::LinkRuntime>,
 }
 
 impl AppState {
@@ -391,6 +393,7 @@ impl AppState {
             integrations: Default::default(),
             toolchains: std::sync::Arc::new(crate::toolchains::Offline),
             toolchain_lock: Default::default(),
+            link: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             mcp_tools: Default::default(),
@@ -496,6 +499,8 @@ pub struct Health {
     /// The product's website (`brand::WEBSITE`), for links to its docs.
     pub website: String,
     pub version: String,
+    /// This instance's name (Settings → This host): the one the user picked, else one from the machine's host name.
+    pub instance_name: String,
     pub profile: pdt_core::brand::Profile,
     pub port: u16,
     pub dev: bool,
@@ -546,6 +551,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::install_updates::router())
         .merge(crate::issue_links::router())
         .merge(crate::issues::router())
+        .merge(crate::link::router())
         .merge(crate::local_forge::router())
         .merge(crate::mcp::router())
         .merge(crate::mcp_servers::router())
@@ -561,6 +567,8 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::projects::router())
         .merge(crate::pty_ws::router())
         .merge(crate::remote::router())
+        .merge(crate::remote_instances::router())
+        .merge(crate::remote_projects::router())
         .merge(crate::review::router())
         .merge(crate::runconfig::router())
         .merge(crate::runs::router())
@@ -632,6 +640,7 @@ async fn health(State(st): State<AppState>, index: Option<PathBuf>) -> Json<Heal
         name: PRODUCT_NAME.into(),
         website: pdt_core::brand::WEBSITE.into(),
         version: pdt_core::BUILD_VERSION.into(),
+        instance_name: crate::link::instance_name(&st).await.unwrap_or_default(),
         profile: i.profile,
         port: i.port,
         dev: i.dev,

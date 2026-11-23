@@ -75,7 +75,8 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
     assert_eq!(v["done"], 0);
     assert_eq!(
         v["steps"],
-        json!({"agents": "todo", "github": "todo", "project": "todo", "defaultAgent": "todo", "permissions": "todo"})
+        json!({"name": "todo", "agents": "todo", "github": "todo", "project": "todo", "defaultAgent": "todo",
+               "permissions": "todo"})
     );
     // A new install's tickets start in Ask until the user picks another mode.
     let (_, h) = call(&app, "GET", "/api/host/settings", None).await;
@@ -114,13 +115,20 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
     assert_eq!(s, StatusCode::OK, "{h}");
     let v = setup(&app).await;
     assert_eq!(v["steps"]["permissions"], "done", "{v}");
-    assert_eq!(v["done"], 5);
+    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(5), Some(true)), "the name to pick");
+
+    // Naming the instance (Settings → This host → Name, or the step).
+    let (s, h) = call(&app, "PUT", "/api/host/settings", Some(json!({"instanceName": "studio"}))).await;
+    assert_eq!(s, StatusCode::OK, "{h}");
+    let v = setup(&app).await;
+    assert_eq!(v["steps"]["name"], "done", "{v}");
+    assert_eq!(v["done"], 6);
     assert_eq!((v["state"]["finished"].as_bool(), v["opensOnLaunch"].as_bool()), (Some(true), Some(false)));
 
     // Finished stays finished, even when a step comes undone.
     call(&app, "PUT", "/api/host/setup", Some(json!({"githubSkipped": false}))).await;
     let v = setup(&app).await;
-    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(4), Some(false)));
+    assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(5), Some(false)));
 }
 
 #[tokio::test]

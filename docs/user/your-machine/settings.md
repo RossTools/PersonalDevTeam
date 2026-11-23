@@ -4,7 +4,7 @@ What each section of Settings changes, for this machine and for each project.
 
 Open **Settings** in the rail (on a phone, in the **☰** menu). The list on the left has three parts:
 **This host** (the machine running PDT), a few pages of their own (**Notifications**, **Plugins**, **All
-connections**, **Secrets**, **MCP servers**), and each project. **Search settings** at the top finds a section by its name or any
+connections**, **Secrets**, **Remote projects**, **MCP servers**), and each project. **Search settings** at the top finds a section by its name or any
 setting on it.
 
 Every setting saves as you change it: a moment of **Saved** beside it says so. Tokens and secrets have their own
@@ -75,6 +75,11 @@ which wins over the setting, so you can't change it here. See
 
 **Start PDT at login**: whether PDT's background service starts when you log in (on by default). Turning it off
 leaves PDT running until you stop it or log out. See [Starting at login](updates.md#starting-at-login).
+
+### Name
+
+**Instance name**: this PDT's name, like `studio` or `win-box`, shown wherever another instance mentions this one.
+Until you pick one it goes by the machine's name. See [Remote projects](remote-projects.md).
 
 ### Remote access
 
@@ -165,6 +170,11 @@ Turn plugins on and off and manage their connections; the GitHub plugin is where
 
 Keys and tokens that agents and workflows use without seeing them. See [Secrets](secrets.md).
 
+## Remote projects
+
+The projects other instances own that this one joined, with **Pause** and **Open on <owner>**. See
+[Remote projects](remote-projects.md).
+
 ## MCP servers
 
 MCP servers every agent gets, signed in once, with each tool allowed, asked or blocked. See
@@ -194,4 +204,6 @@ Each project has its own sections. A personal project (one without a repository)
 - **Plugins**: which Jira project, Buildkite pipeline or other service this project's issues and CI live in.
 - **Documents**: the [documents](../using-pdt/documents.md) linked to the project, with **Add**, and its own
   **Default provider** and **Local documents folder** (blank: this host's).
+- **Remote instances**: the other instances that work on this project for this one, and **Add** to pair one. See
+  [Remote projects](remote-projects.md).
 - **Danger zone**: **Remove this project**. PDT forgets it and stops its sessions and runs; the files on disk stay.

@@ -20,9 +20,10 @@ import { hostKeys, useHostSettings, setHostSettings, useHostChecks } from '../ho
 import { POLL } from '../common/poll';
 import { QueryStatus } from '../common/QueryStatus';
 import { forgeLoginKey, useForgeLogin } from '../plugins/queries';
+import { useInstance } from '../shell/useInstance';
 
-export type StepId = 'agents' | 'github' | 'project' | 'defaultAgent' | 'permissions';
-export const STEPS: StepId[] = ['agents', 'github', 'project', 'defaultAgent', 'permissions'];
+export type StepId = 'name' | 'agents' | 'github' | 'project' | 'defaultAgent' | 'permissions';
+export const STEPS: StepId[] = ['name', 'agents', 'github', 'project', 'defaultAgent', 'permissions'];
 
 const AGENTS: { id: BuiltinAgent; name: string; install: string; env: string }[] = [
   { id: 'claude', name: 'Claude Code', install: 'https://code.claude.com/docs/en/setup', env: 'PDT_CLAUDE_PROGRAM' },
@@ -86,9 +87,9 @@ export interface SetupPageProps {
 }
 
 /**
- * Get started (PDT-230): five steps PDT needs before agents can work on the user's code, in any order. Each ticks
- * itself off from the host's real state (the checks, the GitHub login, the projects, the default agent, tickets'
- * permission mode).
+ * Get started (PDT-230): six steps PDT needs before agents can work on the user's code, in any order. Each ticks
+ * itself off from the host's real state (the instance's name, the checks, the GitHub login, the projects, the default
+ * agent, tickets' permission mode).
  */
 export function SetupPage(props: SetupPageProps) {
   const qc = useQueryClient();
@@ -137,6 +138,7 @@ export function SetupPage(props: SetupPageProps) {
         </div>
       )}
       <div className="flex flex-col gap-2">
+        <NameStep {...step('name')} onDone={() => next('name')} />
         <AgentsStep {...step('agents')} checks={checks.data} loading={checks.isPending} onHostSettings={props.onHostSettings} />
         <GithubStep {...step('github')} onDone={() => next('github')} />
         <ProjectStep {...step('project')} {...props} />
@@ -389,6 +391,42 @@ function GithubStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
           {(device.error ?? skip.error) && <Alert tone="error">{(device.error ?? skip.error)!.message}</Alert>}
         </>
       )}
+    </Step>
+  );
+}
+
+/** This instance's name (shown wherever another instance mentions it): the host name's until the user picks one. */
+function NameStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
+  const qc = useQueryClient();
+  const host = useHostSettings();
+  const instance = useInstance();
+  const current = host.data?.settings.instanceName ?? instance.data?.instanceName ?? '';
+  const [name, setName] = useState<string | null>(null);
+  const save = useMutation({
+    meta: { errorShown: true },
+    mutationFn: () => api.saveHostSettings({ instanceName: name ?? current }),
+    onSuccess: (s) => {
+      setHostSettings(qc, s);
+      void qc.invalidateQueries({ queryKey: hostKeys.setup });
+      void qc.invalidateQueries({ queryKey: hostKeys.health });
+      setName(null);
+      onDone();
+    },
+  });
+  const summary = step.state === 'done' ? `This instance is ${current}.`
+    : 'A short name for this instance of PDT, like studio or win-box. Other instances show it.';
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    save.mutate();
+  };
+  return (
+    <Step {...step} title="Name this instance" summary={summary}>
+      <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+        <Input aria-label="Instance name" mono className="w-56" maxLength={32} value={name ?? current} onChange={(e) => setName(e.target.value)} />
+        <Button size="sm" variant="primary" type="submit" pending={save.isPending}>Use this name</Button>
+      </form>
+      <p className="text-xs text-muted-foreground">Letters, digits, - _ and . (no spaces). Settings › This host › Name changes it later.</p>
+      {save.error && <Alert tone="error">{save.error.message}</Alert>}
     </Step>
   );
 }

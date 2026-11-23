@@ -35,8 +35,8 @@ export const USER_SECTIONS = [
   {
     dir: 'your-machine',
     label: 'Your machine',
-    summary: 'Updates, remote access from a phone or another computer, GitHub, secrets, MCP servers, settings and where your data lives.',
-    pages: ['updates', 'remote-access', 'github', 'secrets', 'mcp-servers', 'settings', 'your-data'],
+    summary: 'Updates, remote access from a phone or another computer, remote projects, GitHub, secrets, MCP servers, settings and where your data lives.',
+    pages: ['updates', 'remote-access', 'remote-projects', 'github', 'secrets', 'mcp-servers', 'settings', 'your-data'],
   },
   {
     dir: 'troubleshooting',

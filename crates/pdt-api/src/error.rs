@@ -97,6 +97,12 @@ pub mod codes {
     pub const KEY_TAKEN: &str = "key_taken";
     pub const LINK_CYCLE: &str = "link_cycle";
     pub const LINK_FAILED: &str = "link_failed";
+    /// 409: the other instance speaks another project-link protocol; the message says which one to update.
+    pub const LINK_INCOMPATIBLE: &str = "link_incompatible";
+    /// 403: a project-link request that isn't signed by the link's other end for that project.
+    pub const LINK_REFUSED: &str = "link_refused";
+    /// 502: the other instance of a project link could not be reached, or answered with an error.
+    pub const LINK_UNREACHABLE: &str = "link_unreachable";
     pub const MERGE_BLOCKED: &str = "merge_blocked";
     pub const MERGE_FAILED: &str = "merge_failed";
     pub const METHOD_NOT_ALLOWED: &str = "method_not_allowed";
@@ -136,6 +142,8 @@ pub mod codes {
     pub const NO_UPDATE: &str = "no_update";
     pub const OWNER_REQUIRED: &str = "owner_required";
     pub const PARTS_OPEN: &str = "parts_open";
+    /// 403: a pairing code that is wrong, used or expired.
+    pub const PAIRING_CODE: &str = "pairing_code";
     pub const PATH_EXISTS: &str = "path_exists";
     pub const PATH_NOT_FOUND: &str = "path_not_found";
     pub const PATH_OUTSIDE: &str = "path_outside";
@@ -151,6 +159,11 @@ pub mod codes {
     pub const QUESTION_OPEN: &str = "question_open";
     pub const READ_FAILED: &str = "read_failed";
     pub const REFINE_RUNNING: &str = "refine_running";
+    /// 409: needs this instance's remote access on (its tailnet address), e.g. to join a remote project.
+    pub const REMOTE_ACCESS_OFF: &str = "remote_access_off";
+    /// 409: a remote project where only this instance's own will do, or a project this instance can't have both local
+    /// and remote.
+    pub const REMOTE_PROJECT: &str = "remote_project";
     pub const REGISTRY_UNAVAILABLE: &str = "registry_unavailable";
     pub const REQUEST_CLOSED: &str = "request_closed";
     pub const RUN_ACTIVE: &str = "run_active";

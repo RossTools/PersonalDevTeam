@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { routePath, type SettingsPage } from './route';
-import { AllConnectionsPage, McpServersPage, NotificationSettingsPage, PluginPage, PluginsPage, SecretsPage } from './screens';
+import { AllConnectionsPage, McpServersPage, NotificationSettingsPage, PluginPage, PluginsPage, RemoteProjectsPage, SecretsPage } from './screens';
 import { navigate } from './router';
 
 /** The Settings pages of their own (not a project's sections or this host's): every kind but these three. */
@@ -31,6 +31,7 @@ const PAGES: { [K in OwnSettingsPage['kind']]: Entry<Extract<OwnSettingsPage, { 
       ? <PluginPage key={page.id} id={page.id} phone={ctx.phone} onBack={() => navigate(routePath({ view: 'settings', page: { kind: 'plugins', id: null } }))} />
       : <PluginsPage phone={ctx.phone} onOpen={ctx.openPlugin} />),
   },
+  'remote-projects': { title: () => 'Remote projects', screen: () => <RemoteProjectsPage /> },
   secrets: { title: () => 'Secrets', screen: () => <SecretsPage /> },
 };
 

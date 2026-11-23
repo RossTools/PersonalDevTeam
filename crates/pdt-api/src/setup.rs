@@ -55,6 +55,7 @@ async fn facts(st: &AppState) -> Result<SetupFacts, ApiError> {
         github_connected: crate::forge_login::connected(st, &pdt_core::forge::ForgeKind::GITHUB),
         github_off: !st.integrations.is_enabled("github"),
         projects: st.store.list_projects().await?.len(),
+        named: host.instance_name.is_some(),
     })
 }
 

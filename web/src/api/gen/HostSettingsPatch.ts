@@ -12,7 +12,11 @@ import type { UpdatePolicy } from "./UpdatePolicy";
 /**
  * A partial update. `owner_login: Some("")` (or blank) clears the owner.
  */
-export type HostSettingsPatch = { remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, updateChannel?: UpdateChannel, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
+export type HostSettingsPatch = { 
+/**
+ * This instance's name ([`crate::instance::valid_name`]).
+ */
+instanceName?: string, remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, updateChannel?: UpdateChannel, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
 /**
  * Blank clears it (back to `~/work`).
  */

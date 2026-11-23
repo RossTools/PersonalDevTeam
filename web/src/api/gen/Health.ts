@@ -6,7 +6,11 @@ export type Health = { status: string, name: string,
 /**
  * The product's website (`brand::WEBSITE`), for links to its docs.
  */
-website: string, version: string, profile: Profile, port: number, dev: boolean, 
+website: string, version: string, 
+/**
+ * This instance's name (Settings → This host): the one the user picked, else one from the machine's host name.
+ */
+instanceName: string, profile: Profile, port: number, dev: boolean, 
 /**
  * The build of the index.html pdtd serves now (the id its `web-build` meta names, else a short hash of it), or
  * null without a web dir. The page compares it with its own id and reloads when they differ: a new release, or a
