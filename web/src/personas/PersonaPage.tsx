@@ -24,6 +24,7 @@ import type { PersonaSetup } from '../api/gen/PersonaSetup';
 import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { Markdown } from '../common/Markdown';
 import { useAgents } from '../common/agents';
+import { EmptyPane } from '../common/EmptyPane';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import { PERMISSION_LABEL, PERMISSION_MODES } from '../conversation/ConversationComposer';
@@ -509,7 +510,10 @@ function PersonaReadOnly({ persona }: { persona: Persona }) {
 export function PersonaPage({ personaId, onSelect }: { personaId: string | null; onSelect: (id: string) => void }) {
   const personas = usePersonas();
   const phone = useMediaQuery(PHONE_QUERY);
-  if (personaId === null) return <EmptyState icon={<UserRound />}>Choose a persona</EmptyState>;
+  if (personaId === null) {
+    return phone ? <EmptyPane icon={<UserRound />}>Pick a persona.</EmptyPane>
+      : <EmptyPane icon={<UserRound />} newLabel="New persona" onNew={() => onSelect('new')}>Pick a persona, or make one.</EmptyPane>;
+  }
   if (personaId === 'new') return phone ? <EmptyState icon={<UserRound />}>Make personas on a computer.</EmptyState> : <NewPersonaForm onSelect={onSelect} />;
   if (personas.isPending) return <Skeleton lines={6} label="Loading the persona" className="p-6" />;
   if (personas.isError) return <EmptyState role="alert">Personas could not be loaded: {personas.error.message}</EmptyState>;

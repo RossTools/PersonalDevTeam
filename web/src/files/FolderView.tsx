@@ -19,6 +19,7 @@ import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
 import { PlacePicker, type Place } from '../common/PlacePicker';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
+import { EmptyPane } from '../common/EmptyPane';
 import { useNavigationGuard } from '../shell/router';
 import { CodeViewer } from './LazyCodeViewer';
 import { FileSearch } from './FileSearch';
@@ -258,7 +259,7 @@ export function FileViewer({ state, readOnly = false }: { state: FolderViewState
     queryFn: () => api.fileContent(place!.projectId, place!.worktreeId, state.file!),
     enabled: !!place && !!state.file,
   });
-  if (!state.file || !place) return <EmptyState icon={<File />}>{readOnly ? 'Pick a file to view it.' : 'Pick a file to view or edit it.'}</EmptyState>;
+  if (!state.file || !place) return <EmptyPane icon={<File />}>{readOnly ? 'Pick a file to view it.' : 'Pick a file to view or edit it.'}</EmptyPane>;
   if (q.isPending) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
   if (q.isError) return <div className="p-4"><Alert tone="error">{q.error.message}</Alert></div>;
   return <OpenFile key={`${place.projectId}:${place.worktreeId}:${q.data.path}`} state={state} place={place} file={q.data} readOnly={readOnly} />;

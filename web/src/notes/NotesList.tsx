@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { Brain, Pin, Search, SquarePen } from 'lucide-react';
-import { Button, EmptyState, IconButton, Input, Kbd, List, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
+import { Brain, Pin, Search } from 'lucide-react';
+import { Button, EmptyState, Input, Kbd, List, ListHeading, SegmentedControl, Select, Skeleton } from '@ui';
 import { ALL, HOST_WIDE, inScope, sectionsOf, type Whose } from './model';
 import { NoteItem } from './NoteItem';
 import { useProjects } from '../projects/queries';
 import { useNotesList, type NotesFilters } from './useNotes';
 import { usePageLimit } from '../common/usePageLimit';
 import { LoadError } from '../common/QueryStatus';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 
 const WHOSE_OPTIONS = [
   { value: 'user' as const, label: 'Mine' },
@@ -58,12 +59,7 @@ export function NotesList({ filters, selectedId, onOpen, onNew, onWhose }: {
   const filtered = !!q.trim() || scope !== ALL;
   return (
     <div className="flex flex-col pb-2">
-      <div className="flex items-center gap-2 pt-2.5 pr-1.5 pb-2 pl-3">
-        <h2 className="flex-1 text-sm font-semibold tracking-tight">Notes</h2>
-        <IconButton label="New note" onClick={onNew}>
-          <SquarePen aria-hidden />
-        </IconButton>
-      </div>
+      <ListColumnHeader title="Notes" newLabel="New note" onNew={onNew} />
       <div className="relative mx-2">
         <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input

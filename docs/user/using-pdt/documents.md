@@ -49,7 +49,7 @@ answer and resolve comments too.
 
 ## Make, import or export a document
 
-- **New document** (the pencil at the top of the list): give it a title, pick **Doc** or **Sheet**, the provider and
+- **New document** (**＋ New** at the top of the list): give it a title, pick **Doc** or **Sheet**, the provider and
   the project.
 - **Import a document** (beside it): pick the provider at the top (when there are several), then search **Files PDT
   can open** and pick one (click it, or move with ↑ ↓ and press Enter). PDT links the file; it doesn't copy it. Each
