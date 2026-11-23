@@ -1,7 +1,7 @@
 // Settings → All connections (PDT-228): every connection from every plugin in one searchable table (and GitHub's
 // login). A row opens its plugin's page, where connections are added and edited.
 import { useState } from 'react';
-import { Badge, Input, Page, Skeleton } from '@ui';
+import { Badge, Button, EmptyState, Input, Page, Skeleton } from '@ui';
 import { useConnections } from '../connections/queries';
 import { connectionDetails } from '../connections/ConnectionRow';
 import { useConnectionKinds } from '../connections/kinds';
@@ -18,7 +18,7 @@ interface Line {
   failing: boolean;
 }
 
-export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => void }) {
+export function AllConnectionsPage({ onOpen, onPlugins }: { onOpen: (pluginId: string) => void; onPlugins: () => void }) {
   const plugins = usePlugins();
   const { kindOf } = useConnectionKinds();
   const connections = useConnections();
@@ -37,15 +37,20 @@ export function AllConnectionsPage({ onOpen }: { onOpen: (pluginId: string) => v
   const needle = q.trim().toLowerCase();
   const shown = needle ? lines.filter((l) => `${l.name} ${l.pluginLabel} ${l.details}`.toLowerCase().includes(needle)) : lines;
   return (
-    <Page title="All connections" className="max-w-5xl" description="Every connection, from every plugin. Add and edit them on their plugin’s page. Their secrets stay in this machine’s keychain.">
+    <Page crumb="Settings" title="All connections" className="max-w-5xl" description="Every connection, from every plugin. Add and edit them on their plugin’s page. Their secrets stay in this machine’s keychain.">
       <LoadError what="Connections" error={connections.error} />
       <LoadError what="Plugins" error={plugins.error} />
       {(connections.isLoading || plugins.isLoading) && <Skeleton label="Loading connections" className="h-24" />}
-      {connections.data && plugins.data && (
+      {connections.data && plugins.data && lines.length === 0 && (
+        <EmptyState action={<Button size="sm" variant="secondary" onClick={onPlugins}>Open Plugins</Button>}>
+          No connections yet. Add them on a plugin’s page.
+        </EmptyState>
+      )}
+      {connections.data && plugins.data && lines.length > 0 && (
         <div className="flex flex-col gap-3">
           <Input aria-label="Search connections" placeholder="Search connections" value={q} onChange={(e) => setQ(e.target.value)} />
           {shown.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{lines.length ? 'No connections match.' : 'None yet. Add one on its plugin’s page.'}</p>
+            <EmptyState size="inline">No connections match.</EmptyState>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full text-sm">
