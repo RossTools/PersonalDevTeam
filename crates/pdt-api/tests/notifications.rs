@@ -110,6 +110,39 @@ async fn a_waiting_session_notifies_until_it_is_viewed() {
     assert_eq!((rows.len(), &rows[0]["show"]), (1, &json!("inbox")));
 }
 
+/// A snooze on a waiting session ends once the session stops waiting (PDT-699): its id is fixed (`session:c1`), so a
+/// snooze kept would hide the session's next wait.
+#[tokio::test]
+async fn a_waiting_session_snoozed_then_answered_shows_when_it_waits_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, st) = setup(tmp.path()).await;
+    needs_you(&app).await;
+    pdt_api::sync_notifications(&st).await;
+    let week = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+        + 7 * 24 * 3_600_000;
+    let (s, v) = call(&app, "POST", "/api/inbox/session:c1/snooze", Some(json!({"until": week}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    assert_eq!((&inbox["total"], &inbox["snoozed"][0]["id"]), (&json!(0), &json!("session:c1")), "{inbox}");
+
+    // Answered in its tab: it stops waiting, and its snooze goes with it.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    call(&app, "POST", "/api/sessions/c1/view", None).await;
+    pdt_api::sync_notifications(&st).await;
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    assert_eq!((&inbox["total"], inbox["snoozed"].as_array().unwrap().len()), (&json!(0), 0), "{inbox}");
+    assert!(st.store.inbox_snoozes().await.unwrap().is_empty());
+
+    // It waits again later that week: listed.
+    call(&app, "POST", "/api/sessions/c1/activity", Some(json!({"source": "claude", "event": "UserPromptSubmit"})))
+        .await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    needs_you(&app).await;
+    pdt_api::sync_notifications(&st).await;
+    let (_, inbox) = call(&app, "GET", "/api/inbox", None).await;
+    assert_eq!((&inbox["total"], &inbox["items"][0]["id"]), (&json!(1), &json!("session:c1")), "{inbox}");
+}
+
 #[tokio::test]
 async fn a_turn_left_unseen_is_an_update_only_above_the_dot() {
     let tmp = tempfile::tempdir().unwrap();
