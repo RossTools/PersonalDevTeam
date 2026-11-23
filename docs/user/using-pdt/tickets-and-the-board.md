@@ -189,6 +189,10 @@ as the first message, and opens the ticket's tab with the session beside it.
 If an open blocker, an overlap or the project's limit on running tickets stands in the way, the dialog says so:
 **Start anyway**, or **Wait** (the ticket shows **Waiting until clear** and starts when it is).
 
+A ticket at work with no agent (you chose **No session**, or made the branch yourself) says so on its
+**Conversation** tab: **Start an agent here** starts your default agent on its branch, with the ticket as the first
+message, as **Start** does.
+
 Comments you add while an agent works are sent to it. To stop, move the ticket back to **To do** (or **Draft** or
 **Ready**), or use **Abandon attempt…** in its menu.
 
