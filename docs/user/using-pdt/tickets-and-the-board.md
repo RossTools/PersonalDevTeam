@@ -145,10 +145,10 @@ one, it picks the areas from the project's list by what the ticket describes and
 
 ## Watch a ticket
 
-To hear about a ticket without opening it, click the eye (**Watch**) at the top of its page (on a phone, **Watch** in
+To hear about a ticket without opening it, click **Watch** (the bell) at the top of its page (on a phone, **Watch** in
 the **⋯** menu). You're told in the Inbox's **Updates**, and on the desktop if you allow notifications, when the ticket
 is done or closed, its work merges, CI fails or the merge queue drops it, or something about it waits on you. The watch
-ends once the ticket is finished; click the eye again to stop sooner.
+ends once the ticket is finished; click **Watching** to stop sooner.
 
 The ticket's **Watching** section lists who watches it: you, and any PM conversation you asked to keep an eye on it.
 **×** beside one stops that watch. On the board and in the backlog, a watched ticket has a small eye; hover it to see

@@ -11,7 +11,6 @@ import {
   Page,
   RelativeTime,
   Section,
-  SegmentedControl,
   Select,
   SettingsRow,
   Skeleton,
@@ -23,6 +22,7 @@ import type { Persona } from '../api/gen/Persona';
 import type { PersonaSetup } from '../api/gen/PersonaSetup';
 import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { Markdown } from '../common/Markdown';
+import { PreviewEdit } from '../common/PreviewEdit';
 import { useAgents } from '../common/agents';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
@@ -63,7 +63,7 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   const agentId = useId();
   const modelId = useId();
   const modeId = useId();
-  const [preview, setPreview] = useState<'write' | 'preview'>('write');
+  const [preview, setPreview] = useState<'edit' | 'preview'>('edit');
   const set = (p: Partial<PersonaSetup>) => onChange({ ...value, ...p });
   const known = usePersonaTools().data;
   const agents = useAgents();
@@ -144,15 +144,8 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
         )}
       </SettingsRow>
       <SettingsRow stacked label="Instructions" description="Markdown, added to its sessions' instructions.">
-        <SegmentedControl
-          aria-label="Instructions view"
-          size="sm"
-          className="self-start"
-          options={[{ value: 'write', label: 'Write' }, { value: 'preview', label: 'Preview' }]}
-          value={preview}
-          onChange={setPreview}
-        />
-        {preview === 'write' ? (
+        <PreviewEdit aria-label="Instructions view" className="self-start" value={preview} onChange={setPreview} />
+        {preview === 'edit' ? (
           <Textarea
             aria-label="Instructions"
             mono

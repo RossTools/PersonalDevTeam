@@ -66,7 +66,7 @@ const TOUCH_ROW = 'min-h-14 pointer-coarse:min-h-14';
  * full-screen version (`/sessions`): taller rows, no dragging. `adding`/`onAddingChange` control the New workspace
  * field from outside (the phone's ⋯).
  */
-export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = false, adding: addingProp, onAddingChange }: {
+export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSettings, onChoose, touch = false, adding: addingProp, onAddingChange, onNewTab }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Opens a project's page in Settings. */
@@ -76,6 +76,8 @@ export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSetting
   touch?: boolean;
   adding?: boolean;
   onAddingChange?: (adding: boolean) => void;
+  /** Opens the new-tab chooser for the current workspace (the "+" on the Agents heading). */
+  onNewTab?: () => void;
 }) {
   const { openMenu, menu } = useMenuAt();
   const [addingState, setAddingState] = useState(false);
@@ -152,7 +154,6 @@ export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSetting
                     <>
                       {projectKey && <ProjectKey projectKey={projectKey} />}
                       {state && state.label !== 'Idle' && <AgentLabel state={state} />}
-                      <span className="text-meta text-muted-foreground tabular-nums">{w.tabs.length}</span>
                     </>
                   }
                   onMenu={(at) => openMenu(at, `Workspace ${w.name}`, () => workspaceMenu(ws, w, () => setRenamingId(w.id), onProjectSettings))}
@@ -211,20 +212,22 @@ export const Sidebar = memo(function Sidebar({ ws, onRenameTab, onProjectSetting
           </div>
         </section>
       )}
-      <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={onChoose} touch={touch} />
+      <AgentsSection ws={ws} onRenameTab={onRenameTab} onChoose={onChoose} touch={touch} onNewTab={onNewTab} />
       {menu}
     </div>
   );
 });
 
 /** Every agent session the user started, with its state and where it is (the Sessions sidebar, the phone drawer). */
-export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
+export function AgentsSection({ ws, onRenameTab, onChoose, touch = false, onNewTab }: {
   ws: WorkspacesApi;
   onRenameTab: (tabId: string) => void;
   /** Called after an agent is chosen (the phone drawer closes). */
   onChoose?: () => void;
   /** 56px rows (the phone's `/sessions`). */
   touch?: boolean;
+  /** Adds a "+" to the heading that opens the new-tab chooser. */
+  onNewTab?: () => void;
 }) {
   const { openMenu, menu } = useMenuAt();
   // The user's own conversations: a workflow step's session never, even in a tab (PDT-299).
@@ -260,7 +263,16 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
   return (
     <>
       <section aria-label="Agents">
-        <ListHeading className="px-2">Agents</ListHeading>
+        <ListHeading
+          className="px-2"
+          trailing={onNewTab && (
+            <IconButton label="Start a new tab" size="sm" noTooltip className="size-5" disabled={!ws.workspace} onClick={onNewTab}>
+              <Plus aria-hidden />
+            </IconButton>
+          )}
+        >
+          Agents
+        </ListHeading>
         <List
           aria-label="Agents"
           onAction={(id) => {

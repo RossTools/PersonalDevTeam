@@ -48,7 +48,8 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 ## Files
 
 **Files** shows a checkout's files as git sees them (ignored files are left out): pick the project or worktree at the
-top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves.
+top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves. A Markdown file has
+**Preview**, **Edit** and **Source** (its text, read-only) in one control.
 
 ### Download files
 
@@ -77,14 +78,14 @@ left out.
 
 ### Find a file by name
 
-Open the command palette (**Ctrl+]** then **k**, or **⌘K** on a Mac) and type at least two letters of a file's name.
+Open the command palette (**Search** at the top of the side rail, **Ctrl+]** then **k**, or **⌘K** on a Mac) and type at least two letters of a file's name.
 Matching files are listed under **Files**, after everything else, each with its folder and its checkout (a ticket's
 key or a branch for a worktree, else the project). It looks in the worktree of the tab on screen, else the current
 project; with no project open, in every project. **Enter** opens the file in **Files**.
 
 ## Start something new
 
-Click **+** at the end of the tab bar (or **Ctrl+]** then **c**). The **New tab** chooser offers:
+Click **+** at the end of the tab bar, or beside the **Agents** heading (or press **Ctrl+]** then **c**). The **New tab** chooser offers:
 
 - each installed, switched-on agent (**Claude**, **Codex**, **Devin** and any you've added) as a conversation, and the
   first three also as a terminal (**Claude (terminal)**); keys **c**, **t**, **x**, **o**, **d**, **e** start them;

@@ -73,6 +73,8 @@ describe('folder view', () => {
     await userEvent.click(await screen.findByRole('row', { name: /README/ }));
     expect(await screen.findByRole('heading', { name: 'Hello', level: 1 })).toBeInTheDocument();
     expect(screen.queryByTestId('code')).not.toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'View' })).toHaveTextContent(/^PreviewEditSource$/);
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Source' }));
     expect(screen.getByTestId('code')).toHaveTextContent('# Hello');
     expect(screen.queryByRole('heading', { name: 'Hello', level: 1 })).not.toBeInTheDocument();
@@ -178,7 +180,8 @@ const editRoutes = (extra: Record<string, unknown> = {}) => ({
 
 async function startEditing(name: RegExp, editor = 'Editor') {
   await userEvent.click(await screen.findByRole('row', { name }));
-  await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+  // Markdown files edit from the Preview | Edit | Source control, others from an Edit button.
+  await userEvent.click(await screen.findByRole(editor.endsWith('.md') ? 'radio' : 'button', { name: 'Edit' }));
   return screen.findByRole('textbox', { name: editor });
 }
 

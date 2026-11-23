@@ -14,6 +14,7 @@ import type { Ticket } from '../api/gen/Ticket';
 import type { TicketEvent } from '../api/gen/TicketEvent';
 import type { TicketOverlap } from '../api/gen/TicketOverlap';
 import type { TicketStage } from '../api/gen/TicketStage';
+import { PreviewEdit } from '../common/PreviewEdit';
 import { Composer } from '../common/Composer';
 import { insertAtCaret } from '../common/insertText';
 import { InlineRename } from '../common/InlineRename';
@@ -120,7 +121,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   const qc = useQueryClient();
   // What is typed, and the description it was started from.
   const [edit, setEdit] = useState<{ draft: string; base: string } | null>(null);
-  const [mode, setMode] = useState<'write' | 'preview'>('write');
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const editing = edit !== null;
   const draft = edit?.draft ?? '';
   const dirty = editing && edit.draft !== edit.base;
@@ -134,7 +135,7 @@ export function TicketDescription({ ticket, onDirtyChange }: {
   };
   const begin = () => {
     setEdit({ draft: ticket.description, base: ticket.description });
-    setMode('write');
+    setMode('edit');
   };
   const saving = useFormAction(async (description: string) => {
     await patchTicket(qc, ticket.id, { description });
@@ -167,15 +168,8 @@ export function TicketDescription({ ticket, onDirtyChange }: {
     >
       {editing ? (
         <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-          <SegmentedControl
-            aria-label="Description editor"
-            size="sm"
-            className="self-start"
-            options={[{ value: 'write', label: 'Write' }, { value: 'preview', label: 'Preview' }]}
-            value={mode}
-            onChange={setMode}
-          />
-          {mode === 'write' ? (
+          <PreviewEdit aria-label="Description editor" className="self-start" value={mode} onChange={setMode} />
+          {mode === 'edit' ? (
             <Textarea
               ref={box}
               aria-label="Description"
