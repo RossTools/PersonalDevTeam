@@ -811,8 +811,6 @@ async fn comments(env: &Env) -> Vec<String> {
     items.iter().filter(|e| e["kind"] == "comment").map(|e| e["body"].as_str().unwrap_or("").to_string()).collect()
 }
 
-/// PDT-104: a pull request set to merge that fails gets an agent on it and merges again, with a Reviewer first when
-/// the agent calls the fix large, up to the try limit.
 /// A merge the forge failed is GitHub's failure (502), not a conflict in PDT's state (PDT-656).
 #[tokio::test]
 async fn a_merge_the_forge_fails_is_a_bad_gateway() {
@@ -828,6 +826,8 @@ async fn a_merge_the_forge_fails_is_a_bad_gateway() {
     assert_eq!(v["message"], "the request timed out");
 }
 
+/// PDT-104: a pull request set to merge that fails gets an agent on it and merges again, with a Reviewer first when
+/// the agent calls the fix large, up to the try limit.
 #[tokio::test]
 async fn a_pr_set_to_merge_is_fixed_and_merges_again() {
     let tmp = tempfile::tempdir().unwrap();
