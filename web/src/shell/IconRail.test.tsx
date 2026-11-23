@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IconRail, RAIL_EXPANDED_KEY } from './IconRail';
 
 beforeEach(() => localStorage.clear());
@@ -48,5 +48,15 @@ describe('IconRail', () => {
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'Project manager' })).toHaveFocus();
     expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('shows Search above the views when given, expanded or not', async () => {
+    const onSearch = vi.fn();
+    render(<IconRail active="sessions" onSelect={() => {}} onSearch={onSearch} />);
+    await userEvent.click(within(rail()).getByRole('button', { name: 'Search' }));
+    await userEvent.click(within(rail()).getByRole('button', { name: 'Expand side rail' }));
+    await userEvent.click(within(rail()).getByRole('button', { name: 'Search' }));
+    expect(onSearch).toHaveBeenCalledTimes(2);
+    expect(within(rail()).getAllByRole('button')[0]).toHaveAccessibleName('Search');
   });
 });

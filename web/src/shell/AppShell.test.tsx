@@ -20,10 +20,10 @@ describe('AppShell', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes });
     renderWithQuery(<AppShell />);
     const rail = screen.getByRole('navigation', { name: 'Views' });
-    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Documents', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
-    for (const name of ['Board', 'Search']) {
-      expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
-    }
+    expect(within(rail).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Search', 'Project manager', 'Sessions', 'Inbox', 'Tickets', 'Notes', 'Documents', 'Workflows', 'Personas', 'Files', 'Settings', 'Expand side rail']);
+    // Search opens the command palette; it is not a view of its own.
+    expect(within(rail).getByRole('button', { name: 'Search' })).not.toHaveAttribute('aria-current');
+    expect(within(rail).queryByRole('button', { name: 'Board' })).not.toBeInTheDocument();
     await userEvent.click(within(rail).getByRole('button', { name: 'Files' }));
     expect(within(rail).getByRole('button', { name: 'Files' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryByText(/arrives with/)).not.toBeInTheDocument();

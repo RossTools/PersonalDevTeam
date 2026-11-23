@@ -394,6 +394,28 @@ describe('workspaces', () => {
     await waitFor(() => expect(alpha).toHaveTextContent('Needs you'));
     expect(within(alpha).getByRole('img', { name: 'Needs you' })).toBeInTheDocument();
     expect(within(list).getByRole('row', { name: /Release/ })).not.toHaveTextContent('Needs you');
+    // No tab count beside the state: "Needs you 3" read as three things needing the user.
+    expect(alpha).not.toHaveTextContent(/\d/);
+  });
+
+  it('keeps New tab outside the scrolling strip, and opens the chooser from the Agents heading too', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
+    await within(tabs).findByRole('tab', { name: /Claude A/ });
+    expect(within(tabs).queryByRole('button', { name: 'New tab' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New tab' })).toBeEnabled();
+    const agents = screen.getByRole('region', { name: 'Agents' });
+    await userEvent.click(within(agents).getByRole('button', { name: 'Start a new tab' }));
+    expect(screen.getByRole('dialog', { name: 'New tab' })).toBeInTheDocument();
+  });
+
+  it('opens the command palette from Search on the rail', async () => {
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const rail = await screen.findByRole('navigation', { name: 'Views' });
+    await userEvent.click(within(rail).getByRole('button', { name: 'Search' }));
+    expect(await screen.findByRole('dialog', { name: /command|palette|search/i })).toBeInTheDocument();
   });
 
   it('focuses the workspace list with Ctrl+] w', async () => {

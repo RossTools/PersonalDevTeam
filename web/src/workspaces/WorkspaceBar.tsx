@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, type DragEvent, type ReactNode, type Ref } from 'react';
+import { memo, useEffect, useRef, useState, type DragEvent, type ReactNode, type Ref } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileDiff, LayoutGrid, Plus, Ticket, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
@@ -130,6 +130,19 @@ export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setR
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [currentTabId]);
+  // Fade the strip's right edge while more tabs lie past it, so it reads as scrollable.
+  const [more, setMore] = useState(false);
+  const tabCount = w?.tabs.length ?? 0;
+  useEffect(() => {
+    const el = strip.current;
+    if (!el) return;
+    const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    measure();
+    el.addEventListener('scroll', measure, { passive: true });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    ro?.observe(el);
+    return () => { el.removeEventListener('scroll', measure); ro?.disconnect(); };
+  }, [tabCount]);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const step = (by: number) => {
     if (!w || !ws.tab) return;
@@ -162,7 +175,8 @@ export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setR
         role="tablist"
         aria-label="Tabs"
         onKeyDown={tabListKeyDown}
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto"
+        data-more={more || undefined}
+        className={cn('flex min-w-0 flex-1 items-center gap-1 overflow-x-auto', more && 'mask-r-from-[calc(100%-2rem)]')}
         onDragOver={(e) => { if (accepts(e)) e.preventDefault(); }}
         onDrop={(e) => drop(e)}
       >
@@ -179,10 +193,11 @@ export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setR
             onDrop={drop}
           />
         ))}
-        <IconButton ref={plusRef} label="New tab" size="sm" shortcut={<Kbd keys={['Ctrl', ']', 'c']} />} disabled={!w} onClick={onNewTab}>
-          <Plus aria-hidden />
-        </IconButton>
       </div>
+      {/* Outside the scrolling strip, so it stays in sight however many tabs there are. */}
+      <IconButton ref={plusRef} label="New tab" size="sm" shortcut={<Kbd keys={['Ctrl', ']', 'c']} />} disabled={!w} onClick={onNewTab}>
+        <Plus aria-hidden />
+      </IconButton>
       {onOverview && <IconButton label="Tab overview" noTooltip disabled={!w} onClick={onOverview}><LayoutGrid aria-hidden /></IconButton>}
       {trailing}
     </div>
