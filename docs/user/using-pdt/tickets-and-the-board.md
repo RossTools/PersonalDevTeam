@@ -157,13 +157,15 @@ who watches. A workflow run has the same eye, on its page under the workflow's *
 ## Search and filters
 
 - **Search tickets** matches titles and descriptions; type a key (`ABC-12`) to jump to that ticket.
-- Filter by **Stage**, **Priority**, **Labels**, **Blocked** and **Overlap**; **Show closed** adds **Done** and
-  **Won't do**; **Clear filters** resets.
-- Sort by rank, priority, updated or created; group by stage, priority or label.
+- Filter by **Stage**, **Priority**, **Labels**, **Blocked** and **Overlap**. The backlog starts on **Draft** and
+  **Ready**; under the stages, **All open** adds **To do** and **In progress**, **Show closed** shows every stage, and
+  **Backlog** goes back to Draft and Ready.
+- **Group** by stage, priority or label; **Sort** by rank, priority, updated or created.
 - The board has the same search and filters, without **Stage** (its columns are the stages); while a filter is set,
   only the parents' lanes with matching parts show. Filters stay as you switch between **Backlog** and **Board**.
-- **Save filter…** keeps the current filters. The built-in **Ready to start** shows **Ready** tickets nothing blocks or
-  conflicts with.
+- Once the backlog's filters differ from the default, **Clear** and **Save…** show beside the ticket count: **Clear**
+  resets them and **Save…** keeps them (so does **＋** beside **Saved filters**). The built-in **Ready to start** shows
+  **Ready** tickets nothing blocks or conflicts with.
 
 In rank order, drag rows (or **Alt+↑** / **Alt+↓**) to reorder; **Move to top** is in the row menu. **Select** (or the
 row checkboxes) picks several tickets to move, label, prioritise or delete together. Tickets an action moves out of
@@ -250,7 +252,8 @@ workflow of yours can pause it too.
 
 ## On a phone
 
-The top bar's title picks the project and saved filters, with **Backlog**, **Board**, search and filters below. The
+The top bar's title picks the project and saved filters, with **Backlog**, **Board**, search and filters below, and a
+line saying which stages the backlog shows and how many tickets match: tap it to change the filters. The
 board shows one column at a time: pick it from the chips or swipe. Long-press a row or card for its menu instead of
 dragging; **＋** adds a ticket. A ticket opens full screen with **Overview**, **Conversation** and **Changes**, and its
 main action (**Start**, **Accept…**, **Open work**) at the bottom. In **Comment…**, the paperclip attaches a photo or
