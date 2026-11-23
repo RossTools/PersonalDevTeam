@@ -63,6 +63,9 @@ export const documentsApi = {
     }),
   /** The changes agents made to it without asking, newest first. */
   documentChanges: (id: string) => request<DocumentChange[]>(`/api/documents/${enc(id)}/changes`),
+  /** Puts a local document back as it was before an agent's change (every change since goes too). */
+  restoreDocumentChange: (id: string, change: string) =>
+    request<EditResult>(`/api/documents/${enc(id)}/changes/${enc(change)}/restore`, { method: 'POST' }),
   documentComments: (id: string) => request<DocumentComment[]>(`/api/documents/${enc(id)}/comments`),
   addDocumentComment: (id: string, c: DocumentCommentInput) =>
     request<DocumentComment>(`/api/documents/${enc(id)}/comments`, { method: 'POST', body: JSON.stringify({ ...c, by: 'user' } satisfies DocumentCommentInput) }),

@@ -115,7 +115,9 @@ Replying to and resolving comments always ask, and so does every change by an ag
 
 Each change made without asking is kept: the document lists them under **Changes agents made without asking**, with
 the agent, its ticket, what it did, the version after it and, for a doc, the diff; the agent's ticket shows the same in
-its activity. Use the diff, or the version in your provider's history, to undo one.
+its activity. To undo one in a **Local** document, click **Restore** on it: PDT keeps the document as
+it was before each of its last ten such changes (up to 10 MB), and puts that back, so every change made since goes
+too, yours as well. For another provider's document, use the diff, or the version in its history.
 
 Workflows work on documents too: they can make one, add text or rows, set cells, add a chart and comment, and start
 when a document changes or gets a new comment. See [Workflows](../automation/workflows.md#steps), with examples that

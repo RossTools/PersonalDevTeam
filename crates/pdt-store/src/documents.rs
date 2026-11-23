@@ -3,12 +3,15 @@
 
 use crate::{Store, StoreError};
 use pdt_core::document::{
-    BesideTab, Chart, CommentAnchor, CommentReply, Document, DocumentChange, DocumentComment, DocumentFilter,
-    DocumentKind, DocumentProject, DocumentTicket, DocumentsBeside, ProjectDocumentSettings,
+    BesideTab, Chart, CommentAnchor, CommentReply, Document, DocumentBackup, DocumentChange, DocumentComment,
+    DocumentFilter, DocumentKind, DocumentProject, DocumentTicket, DocumentsBeside, ProjectDocumentSettings,
 };
 use pdt_core::ticket::Actor;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
+
+/// How many of a document's newest unasked changes keep what it was before them (PDT-709).
+pub const KEPT_BACKUPS: i64 = 10;
 
 const SELECT: &str = "SELECT d.id, d.title, d.kind, d.provider, d.provider_ref, d.url, d.actor, d.agent, d.created_at, \
                       d.updated_at FROM documents d";
@@ -413,6 +416,26 @@ impl Store {
         Ok(())
     }
 
+    /// Puts back a sheet's charts as a backup had them (PDT-709), in place of the ones it has.
+    pub async fn set_document_charts(&self, document_id: &str, charts: &[(String, Chart)]) -> Result<(), StoreError> {
+        let mut tx = self.write_tx().await?;
+        sqlx::query("DELETE FROM document_charts WHERE document_id = ?").bind(document_id).execute(&mut *tx).await?;
+        for (position, (sheet, chart)) in charts.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO document_charts (document_id, chart_id, sheet, spec, position) VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind(document_id)
+            .bind(&chart.id)
+            .bind(sheet)
+            .bind(serde_json::to_string(&chart.spec).expect("a chart serializes"))
+            .bind(position as i64 + 1)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Removes a chart; false when there was none.
     pub async fn delete_document_chart(&self, document_id: &str, chart_id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM document_charts WHERE document_id = ? AND chart_id = ?")
@@ -503,13 +526,22 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Records a change an agent made to a document without asking (PDT-618); false when the document is gone.
-    pub async fn add_document_change(&self, c: &DocumentChange) -> Result<bool, StoreError> {
+    /// Records a change an agent made to a document without asking (PDT-618), with what the document was before it
+    /// when PDT kept that (PDT-709); false when the document is gone. Only the newest [`KEPT_BACKUPS`] changes of a
+    /// document keep theirs.
+    pub async fn add_document_change(
+        &self,
+        c: &DocumentChange,
+        backup: Option<&DocumentBackup>,
+    ) -> Result<bool, StoreError> {
         let summary = self.redactor.string(&c.summary);
         let diff = c.diff.as_deref().map(|d| self.redactor.string(d));
+        let charts = backup.map(|b| serde_json::to_string(&b.charts).expect("charts serialize"));
+        let mut tx = self.write_tx().await?;
         let r = sqlx::query(
-            "INSERT INTO document_changes (id, document_id, at, tool, summary, version, diff, agent, ticket_id) \
-             SELECT ?, id, ?, ?, ?, ?, ?, ?, ? FROM documents WHERE id = ?",
+            "INSERT INTO document_changes \
+             (id, document_id, at, tool, summary, version, diff, agent, ticket_id, backup, backup_charts) \
+             SELECT ?, id, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM documents WHERE id = ?",
         )
         .bind(&c.id)
         .bind(c.at)
@@ -519,17 +551,56 @@ impl Store {
         .bind(&diff)
         .bind(serde_json::to_string(&c.agent).expect("an agent serializes"))
         .bind(&c.agent.from_ticket_id)
+        .bind(backup.map(|b| b.bytes.as_slice()))
+        .bind(&charts)
         .bind(&c.document_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        if backup.is_some() {
+            sqlx::query(
+                "UPDATE document_changes SET backup = NULL, backup_charts = NULL \
+                 WHERE document_id = ? AND backup IS NOT NULL AND id NOT IN ( \
+                   SELECT id FROM document_changes WHERE document_id = ? AND backup IS NOT NULL \
+                   ORDER BY at DESC, rowid DESC LIMIT ?)",
+            )
+            .bind(&c.document_id)
+            .bind(&c.document_id)
+            .bind(KEPT_BACKUPS)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// What a document was before one of its changes, when PDT still keeps it.
+    pub async fn document_change_backup(
+        &self,
+        document_id: &str,
+        change_id: &str,
+    ) -> Result<Option<DocumentBackup>, StoreError> {
+        let row: Option<(Vec<u8>, Option<String>)> = sqlx::query_as(
+            "SELECT backup, backup_charts FROM document_changes \
+             WHERE document_id = ? AND id = ? AND backup IS NOT NULL",
+        )
+        .bind(document_id)
+        .bind(change_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((bytes, charts)) = row else { return Ok(None) };
+        let charts = match charts {
+            Some(j) => serde_json::from_str(&j)
+                .map_err(|e| StoreError::Corrupt(format!("a document change's backed-up charts: {e}")))?,
+            None => vec![],
+        };
+        Ok(Some(DocumentBackup { bytes, charts }))
     }
 
     /// The changes agents made to a document without asking, newest first.
     pub async fn document_changes(&self, document_id: &str) -> Result<Vec<DocumentChange>, StoreError> {
         let rows = sqlx::query(
-            "SELECT id, document_id, at, tool, summary, version, diff, agent FROM document_changes \
-             WHERE document_id = ? ORDER BY at DESC, rowid DESC",
+            "SELECT id, document_id, at, tool, summary, version, diff, agent, backup IS NOT NULL AS restorable \
+             FROM document_changes WHERE document_id = ? ORDER BY at DESC, rowid DESC",
         )
         .bind(document_id)
         .fetch_all(&self.pool)
@@ -547,6 +618,7 @@ impl Store {
                     diff: r.try_get("diff")?,
                     agent: serde_json::from_str(&agent)
                         .map_err(|e| StoreError::Corrupt(format!("a document change's agent {agent:?}: {e}")))?,
+                    restorable: r.try_get("restorable")?,
                 })
             })
             .collect()
@@ -716,10 +788,6 @@ mod tests {
         assert_eq!(all[0].quote.as_deref(), Some("Sheet1!B3"));
         assert_eq!(all[0].replies.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["r1"]);
 
-        let chart = |id: &str, title: &str| Chart {
-            id: id.into(),
-            spec: ChartSpec { kind: ChartKind::Bar, data: "A1:B4".into(), title: Some(title.into()), anchor: None },
-        };
         store.put_document_chart("d1", "Sheet1", &chart("a", "One")).await.unwrap();
         store.put_document_chart("d1", "Sheet1", &chart("b", "Two")).await.unwrap();
         store.put_document_chart("d1", "Sheet1", &chart("a", "One again")).await.unwrap();
@@ -735,6 +803,13 @@ mod tests {
         store.delete_document("d1").await.unwrap();
         assert!(store.document_comments("d1").await.unwrap().is_empty());
         assert!(store.document_charts("d1").await.unwrap().is_empty());
+    }
+
+    fn chart(id: &str, title: &str) -> Chart {
+        Chart {
+            id: id.into(),
+            spec: ChartSpec { kind: ChartKind::Bar, data: "A1:B4".into(), title: Some(title.into()), anchor: None },
+        }
     }
 
     #[tokio::test]
@@ -757,12 +832,13 @@ mod tests {
                 from_ticket: Some("P-1".into()),
                 from_ticket_id: Some("t1".into()),
             },
+            restorable: false,
         };
-        assert!(store.add_document_change(&change("c1", 5)).await.unwrap());
-        assert!(store.add_document_change(&change("c2", 6)).await.unwrap());
+        assert!(store.add_document_change(&change("c1", 5), None).await.unwrap());
+        assert!(store.add_document_change(&change("c2", 6), None).await.unwrap());
         assert!(
             !store
-                .add_document_change(&DocumentChange { document_id: "gone".into(), ..change("c3", 7) })
+                .add_document_change(&DocumentChange { document_id: "gone".into(), ..change("c3", 7) }, None)
                 .await
                 .unwrap()
         );
@@ -771,6 +847,56 @@ mod tests {
         assert_eq!(got[1], change("c1", 5));
         store.delete_document("d1").await.unwrap();
         assert!(store.document_changes("d1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_newest_changes_keep_what_the_document_was_before_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.add_document(&doc("d1", "Plan", DocumentKind::Sheet, "local", 1)).await.unwrap();
+        let change = |n: i64| DocumentChange {
+            id: format!("c{n}"),
+            document_id: "d1".into(),
+            at: n,
+            tool: "sheet_edit".into(),
+            summary: "Edited".into(),
+            version: None,
+            diff: None,
+            agent: pdt_core::ticket::AgentBy {
+                session_id: "s1".into(),
+                project_id: None,
+                persona: None,
+                from_ticket: None,
+                from_ticket_id: None,
+            },
+            restorable: false,
+        };
+        let backup = |n: i64| DocumentBackup {
+            bytes: vec![n as u8; 3],
+            charts: vec![("Sheet1".into(), chart(&format!("ch{n}"), "Sales"))],
+        };
+        for n in 1..=KEPT_BACKUPS + 2 {
+            store.add_document_change(&change(n), Some(&backup(n))).await.unwrap();
+        }
+        store.add_document_change(&change(100), None).await.unwrap();
+        let got = store.document_changes("d1").await.unwrap();
+        let kept: Vec<&str> = got.iter().filter(|c| c.restorable).map(|c| c.id.as_str()).collect();
+        assert_eq!(kept.len() as i64, KEPT_BACKUPS);
+        assert!(!kept.contains(&"c1") && !kept.contains(&"c2") && !kept.contains(&"c100"));
+        assert_eq!(store.document_change_backup("d1", "c12").await.unwrap(), Some(backup(12)));
+        assert_eq!(store.document_change_backup("d1", "c1").await.unwrap(), None);
+        assert_eq!(store.document_change_backup("other", "c12").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_sheets_charts_are_put_back_as_a_backup_had_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_ticket(dir.path()).await;
+        store.add_document(&doc("d1", "Plan", DocumentKind::Sheet, "local", 1)).await.unwrap();
+        store.put_document_chart("d1", "Sheet1", &chart("a", "One")).await.unwrap();
+        let back = vec![("Q1".to_string(), chart("b", "Two")), ("Sheet1".to_string(), chart("c", "Three"))];
+        store.set_document_charts("d1", &back).await.unwrap();
+        assert_eq!(store.document_charts("d1").await.unwrap(), back);
     }
 
     #[tokio::test]
