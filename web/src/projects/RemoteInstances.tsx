@@ -1,17 +1,19 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Copy, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
 import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
 import { AutoSaveText } from '../common/AutoSave';
+import { copyToClipboard } from '../common/clipboard';
 import { LoadError } from '../common/QueryStatus';
 import { formatBytes } from '../common/text';
 import { useAction } from '../common/useAction';
 import type { PlacementSettings } from '../api/gen/PlacementSettings';
 import { projectKeys, usePlacement, useRemoteInstances } from './queries';
+import { RemoteAccessOff } from './RemoteAccessOff';
 
 export const LINK_STATE: Record<LinkState, { label: string; tone: BadgeTone }> = {
   connected: { label: 'connected', tone: 'running' },
@@ -28,6 +30,11 @@ export function capOf(text: string): number {
   const n = Number(text.trim() || '0');
   if (!Number.isInteger(n) || n < 0) throw new Error('Enter a whole number, or leave it blank.');
   return n;
+}
+
+/** "9 min" left until `at` (ms), at least 1 while it lasts. */
+export function minutesLeft(at: number, now = Date.now()): string {
+  return `${Math.max(1, Math.ceil((at - now) / 60_000))} min`;
 }
 
 /** "3 min ago" for a time in ms. */
@@ -161,9 +168,25 @@ function PlacementRules({ project, instances }: { project: Project; instances: R
   );
 }
 
+/** One line of the pairing block: what it is, the value in mono, and Copy. */
+function PairingValue({ label, value }: { label: string; value: string }) {
+  return (
+    <>
+      <dt className="text-meta text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-all font-mono text-heading tracking-wide">{value}</dd>
+      <dd>
+        <Button size="sm" variant="ghost" aria-label={`Copy the ${label.toLowerCase()}`} onClick={() => void copyToClipboard(value, `${label} copied`)}>
+          <Copy aria-hidden /> Copy
+        </Button>
+      </dd>
+    </>
+  );
+}
+
 /**
  * Project Settings → Remote instances: the other instances that joined this project to work for it, each with its
- * link's state and what it reported; Add shows a pairing code to enter on the other instance.
+ * link's state and what it reported; Add instance shows a pairing code and this instance's address to enter on the
+ * other instance. Pairing needs remote access, so while it is off the section says so and links to it instead.
  */
 export function RemoteInstances({ project }: { project: Project }) {
   const qc = useQueryClient();
@@ -176,50 +199,47 @@ export function RemoteInstances({ project }: { project: Project }) {
     await api.cancelPairingCode(project.id);
     await qc.invalidateQueries({ queryKey: projectKeys.remoteInstances(project.id) });
   });
+  const address = v?.address;
+  const pairing = address ? v?.pairing : null;
   return (
     <Section
       label="Remote instances"
       description="Other instances of PDT that work on this project for this one. The board, tickets and PM stay here."
+      actions={v && (
+        <>
+          {v.instances.length > 0 && (
+            <Button size="sm" variant="ghost" pending={checking} onClick={() => void check()}><RefreshCw aria-hidden /> Check now</Button>
+          )}
+          {address && <Button size="sm" pending={adding} onClick={() => void add()}><Plus aria-hidden /> {pairing ? 'New code' : 'Add instance'}</Button>}
+        </>
+      )}
+      notice={v && !address && <RemoteAccessOff />}
     >
       {q.isPending && <Skeleton lines={2} label="Loading remote instances" />}
       <LoadError what="Remote instances" error={q.error} />
-      {v && v.instances.length === 0 && !v.pairing && <EmptyState>No remote instances yet.</EmptyState>}
+      {v && v.instances.length === 0 && !pairing && <EmptyState>No remote instances yet.</EmptyState>}
       {v && v.instances.length > 0 && (
         <ul data-flush className="flex flex-col divide-y divide-border">
           {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} />)}
         </ul>
       )}
       {v && v.instances.length > 0 && <PlacementRules project={project} instances={v.instances} />}
-      {v?.pairing ? (
+      {pairing && address && (
         <SettingsRow
           stacked
           label="Pairing code"
-          description={
-            <>
-              On the other instance, choose Add project → Join a remote, and enter this instance&apos;s address and the
-              code. It works once, until {new Date(v.pairing.expiresAt).toLocaleTimeString()}.
-            </>
-          }
+          description="On the other instance, choose Add project → Join a remote, and enter this instance's address and the code. It works once."
         >
-          <div className="flex flex-wrap items-center gap-3">
-            <code className="rounded border border-border px-2 py-1 font-mono text-heading tracking-widest">{v.pairing.code}</code>
-            <span className="text-xs">
-              Address: {v.address ? <span className="font-mono">{v.address}</span> : <span className="text-muted-foreground">turn on remote access first (Settings → This host)</span>}
-            </span>
-            <Button size="sm" variant="ghost" pending={cancelling} onClick={() => void cancel()}>Cancel</Button>
+          <dl aria-label="Pairing" className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1">
+            <PairingValue label="Code" value={pairing.code} />
+            <PairingValue label="Address" value={address} />
+          </dl>
+          <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+            <span title={new Date(pairing.expiresAt).toLocaleTimeString()}>Expires in {minutesLeft(pairing.expiresAt)}</span>
+            <span className="flex-1" />
+            <Button size="sm" variant="ghost" pending={cancelling} onClick={() => void cancel()}>Cancel code</Button>
           </div>
         </SettingsRow>
-      ) : null}
-      {v && (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" pending={adding} onClick={() => void add()}><Plus aria-hidden /> {v.pairing ? 'New code' : 'Add'}</Button>
-          {v.instances.length > 0 && (
-            <Button size="sm" variant="ghost" pending={checking} onClick={() => void check()}><RefreshCw aria-hidden /> Check now</Button>
-          )}
-        </div>
-      )}
-      {v && !v.address && !v.pairing && (
-        <p className="text-meta text-muted-foreground">Remote instances reach this one through remote access (Settings → This host → Remote access).</p>
       )}
     </Section>
   );
