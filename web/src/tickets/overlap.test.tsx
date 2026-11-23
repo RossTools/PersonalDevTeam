@@ -266,7 +266,8 @@ describe('ticket tab', () => {
     await waitFor(() => expect(within(section).getByText('old-area').closest('[title]')).toHaveAttribute('title', 'Not in .pdt/project.toml — ignored for overlap'));
     expect(within(section).getByText('old-area').closest('span[title]')!.className).toContain('line-through');
     expect(within(section).getByLabelText('Exclusive')).toBeInTheDocument();
-    await userEvent.click(within(section).getByRole('combobox', { name: 'Add area' }));
+    await userEvent.click(within(section).getByRole('button', { name: 'Add area' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Add area' }));
     await userEvent.click(await screen.findByRole('option', { name: 'web/ui' }));
     await waitFor(() => expect(patches(calls)).toEqual([{ areas: ['migrations', 'old-area', 'web/ui'] }]));
   });
@@ -382,9 +383,12 @@ describe('new ticket', () => {
     renderWithQuery(<NewTicketDialog projects={[project]} projectId={project.id} title="Areas" onClose={vi.fn()} />);
     const dialog = screen.getByRole('dialog', { name: 'New ticket' });
     await waitFor(() => expect(calls.some((c) => c.path.endsWith('/areas'))).toBe(true));
-    await userEvent.type(within(dialog).getByRole('combobox', { name: 'Add area' }), 'migrations{Enter}');
-    // The other configured area is still offered: close the list first.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add area' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Add area' }), 'migrations{Enter}');
+    // The other configured area is still offered: close the list, then the popover.
     if (screen.queryByRole('listbox')) await userEvent.keyboard('{Escape}');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('combobox', { name: 'Add area' })).toBeNull());
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({ title: 'Areas', areas: ['migrations'] }));
   });

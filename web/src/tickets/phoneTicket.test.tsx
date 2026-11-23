@@ -102,12 +102,12 @@ describe('phone ticket: the primary action by stage', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path === '/api/tickets/t1/refine')).toBe(true));
   });
 
-  it('shows Open work for an In progress ticket, opening the session working on it', async () => {
+  it('shows Open in workspace for an In progress ticket, opening the session working on it', async () => {
     const onSession = vi.fn();
     stub(inProgress);
     renderWithQuery(<Harness t={inProgress} onSession={onSession} />);
-    expect(barButtons()).toEqual(['Comment…', 'Open work']);
-    await userEvent.click(within(bar()).getByRole('button', { name: 'Open work' }));
+    expect(barButtons()).toEqual(['Comment…', 'Open in workspace']);
+    await userEvent.click(within(bar()).getByRole('button', { name: 'Open in workspace' }));
     expect(onSession).toHaveBeenCalledWith({ id: 's1', projectId: project.id });
   });
 

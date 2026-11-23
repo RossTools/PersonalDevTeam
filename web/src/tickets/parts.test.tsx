@@ -103,6 +103,15 @@ describe('a parent ticket', () => {
     await waitFor(() => expect(posts(calls, '/api/tickets/t3/rank')[1]).toEqual({ before: 't2' }));
   });
 
+  it('shows the parts\' progress once: in the Parts section on the Overview, in the header elsewhere', async () => {
+    stub(parent, { 'GET /api/tickets/t1/attempts': [], 'GET /api/sessions': [] });
+    view();
+    await screen.findByRole('region', { name: 'Parts' });
+    expect(screen.getAllByRole('img', { name: /1 of 3/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('tab', { name: 'Conversation' }));
+    expect(screen.getAllByRole('img', { name: /1 of 3/ })).toHaveLength(1);
+  });
+
   it('starts the next part, or says why there is none', async () => {
     const onStart = vi.fn();
     stub(parent);

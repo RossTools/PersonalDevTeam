@@ -88,8 +88,9 @@ where **Done** moves them there. Either way its sessions stop and its worktree a
 On the board, **In progress** splits into these stages, and each card says who has the ticket ("Reviewer · working",
 "Your turn").
 
-The Pipeline also handles **Refine** (in a **Draft** or **Ready** ticket's menu): the **Refiner** rewrites the ticket
-so it's ready to build, sets its areas, and moves it to **To do**, or asks you when something needs clearing up.
+The Pipeline also handles **Refine with an agent…** (in a **Draft** or **Ready** ticket's menu): the **Refiner**
+rewrites the ticket so it's ready to build, sets its areas, and moves it to **To do**, or asks you when something needs
+clearing up.
 
 How each agent works inside a stage is in [Personas and approvals](personas-and-approvals.md#how-a-workflow-runs-an-agent).
 

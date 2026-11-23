@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Chip, IconButton, SuggestInput } from '@ui';
+import { Button, Chip, IconButton, Popover, SuggestInput } from '@ui';
 import { normaliseArea, normaliseLabel } from './model';
 
 export interface LabelsEditorProps {
@@ -18,8 +18,8 @@ export interface LabelsEditorProps {
   className?: string;
 }
 
-/** Chips with a remove button each, and a field that adds one: pick an existing one from the list, or type a new one
- *  and press Enter (or a comma). */
+/** Chips with a remove button each, then a ghost "+ Add" that opens a field in a popover: pick an existing one from the
+ *  list, or type a new one and press Enter (or a comma). The field stays open to add more; Escape closes it. */
 export function LabelsEditor({ labels, onChange, suggestions = [], noun = 'Label', disabled, renderChip, className }: LabelsEditorProps) {
   const lower = noun.toLowerCase();
   const add = (text: string) => {
@@ -44,17 +44,28 @@ export function LabelsEditor({ labels, onChange, suggestions = [], noun = 'Label
           </IconButton>
         </span>
       ))}
-      <SuggestInput
-        size="sm"
-        aria-label={`Add ${lower}`}
-        placeholder={`Add ${lower}…`}
-        suggestions={offered}
-        onCommit={add}
-        disabled={disabled}
-        maxLength={noun === 'Area' ? 60 : 30}
-        commitKeys={[',']}
-        className="w-32"
-      />
+      <Popover
+        label={`Add ${lower}`}
+        placement="bottom start"
+        className="w-56 p-1.5"
+        trigger={
+          <Button variant="ghost" size="sm" compact aria-label={`Add ${lower}`} disabled={disabled} className="text-muted-foreground">
+            <Plus aria-hidden /> Add
+          </Button>
+        }
+      >
+        <SuggestInput
+          size="sm"
+          aria-label={`Add ${lower}`}
+          placeholder={`${noun} name…`}
+          suggestions={offered}
+          onCommit={add}
+          disabled={disabled}
+          maxLength={noun === 'Area' ? 60 : 30}
+          commitKeys={[',']}
+          autoFocus
+        />
+      </Popover>
     </div>
   );
 }
