@@ -103,7 +103,8 @@ pub(super) async fn insert_ticket(
     now: i64,
 ) -> TResult<()> {
     let number: Option<(i64,)> = sqlx::query_as(
-        "UPDATE projects SET next_ticket_number = next_ticket_number + 1 WHERE id = ? \
+        // A remote project's tickets live on its owner (PDT-631): none is ever made here.
+        "UPDATE projects SET next_ticket_number = next_ticket_number + 1 WHERE id = ? AND kind != 'remote' \
          RETURNING next_ticket_number - 1",
     )
     .bind(project_id)

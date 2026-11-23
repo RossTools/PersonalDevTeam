@@ -24,6 +24,7 @@ import { ProjectDocuments } from '../documents/DocumentSettings';
 import { formatBytes } from '../common/text';
 import { invalidateProjects, invalidateStorage, projectKeys } from './queries';
 import { LoadError } from '../common/QueryStatus';
+import { RemoteInstances } from './RemoteInstances';
 
 /**
  * Name, key and base branch, each saved as it changes (PDT-231): text on blur or Enter, the branch at once. Folder and
@@ -242,6 +243,7 @@ export function ProjectPage({ project, onRemoved, drill = false, section = null,
     ...(project.kind !== 'personal' ? [{ label: 'Worktrees', node: <Worktrees project={project} /> }] : []),
     ...panel.sections,
     { label: 'Documents', node: <ProjectDocuments project={project} /> },
+    ...(project.kind !== 'personal' ? [{ label: 'Remote instances', node: <RemoteInstances project={project} /> }] : []),
     { label: 'Danger zone', node: <RemoveProject project={project} onRemoved={onRemoved} /> },
   ];
   return (

@@ -65,6 +65,7 @@ mod pty_ws;
 mod read_failures;
 mod release;
 mod remote;
+mod remote_projects;
 mod retired_builtins;
 mod review;
 mod runconfig;

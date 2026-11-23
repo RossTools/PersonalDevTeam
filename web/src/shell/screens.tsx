@@ -25,6 +25,7 @@ export const PluginsPage = lazy(() => import('../plugins/PluginsPage').then((m) 
 export const PmView = lazy(() => import('../pm/PmView').then((m) => ({ default: m.PmView })));
 export const ProjectPage = lazy(() => import('../projects/ProjectPage').then((m) => ({ default: m.ProjectPage })));
 export const RunView = lazy(() => import('../runs/RunView').then((m) => ({ default: m.RunView })));
+export const RemoteProjectsPage = lazy(() => import('../projects/RemoteProjectsPage').then((m) => ({ default: m.RemoteProjectsPage })));
 export const SecretsPage = lazy(() => import('../secrets/SecretsPage').then((m) => ({ default: m.SecretsPage })));
 export const SessionView = lazy(() => import('../sessions/SessionView').then((m) => ({ default: m.SessionView })));
 export const SetupPage = lazy(() => import('../setup/SetupPage').then((m) => ({ default: m.SetupPage })));

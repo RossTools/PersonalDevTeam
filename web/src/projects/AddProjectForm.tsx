@@ -6,20 +6,22 @@ import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
 import { invalidateProjects } from './queries';
 import { useHostSettings } from '../host/queries';
+import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 
-export type AddProjectMode = 'path' | 'clone' | 'personal';
+export type AddProjectMode = 'path' | 'clone' | 'personal' | 'remote';
 type Mode = AddProjectMode;
 const modes = [
   { value: 'path' as const, label: 'Folder' },
   { value: 'clone' as const, label: 'Clone URL' },
   { value: 'personal' as const, label: 'Personal (no repo)' },
+  { value: 'remote' as const, label: 'Remote project' },
 ];
 
 /**
  * Adds a project from a folder on this host, by cloning a repository URL into the Projects folder, or as a Personal
- * project with no repository (PDT makes its folder).
+ * project with no repository (PDT makes its folder); or joins a remote project of another instance (`onJoined`).
  */
-export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path' }: { onAdded?: (p: Project) => void; autoFocus?: boolean; initialMode?: Mode }) {
+export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMode = 'path' }: { onAdded?: (p: Project) => void; onJoined?: () => void; autoFocus?: boolean; initialMode?: Mode }) {
   const qc = useQueryClient();
   const errorId = useId();
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -51,9 +53,19 @@ export function AddProjectForm({ onAdded, autoFocus = false, initialMode = 'path
     else if (mode === 'personal') add.mutate({ name, repoPath: '', kind: 'personal', ...(opt(key) ? { key: opt(key) } : {}) });
     else clone.mutate({ url, ...(opt(name) ? { name: opt(name) } : {}), ...(opt(key) ? { key: opt(key) } : {}), ...(opt(parentDir) ? { parentDir: opt(parentDir) } : {}) });
   };
+  const choose = <SegmentedControl aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="w-full [&>*]:flex-1" />;
+  if (mode === 'remote') {
+    return (
+      <div className="flex flex-col gap-3 p-2">
+        {choose}
+        <p className="text-xs text-muted-foreground">A project another instance of PDT owns: this one works on it for the owner, whose board, tickets and PM it stays on.</p>
+        <JoinRemoteProjectForm autoFocus={autoFocus} onJoined={() => onJoined?.()} />
+      </div>
+    );
+  }
   return (
     <form onSubmit={submit} aria-label="Add project" className="flex flex-col gap-3 p-2">
-      <SegmentedControl aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="w-full [&>*]:flex-1" />
+      {choose}
       {mode === 'path' ? (
         <>
           {/* The folder first: picking it fills the name in. */}

@@ -86,6 +86,8 @@ pub(crate) async fn create(
     payload: Result<Json<CreateTicket>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Ticket>), ApiError> {
     let Json(CreateTicket { ticket: input, reason }) = payload?;
+    // A remote project's tickets are on its owner (PDT-631): refused here with why.
+    st.project(&project_id).await?;
     let (by, source) = creator(&st, &headers).await?;
     let mut t = pdt_core::ticket::ValidNewTicket { source, ..input.validate()? };
     // An agent's ticket waits for the user as a proposal (PDT-366).

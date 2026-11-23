@@ -221,7 +221,7 @@ describe('settings page', () => {
     await userEvent.click(await within(nav).findByRole('button', { name: /Alpha/ }));
     const group = within(nav).getByRole('group', { name: 'Alpha' });
     expect(within(group).getAllByRole('button').map((b) => b.textContent))
-      .toEqual(['General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Danger zone']);
+      .toEqual(['General', 'Worktrees', 'Runs on this host', 'Agent instructions', 'Agents', 'Review', 'Pipeline and policies', 'Plugins', 'Documents', 'Remote instances', 'Danger zone']);
     // One section per screen, under a breadcrumb.
     await userEvent.click(within(group).getByRole('button', { name: 'Review' }));
     const main = screen.getByRole('main');
@@ -235,7 +235,7 @@ describe('Get started (PDT-230)', () => {
   const here = () => window.location.pathname + window.location.search;
   const setupView = (opensOnLaunch: boolean) => ({
     state: { needed: opensOnLaunch, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false, permissionsConfirmed: false },
-    steps: { agents: 'done', github: 'todo', project: 'todo', defaultAgent: 'todo', permissions: 'todo' },
+    steps: { name: 'todo', agents: 'done', github: 'todo', project: 'todo', defaultAgent: 'todo', permissions: 'todo' },
     done: 1, opensOnLaunch, defaultAgent: 'claude',
   });
   afterEach(() => cleanup());
@@ -268,7 +268,7 @@ describe('Get started (PDT-230)', () => {
     stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(false) });
     renderWithQuery(<AppShell />);
     const setup = await within(screen.getByRole('main')).findByRole('region', { name: 'Setup' });
-    expect(await within(setup).findByText('1 of 5 steps done.')).toBeInTheDocument();
+    expect(await within(setup).findByText('1 of 6 steps done.')).toBeInTheDocument();
     await userEvent.click(within(setup).getByRole('button', { name: 'Open Get started' }));
     await waitFor(() => expect(here()).toBe('/setup'));
   });

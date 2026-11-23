@@ -99,6 +99,7 @@ async fn add(
     {
         return Err(key_taken());
     }
+    crate::remote_projects::refuse_if_remote(st, &info.root).await?;
     let project = Project {
         id: uuid::Uuid::now_v7().to_string(),
         name,

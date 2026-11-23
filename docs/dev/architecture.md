@@ -51,8 +51,19 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   ports in the store (host value `remote.served`), since `serve --bg` mappings outlive the process. A web run's port
   is mapped to an owner-checking proxy of pdtd's on a free loopback port (`remote_proxy.rs`), never to the run, and
   the proxy stops when the mapping goes; after a restart the mapping leads nowhere until the resumed run maps it again.
+- **The project link** joins a project's owner instance to its remote instances (pdt-api `link.rs`, rules in pdt-core
+  `link.rs`): HTTPS between two pdtds over their remote access, under `/api/link/*`. Pairing (`/link/pair`, on the
+  owner) takes the code the owner shows and swaps an Ed25519 public key per end for that one project. Every later
+  request is signed by its sender's key for the link (headers in pdt-core `link::headers`; the signature covers the
+  method, path, link, project, time, nonce and body) and still passes the identity guard. The owner sends heartbeats
+  (`/link/heartbeat`, the `project links` loop every 30 s) and the remote instance answers with its name, version,
+  protocol and facts (OS, CPUs, free disk, agents from the host checks, tools on the PATH). `/link/revoke` (owner →
+  remote) and `/link/leave` (remote → owner) end a link at the other end. `link::PROTOCOL` is the link's version:
+  ends that differ refuse each other with a message naming the one to update.
 
-**Instances.** A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
+**Instances.** Each instance has a name (host setting `instance_name`, Settings → This host → Name and Get started;
+until the user picks one, pdt-core `instance::suggest_name` of the machine's host name) and an id made once (host
+value `instance.id`, `link::instance_id`). `/api/health` reports the name. A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd
 sharing a data folder. Environment variables are read in `crates/pdtd/src/config.rs`. `GET /api/health` reports
 name, version, profile, port and build. The data folder holds `pdt.db`, `logs/`, `sessions/<id>/` (per-session files:
@@ -96,8 +107,16 @@ API types derive ts-rs and are generated into `web/src/api/gen`.
 **Projects.** A repository and its main checkout, with a short key (`PDT`) used in ticket keys. The base branch
 defaults to the repository's default branch. The forge (GitHub, GitLab, the local forge, or none) comes from
 `.pdt/project.toml` or from the plugin that claims `origin`'s host; all forge access goes through pdt-api
-`forge::project_forge`. Two special kinds: `personal` (a folder with no repository: no worktrees or runs) and the
-hidden `host` project (key `_HOST`), which holds the PM's sessions.
+`forge::project_forge`. Three special kinds: `personal` (a folder with no repository: no worktrees or runs), the
+hidden `host` project (key `_HOST`), which holds the PM's sessions, and `remote` (below).
+
+**Remote projects.** A project another instance owns, which this one joined to work for it. On the remote instance
+it is a `projects` row of kind `remote` (no workspace; `repo_path` is `remote:<link id>`) plus its link to the owner in
+`remote_projects` (pdt-api `remote_projects.rs`: join, Pause, Leave). On the owner, each joined instance is a
+`remote_instances` row with its last heartbeat (pdt-api `remote_instances.rs`: Project Settings → Remote instances,
+pairing codes, Remove). Each end's private key for a link is in the keychain (`project-link:<link id>`); the rows hold
+only the other end's public key. Pairing codes live in memory (`AppState::link`), one per project, for 10 minutes.
+Nothing is placed on a remote instance yet.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.
@@ -757,6 +776,7 @@ shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with s
 
 | Area | Rust | Web |
 | --- | --- | --- |
+| Remote projects and the project link | pdt-api `link.rs`, `remote_instances.rs`, `remote_projects.rs`; pdt-core `link.rs`; pdt-store `links.rs` | `web/src/projects/RemoteInstances.tsx`, `RemoteProjectsPage.tsx` |
 | Host, settings, updates, remote access | pdt-api `host.rs`, `update.rs`, `remote.rs`, guards (`host_guard.rs`, `identity_guard.rs`, `untrusted.rs`); `crates/pdt-host`; `crates/pdt-update` | `web/src/host`, `web/src/setup` |
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
 | Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |

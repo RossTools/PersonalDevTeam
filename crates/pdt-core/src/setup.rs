@@ -1,4 +1,4 @@
-//! The Get started checklist (PDT-230): its five steps, each ticked off from the host's real state, and whether it
+//! The Get started checklist (PDT-230): its six steps, each ticked off from the host's real state, and whether it
 //! opens on launch. Pure: pdt-api gathers the facts and stores the state.
 
 use serde::{Deserialize, Serialize};
@@ -88,6 +88,8 @@ pub struct SetupFacts {
     /// The GitHub plugin is turned off (PDT-251): nothing to connect.
     pub github_off: bool,
     pub projects: usize,
+    /// The user named this instance (Settings → This host, or the checklist).
+    pub named: bool,
 }
 
 impl SetupFacts {
@@ -121,6 +123,8 @@ impl StepState {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SetupSteps {
+    /// This instance has a name the user picked.
+    pub name: StepState,
     /// git is found, and at least one agent is found and logged in.
     pub agents: StepState,
     /// Connected, or skipped (also while the GitHub plugin is off).
@@ -134,11 +138,12 @@ pub struct SetupSteps {
 }
 
 /// How many steps the checklist has.
-pub const STEPS: u32 = 5;
+pub const STEPS: u32 = 6;
 
 impl SetupSteps {
     pub fn read(s: &SetupState, f: &SetupFacts) -> Self {
         Self {
+            name: StepState::done_if(f.named),
             agents: StepState::done_if(f.git && f.any_agent()),
             // Connected wins over skipped: it says more.
             github: if f.github_connected {
@@ -156,7 +161,7 @@ impl SetupSteps {
 
     /// How many of the [`STEPS`] are done.
     pub fn done(&self) -> u32 {
-        [self.agents, self.github, self.project, self.default_agent, self.permissions]
+        [self.name, self.agents, self.github, self.project, self.default_agent, self.permissions]
             .iter()
             .filter(|s| s.complete())
             .count() as u32
@@ -260,8 +265,17 @@ mod tests {
         let four = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, ..facts() });
         assert_eq!((four.done(), four.all_done()), (4, false), "permissions still to do");
         let s = SetupState { permissions_confirmed: true, ..s };
-        let all = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, ..facts() });
+        let five = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, ..facts() });
+        assert_eq!((five.done(), five.all_done()), (5, false), "the instance still to name");
+        let all = SetupSteps::read(&s, &SetupFacts { git: true, codex: true, projects: 1, named: true, ..facts() });
         assert_eq!((all.done(), all.all_done()), (STEPS, true));
+    }
+
+    #[test]
+    fn the_name_step_is_done_once_the_instance_is_named() {
+        let s = SetupState::default();
+        assert_eq!(SetupSteps::read(&s, &facts()).name, StepState::Todo);
+        assert_eq!(SetupSteps::read(&s, &SetupFacts { named: true, ..facts() }).name, StepState::Done);
     }
 
     #[test]

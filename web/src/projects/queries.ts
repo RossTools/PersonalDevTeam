@@ -1,6 +1,7 @@
 // Projects: the list every screen shares, and what a project write marks stale.
 import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { POLL } from '../common/poll';
 import { workspaceKeys } from '../workspaces/queries';
 
 export const projectKeys = {
@@ -13,7 +14,21 @@ export const projectKeys = {
   /** What worktrees take on disk: every project's (null) or one project's. */
   storage: (projectId: string | null) => ['storage', projectId] as const,
   storageAll: ['storage'] as const,
+  /** On the owner: a project's remote instances and the pairing code on show. */
+  remoteInstances: (projectId: string) => ['remote-instances', projectId] as const,
+  /** On a remote instance: the projects it joined. */
+  remote: ['remote-projects'] as const,
 };
+
+/** This instance's remote projects (other instances' projects it works for), polled for their link's state. */
+export function useRemoteProjects() {
+  return useQuery({ queryKey: projectKeys.remote, queryFn: api.listRemoteProjects, refetchInterval: POLL.steady });
+}
+
+/** A project's remote instances, polled for their heartbeats (and the pairing code's expiry). */
+export function useRemoteInstances(projectId: string) {
+  return useQuery({ queryKey: projectKeys.remoteInstances(projectId), queryFn: () => api.remoteInstances(projectId), refetchInterval: POLL.steady });
+}
 
 /** Every project. They change through this UI (which invalidates them), so a mount within 30 s doesn't refetch. */
 export function useProjects({ enabled = true }: { enabled?: boolean } = {}) {

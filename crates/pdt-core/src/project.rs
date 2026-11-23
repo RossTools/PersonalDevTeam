@@ -35,6 +35,10 @@ impl Project {
     pub fn is_host(&self) -> bool {
         self.kind == ProjectKind::Host
     }
+    /// A remote project: another instance owns it, and this one only executes for it.
+    pub fn is_remote(&self) -> bool {
+        self.kind == ProjectKind::Remote
+    }
 }
 
 /// The host project's key: no user key can have `_` (PDT-81).
@@ -52,6 +56,10 @@ pub enum ProjectKind {
     /// PDT's own project for host-level sessions (the PM's, PDT-81): one per host, made by the store, no repository,
     /// never listed.
     Host,
+    /// A project another instance owns, which this one joined to execute for it (remote projects). Never listed with
+    /// this instance's own projects, and invisible to its PM, workflows, pickup and Inbox: its tickets live on the
+    /// owner.
+    Remote,
 }
 
 impl ProjectKind {
@@ -60,10 +68,13 @@ impl ProjectKind {
             ProjectKind::Repo => "repo",
             ProjectKind::Personal => "personal",
             ProjectKind::Host => "host",
+            ProjectKind::Remote => "remote",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        [ProjectKind::Repo, ProjectKind::Personal, ProjectKind::Host].into_iter().find(|k| k.as_str() == s)
+        [ProjectKind::Repo, ProjectKind::Personal, ProjectKind::Host, ProjectKind::Remote]
+            .into_iter()
+            .find(|k| k.as_str() == s)
     }
 }
 
