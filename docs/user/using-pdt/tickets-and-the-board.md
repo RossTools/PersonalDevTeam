@@ -40,8 +40,9 @@ each card says who has it ("Reviewer · working", "Your turn"). See [Workflows](
 For a quick one, type a title in the box at the top of the backlog and press **Enter** (it goes in as a **Draft** at
 the top); **Shift+Enter** opens the full form instead.
 
-Click a ticket to open it beside the list, or **Open in workspace** to give it its own tab in its project's workspace. Its **Activity** holds your comments and
-everything that happened to it: moves, starts, merges, agents' outcomes.
+Click a ticket to open it beside the list, or **Open in workspace** to give it its own tab in its project's
+workspace. Its **Activity** holds your comments and everything that happened to it: moves, starts, merges, agents'
+outcomes.
 
 A ticket you didn't make carries a badge saying who did: **PM**, **Workflow**, **External**, or the persona of the
 agent that filed it (**Coder**, say). Hover over an agent's badge to see the ticket it was working on: "Created by
