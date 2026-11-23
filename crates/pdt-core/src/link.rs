@@ -317,6 +317,9 @@ pub enum LinkState {
     Offline,
     /// It speaks another protocol: one of the two must update.
     Incompatible,
+    /// On a remote instance: the owner no longer has the link (it removed this instance or the project while the two
+    /// couldn't reach each other). Leaving the project here is all that is left to do.
+    Removed,
 }
 
 /// How long without a heartbeat before a link counts as offline.
@@ -377,6 +380,10 @@ pub struct OwnerLink {
     /// When the owner last reached this instance, in ms.
     #[ts(type = "number | null")]
     pub last_contact_at: Option<i64>,
+    /// When the owner was found to have removed this instance from the project (it couldn't tell it then), in ms.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub removed_at: Option<i64>,
     #[ts(type = "number")]
     pub created_at: i64,
 }

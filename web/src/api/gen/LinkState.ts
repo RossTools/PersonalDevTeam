@@ -3,4 +3,4 @@
 /**
  * A link's state, as one end shows it.
  */
-export type LinkState = "connected" | "paused" | "offline" | "incompatible";
+export type LinkState = "connected" | "paused" | "offline" | "incompatible" | "removed";

@@ -47,6 +47,8 @@ pub const PAIR_PATH: &str = "/api/link/pair";
 pub const HEARTBEAT_PATH: &str = "/api/link/heartbeat";
 pub const REVOKE_PATH: &str = "/api/link/revoke";
 pub const LEAVE_PATH: &str = "/api/link/leave";
+/// A remote instance asks its owner whether it still has the link (PDT-702): while the owner's heartbeats don't come.
+pub const STATUS_PATH: &str = "/api/link/status";
 /// The owner asks a joined instance to update (PDT-637); it is taken whatever protocol the owner speaks.
 pub const UPDATE_PATH: &str = "/api/link/update";
 
@@ -695,7 +697,7 @@ async fn from_owner_with(
         .store
         .owner_link_by_id(&parts.link_id)
         .await?
-        .ok_or_else(|| refused("this instance isn't paired on that link"))?;
+        .ok_or_else(|| ApiError::forbidden(codes::LINK_REVOKED, "this instance isn't paired on that link"))?;
     parts.check(st, method, uri.path(), body, &link.owner_project_id, &link.owner_public_key)?;
     Ok(link)
 }
@@ -711,11 +713,10 @@ pub(crate) async fn from_remote(
 ) -> Result<pdt_core::link::RemoteInstance, ApiError> {
     crate::host_guard::optional_json::<Value>(headers, body)?;
     let parts = SignedParts::read(st, headers).await?;
-    let instance = st
-        .store
-        .get_remote_instance(&parts.link_id)
-        .await?
-        .ok_or_else(|| refused("this instance has no remote instance on that link"))?;
+    let instance =
+        st.store.get_remote_instance(&parts.link_id).await?.ok_or_else(|| {
+            ApiError::forbidden(codes::LINK_REVOKED, "this instance has no remote instance on that link")
+        })?;
     parts.check(st, method, uri.path(), body, &instance.project_id, &instance.public_key)?;
     Ok(instance)
 }
@@ -756,6 +757,82 @@ async fn revoke_route(
     delete_key(&st, &link.link_id).await;
     tracing::info!(owner = %link.owner_name, link = %link.link_id, "the owner removed this instance from a project");
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A remote instance asks whether this instance still has its link: answered when it does, refused (`link_revoked`)
+/// when it was removed.
+async fn status_route(
+    State(st): State<AppState>,
+    method: Method,
+    uri: OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    from_remote(&st, &method, &uri, &headers, &body).await?;
+    Ok(Json(json!({})))
+}
+
+/// Whether a call to the other end of a link got through: it answered, or it no longer has the link (so the link is
+/// over at both ends all the same). Anything else is logged as `what`.
+pub(crate) fn got_through<T>(r: &Result<T, PeerError>, who: &str, what: &str) -> bool {
+    match r {
+        Ok(_) => true,
+        Err(PeerError::Refused { code, .. }) if code == codes::LINK_REVOKED => true,
+        Err(e) => {
+            tracing::warn!(other = %who, error = %e.text(), "{what}");
+            false
+        }
+    }
+}
+
+/// The owner tells a joined instance it is removed from `project_id` (so it drops the remote project and its key),
+/// then forgets its own key for the link. True when the instance was told; an instance that can't be reached is
+/// removed here all the same, and finds out once it asks ([`check_owners`]).
+pub(crate) async fn revoke(st: &AppState, i: &pdt_core::link::RemoteInstance, project_id: &str) -> bool {
+    let told = match load_key_for_revoke(st, &i.link_id).await {
+        Some(key) => {
+            let r: Result<Value, _> =
+                post(st, &i.url, REVOKE_PATH, Some((&key, &i.link_id, project_id)), &json!({})).await;
+            got_through(&r, &i.name, "could not tell a removed remote instance")
+        }
+        None => {
+            tracing::warn!(instance = %i.name, "no key to tell a removed remote instance with");
+            false
+        }
+    };
+    delete_key(st, &i.link_id).await;
+    told
+}
+
+/// A remote instance asks the owners it hasn't heard from lately whether they still have its links; one that says
+/// it doesn't removed this instance while it couldn't tell it, and the remote project says so (the `project links`
+/// loop).
+pub async fn check_owners(st: &AppState) {
+    let projects = match st.store.list_remote_projects().await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not list the remote projects");
+            return;
+        }
+    };
+    let now = now_ms();
+    let quiet = projects.into_iter().map(|(_, l)| l).filter(|l| {
+        l.removed_at.is_none() && link::state(l.last_contact_at, true, false, now) == link::LinkState::Offline
+    });
+    futures_util::future::join_all(quiet.map(|l| async move {
+        let Ok(key) = load_key(st, &l.link_id).await else { return };
+        let r: Result<Value, _> =
+            post(st, &l.owner_url, STATUS_PATH, Some((&key, &l.link_id, &l.owner_project_id)), &json!({})).await;
+        if let Err(PeerError::Refused { code, .. }) = r
+            && code == codes::LINK_REVOKED
+        {
+            tracing::info!(owner = %l.owner_name, link = %l.link_id, "the owner removed this instance from a project");
+            if let Err(e) = st.store.set_owner_link_removed(&l.link_id, now_ms()).await {
+                tracing::warn!(error = %e, "could not record a removed remote project");
+            }
+        }
+    }))
+    .await;
 }
 
 /// A remote instance left one of this instance's projects: it is no longer joined, and the owner's key goes.
@@ -907,6 +984,9 @@ async fn heartbeat_once(
                     None => ("it speaks another project-link protocol".into(), None),
                 });
             }
+            Err(PeerError::Refused { code, .. }) if code == codes::LINK_REVOKED => {
+                return Err((format!("{} left the project; remove it here too", i.name), None));
+            }
             Err(e) => return Err((e.text(), None)),
         };
     if !link::compatible(me.protocol, reply.instance.protocol) {
@@ -941,6 +1021,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/heartbeat", post(heartbeat_route))
         .route("/link/revoke", post(revoke_route))
         .route("/link/leave", post(leave_route))
+        .route("/link/status", post(status_route))
         .route("/link/update", post(crate::update_instances::link_route))
         .merge(crate::exec::router())
 }

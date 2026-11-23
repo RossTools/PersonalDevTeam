@@ -72,7 +72,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   new head's own diff id (`base_ci::diff_id`: per-file patches without hunk positions; None for no files or a file
   without a patch, or for a file list the forge cut off: `Forge::change_request_files_whole`) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
   `record` saves a diff only while the PR's head is the approved one (read before and after its files), and Request
-  changes and Close `forget` it, so only the user's last word counts.
+  changes and Close `forget` it, as does the `closed` trigger in both variants (a close or merge on GitHub), so only
+  the user's last word counts. `check` drops an approval older than 30 days (`APPROVAL_MAX_AGE_MS`) and one followed
+  by the user's own `changes_requested` review on the forge (a review id above the newest one at `record`).
   What these nodes remember (the approval, the base fix a pull request was updated for) is workflow state under
   `_pdt.` keys (`schedule::RESERVED_STATE`), which `state.set` refuses, so a workflow can't forge an approval. The
   update is asked once per base fix (`github.pr.update`'s `key`).
@@ -284,7 +286,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   like approvals snooze too) are applied in `inbox::list` alone: the item stays open in the store, its step keeps
   waiting, and holds (`holds_ticket`), sensors and the Notifier see it as before. `GET /api/inbox` moves it to
   `snoozed` (out of `items` and `total`) while `InboxSnooze::hides`; a snooze whose time came, whose ticket closed or
-  went, or whose stored item is no longer open is deleted as the list is read.
+  went, or whose stored item is no longer open is deleted as the list is read; so, on an unfiltered list, is one whose
+  item is no longer listed (a listed item's id is fixed, so a kept snooze would hide its next occurrence).
 - **A login failure is never nudged, and never waits without an item for long.** A step goes to `waiting_login`
   (under the agent's `agent_login_locks`) or is held with `wait.login` while its agent's `agent_login` item is open;
   closing that item (`agent_login::resume`) takes every such step up again, and the login watch takes up any left
