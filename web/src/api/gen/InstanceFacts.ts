@@ -13,4 +13,9 @@ os: string, arch: string, cpus: number,
 /**
  * Free space on the disk holding its data folder, when it could read it.
  */
-diskFreeBytes: number | null, agents: Array<AgentFact>, tools: Array<ToolFact>, };
+diskFreeBytes: number | null, agents: Array<AgentFact>, 
+/**
+ * When its agents were last checked; none while it hasn't checked them yet (just after it started), when
+ * `agents` is empty because it doesn't know.
+ */
+agentsCheckedAt: number | null, tools: Array<ToolFact>, };
