@@ -168,27 +168,30 @@ describe('workspaces', () => {
     const d = await screen.findByRole('dialog', { name: 'Menu' });
     await expectOnlyOwn(within(d).getByRole('region', { name: 'Agents' }));
   });
-  it('shows each agent\'s branch, and its workspace only when it is not the current one', async () => {
+  it('shows where each agent runs, and its workspace only when it is not the current one', async () => {
     stubWorkspaces({
       [`GET /api/projects/${project.id}/worktrees`]: [{ id: 'wt1', projectId: project.id, branch: 'feat/login', path: '/r/.worktrees/feat-login', baseCommit: 'x', createdAt: 2 }],
       [`GET /api/projects/${project.id}/sessions`]: [
         sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working' }),
         sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', worktreeId: 'wt1', cwd: '/r/.worktrees/feat-login' }),
         sess('d', 'Claude D', { kind: 'agent_tui', agent: 'claude' }),
+        sess('e', 'Alpha', { kind: 'agent_tui', agent: 'claude' }),
       ],
     });
     renderWithQuery(<AppShell />);
     const agents = await screen.findByRole('region', { name: 'Agents' });
     const secondary = (name: RegExp) => within(agents).getByRole('row', { name }).querySelector('[data-slot=list-secondary]')?.textContent ?? null;
     await within(agents).findByRole('row', { name: /Codex B/ });
-    // In the current workspace (Alpha): the main checkout says nothing, a worktree its branch.
+    // In the current workspace (Alpha): the main checkout its project (unless the title is that already), a worktree
+    // its branch.
     await waitFor(() => expect(secondary(/Codex B/)).toBe('feat/login'));
-    expect(secondary(/Claude A/)).toBeNull();
-    expect(secondary(/Claude D/)).toBe('no tab');
+    expect(secondary(/Claude A/)).toBe('Alpha');
+    expect(secondary(/Claude D/)).toBe('Alpha · no tab');
+    expect(secondary(/^Alpha/)).toBe('no tab');
     // From another workspace, the agents' workspace follows.
     await userEvent.click(within(screen.getByRole('region', { name: 'Workspaces' })).getByRole('row', { name: /Release/ }));
     await waitFor(() => expect(secondary(/Codex B/)).toBe('feat/login · Alpha'));
-    expect(secondary(/Claude A/)).toBe('Alpha');
+    expect(secondary(/Claude A/), 'the workspace is named after the project: not twice').toBe('Alpha');
   });
 
   it('opens a session\'s changes in the workspace on screen, after its tab', async () => {

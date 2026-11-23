@@ -46,11 +46,12 @@ function reorderTo(list: Workspace[], movingId: string, target: ListDropEvent['t
 // also depend on outside state (the current workspace or tab, renaming).
 
 /**
- * An agent row's second line: its branch (nothing for the main checkout), then its workspace when that isn't the one
- * on screen ("no tab" when it has none). Null when there is nothing to say.
+ * An agent row's second line: where it runs (its branch, or its project for the main checkout), then its workspace when
+ * that isn't the one on screen ("no tab" when it has none) and doesn't repeat it. Null when there is nothing to say.
  */
-function agentSecondary(branch: string | null, workspaceName: string | null, isCurrentWorkspace: boolean): string | null {
-  const parts = [branch, workspaceName === null ? 'no tab' : isCurrentWorkspace ? null : workspaceName].filter((p): p is string => !!p);
+function agentSecondary(place: string | null, workspaceName: string | null, isCurrentWorkspace: boolean): string | null {
+  const workspace = workspaceName === null ? 'no tab' : isCurrentWorkspace || workspaceName === place ? null : workspaceName;
+  const parts = [place, workspace].filter((p): p is string => !!p);
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
@@ -245,9 +246,15 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
     () => new Map(worktreeData.flatMap((d) => (d ?? []).map((w) => [w.id, w.branch] as const))),
     [worktreeData],
   );
-  /** The worktree's branch (its folder name until the worktrees load); null for the main checkout. */
-  const branchOf = (i: ItemInfo) => {
-    if (!i.worktreeId) return null;
+  /**
+   * Where it runs: the worktree's branch (its folder name until the worktrees load), or the project for the main
+   * checkout, unless the title already says it (a conversation not yet named after its first message).
+   */
+  const placeOf = (i: ItemInfo) => {
+    if (!i.worktreeId) {
+      const name = ws.projects.find((p) => p.id === i.projectId)?.name ?? null;
+      return name === i.title ? null : name;
+    }
     return branches.get(i.worktreeId) ?? i.session?.cwd.split(/[\\/]/).filter(Boolean).pop() ?? null;
   };
   return (
@@ -304,7 +311,7 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
                     </>
                   ) : undefined
                 }
-                secondary={agentSecondary(branchOf(info), where?.workspace.name ?? null, where?.workspace.id === ws.workspace?.id) ?? undefined}
+                secondary={agentSecondary(placeOf(info), where?.workspace.name ?? null, where?.workspace.id === ws.workspace?.id) ?? undefined}
                 onMenu={(at) => openMenu(at, `Agent ${info.title}`, () => agentMenu(
                   () => void runAction(() => ws.focusItem(info.item, info.projectId)),
                   where ? () => { ws.selectTab(where.tab); onRenameTab(where.tab.id); } : undefined,

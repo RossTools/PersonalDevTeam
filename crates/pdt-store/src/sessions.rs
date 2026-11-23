@@ -367,6 +367,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Renames a session only while it is still called `from`, so a rename made meanwhile wins. False when it wasn't.
+    pub async fn retitle_session(&self, id: &str, from: &str, to: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET title = ? WHERE id = ? AND title = ?")
+            .bind(to)
+            .bind(id)
+            .bind(from)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Where a session runs, as the instance that runs it says (a remote session in the remote's checkout, PDT-633).
     pub async fn set_session_cwd(&self, id: &str, cwd: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE sessions SET cwd = ? WHERE id = ?").bind(cwd).bind(id).execute(&self.pool).await?;
@@ -603,6 +614,9 @@ pub(crate) mod tests {
         assert!(store.rename_session("a", "New name").await.unwrap());
         assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
         assert!(!store.rename_session("zz", "x").await.unwrap());
+        assert!(!store.retitle_session("a", "Old name", "Auto").await.unwrap(), "renamed meanwhile");
+        assert!(store.retitle_session("a", "New name", "Auto").await.unwrap());
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "Auto");
     }
 
     #[tokio::test]
