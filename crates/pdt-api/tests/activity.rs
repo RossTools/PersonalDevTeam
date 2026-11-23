@@ -166,7 +166,7 @@ fn fake_codex_status(dir: &Path) -> std::path::PathBuf {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
+async fn codex_program_status_keeps_an_empty_enter_idle() {
     use futures_util::StreamExt;
     let tmp = tempfile::tempdir().unwrap();
     let (_, mut state) = setup(tmp.path()).await;
@@ -211,8 +211,15 @@ async fn codex_program_status_keeps_trust_and_empty_enter_idle() {
     output_until(&mut ws, "Trust this folder?").await;
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "ready").await;
-    // The terminal can show "ready" before the tracker has applied the program's idle status, so wait for it.
-    wait_for_activity(&app, id, json!("idle")).await; // trust acceptance is not a turn
+    // Until Codex reports a status, an Enter counts as work (older Codex reports none), so accepting trust shows
+    // working until its idle status arrives. The terminal can show "ready" before the tracker has applied that status,
+    // and the row starts idle, so idle alone doesn't show it was applied: the change back to idle also flags the
+    // session unseen. Typing on before then let the trust Enter's working land late and look like the prompt's.
+    wait_until("Codex's idle status to be applied", async || {
+        let s = session(&app, id).await;
+        s["activity"] == "idle" && s["unseen"] == true
+    })
+    .await;
     type_in(&mut ws, "\r").await;
     output_until(&mut ws, "empty").await;
     wait_for_activity(&app, id, json!("idle")).await; // empty Enter is not a turn
