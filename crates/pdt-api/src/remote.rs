@@ -47,7 +47,7 @@ const SERVED_KEY: &str = "remote.served";
 #[derive(Debug, Default)]
 pub(crate) struct Applied {
     /// HTTPS ports this instance mapped with `tailscale serve`, by this process or a previous one (kept under
-    /// [`SERVED_KEY`]; changed only under `settings_lock`).
+    /// [`SERVED_KEY`]; changed only under `remote_lock`).
     pub(crate) served: BTreeSet<u16>,
     /// Whether `served` has had the stored ports added (once per process, on first use).
     loaded: bool,
@@ -58,7 +58,7 @@ pub(crate) struct Applied {
 }
 
 /// Runs one tailscale call on the blocking pool, bounded by `st.tailscale_timeout` so a hung CLI cannot stall
-/// startup or hold `settings_lock` (the real CLI also kills its process at its own timeout).
+/// startup or hold `remote_lock` for long (the real CLI also kills its process at its own timeout).
 async fn blocking<T: Send + 'static>(
     st: &AppState,
     f: impl FnOnce(&dyn pdt_tailscale::TailscaleApi) -> Result<T, TsError> + Send + 'static,
@@ -81,7 +81,7 @@ fn extra_ports(st: &AppState) -> Vec<u16> {
 /// Maps a web run's port to itself while remote access is active, recording it as this process's mapping (so
 /// turning remote access off removes it). With remote access inactive it runs no tailscale command.
 pub(crate) async fn map_run_port(st: &AppState, port: u16) {
-    let _guard = st.settings_lock.lock().await;
+    let _guard = st.remote_lock.lock().await;
     load_served(st).await;
     if !st.remote.lock().unwrap_or_else(|e| e.into_inner()).active {
         return;
@@ -93,7 +93,7 @@ pub(crate) async fn map_run_port(st: &AppState, port: u16) {
 
 /// Removes a run port's mapping, but only one this instance made (ruling F1); pdtd's own HTTPS port is never touched.
 pub(crate) async fn unmap_run_port(st: &AppState, port: u16) {
-    let _guard = st.settings_lock.lock().await;
+    let _guard = st.remote_lock.lock().await;
     load_served(st).await;
     unmap_locked(st, port).await;
     save_served(st).await;
@@ -102,7 +102,7 @@ pub(crate) async fn unmap_run_port(st: &AppState, port: u16) {
 /// Removes the run-port mappings a previous process made for runs this one does not drive (a run that moved to
 /// another port, failed to resume or whose row was removed). pdtd awaits it after resuming the runs.
 pub(crate) async fn unmap_stale_run_ports(st: &AppState) {
-    let _guard = st.settings_lock.lock().await;
+    let _guard = st.remote_lock.lock().await;
     load_served(st).await;
     let driven = extra_ports(st);
     let stale: Vec<u16> =
@@ -113,7 +113,7 @@ pub(crate) async fn unmap_stale_run_ports(st: &AppState) {
     save_served(st).await;
 }
 
-/// [`unmap_run_port`] for callers that hold `settings_lock` and save `served` afterwards.
+/// [`unmap_run_port`] for callers that hold `remote_lock` and save `served` afterwards.
 async fn unmap_locked(st: &AppState, port: u16) {
     if port == st.remote_https_port {
         return;
@@ -172,34 +172,48 @@ fn tailnet_host(dns_name: &str, https_port: u16) -> String {
     if https_port == HOST_HTTPS_PORT { dns_name.to_string() } else { format!("{dns_name}:{https_port}") }
 }
 
-/// Applies the stored setting: serve or unserve, update the allowlist, and record the outcome. Takes
-/// `settings_lock`, so it cannot interleave with a settings change (pdtd awaits it at startup).
+/// Applies the stored setting: serve or unserve, update the allowlist, and record the outcome (pdtd awaits it at
+/// startup; a settings change awaits it after saving). The tailscale commands run under `remote_lock` alone, so a
+/// hung CLI never holds up a run start or a settings save; `settings_lock` is taken only to commit the outcome. When
+/// the setting changed while the commands ran, the outcome is stale and the setting is applied again before
+/// committing anything.
 pub async fn apply_remote_access(st: &AppState) -> RemoteStatus {
-    let _guard = st.settings_lock.lock().await;
-    apply_locked(st).await
+    let _remote = st.remote_lock.lock().await;
+    load_served(st).await;
+    loop {
+        let previous = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let wanted = st.store.get_host_settings().await.map(|s| s.remote_access);
+        let out = match &wanted {
+            // Without the setting, change nothing.
+            Err(e) => RemoteStatus { error: Some(format!("could not read the host settings: {e}")), ..previous },
+            Ok(true) => enable(st).await,
+            Ok(false) => disable(st, previous).await,
+        };
+        let _settings = st.settings_lock.lock().await;
+        if let (Ok(was), Ok(now)) = (&wanted, st.store.get_host_settings().await.map(|s| s.remote_access))
+            && *was != now
+        {
+            continue;
+        }
+        commit(st, &out).await;
+        return out;
+    }
 }
 
-/// [`apply_remote_access`] for callers that already hold `settings_lock`.
-pub(crate) async fn apply_locked(st: &AppState) -> RemoteStatus {
-    load_served(st).await;
+/// Records an apply's outcome: the status, the running web runs' links, and a restart of the runs that baked the old
+/// host into their processes. The caller holds `remote_lock` and `settings_lock`.
+async fn commit(st: &AppState, out: &RemoteStatus) {
     let previous = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let before = previous.active.then(|| previous.dns_name.clone()).flatten();
-    let out = match st.store.get_host_settings().await {
-        // Without the setting, change nothing.
-        Err(e) => RemoteStatus { error: Some(format!("could not read the host settings: {e}")), ..previous },
-        Ok(s) if s.remote_access => enable(st).await,
-        Ok(_) => disable(st, previous).await,
-    };
-    // Running web runs' links follow the outcome (their ports were mapped or unmapped above).
+    let before = previous.active.then_some(previous.dns_name.as_deref()).flatten();
+    // Running web runs' links follow the outcome (their ports were mapped or unmapped by the apply).
     let tailnet = out.active.then_some(out.dns_name.as_deref()).flatten();
     crate::run_manager::relink_runs(st, tailnet).await;
-    let host_changed = before.as_deref() != tailnet;
+    let host_changed = before != tailnet;
     *st.remote.lock().unwrap_or_else(|e| e.into_inner()) = out.clone();
     // Runs that baked the old host into their processes restart with the new one (final review #9).
     if host_changed {
         crate::run_manager::restart_host_dependent_runs(st);
     }
-    out
 }
 
 /// Maps the HTTPS port to pdtd and allows the tailnet name. On failure the name is withdrawn from the allowlist, so

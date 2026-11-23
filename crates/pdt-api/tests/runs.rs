@@ -500,6 +500,35 @@ async fn toggling_remote_access_updates_running_web_runs() {
     env.state.ptys.shutdown().await;
 }
 
+/// PDT-658: applying remote access while the tailscale CLI is slow does not hold up a run start: the commands run
+/// without the settings lock, which applying takes only to commit.
+#[tokio::test]
+async fn a_slow_tailscale_does_not_hold_up_a_run_start() {
+    let mut env = setup().await;
+    let fake = recording();
+    env.state.tailscale = fake.clone();
+    env.app = router(env.state.clone(), None);
+    let on = json!({"remoteAccess": true, "ownerLogin": "me@example.com"});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(on)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let seen = fake.status_calls();
+    // Well short of the CLI's timeout, well past what a run start takes on a loaded CI runner.
+    fake.set_delay(Duration::from_secs(5));
+    let st = env.state.clone();
+    let apply = tokio::spawn(async move { pdt_api::apply_remote_access(&st).await });
+    wait_until("the apply's `tailscale status`", async || fake.status_calls() > seen).await;
+    let started = std::time::Instant::now();
+    let (s, r) = start(&env, json!({"name": "idle", "kind": "run"})).await;
+    assert_eq!(s, StatusCode::CREATED, "{r}");
+    assert!(started.elapsed() < Duration::from_secs(4), "the start waited on tailscale: {:?}", started.elapsed());
+    assert!(!apply.is_finished(), "the apply was still running tailscale");
+    let id = r["id"].as_str().unwrap().to_string();
+    call(&env.app, "POST", &format!("/api/runs/{id}/stop"), None).await;
+    wait_state(&env.app, &id, &["stopped"]).await;
+    assert!(apply.await.unwrap().active);
+    env.state.ptys.shutdown().await;
+}
+
 /// Waits until the web server on `port` answers with a body ending
 /// in `want`; on failure says what it last answered and where the run `id` is.
 async fn wait_body(app: &axum::Router, id: &str, port: u16, want: &str) {
