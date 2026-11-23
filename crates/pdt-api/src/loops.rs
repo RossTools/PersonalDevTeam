@@ -178,6 +178,41 @@ where
     }
 }
 
+/// Runs `handle` for each message `rx` brings until it closes or shutdown, each contained (see [`contain`]) and
+/// recorded as a pass of `name`. With no message in `every` it records an empty pass, so `/api/health` lists the
+/// loop as alive while nothing happens and as stale once its task is gone.
+pub async fn run_on<T, F, Fut>(
+    st: AppState,
+    name: &'static str,
+    every: Duration,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<T>,
+    mut handle: F,
+) where
+    F: FnMut(AppState, T) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    st.loops.register(name, every, None);
+    let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let msg = tokio::select! {
+            m = rx.recv() => match m {
+                Some(m) => Some(m),
+                None => return,
+            },
+            _ = tick.tick() => None,
+        };
+        if st.shutting_down.load(Ordering::SeqCst) {
+            return;
+        }
+        let ended = match msg {
+            Some(m) => contain(name, None, handle(st.clone(), m)).await,
+            None => Ended::Finished,
+        };
+        st.loops.passed(name, now_ms(), ended == Ended::Panicked);
+    }
+}
+
 /// One member of a loop's pass, contained and limited to [`POLL_PART_LIMIT`]: the members after it run whatever
 /// happens to it.
 pub async fn part<F, Fut>(st: &AppState, what: &'static str, work: F) -> Ended
@@ -271,6 +306,51 @@ mod tests {
         let h = st.loops.health(now_ms());
         assert_eq!((h[0].name.as_str(), h[0].panics, h[0].stale), ("test", 1, false));
         assert!(h[0].last_pass_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_message_whose_handling_panics_is_counted_and_the_next_message_still_runs() {
+        let (st, _tmp) = state().await;
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<u32>();
+        let handled = Arc::new(AtomicUsize::new(0));
+        let h = handled.clone();
+        let looping = tokio::spawn(run_on(st.clone(), "events", Duration::from_secs(60), rx, move |_, n| {
+            let h = h.clone();
+            async move {
+                if n == 0 {
+                    panic!("the first message breaks");
+                }
+                h.fetch_add(1, Ordering::SeqCst);
+            }
+        }));
+        for n in 0..3 {
+            tx.send(n).unwrap();
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while handled.load(Ordering::SeqCst) < 2 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(handled.load(Ordering::SeqCst), 2, "the loop went on after the panic");
+        let health = st.loops.health(now_ms());
+        assert_eq!((health[0].name.as_str(), health[0].panics, health[0].stale), ("events", 1, false));
+        drop(tx);
+        looping.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_event_loop_with_no_messages_still_passes() {
+        let (st, _tmp) = state().await;
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+        let looping = tokio::spawn(run_on(st.clone(), "quiet", Duration::from_millis(10), rx, |_, ()| async {}));
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while st.loops.health(now_ms()).first().is_none_or(|h| h.last_pass_at.is_none())
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(st.loops.health(now_ms())[0].last_pass_at.is_some(), "a pass with no message");
+        st.shutting_down.store(true, Ordering::SeqCst);
+        looping.await.unwrap();
     }
 
     #[tokio::test]
