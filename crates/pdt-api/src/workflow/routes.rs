@@ -350,9 +350,7 @@ pub(crate) async fn run_now(
 ) -> Result<Json<Started>, ApiError> {
     let r = body(payload)?;
     let w = load(&st, &id).await?;
-    let run_id = engine::start_manual(&st, &w, r.input, r.run_key)
-        .await
-        .map_err(|e| ApiError::conflict(codes::CANNOT_RUN, e))?;
+    let run_id = engine::start_manual(&st, &w, r.input, r.run_key).await.map_err(|e| e.into_api(codes::CANNOT_RUN))?;
     Ok(Json(Started { run_id }))
 }
 
@@ -505,7 +503,7 @@ pub(crate) async fn get_run(State(st): State<AppState>, Path(id): Path<String>) 
 
 pub(crate) async fn retry_run(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::retry_run(&st, &id).await.map_err(|e| ApiError::conflict(codes::CANNOT_RETRY, e))?;
+    engine::retry_run(&st, &id).await.map_err(|e| e.into_api(codes::CANNOT_RETRY))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -515,7 +513,7 @@ pub(crate) async fn resume_run(
     Path(id): Path<String>,
 ) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::resume_run(&st, &id, None).await.map_err(|e| ApiError::conflict(codes::CANNOT_RESUME, e))?;
+    engine::resume_run(&st, &id, None).await.map_err(|e| e.into_api(codes::CANNOT_RESUME))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -524,7 +522,7 @@ pub(crate) async fn cancel_run(
     Path(id): Path<String>,
 ) -> Result<Json<RunDetail>, ApiError> {
     run_detail(&st, &id).await?;
-    engine::cancel_run(&st, &id).await.map_err(|e| ApiError::conflict(codes::CANNOT_CANCEL, e))?;
+    engine::cancel_run(&st, &id).await.map_err(|e| e.into_api(codes::CANNOT_CANCEL))?;
     Ok(Json(run_detail(&st, &id).await?))
 }
 
@@ -550,7 +548,7 @@ pub(crate) async fn answer(
     let items = st.store.open_items_for_step(&step).await?;
     engine::answer(&st, &id, &step, &a.choice, a.text.as_deref())
         .await
-        .map_err(|e| ApiError::conflict(codes::CANNOT_ANSWER, e))?;
+        .map_err(|e| e.into_api(codes::CANNOT_ANSWER))?;
     for item in &items {
         crate::workflow::sensors::inbox_answered(&st, item, Some(&a.choice), a.text.as_deref(), "user", None).await;
     }
