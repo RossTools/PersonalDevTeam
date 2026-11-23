@@ -16,9 +16,11 @@ describe('ApprovalCard', () => {
 
   it('offers Always allow only when it can, and asks for a second press (PDT-623)', async () => {
     const onAnswer = vi.fn();
-    render(<ApprovalCard title="Edit this file?" subject="a.ts" canAlways onAnswer={onAnswer} />);
+    const { container } = render(<ApprovalCard title="Edit this file?" subject="a.ts" canAlways onAnswer={onAnswer} />);
     await userEvent.click(screen.getByRole('button', { name: 'Always allow in this session' }));
     expect(onAnswer).not.toHaveBeenCalled();
+    // A screen reader hears it (PDT-667).
+    expect(container.querySelector('[aria-live=polite]')).toHaveTextContent('Press again to always allow in this session.');
     await userEvent.click(screen.getByRole('button', { name: 'Confirm always allow in this session' }));
     expect(onAnswer).toHaveBeenCalledWith({ type: 'approve', always: true });
   });

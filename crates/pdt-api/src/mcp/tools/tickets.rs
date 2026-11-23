@@ -322,8 +322,10 @@ async fn edit_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String>
     if unchanged {
         let by = agent_by(st, cx.session).await;
         let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
-        return Ok(json!({"updated": true, "key": current.summary.key, "title": current.summary.title,
-                         "attachments": crate::ticket_attachments::attached_json(st, &attached)}));
+        let outside = crate::untrusted::Outside::new();
+        let title = outside.title(&current.summary.title, current.summary.source);
+        return Ok(outside.noted(json!({"updated": true, "key": current.summary.key, "title": title,
+                         "attachments": crate::ticket_attachments::attached_json(st, &attached)})));
     }
     let since = now_ms();
     let mut by = agent_by(st, cx.session).await;
@@ -347,10 +349,13 @@ async fn edit_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String>
         None => {}
     }
     let attached = crate::ticket_attachments::attach_read(st, &id, read, &by).await?;
-    let changes = changes(&current, &t);
-    Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "stage": t.summary.stage,
+    // An external ticket's title is what an outsider wrote (PDT-727): fenced in the answer, as in search_tickets.
+    let outside = crate::untrusted::Outside::new();
+    let changes = changes(&current, &t, &outside);
+    let title = outside.title(&t.summary.title, t.summary.source);
+    Ok(outside.noted(json!({"updated": true, "key": t.summary.key, "title": title, "stage": t.summary.stage,
               "parent": t.summary.parent.map(|p| p.key), "changes": changes,
-              "attachments": crate::ticket_attachments::attached_json(st, &attached)}))
+              "attachments": crate::ticket_attachments::attached_json(st, &attached)})))
 }
 
 /// Links two tickets, or (`unlink_tickets`) removes the link.
@@ -428,7 +433,11 @@ async fn stop_ticket(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String>
 
 /// What an edit changed, field by field, for the conversation's card (`from` → `to`; a description only says it
 /// changed).
-fn changes(before: &pdt_core::ticket::Ticket, after: &pdt_core::ticket::Ticket) -> Vec<Value> {
+fn changes(
+    before: &pdt_core::ticket::Ticket,
+    after: &pdt_core::ticket::Ticket,
+    outside: &crate::untrusted::Outside,
+) -> Vec<Value> {
     let (b, a) = (&before.summary, &after.summary);
     let mut out = vec![];
     let mut field = |name: &str, from: Value, to: Value| {
@@ -436,7 +445,9 @@ fn changes(before: &pdt_core::ticket::Ticket, after: &pdt_core::ticket::Ticket) 
             out.push(json!({"field": name, "from": from, "to": to}));
         }
     };
-    field("title", json!(b.title), json!(a.title));
+    if b.title != a.title {
+        field("title", json!(outside.title(&b.title, b.source)), json!(outside.title(&a.title, a.source)));
+    }
     field("stage", json!(b.stage), json!(a.stage));
     field("priority", json!(b.priority), json!(a.priority));
     field("labels", json!(b.labels), json!(a.labels));

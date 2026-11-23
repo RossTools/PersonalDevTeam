@@ -235,7 +235,7 @@ describe('backlog', () => {
     expect(within(sheet).getByRole('button', { name: /Stage/ })).toHaveTextContent('Ready');
     expect(within(within(sheet).getByRole('group', { name: 'Areas' })).getByText('web/ui')).toBeInTheDocument();
     expect(await within(sheet).findByText('Created')).toBeInTheDocument();
-    await userEvent.click(within(sheet).getByRole('button', { name: 'Open' }));
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Open in workspace' }));
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', projectId: project.id }));
   });
 

@@ -1,4 +1,4 @@
-import { useContext, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ComboBox, ComboBoxStateContext } from 'react-aria-components';
 import { cn } from '@ui/lib/utils';
 import { Input as InputPrimitive } from '@ui/primitives/input';
@@ -17,6 +17,8 @@ export interface SuggestInputProps {
   disabled?: boolean;
   /** Keys that commit the typed text, besides Enter (e.g. ','). */
   commitKeys?: string[];
+  /** Focus the field when it mounts (one opened in a popover). */
+  autoFocus?: boolean;
   className?: string;
 }
 
@@ -29,6 +31,7 @@ export function SuggestInput({
   maxLength,
   disabled,
   commitKeys = [],
+  autoFocus,
   className,
   ...aria
 }: SuggestInputProps) {
@@ -53,7 +56,7 @@ export function SuggestInput({
       isDisabled={disabled}
       className={cn('min-w-0', className)}
     >
-      <SuggestField text={text} commit={commit} commitKeys={commitKeys} placeholder={placeholder} size={size} maxLength={maxLength} />
+      <SuggestField text={text} commit={commit} commitKeys={commitKeys} placeholder={placeholder} size={size} maxLength={maxLength} autoFocus={autoFocus} />
       <SelectPopover placement="bottom start" className="max-h-60 w-auto min-w-(--trigger-width)">
         <SelectList>{(item: { id: string }) => <SelectItem id={item.id}>{item.id}</SelectItem>}</SelectList>
       </SelectPopover>
@@ -68,6 +71,7 @@ function SuggestField({
   placeholder,
   size,
   maxLength,
+  autoFocus,
 }: {
   text: string;
   commit: (v: string) => void;
@@ -75,8 +79,16 @@ function SuggestField({
   placeholder?: string;
   size: 'sm' | 'md';
   maxLength?: number;
+  autoFocus?: boolean;
 }) {
   const state = useContext(ComboBoxStateContext);
+  const input = useRef<HTMLInputElement>(null);
+  // A frame after mount: a popover (and a dialog around it) moves focus to itself first, which `autoFocus` loses to.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const id = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [autoFocus]);
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key !== 'Enter' && !commitKeys.includes(e.key)) return;
@@ -86,5 +98,5 @@ function SuggestField({
     commit(text);
     state?.close();
   };
-  return <InputPrimitive autoComplete="off" placeholder={placeholder} size={size} maxLength={maxLength} onKeyDown={onKeyDown} />;
+  return <InputPrimitive autoComplete="off" placeholder={placeholder} size={size} maxLength={maxLength} onKeyDown={onKeyDown} autoFocus={autoFocus} ref={input} />;
 }

@@ -31,6 +31,8 @@ export function anchorLabel(a: CommentAnchor): string {
 
 export interface DocumentCommentsProps {
   id: string;
+  /** The provider edits it live in PDT (its comments are PDT's own, cheap to poll). */
+  live: boolean;
   /** A doc's headings to comment on. */
   headings?: string[];
   /** A sheet's selection now (where a new comment goes), read when the user starts one. */
@@ -47,9 +49,9 @@ const QUOTE = '__quote__';
  * sheet; reply and resolve. A new comment on a doc goes on the heading picked, or on the text selected on the page; on
  * a sheet, on the cells selected.
  */
-export function DocumentComments({ id, headings, selection, onShow }: DocumentCommentsProps) {
+export function DocumentComments({ id, live, headings, selection, onShow }: DocumentCommentsProps) {
   const qc = useQueryClient();
-  const comments = useDocumentComments(id, true);
+  const comments = useDocumentComments(id, true, live);
   const [adding, setAdding] = useState<{ anchor: CommentAnchor | null; quote: string | null } | null>(null);
   const [pick, setPick] = useState<string>(WHOLE);
   const settle = () => qc.invalidateQueries({ queryKey: documentKeys.comments(id) });

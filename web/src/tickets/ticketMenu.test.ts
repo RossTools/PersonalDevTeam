@@ -36,6 +36,6 @@ describe('ticketMenu', () => {
   });
 
   it('offers Refine on a Draft or Ready ticket', () => {
-    expect(names(ticketMenu({ qc: new QueryClient(), confirm, ticket: { ...base, stage: 'ready' } }))[0]).toBe('Refine');
+    expect(names(ticketMenu({ qc: new QueryClient(), confirm, ticket: { ...base, stage: 'ready' } }))[0]).toBe('Refine with an agent…');
   });
 });

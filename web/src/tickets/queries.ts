@@ -9,6 +9,8 @@ import { useProjects } from '../projects/queries';
 import { sessionsQuery } from '../sessions/queries';
 import { POLL, pagedPoll } from '../common/poll';
 import { isTicketKey } from './model';
+import { workspacesQuery } from '../workspaces/queries';
+import { findTab } from '../workspaces/model';
 
 export const ticketKeys = {
   /** Every list of tickets (backlog pages, counts, pickers). */
@@ -185,4 +187,11 @@ export function useCheckMerge(t: Pick<Ticket, 'id' | 'attempt'> | undefined) {
       () => { /* The 60 s loop checks again; nothing to tell the user. */ },
     );
   }, [id, active, qc]);
+}
+
+/** The name of the workspace Open in workspace shows the ticket in: the one with its tab, else its project's. */
+export function useTicketWorkspaceName(t: { id: string; projectId: string } | undefined): string | null {
+  const workspaces = useQuery(workspacesQuery).data ?? [];
+  if (!t) return null;
+  return (findTab(workspaces, { kind: 'ticket', id: t.id })?.workspace ?? workspaces.find((w) => w.projectId === t.projectId))?.name ?? null;
 }

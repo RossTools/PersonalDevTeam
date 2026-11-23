@@ -230,7 +230,7 @@ export function ticketMenu(opts: {
     ...(opts.watch ? [watchEntry(qc, { ticket: t.id }, opts.watch.watches)] : []),
     ...(opts.onOpen ? [{ label: 'Open', onSelect: opts.onOpen }] : []),
     ...(opts.onStart ? [{ label: 'Start…', onSelect: opts.onStart }] : []),
-    ...(canRefine(t) ? [{ label: 'Refine', onSelect: () => void runAction(() => refineTicket(qc, t)) }] : []),
+    ...(canRefine(t) ? [{ label: 'Refine with an agent…', hint: 'An agent sharpens the description and Done when', onSelect: () => void runAction(() => refineTicket(qc, t)) }] : []),
     ...(t.waiting ? [stopWaitingEntry(qc, t)] : []),
     ...(t.pickupFailed ? [retryAutoStartEntry(qc, t)] : []),
     { submenu: 'Move to', entries: moveToEntries(qc, t, confirm) },

@@ -16,4 +16,13 @@ describe('ActionBar', () => {
     expect(bar).toHaveTextContent('1 of 2 answered');
     expect(bar).toHaveTextContent('Outcomes');
   });
+
+  it('keeps the hint in a live region that is there before it says anything', () => {
+    const { rerender } = render(<ActionBar><button type="button">Close</button></ActionBar>);
+    const live = screen.getByRole('group').querySelector('[aria-live=polite]')!;
+    expect(live).toBeEmptyDOMElement();
+    rerender(<ActionBar hint="Press again to confirm"><button type="button">Close</button></ActionBar>);
+    expect(screen.getByRole('group').querySelector('[aria-live=polite]')).toBe(live);
+    expect(live).toHaveTextContent('Press again to confirm');
+  });
 });

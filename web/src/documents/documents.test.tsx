@@ -13,6 +13,8 @@ import { anchorLabel, headingsOf } from './DocumentComments';
 import { ImportDocumentDialog, NewDocumentDialog } from './DocumentDialogs';
 import { pickerModules } from './picker';
 import { api } from '../api/client';
+import { POLL } from '../common/poll';
+import { documentKeys } from './queries';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -308,6 +310,31 @@ describe('documents', () => {
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ body: 'Which goal?', anchor: { on: 'heading', heading: 'Goal' }, by: 'user' }));
     expect(await within(section).findByText('Which goal?')).toBeInTheDocument();
     expect(within(section).getByText('Goal')).toBeInTheDocument();
+  });
+
+  it('comments poll every 2 s only where PDT keeps them, not at an outside provider', async () => {
+    const google = { id: 'google', label: 'Google', capabilities: all, picker: null };
+    const local = { id: 'local', label: 'PDT', capabilities: { ...all, live: true }, picker: null };
+    const content = { content: { kind: 'doc', markdown: '# Plan\n', version: '1' }, embedUrl: null };
+    stubApi({
+      'GET /api/documents/g1': doc('g1', 'Plan', { provider: 'google', providerRef: 'd1' }),
+      'GET /api/documents/l1': doc('l1', 'Notes', { provider: 'local', providerRef: 'notes.md' }),
+      'GET /api/documents/g1/content': content,
+      'GET /api/documents/l1/content': content,
+      'GET /api/documents/g1/comments': [],
+      'GET /api/documents/l1/comments': [],
+      'GET /api/documents/providers': { ...providers, providers: [...providers.providers, google, local] },
+      'GET /api/projects': [project],
+    });
+    const poll = (qc: ReturnType<typeof renderWithQuery>['qc'], id: string) =>
+      (qc.getQueryCache().find({ queryKey: documentKeys.comments(id) })?.options as { refetchInterval?: unknown } | undefined)?.refetchInterval;
+    const g = renderWithQuery(<DocumentPage id="g1" phone={false} onGone={() => {}} />);
+    await screen.findByRole('region', { name: 'Comments' });
+    expect(poll(g.qc, 'g1')).toBe(POLL.paged);
+    g.unmount();
+    const l = renderWithQuery(<DocumentPage id="l1" phone={false} onGone={() => {}} />);
+    await screen.findByRole('region', { name: 'Comments' });
+    expect(poll(l.qc, 'l1')).toBe(POLL.live);
   });
 
   it('headings and anchors read as people see them', () => {

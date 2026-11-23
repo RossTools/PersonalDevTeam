@@ -143,9 +143,10 @@ function AddPart({ ticket, last }: { ticket: Ticket; last?: TicketSummary }) {
 
 /**
  * A parent's parts: the stepper, its parts in order (drag or Alt+↑/↓ to reorder), a quick add and Start next part.
- * Nothing for a ticket without parts (its ⋯ menu has Make into parts…).
+ * Nothing for a ticket without parts (its ⋯ menu has Make into parts…). `startNext` false leaves the button out (the
+ * peek has it in its footer).
  */
-export function PartsSection({ ticket: t }: { ticket: Ticket }) {
+export function PartsSection({ ticket: t, startNext = true }: { ticket: Ticket; startNext?: boolean }) {
   const start = useStartTicket();
   const parts = t.partList;
   if (parts.length === 0) return null;
@@ -154,7 +155,7 @@ export function PartsSection({ ticket: t }: { ticket: Ticket }) {
     <OverviewSection
       title="Parts"
       actions={
-        !isClosed(t.stage) && parts.some((p) => !isClosed(p.stage)) && (
+        startNext && !isClosed(t.stage) && parts.some((p) => !isClosed(p.stage)) && (
           <Button
             variant="ghost"
             size="sm"

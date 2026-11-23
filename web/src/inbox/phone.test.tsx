@@ -249,6 +249,20 @@ describe('phone triage', () => {
     expect(await screen.findByText('All clear')).toBeInTheDocument();
   });
 
+  it('names the confirming press after its action, and says to press again in a live region (PDT-667)', async () => {
+    const review = item('pr', { choices: [
+      { id: 'approve_merge', title: 'Approve merge', primary: true },
+      { id: 'request_changes', title: 'Request changes', primary: false, outward: true },
+    ] });
+    triage([review], 'pr');
+    const live = document.querySelector('p[aria-live=polite]')!;
+    expect(live).toBeEmptyDOMElement();
+    await userEvent.click(bar().getByRole('button', { name: 'Request changes' }));
+    expect(bar().getByRole('button', { name: 'Confirm request changes' })).toHaveTextContent('Confirm');
+    expect(document.querySelector('p[aria-live=polite]')).toBe(live);
+    expect(live).toHaveTextContent(/Press again to confirm/);
+  });
+
   it('has Take over · Nudge for a stalled step; Take over offers its outcomes', async () => {
     const { calls } = triage([stalled], 'st');
     expect(barLabels()).toEqual(['Take over', 'Nudge']);
