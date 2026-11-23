@@ -154,14 +154,14 @@ export function NewTicketDialog({
             <Field label="Priority">
               <Select options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))} value={priority} onChange={setPriority} />
             </Field>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium">Labels</span>
-            <LabelsEditor labels={labels} suggestions={known.data ?? []} onChange={setLabels} />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs font-medium">Areas</span>
-            <AreasEditor projectId={projectId} areas={areas} onChange={setAreas} />
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-xs font-medium">Labels</span>
+              <LabelsEditor labels={labels} suggestions={known.data ?? []} onChange={setLabels} />
+            </div>
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <span className="text-xs font-medium">Areas</span>
+              <AreasEditor projectId={projectId} areas={areas} onChange={setAreas} />
+            </div>
           </div>
         </div>
         {then && (

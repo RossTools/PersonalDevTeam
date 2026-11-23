@@ -35,6 +35,8 @@ export type MenuEntry =
       icon?: ReactNode;
       /** Muted text at the item's end ("on Fri"). */
       detail?: string;
+      /** A muted line under the label saying what the item does. */
+      hint?: string;
       /** The option in force, ticked (its detail gives way to the tick). */
       checked?: boolean;
     }
@@ -49,11 +51,18 @@ type InputEntry = Extract<MenuEntry, { input: string }>;
 const LIST = 'max-h-[inherit] min-w-40 max-w-72 overflow-x-hidden overflow-y-auto outline-hidden';
 const ITEM = 'pointer-coarse:min-h-control-touch';
 
-function ItemBody({ icon, label, shortcut, detail, checked }: { icon?: ReactNode; label: string; shortcut?: string; detail?: string; checked?: boolean }) {
+function ItemBody({ icon, label, shortcut, detail, hint, checked }: { icon?: ReactNode; label: string; shortcut?: string; detail?: string; hint?: string; checked?: boolean }) {
   return (
     <>
       {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {hint ? (
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate">{label}</span>
+          <span className="text-xs text-muted-foreground">{hint}</span>
+        </span>
+      ) : (
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+      )}
       {checked ? <CheckIcon aria-label="Chosen" className="ml-auto text-link" />
         : detail && <span className="ml-auto shrink-0 text-xs text-muted-foreground">{detail}</span>}
       {shortcut && <Kbd className="ml-auto">{shortcut}</Kbd>}
@@ -116,7 +125,7 @@ function renderEntries(entries: MenuEntry[], onInput: (e: InputEntry) => void): 
           onAction={e.onSelect}
           className={cn(ITEM, e.danger && 'text-destructive')}
         >
-          <ItemBody icon={e.icon} label={e.label} shortcut={e.shortcut} detail={e.detail} checked={e.checked} />
+          <ItemBody icon={e.icon} label={e.label} shortcut={e.shortcut} detail={e.detail} hint={e.hint} checked={e.checked} />
         </DropdownMenuItem>,
       );
     }

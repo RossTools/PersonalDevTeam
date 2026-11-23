@@ -40,7 +40,7 @@ each card says who has it ("Reviewer · working", "Your turn"). See [Workflows](
 For a quick one, type a title in the box at the top of the backlog and press **Enter** (it goes in as a **Draft** at
 the top); **Shift+Enter** opens the full form instead.
 
-Click a ticket to open it beside the list, or **Open** to give it its own tab. Its **Activity** holds your comments and
+Click a ticket to open it beside the list, or **Open in workspace** to give it its own tab in its project's workspace. Its **Activity** holds your comments and
 everything that happened to it: moves, starts, merges, agents' outcomes.
 
 A ticket you didn't make carries a badge saying who did: **PM**, **Workflow**, **External**, or the persona of the
@@ -76,7 +76,7 @@ read its design doc first. See [Documents](documents.md).
 **Priority** (**Urgent**, **High**, **Medium**, **Low**, **No priority**) sorts and groups the backlog and, by default,
 decides what [auto-start](#auto-start) takes first.
 
-**Labels** are lower-case tags you make up (`ui`, `bug`, `docs`); type one in **Labels** to add it. One label means
+**Labels** are lower-case tags you make up (`ui`, `bug`, `docs`); click **＋ Add** beside **Labels** and type or pick one. One label means
 something to PDT: **`agentic`**, for a ticket that can go all the way without you. On the **Pipeline**, an `agentic`
 ticket skips **Accept** and merges once review and QA pass it; others wait for you in the [Inbox](the-inbox.md).
 Tickets that came from outside PDT (an issue, say) only get it from you.
@@ -247,5 +247,5 @@ workflow of yours can pause it too.
 The top bar's title picks the project and saved filters, with **Backlog**, **Board**, search and filters below. The
 board shows one column at a time: pick it from the chips or swipe. Long-press a row or card for its menu instead of
 dragging; **＋** adds a ticket. A ticket opens full screen with **Overview**, **Conversation** and **Changes**, and its
-main action (**Start**, **Accept…**, **Open work**) at the bottom. In **Comment…**, the paperclip attaches a photo or
+main action (**Start**, **Accept…**, **Open in workspace**) at the bottom. In **Comment…**, the paperclip attaches a photo or
 file.

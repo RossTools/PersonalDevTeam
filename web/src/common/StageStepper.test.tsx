@@ -27,5 +27,7 @@ describe('StageStepper', () => {
     render(<StageStepper stage="in_progress" compact />);
     expect(screen.getByText('Draft').className).toContain('sr-only');
     expect(screen.getByText('In progress').className).not.toContain('sr-only');
+    // Each dot names its stage on hover.
+    expect(screen.getAllByRole('listitem').map((li) => li.getAttribute('title'))).toEqual(['Draft', 'Ready', 'To do', 'In progress', 'Done']);
   });
 });

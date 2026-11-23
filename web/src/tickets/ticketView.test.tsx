@@ -201,7 +201,8 @@ describe('ticket tab', () => {
     const calls = stub();
     view();
     const details = await screen.findByRole('region', { name: 'Details' });
-    await userEvent.type(within(details).getByRole('combobox', { name: 'Add label' }), 'Back End{Enter}');
+    await userEvent.click(within(details).getByRole('button', { name: 'Add label' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Add label' }), 'Back End{Enter}');
     await waitFor(() => expect(patches(calls)).toContainEqual({ labels: ['back end'] }));
   });
 
@@ -209,7 +210,8 @@ describe('ticket tab', () => {
     const calls = stub();
     view();
     const details = await screen.findByRole('region', { name: 'Details' });
-    await userEvent.click(within(details).getByRole('combobox', { name: 'Add label' }));
+    await userEvent.click(within(details).getByRole('button', { name: 'Add label' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Add label' }));
     await userEvent.click(await screen.findByRole('option', { name: 'ui' }));
     await waitFor(() => expect(patches(calls)).toContainEqual({ labels: ['ui'] }));
   });
@@ -297,7 +299,9 @@ describe('new ticket form', () => {
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Why');
     await userEvent.click(within(dialog).getByRole('button', { name: /Priority/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'High' }));
-    await userEvent.type(within(dialog).getByRole('combobox', { name: 'Add label' }), 'ui{Enter}');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Add label' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Add label' }), 'ui{Enter}');
+    await userEvent.keyboard('{Escape}');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
       title: 'Half typed', description: 'Why', stage: 'draft', priority: 'high', labels: ['ui'],

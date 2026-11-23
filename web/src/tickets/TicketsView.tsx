@@ -40,7 +40,7 @@ import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportBy
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
-import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
+import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages, useTicketWorkspaceName } from './queries';
 import { LabelChips } from '../common/LabelChips';
 import { TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
@@ -261,7 +261,7 @@ function QuickAdd({ projectId, before, onDetails }: { projectId: string; before?
 // ---------------------------------------------------------------------------------------------------------------
 // Peek
 
-/** The ticket in a side sheet: its Overview in short, Open for the tab, ⋯ for the rest. A phone shows `PhoneTicket` instead. */
+/** The ticket in a side sheet: its Overview in short, Open in workspace for the tab, ⋯ for the rest. A phone shows `PhoneTicket` instead. */
 function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirtyChange, onLoaded, phone }: {
   ticketId: string | null; open: boolean; missing: boolean;
   /** Closes it, asking first over an unsaved description edit; resolves false when the user keeps editing. */
@@ -276,6 +276,7 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
   const open = useOpenTicket();
   const start = useStartTicket();
   const t = q.data;
+  const workspaceName = useTicketWorkspaceName(t);
   const [making, setMaking] = useState(false);
   useCheckMerge(t);
   useEffect(() => {
@@ -295,7 +296,13 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
       />
       {canStart(t) && <Button onClick={() => start(t)}>Start</Button>}
       {t.parts && !isClosed(t.stage) && <Button onClick={() => void runAction(() => startNextPart(start, t))}>Start next part</Button>}
-      <Button variant="primary" onClick={() => void onClose().then((ok) => { if (ok) open(t); })}>Open</Button>
+      <Button
+        variant="primary"
+        title={workspaceName ? `Shows the ticket's tab in ${workspaceName}` : "Shows the ticket's tab in its project's workspace"}
+        onClick={() => void onClose().then((ok) => { if (ok) open(t); })}
+      >
+        Open in workspace
+      </Button>
     </>
   );
   const body = (
@@ -312,14 +319,15 @@ function TicketPeek({ ticketId, open: shown, missing, onClose, onDeleted, onDirt
           <TicketTitle ticket={t} className="text-base font-semibold" />
           <StageStepper stage={t.stage} compact />
           <TicketBadges ticket={t} className="flex-wrap" />
-          {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
+          {/* The Parts section below has the parts' progress; this is for a parent whose part list hasn't come. */}
+          {t.parts && t.partList.length === 0 && <PartsStepper parts={t.parts} showCount className="w-40" />}
           <MergedBanner ticket={t} className="rounded-md border" />
         </div>
         <TicketDetails ticket={t} />
         <AttemptSection ticket={t} compact />
         {t.overlaps.length > 0 && <TicketOverlaps ticket={t} />}
         <TicketDescription key={t.id} ticket={t} onDirtyChange={onDirtyChange} />
-        <PartsSection ticket={t} />
+        <PartsSection ticket={t} startNext={false} />
         <TicketLinks ticket={t} />
         <TicketDocuments ticket={t} />
         <TicketAttachments ticketId={t.id} />

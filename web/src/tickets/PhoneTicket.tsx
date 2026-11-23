@@ -43,7 +43,7 @@ export type PhoneTicketAction = 'refine' | 'start' | 'open' | 'accept';
 
 /**
  * The stage's primary action(s): Draft/Ready → Refine · Start; To do → Start; In progress → Accept… while its Accept
- * gate waits in the Inbox, else Open work (with an active attempt); Done and Won't do → none.
+ * gate waits in the Inbox, else Open in workspace (with an active attempt); Done and Won't do → none.
  */
 export function phoneTicketActions(t: Ticket, acceptOpen: boolean): PhoneTicketAction[] {
   if (isClosed(t.stage)) return [];
@@ -106,7 +106,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
     onDeleted,
   }));
 
-  // Open work: the session working on it now, else the active attempt's newest one, else the ticket's tab.
+  // Open in workspace: the session working on it now, else the active attempt's newest one, else the ticket's tab.
   const openWork = () => {
     const session = t.agent?.sessionId ?? t.sessions.find((s) => s.attemptId === attempt?.id)?.id;
     if (session) openSession({ id: session, projectId: t.projectId });
@@ -120,7 +120,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
       case 'start':
         return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" onClick={() => start(t)}>Start</Button>;
       case 'open':
-        return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" onClick={openWork}>Open work</Button>;
+        return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" onClick={openWork}>Open in workspace</Button>;
       case 'accept':
         return <Button key={a} variant="primary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" onClick={() => setAccepting(true)}>Accept…</Button>;
     }

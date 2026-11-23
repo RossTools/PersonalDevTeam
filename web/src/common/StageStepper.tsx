@@ -45,6 +45,8 @@ export function StageStepper({ stage, compact = false, className }: StageStepper
           <li
             key={s}
             aria-current={current ? 'step' : undefined}
+            // Compact shows only the current stage's name: the others say theirs on hover.
+            title={compact ? label : undefined}
             data-state={current ? 'current' : past ? 'complete' : 'upcoming'}
             className="flex min-w-0 items-center gap-1.5"
           >
@@ -59,7 +61,7 @@ export function StageStepper({ stage, compact = false, className }: StageStepper
                 past && 'border-primary bg-primary text-primary-foreground',
                 current && !past && !crossed && 'border-primary bg-accent text-link ring-2 ring-ring',
                 current && crossed && 'border-muted-foreground bg-muted text-muted-foreground',
-                !past && !current && 'border-border bg-card',
+                !past && !current && 'border-muted-foreground/40 bg-card',
               )}
             >
               {past && !compact && <Check strokeWidth={3} />}

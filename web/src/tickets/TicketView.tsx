@@ -85,7 +85,8 @@ export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
   );
 }
 
-function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () => void }) {
+/** `partsShown`: the Overview's Parts section is on screen, with its own progress bar (the header leaves it out). */
+function TicketHeader({ ticket, onDeleted, partsShown }: { ticket: Ticket; onDeleted?: () => void; partsShown: boolean }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const start = useStartTicket();
@@ -112,10 +113,10 @@ function TicketHeader({ ticket, onDeleted }: { ticket: Ticket; onDeleted?: () =>
       titleTooltip={ticket.title}
       meta={
         <>
-          <StageStepper stage={ticket.stage} compact />
+          <StageStepper stage={ticket.stage} />
           <PriorityIcon priority={ticket.priority} />
           <TicketBadges ticket={ticket} />
-          {ticket.parts && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}
+          {ticket.parts && !partsShown && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}
           <LabelChips labels={ticket.labels} className="hidden sm:flex" />
           {attempt && (
             <BranchChip
@@ -207,7 +208,7 @@ export function TicketView({ ticketId, onDeleted, mergedBanner = true }: { ticke
   const t = q.data;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <TicketHeader ticket={t} onDeleted={onDeleted} />
+      <TicketHeader ticket={t} onDeleted={onDeleted} partsShown={tab === 'overview' && t.partList.length > 0} />
       {mergedBanner && <MergedBanner ticket={t} />}
       <HeldBanner ticket={t} />
       <AutoStartFailedBanner ticket={t} />
