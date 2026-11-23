@@ -110,7 +110,8 @@ work on tickets create, edit and link documents with no prompt:
 - **Across the project**: an agent also makes documents linked to the project, and edits and links any document
   linked to the project. A new document on another ticket still asks.
 
-Replying to and resolving comments always ask. Only you can change this setting, in PDT.
+Replying to and resolving comments always ask, and so does every change by an agent working from outside input
+(triaging an issue, or in a workflow run a new issue or a webhook started). Only you can change this setting, in PDT.
 
 Each change made without asking is kept: the document lists them under **Changes agents made without asking**, with
 the agent, its ticket, what it did, the version after it and, for a doc, the diff; the agent's ticket shows the same in
