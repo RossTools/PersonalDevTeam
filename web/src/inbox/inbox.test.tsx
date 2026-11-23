@@ -708,9 +708,47 @@ describe('inbox', () => {
     const calls = stubApi({ 'POST /api/sessions/sess/requests/r3': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const onSelect = vi.fn();
     renderWithQuery(<InboxView items={[bashApproval, gate]} selectedId={bashApproval.id} onSelect={onSelect} />);
-    await userEvent.click(screen.getByRole('button', { name: /^Allow once/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Allow/ }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r3')?.body).toEqual({ answer: { type: 'approve', always: false } }));
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('g'));
+  });
+
+  // The agent's own questions (AskUserQuestion) are answered as PDT's are (PDT-684): numbered choices, Send answers on
+  // Enter, Dismiss on `e`, and no card inside the page.
+  const askInput = { questions: [
+    { question: 'Which library?', header: 'Lib', options: [{ label: 'zod' }, { label: 'valibot' }], multiSelect: false },
+    { question: 'Which extras?', options: [{ label: 'FTS' }, { label: 'JSON' }], multiSelect: true },
+  ] };
+  const asking = item('approval:sess:r7', {
+    kind: 'approval', group: 'approval', sessionId: 'sess', runId: null, stepId: null, title: 'Which library?',
+    body: { requestId: 'r7', tool: 'AskUserQuestion', input: askInput },
+    choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'deny', title: 'Deny', primary: false }],
+  });
+
+  it("answers the agent's own questions with number keys and Enter, as PDT's questions are", async () => {
+    const calls = stubApi({ 'POST /api/sessions/sess/requests/r7': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[asking]} selectedId={asking.id} onSelect={() => {}} />);
+    expect(screen.queryByText('A question for you')).not.toBeInTheDocument();
+    expect(screen.getByText('0 of 2 answered')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Send answers/ })).toBeDisabled();
+    // `n` is never Dismiss.
+    fireEvent.keyDown(window, { key: 'n' });
+    fireEvent.keyDown(window, { key: '2' });
+    expect(screen.getByRole('radio', { name: /valibot/ })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.keyDown(window, { key: '1' });
+    fireEvent.keyDown(window, { key: '2' });
+    expect(screen.getByText('2 of 2 answered')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r7')?.body)
+      .toEqual({ answer: { type: 'question', answers: { 'Which library?': ['valibot'], 'Which extras?': ['FTS', 'JSON'] } } }));
+  });
+
+  it("dismisses the agent's own question on e", async () => {
+    const calls = stubApi({ 'POST /api/sessions/sess/requests/r7': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<InboxView items={[asking]} selectedId={asking.id} onSelect={() => {}} />);
+    expect(screen.getByRole('button', { name: /^Dismiss/ })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'e' });
+    await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r7')?.body).toEqual({ answer: { type: 'deny' } }));
   });
 
   it('says so when an approval was answered elsewhere or expired', async () => {

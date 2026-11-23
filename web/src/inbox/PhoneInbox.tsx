@@ -33,10 +33,12 @@ interface Decision {
   disabled?: boolean;
   /** Waits for a second press (PDT-623). */
   confirming?: boolean;
+  /** A row of its own, under the rest (Always allow in this session). */
+  wide?: boolean;
 }
 
 /**
- * The bottom bar: the decisions, the primary one on the right. More than three: the primary one and **More ▾**, a
+ * The bottom bar: the decisions, the primary one on the right, a wide one in a row of its own under them. More than three: the primary one and **More ▾**, a
  * bottom sheet with the rest as big rows.
  */
 function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy: boolean; onPick: (id: string) => void }) {
@@ -46,13 +48,13 @@ function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy:
   const folded = ordered.length > 3 && main ? ordered.slice(0, -1) : [];
   const shown = folded.length > 0 && main ? [main] : ordered;
   const button = (d: Decision) => (
-    <Button key={d.id} variant={d.confirming ? 'danger' : d.primary ? 'primary' : 'secondary'} size="lg" className="min-w-0 flex-1" pending={busy && d.primary}
+    <Button key={d.id} variant={d.confirming ? 'danger' : d.primary ? 'primary' : 'secondary'} size="lg" className={cn('min-w-0 flex-1', d.wide && 'basis-full')} pending={busy && d.primary}
       disabled={busy || d.disabled} onClick={() => onPick(d.id)}>
       <span className="truncate">{d.title}</span>
     </Button>
   );
   return (
-    <div role="group" aria-label="Decision" className="flex gap-2 border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div role="group" aria-label="Decision" className="flex flex-wrap gap-2 border-t border-border bg-card px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       {folded.length > 0 && (
         <>
           <Button variant="secondary" size="lg" className="min-w-0 flex-1" aria-haspopup="dialog" disabled={busy} onClick={() => setMore(true)}>
@@ -63,7 +65,8 @@ function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy:
           </Sheet>
         </>
       )}
-      {shown.map(button)}
+      {shown.filter((d) => !d.wide).map(button)}
+      {shown.filter((d) => d.wide).map(button)}
     </div>
   );
 }
@@ -217,7 +220,7 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDis
   // except for a notice, whose bar has it as its one other way out.
   const actions = [...spec.actions.filter((a) => a.end), ...spec.actions.filter((a) => !a.end)]
     .filter((a) => a.id !== 'dismiss' || item.kind === 'notice');
-  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming }));
+  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.wide ? a.title : a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming, wide: a.wide }));
   const pick = (id: string) => {
     // Merge (and Accept) asks first.
     if (merges(item, id)) return setConfirming(id);

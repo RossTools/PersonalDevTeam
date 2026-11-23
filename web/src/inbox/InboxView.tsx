@@ -94,7 +94,12 @@ function ItemPane({ item, items, onSelect }: { item: InboxItem; items: InboxItem
         case 'o':
           if (k.item.ticketId && k.item.projectId) k.openTicket({ id: k.item.ticketId, projectId: k.item.projectId });
           break;
-        case 'e': void k.dismiss(); break;
+        case 'e': {
+          // The item's own Dismiss, where it has one (an agent's question answers the agent); else PDT's.
+          const d = k.spec.actions.find((a) => a.kbd === 'e');
+          if (d) { if (!d.disabled && !d.pending) d.run(); } else void k.dismiss();
+          break;
+        }
         default:
           if (!k.spec.onKey?.(e.key)) return;
       }
