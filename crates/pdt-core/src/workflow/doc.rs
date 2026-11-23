@@ -50,6 +50,11 @@ pub struct Node {
     /// Loop limit: more visits in one run fail the step. Default [`DEFAULT_MAX_VISITS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_visits: Option<u32>,
+    /// A visit here starts every loop limit over: visits count from the last time the run passed it (a person's
+    /// go-ahead, so a path taken again after it gets its whole budget again).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional, as = "Option<bool>")]
+    pub resets_visits: bool,
 }
 
 impl Node {
@@ -127,6 +132,14 @@ impl WorkflowDoc {
     pub fn has_edge_from(&self, from: &str, port: &str) -> bool {
         self.edges.iter().any(|e| e.from == from && e.port == port)
     }
+
+    /// The visits of `node` that count toward its loop limit, from the run's finished steps (node and `seq`): those
+    /// after the run last passed a node that `resets_visits`.
+    pub fn loop_visits(&self, node: &str, finished: &[(&str, i64)]) -> usize {
+        let resets = |id: &str| self.node(id).is_some_and(|n| n.resets_visits);
+        let from = finished.iter().filter(|(id, _)| resets(id)).map(|(_, seq)| *seq).max();
+        finished.iter().filter(|(id, seq)| *id == node && from.is_none_or(|f| *seq > f)).count()
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +160,26 @@ mod tests {
         assert_eq!(d.node("b").unwrap().max_visits(), DEFAULT_MAX_VISITS);
         assert_eq!(d.settings, RunSettings::default());
         assert!(d.has_edge_from("a", OUT));
+    }
+
+    #[test]
+    fn loop_visits_count_from_the_last_reset() {
+        let d: WorkflowDoc = serde_json::from_value(serde_json::json!({
+            "name": "n",
+            "nodes": [{"id": "go", "kind": "gate", "version": 1, "resetsVisits": true},
+                      {"id": "poll", "kind": "wait", "version": 1}],
+        }))
+        .unwrap();
+        assert!(d.node("go").unwrap().resets_visits);
+        assert!(
+            !serde_json::to_value(d.node("poll").unwrap()).unwrap().as_object().unwrap().contains_key("resetsVisits")
+        );
+        let steps = [("poll", 1), ("poll", 2), ("go", 3), ("poll", 4)];
+        assert_eq!(d.loop_visits("poll", &steps), 1);
+        assert_eq!(d.loop_visits("poll", &steps[..2]), 2);
+        // Out of order, the latest reset still counts.
+        assert_eq!(d.loop_visits("poll", &[("poll", 4), ("go", 3), ("poll", 1), ("go", 0)]), 1);
+        assert_eq!(d.loop_visits("go", &steps), 0);
     }
 
     #[test]

@@ -24,14 +24,12 @@ import {
   againstRecommendation, holdsTicket, inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, recommendationOf, recommendationTone, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerTiming, useAnswersHeld } from '../common/answerGuard';
-import { answerApproval } from './approval';
+import { answerApproval, approveCommand } from './approval';
 import { DecideRows, useRowsDecision } from '../common/DecideRows';
 import { pdtApproval } from '../conversation/PdtProposal';
 import { pdtTool } from '../conversation/pdtTools';
 import { nonBlank } from '../common/guards';
 import { capitalize, formatBytes } from '../common/text';
-import { api } from '../api/client';
-import { useAction } from '../common/useAction';
 import { commandText } from '../runs/ApproveCommands';
 import { invalidateCommands } from '../runs/queries';
 import { inboxKey } from './useInbox';
@@ -149,12 +147,19 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
   const approve = (a: ApprovalAnswer, rows?: number[]) =>
     answerApproval(item, a, onApproved, { rows, phone, onUndo, then: () => qc.invalidateQueries({ queryKey: inboxKey }) });
   const waitingCommand = commandNoticeOf(item);
-  const [approveCommand, approvingCommand] = useAction(async () => {
+  // It trusts the command for every branch, so it is held for Undo, asks twice (`needsConfirm`) and Enter doesn't take it
+  // (PDT-705).
+  const trustCommand = () => {
     if (!waitingCommand) return;
-    await api.trustCommands(waitingCommand.projectId, [waitingCommand.command.fingerprint]);
-    void invalidateCommands(qc, waitingCommand.projectId);
-    await qc.invalidateQueries({ queryKey: inboxKey });
-  }, { success: 'Approved' });
+    const { projectId, command } = waitingCommand;
+    approveCommand(item, projectId, command.fingerprint, onApproved, {
+      onUndo,
+      then: async () => {
+        void invalidateCommands(qc, projectId);
+        await qc.invalidateQueries({ queryKey: inboxKey });
+      },
+    });
+  };
 
   // The PM's batch of decisions, from an Inbox confirmation or its conversation's card: untick rows, then Allow (`y`)
   // or Deny (`n`), as on the card.
@@ -454,10 +459,8 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
                 <CodeCard title={command.uses.join(', ') || 'Command'} aria-label="The command" code={commandText(command)} />
               </>
             ),
-            actions: [
-              { id: 'approve', title: 'Approve', primary: true, pending: approvingCommand, disabled: approvingCommand, run: () => void approveCommand() },
-              ...dismissAction,
-            ],
+            actions: [{ id: 'approve', title: 'Approve', primary: true, run: trustCommand }, ...dismissAction],
+            enter: false,
           };
         }
         return {
@@ -642,7 +645,9 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
     ? spec.hint
     : rec && againstRecommendation(item, armed.id)
       ? `Press again to confirm: ${rec.by} recommends ${rec.title}.`
-      : 'Press again to confirm: this acts outside PDT or can’t be taken back.';
+      : waitingCommand
+        ? <>Press again to approve <code>{waitingCommand.command.command}</code>: it runs in every branch of the project.</>
+        : 'Press again to confirm: this acts outside PDT or can’t be taken back.';
   // Its key asks twice too (`y` on an Allow that posts outside PDT).
   const onKey = (key: string) => {
     const a = actions.find((x) => x.kbd === key && needsConfirm(item, x.id));

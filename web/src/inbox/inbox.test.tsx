@@ -421,7 +421,8 @@ describe('inbox', () => {
     const region = screen.getByRole('region', { name: 'Command to approve' });
     expect(region).toHaveTextContent('The test "check" on agent-work');
     expect(within(region).getByRole('group', { name: 'The command' })).toHaveTextContent('scripts/check.sh');
-    fireEvent.keyDown(window, { key: 'Enter' });
+    await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/projects/p/commands/trust')?.body).toEqual({ fingerprints: ['fp'] }));
   });
 

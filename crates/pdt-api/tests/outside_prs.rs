@@ -832,6 +832,38 @@ async fn a_merge_that_is_no_longer_set_asks_and_a_push_hands_it_on() {
     assert_eq!(r["status"], "quiet", "the push's run takes over: {r}");
 }
 
+/// PDT-708: a merge watched until its loop limit asks "Didn't merge"; Approve & merge then watches it afresh, as long
+/// as the first time, rather than asking again at once. (The watch's limit is cut to two polls here.)
+#[tokio::test]
+async fn a_merge_approved_again_after_its_watch_ran_out_is_watched_again() {
+    let env = setup_with(Some(None)).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{}", env.wf), None).await;
+    let mut doc = w["doc"].clone();
+    for n in doc["nodes"].as_array_mut().unwrap().iter_mut().filter(|n| n["id"] == "watch_wait") {
+        n["maxVisits"] = json!(2);
+    }
+    let (s, v) = call(&env.app, "PUT", &format!("/api/workflows/{}", env.wf), Some(json!({"doc": doc}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (id, bump) = queued_patch(&env, 40).await;
+    set_to_merge(&env, &bump, true);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "watch_wait", "its second poll");
+    time_passes(&env, &id).await;
+    let (node, step) = waiting(&env, &id).await;
+    assert_eq!(node, "blocked", "not merged in time");
+    answer(&env, &id, &step, "approve_merge", None).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_ci");
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "watch_wait", "merged again and watched");
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "watch_wait", "its second poll again");
+    assert!(gates(&env).await.is_empty(), "nothing asked while it is watched");
+    merges(&env, &bump);
+    time_passes(&env, &id).await;
+    let r = run(&env, &id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+}
+
 /// Dependabot's text for a grouped update (#613): its release notes, at GitHub's cap of 65,535 characters.
 const DEPENDABOT_BODY: &str = include_str!("fixtures/outside_prs/dependabot-613-body.md");
 
