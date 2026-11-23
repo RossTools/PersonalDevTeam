@@ -31,6 +31,8 @@ describe('snooze (PDT-641)', () => {
     const before = Date.now();
     await user.click(screen.getByRole('menuitem', { name: 'For 1 week' }));
     await waitFor(() => expect(snoozes()).toHaveLength(1));
+    // The item leaves the screen: a toast says where it went (PDT-667).
+    expect(await screen.findByText(/^Snoozed until /)).toBeInTheDocument();
     const week = snoozes()[0].until!;
     expect(week - before).toBeGreaterThanOrEqual(7 * 24 * 3_600_000 - 1000);
     expect(week - before).toBeLessThan(7 * 24 * 3_600_000 + 5000);

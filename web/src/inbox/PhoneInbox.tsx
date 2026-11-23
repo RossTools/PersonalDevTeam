@@ -29,6 +29,8 @@ const openChangeRequest = (item: InboxItem) => item.changeRequest && openExterna
 interface Decision {
   id: string;
   title: string;
+  /** Its whole name, when `title` is short for it ("Confirm" for "Confirm request changes"). */
+  label?: string;
   primary?: boolean;
   disabled?: boolean;
   /** Waits for a second press (PDT-623). */
@@ -49,7 +51,7 @@ function DecisionBar({ decisions, busy, onPick }: { decisions: Decision[]; busy:
   const shown = folded.length > 0 && main ? [main] : ordered;
   const button = (d: Decision) => (
     <Button key={d.id} variant={d.confirming ? 'danger' : d.primary ? 'primary' : 'secondary'} size="lg" className={cn('min-w-0 flex-1', d.wide && 'basis-full')} pending={busy && d.primary}
-      disabled={busy || d.disabled} onClick={() => onPick(d.id)}>
+      disabled={busy || d.disabled} aria-label={d.label} onClick={() => onPick(d.id)}>
       <span className="truncate">{d.title}</span>
     </Button>
   );
@@ -223,7 +225,7 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDis
   const actions = [...spec.actions.filter((a) => a.end), ...spec.actions.filter((a) => !a.end)]
     .filter((a) => a.id !== 'dismiss' || item.kind === 'notice');
   // A snoozed item is read, not answered (PDT-686).
-  const decisions: Decision[] = item.snooze ? [] : actions.map((a) => ({ id: a.id, title: a.wide ? a.title : a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming, wide: a.wide }));
+  const decisions: Decision[] = item.snooze ? [] : actions.map((a) => ({ id: a.id, title: a.wide ? a.title : a.short ?? a.title, label: a.confirming ? a.title : undefined, primary: a.primary, disabled: a.disabled, confirming: a.confirming, wide: a.wide }));
   const pick = (id: string) => {
     // Merge (and Accept) asks first.
     if (merges(item, id)) return setConfirming(id);
@@ -252,7 +254,8 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDis
             {spec.note.hint && <p className="text-meta text-muted-foreground">{spec.note.hint}</p>}
           </div>
         )}
-        {spec.hint && <p className="text-meta text-muted-foreground">{spec.hint}</p>}
+        {/* Always there, so a screen reader says each new hint ("Press again to confirm", PDT-667). */}
+        <p aria-live="polite" className={cn('text-meta text-muted-foreground', !spec.hint && 'sr-only')}>{spec.hint}</p>
         {spec.takeOver && (
           <Sheet side="bottom" title="Take over: the step ends with" open={spec.takeOver.open} onOpenChange={spec.takeOver.setOpen}>
             <Rows rows={spec.takeOver.outcomes} disabled={busy} onPick={(id) => spec.takeOver!.pick(id)} />

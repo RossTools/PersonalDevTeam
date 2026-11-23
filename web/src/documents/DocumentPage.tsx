@@ -195,6 +195,7 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
         {provider?.capabilities.comments && content.data && (
           <DocumentComments
             id={id}
+            live={provider.capabilities.live}
             headings={content.data.content.kind === 'doc' ? headingsOf(content.data.content.markdown) : undefined}
             selection={content.data.content.kind === 'sheet' && sheetHandle ? sheetHandle.selection : undefined}
             onShow={sheetHandle ? sheetHandle.show : undefined}
