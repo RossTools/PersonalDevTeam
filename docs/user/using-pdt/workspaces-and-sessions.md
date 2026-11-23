@@ -12,7 +12,8 @@ branches start from and are reviewed against), runs and policies.
 
 A **worktree** is another checkout of the repository on a different branch, in its own folder under `.worktrees/`.
 PDT makes one for each ticket it starts and each branch you run, so several agents work at once without touching each
-other's files or your main checkout.
+other's files or your main checkout. `.worktrees` must be a plain folder in the repository: when it is a symbolic
+link (or leads outside the repository), PDT refuses to make worktrees there.
 
 The project's **Worktrees** section in **Settings** lists them, with **Review changes** and **Remove worktree**. PDT
 asks before removing one with uncommitted changes and won't remove one a ticket is working in. Finishing a merged
