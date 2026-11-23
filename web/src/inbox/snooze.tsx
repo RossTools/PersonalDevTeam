@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AlarmClock } from 'lucide-react';
-import { Button, List, ListHeading, ListRow, MenuButton, clockTime } from '@ui';
+import { Button, List, ListHeading, ListRow, MenuButton, clockTime, toast } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxSnooze } from '../api/gen/InboxSnooze';
 import type { SnoozeRequest } from '../api/gen/SnoozeRequest';
 import { TicketKey } from '../common/TicketKey';
+import { actionError } from '../common/useAction';
 import { useInbox, useRefreshInbox } from './useInbox';
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -32,11 +33,15 @@ function snoozeText(s: InboxSnooze, now: number = Date.now()): string {
   return `until ${parts.join(' or ')}`;
 }
 
-/** The item's Snooze menu: Until tomorrow, For 1 week, Until a ticket is done… (its own ticket filled in). */
+/**
+ * The item's Snooze menu: Until tomorrow, For 1 week, Until a ticket is done… (its own ticket filled in, unless that
+ * ticket waits on the item: it would never be done, PDT-698).
+ */
 export function SnoozeMenu({ item }: { item: InboxItem }) {
   const refresh = useRefreshInbox();
   const snooze = useMutation({
     mutationFn: (s: SnoozeRequest) => api.snoozeInbox(item.id, s),
+    onError: (err) => toast.error(actionError(err)),
     onSettled: () => void refresh(),
   });
   return (
@@ -48,7 +53,7 @@ export function SnoozeMenu({ item }: { item: InboxItem }) {
         { label: 'For 1 week', onSelect: () => snooze.mutate({ until: Date.now() + WEEK }) },
         {
           input: 'Until a ticket is done…',
-          defaultValue: item.ticketKey ?? '',
+          defaultValue: item.ticketWaits ? '' : (item.ticketKey ?? ''),
           onSubmit: (v) => { if (v.trim()) snooze.mutate({ ticket: v.trim() }); },
         },
       ]}
@@ -83,7 +88,10 @@ export function Snoozed() {
             secondary={
               <span className="flex min-w-0 items-center gap-1.5">
                 {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                <span className="truncate">{i.snooze ? snoozeText(i.snooze) : 'snoozed'}</span>
+                <span className="truncate">
+                  {i.snooze ? snoozeText(i.snooze) : 'snoozed'}
+                  {i.ticketWaits && ` · ${i.ticketKey ?? 'its ticket'} waits on it`}
+                </span>
               </span>
             }
             trailing={

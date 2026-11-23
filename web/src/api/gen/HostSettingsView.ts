@@ -36,4 +36,8 @@ acpAgents: Array<AcpAgentView>,
  * The agents switched on (`settings.disabledAgents` left out): the built-ins, then the ACP agents. What every
  * agent picker offers (PDT-270).
  */
-enabledAgents: Array<AgentKind>, network: NetworkView, };
+enabledAgents: Array<AgentKind>, network: NetworkView, 
+/**
+ * The name this instance goes by while `settings.instanceName` is unset: from the machine's host name.
+ */
+defaultInstanceName: string, };

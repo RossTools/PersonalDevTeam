@@ -28,6 +28,7 @@ const settingsView = (over: object = {}) => ({
   ],
   network: network(),
   acpAgents: [],
+  defaultInstanceName: 'studio',
   ...over,
 });
 function network(over: object = {}) {
@@ -627,6 +628,58 @@ describe('HostSettingsPage', () => {
     expect(await screen.findByText(/Updates are off: not supervised\./)).toBeInTheDocument();
     expect(screen.getByText('Rejected, ignored')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Check for updates' })).not.toBeInTheDocument();
+  });
+
+  it('names the instance at the top of Remote access, and goes back to the host name', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/update': update(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/connections': [],
+      'GET /api/health': { instanceName: 'studio' },
+      'PUT /api/host/settings': (c) => {
+        const name = (c.body as { instanceName: string }).instanceName;
+        return settingsView({ settings: { ...settingsView().settings, instanceName: name || null } });
+      },
+    });
+    renderWithQuery(<HostSettingsPage section="remote-access" />);
+    const input = await screen.findByRole('textbox', { name: 'Instance name' });
+    // Not picked: empty, the host name's as a placeholder, not as if chosen.
+    expect(input).toHaveValue('');
+    expect(input).toHaveAttribute('placeholder', 'studio');
+    expect(screen.getByText(/Not picked yet: it goes by studio/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Use host name' })).toBeNull();
+    await userEvent.type(input, 'win-box');
+    await userEvent.tab();
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PUT', path: '/api/host/settings', body: { instanceName: 'win-box' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Use host name' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PUT', path: '/api/host/settings', body: { instanceName: '' } }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Instance name' })).toHaveValue(''));
+  });
+
+  it('titles the PM screen PM, over its Daily checkpoint', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/whoami': local,
+      'GET /api/pm-checkpoint': new Reply(500, { code: 'x', message: 'down' }),
+    });
+    renderWithQuery(<HostSettingsPage section="pm" />);
+    expect(await screen.findByRole('heading', { level: 2, name: 'PM' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Daily checkpoint' })).toBeInTheDocument();
+  });
+
+  it('shows how far Get started is above the checks', async () => {
+    stubApi({
+      'GET /api/host/settings': settingsView(),
+      'GET /api/host/checks': checks(true),
+      'GET /api/host/whoami': local,
+      'GET /api/host/setup': { done: 2, state: { dismissed: false }, steps: {} },
+    });
+    renderWithQuery(<HostSettingsPage section="checks" />);
+    const checksSection = await screen.findByRole('region', { name: 'Checks' });
+    expect(await within(checksSection).findByText('Get started · 2 of 6 steps done')).toBeInTheDocument();
+    expect(within(checksSection).getByRole('button', { name: 'Open' })).toBeInTheDocument();
   });
 
   it('lists the checks, with Devin optional', async () => {

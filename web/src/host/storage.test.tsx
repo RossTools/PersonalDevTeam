@@ -22,7 +22,7 @@ const cleanupView = (over: Partial<BuiltinSettingsView> = {}, values: Record<str
 const size = (over: object = {}) => ({ total: 4 * GB, build: 3 * GB, uncommitted: false, unpushed: 0, neverPushed: false, measuredAt: 1, ...over });
 
 const view = (over: Partial<StorageView> = {}): StorageView => ({
-  disks: [{ folders: ['/data', '/work/app'], space: { free: 12 * GB, total: 500 * GB }, level: 'low' }],
+  disks: [{ folders: ['/data', '/work/app'], labels: ['PDT data', 'App'], space: { free: 12 * GB, total: 500 * GB }, level: 'low' }],
   projects: [{
     projectId: 'p', name: 'App', key: 'APP',
     buildOutput: { paths: ['target', '**/node_modules'], detected: true, error: null },
@@ -58,6 +58,13 @@ describe('Settings › Storage', () => {
     renderWithQuery(<Storage />);
     expect(await screen.findByText('12 GB free of 500 GB')).toBeInTheDocument();
     expect(screen.getByText('Low')).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: 'Disk used' })).toHaveAttribute('aria-valuenow', '98');
+    // The folders by name, their paths a click away.
+    await userEvent.click(screen.getByRole('button', { name: 'PDT data · App' }));
+    const folders = await screen.findByRole('dialog', { name: 'Folders on this disk' });
+    expect(folders).toHaveTextContent('PDT data/data');
+    expect(folders).toHaveTextContent('App/work/app');
+    await userEvent.keyboard('{Escape}');
     expect(screen.getByText('target, **/node_modules')).toBeInTheDocument();
     const rows = screen.getAllByRole('listitem');
     expect(rows[0]).toHaveTextContent('APP-1');

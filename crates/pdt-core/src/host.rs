@@ -231,7 +231,7 @@ impl Default for HostSettings {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct HostSettingsPatch {
-    /// This instance's name ([`crate::instance::valid_name`]).
+    /// This instance's name ([`crate::instance::valid_name`]); blank clears it, back to the host name's.
     #[serde(default)]
     #[ts(optional)]
     pub instance_name: Option<String>,
@@ -388,7 +388,8 @@ impl HostSettings {
     pub fn apply(&self, p: &HostSettingsPatch) -> Result<HostSettings, HostSettingsError> {
         let mut s = self.clone();
         if let Some(raw) = &p.instance_name {
-            s.instance_name = Some(crate::instance::valid_name(raw)?);
+            // Blank goes back to the name from the host name.
+            s.instance_name = if raw.trim().is_empty() { None } else { Some(crate::instance::valid_name(raw)?) };
         }
         if let Some(v) = p.remote_access {
             s.remote_access = v;
@@ -639,6 +640,9 @@ mod tests {
         let named = s.apply(&HostSettingsPatch { instance_name: Some(" win-box ".into()), ..patch() }).unwrap();
         assert_eq!(named.instance_name.as_deref(), Some("win-box"));
         assert_eq!(named.instance_name_or("Studio.local"), "win-box");
+        let cleared = named.apply(&HostSettingsPatch { instance_name: Some(" ".into()), ..patch() }).unwrap();
+        assert_eq!(cleared.instance_name, None, "blank goes back to the host name's");
+        assert_eq!(cleared.instance_name_or("Studio.local"), "studio");
         let bad = s.apply(&HostSettingsPatch { instance_name: Some("two words".into()), ..patch() });
         assert!(matches!(bad, Err(HostSettingsError::BadInstanceName(_))));
     }

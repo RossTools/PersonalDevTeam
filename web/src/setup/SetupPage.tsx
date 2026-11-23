@@ -146,7 +146,7 @@ export function SetupPage(props: SetupPageProps) {
         <PermissionsStep {...step('permissions')} />
       </div>
       <footer className="flex flex-wrap items-center justify-between gap-2 text-muted-foreground">
-        <span>Reopen this any time from Settings › This host › Setup.</span>
+        <span>Reopen this any time from Settings › This host › Checks.</span>
         <Button variant="ghost" size="sm" pending={dismiss.isPending} onClick={() => dismiss.mutate()}>Dismiss setup</Button>
       </footer>
       {dismiss.error && <Alert tone="error">{dismiss.error.message}</Alert>}
@@ -425,7 +425,7 @@ function NameStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
         <Input aria-label="Instance name" mono className="w-56" maxLength={32} value={name ?? current} onChange={(e) => setName(e.target.value)} />
         <Button size="sm" variant="primary" type="submit" pending={save.isPending}>Use this name</Button>
       </form>
-      <p className="text-xs text-muted-foreground">Letters, digits, - _ and . (no spaces). Settings › This host › Name changes it later.</p>
+      <p className="text-xs text-muted-foreground">Letters, digits, - _ and . (no spaces). Settings › This host › Remote access changes it later.</p>
       {save.error && <Alert tone="error">{save.error.message}</Alert>}
     </Step>
   );

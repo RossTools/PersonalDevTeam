@@ -51,6 +51,7 @@ fn to_item(r: &SqliteRow) -> Result<InboxItem, StoreError> {
         created_at: r.try_get("created_at")?,
         resolved_at: r.try_get("resolved_at")?,
         snooze: None,
+        ticket_waits: false,
     })
 }
 

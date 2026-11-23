@@ -78,15 +78,13 @@ which wins over the setting, so you can't change it here. See
 **Start PDT at login**: whether PDT's background service starts when you log in (on by default). Turning it off
 leaves PDT running until you stop it or log out. See [Starting at login](updates.md#starting-at-login).
 
-### Name
-
-**Instance name**: this PDT's name, like `studio` or `win-box`, shown wherever another instance mentions this one.
-Until you pick one it goes by the machine's name. See [Remote projects](remote-projects.md).
-
 ### Remote access
 
-**Serve on the tailnet**, its **Status** and address, and the **Owner**. See
-[Remote access and your phone](remote-access.md).
+- **Instance name**: this PDT's name, like `studio` or `win-box`, shown wherever another instance mentions this one.
+  Until you pick one it goes by the machine's name, shown greyed in the empty field; **Use host name** goes back to
+  it. See [Remote projects](remote-projects.md).
+- **Serve on the tailnet**, its **Status** and address, and the **Owner**. See
+  [Remote access and your phone](remote-access.md).
 
 ### Runs
 
@@ -102,7 +100,8 @@ See [Run configuration](../automation/run-configuration.md).
 
 ### Storage
 
-Free space on each disk PDT uses, and what each project's worktrees take, with their build output apart.
+Free space on each disk PDT uses, as a bar and in GB, with what of PDT's is on it (its data, your projects): click
+or tap the names for their folders. Below, what each project's worktrees take, with their build output apart.
 
 - **Clean** or **Remove…** a worktree, or **Clean all finished** tickets' worktrees at once.
 - While pickup is paused, why, with **Resume pickup**.
@@ -147,9 +146,7 @@ Whether PDT found the programs it runs: git, the agents and Tailscale, with wher
 **git identity** says whether git has a name and email to commit merges with in each of your projects (one set for a
 single repository or folder counts), naming any project without them. **Run checks again** after installing something.
 
-### Setup
-
-**Open Get started** brings back the first-run checklist.
+Above the checks, **Get started** says how many of its steps are done; **Open** brings back the first-run checklist.
 
 ### Danger zone
 

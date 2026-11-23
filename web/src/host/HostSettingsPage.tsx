@@ -31,7 +31,7 @@ import { Storage } from './StorageSettings';
 import { InstallUpdates } from './InstallUpdates';
 import { InstanceUpdates } from './InstanceUpdates';
 import { StuckAgents } from './StuckAgents';
-import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
+import { PmSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
 import { hostKeys, useHostSettings, setHostSettings, useHostChecks, useAgentCapabilities } from './queries';
 import { LoadError } from '../common/QueryStatus';
@@ -176,7 +176,8 @@ function RemoteAccess({ v, me }: { v: HostSettingsView; me: string | null }) {
         ? ['waiting', 'Not active']
         : ['neutral', 'Off'];
   return (
-    <Section label="Remote access" description="Reach this host from your other devices over Tailscale.">
+    <Section label="Remote access" description="What other instances call this host, and reaching it from your other devices over Tailscale.">
+      <InstanceName v={v} />
       <SettingsRow label="Serve on the tailnet" description="Over HTTPS, through tailscale serve.">
         <SaveNote s={toggle} />
         <Switch aria-label="Remote access" checked={s.remoteAccess} onChange={(on) => void toggle.save({ remoteAccess: on })} />
@@ -721,28 +722,31 @@ function TriageCaps({ v }: { v: HostSettingsView }) {
   );
 }
 
-/** This instance's name (PDT-631): shown wherever another instance mentions this one. */
+/**
+ * This instance's name (PDT-631), at the top of Remote access (PDT-693): shown wherever another instance mentions this
+ * one. Unset, the field is empty with the host name's as its placeholder; Use host name goes back to that.
+ */
 function InstanceName({ v }: { v: HostSettingsView }) {
   const qc = useQueryClient();
-  const instance = useInstance();
   const save = useSaveSettings();
   const id = useId();
   const picked = v.settings.instanceName;
-  const shown = picked ?? instance.data?.instanceName ?? '';
+  const settle = async (instanceName: string) => {
+    await save.saveText({ instanceName });
+    await qc.invalidateQueries({ queryKey: hostKeys.health });
+  };
+  const [reset, resetting] = useAction(() => settle(''));
   return (
-    <Section label="Name" description="This instance of PDT's name, shown wherever another instance mentions it (e.g. studio, win-box).">
-      <SettingsRow
-        label="Instance name"
-        htmlFor={id}
-        description={picked ? 'Letters, digits, - _ and . (no spaces).' : `Not picked yet: it goes by ${shown}, from this machine's host name.`}
-      >
-        <AutoSaveText id={id} aria-label="Instance name" mono className="w-56 max-w-full" maxLength={32} value={shown}
-          onSave={async (instanceName) => {
-            await save.saveText({ instanceName });
-            await qc.invalidateQueries({ queryKey: hostKeys.health });
-          }} />
-      </SettingsRow>
-    </Section>
+    <SettingsRow
+      label="Instance name"
+      htmlFor={id}
+      description={picked ? 'What other instances call this one. Letters, digits, - _ and . (no spaces).'
+        : `What other instances call this one. Not picked yet: it goes by ${v.defaultInstanceName}, from this machine's host name.`}
+    >
+      {picked && <Button size="sm" variant="ghost" pending={resetting} onClick={() => void reset()}>Use host name</Button>}
+      <AutoSaveText id={id} aria-label="Instance name" mono className="w-56 max-w-full" maxLength={32}
+        placeholder={v.defaultInstanceName} value={picked ?? ''} onSave={settle} />
+    </SettingsRow>
   );
 }
 
@@ -831,6 +835,7 @@ function Checks() {
       label="Checks"
       description="The programs PDT runs on this host."
       actions={<Button size="sm" pending={refreshing} onClick={() => void refresh()}>Run checks again</Button>}
+      notice={<GetStarted />}
     >
       {checks.isPending && <Skeleton lines={4} label="Loading checks" />}
       {checks.data && (
@@ -859,19 +864,16 @@ function Checks() {
   );
 }
 
-/** Get started (PDT-230): reopens the first-run checklist. */
-function Setup() {
+/** Get started (PDT-230): how far the first-run checklist is, above Checks (PDT-693), and Open to reopen it. */
+function GetStarted() {
   const setup = useQuery({ queryKey: hostKeys.setup, queryFn: api.hostSetup });
   const v = setup.data;
-  const where = !v ? undefined
-    : v.done === STEPS.length ? 'Every step is done.'
-      : `${v.done} of ${STEPS.length} steps done.${v.state.dismissed ? ' Dismissed: it no longer opens on its own.' : ''}`;
+  if (!v) return null;
+  const where = v.done === STEPS.length ? 'every step is done' : `${v.done} of ${STEPS.length} steps done`;
   return (
-    <Section label="Setup" description="The Get started checklist: agents, GitHub, a first project and the default agent.">
-      <SettingsRow label="Get started" description={where}>
-        <Button size="sm" onClick={() => navigate('/setup')}>Open Get started</Button>
-      </SettingsRow>
-    </Section>
+    <Alert tone="info" action={<Button size="sm" variant="secondary" onClick={() => navigate('/setup')}>Open</Button>}>
+      Get started · {where}{v.state.dismissed && v.done < STEPS.length ? '. Dismissed: it no longer opens on its own.' : ''}
+    </Alert>
   );
 }
 
@@ -968,11 +970,9 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   // The device being used when it is on the tailnet; otherwise the login this host's Tailscale is signed in as.
   const me = whoami.data?.caller === 'tailnet' && whoami.data.login ? whoami.data.login : v.remote.tailscaleLogin;
   const nodes: Record<string, ReactNode> = {
-    'Name': <InstanceName v={v} />,
-    'Setup': <Setup />,
     'Updates': <><Updates v={v} /><InstanceUpdates /><InstallUpdates policy={v.settings.updatePolicy} /></>,
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
-    'PM': <PmCheckpointSettings />,
+    'PM': <PmSettings />,
     'Network': <Network v={v} />,
     'Startup': <StartAtLogin />,
     'Remote access': <RemoteAccess v={v} me={me ?? null} />,

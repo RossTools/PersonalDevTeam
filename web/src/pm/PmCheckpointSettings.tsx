@@ -1,4 +1,4 @@
-import { Checkbox, SettingsRow, Switch } from '@ui';
+import { Checkbox, Section, SettingsRow, Switch } from '@ui';
 import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import { AutoSaveRow, AutoSaveText } from '../common/AutoSave';
@@ -10,6 +10,16 @@ const DAYS = [
   { id: 'mon', label: 'Mon' }, { id: 'tue', label: 'Tue' }, { id: 'wed', label: 'Wed' }, { id: 'thu', label: 'Thu' },
   { id: 'fri', label: 'Fri' }, { id: 'sat', label: 'Sat' }, { id: 'sun', label: 'Sun' },
 ];
+
+/** Settings → This host → PM: its title (PDT-693), then its groups. */
+export function PmSettings() {
+  return (
+    <>
+      <Section label="PM" description="What the PM does on its own on this host." />
+      <PmCheckpointSettings />
+    </>
+  );
+}
 
 /**
  * Settings → This host → PM → Daily checkpoint (PDT-384): the PM daily checkpoint built-in's inputs: a time of day

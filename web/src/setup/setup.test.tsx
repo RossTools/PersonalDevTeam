@@ -272,7 +272,7 @@ describe('Get started', () => {
     const p = props();
     const calls = stub(view(), { 'PUT /api/host/setup': view({ opensOnLaunch: false }) });
     renderWithQuery(<SetupPage {...p} />);
-    expect(await screen.findByText(/Reopen this any time from Settings › This host › Setup/)).toBeInTheDocument();
+    expect(await screen.findByText(/Reopen this any time from Settings › This host › Checks/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss setup' }));
     await waitFor(() => expect(p.onDismissed).toHaveBeenCalled());
     expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ dismissed: true });

@@ -2,7 +2,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { Reply, renderWithQuery, stubApi } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
 import { tomorrowMorning } from './snooze';
@@ -43,6 +43,21 @@ describe('snooze (PDT-641)', () => {
     await waitFor(() => expect(snoozes()[1]).toEqual({ ticket: 'PDT-7' }));
   });
 
+  it('leaves out its own ticket when that ticket waits on it, and says why a snooze was refused', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      'GET /api/inbox': { items: [], snoozed: [], total: 0 },
+      'POST /api/inbox/q/snooze': new Reply(400, { code: 'invalid', message: 'PDT-7 is waiting on this' }),
+    });
+    renderWithQuery(<InboxView items={[item('q', { kind: 'question', group: 'question', ticketWaits: true })]} selectedId="q" onSelect={() => {}} />);
+    await user.click(screen.getByRole('button', { name: 'Snooze' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Until a ticket is done…' }));
+    const field = screen.getByRole('textbox', { name: 'Until a ticket is done…' });
+    expect(field).toHaveValue('');
+    await user.type(field, 'PDT-7{Enter}');
+    expect(await screen.findByText(/PDT-7 is waiting on this/)).toBeInTheDocument();
+  });
+
   it('lists the snoozed items with until when, and Unsnooze brings one back', async () => {
     const user = userEvent.setup();
     const away = item('g', {
@@ -54,7 +69,15 @@ describe('snooze (PDT-641)', () => {
     const section = await screen.findByRole('region', { name: 'Snoozed' });
     expect(section).toHaveTextContent('Merge #633?');
     expect(section).toHaveTextContent('until PDT-639 is done');
+    expect(section).not.toHaveTextContent('waits on it');
     await user.click(screen.getByRole('button', { name: 'Unsnooze' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/inbox/g/snooze')).toBe(true));
   });
+});
+
+it('says when a snoozed item holds its ticket', async () => {
+  const held = item('q', { kind: 'question', ticketWaits: true, snooze: { itemId: 'q', until: 1e15, ticketId: null, ticketKey: null, createdAt: 1 } });
+  stubApi({ 'GET /api/inbox': { items: [], snoozed: [held], total: 0 } });
+  renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={() => {}} />);
+  expect(await screen.findByRole('region', { name: 'Snoozed' })).toHaveTextContent('PDT-7 waits on it');
 });

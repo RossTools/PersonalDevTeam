@@ -258,6 +258,8 @@ pub struct HostSettingsView {
     /// agent picker offers (PDT-270).
     pub enabled_agents: Vec<AgentKind>,
     pub network: NetworkView,
+    /// The name this instance goes by while `settings.instanceName` is unset: from the machine's host name.
+    pub default_instance_name: String,
 }
 
 impl From<HostSettingsError> for ApiError {
@@ -293,6 +295,7 @@ pub(crate) async fn view(st: &AppState) -> Result<HostSettingsView, ApiError> {
         remote: st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone(),
         programs,
         network: network_view(st),
+        default_instance_name: pdt_core::instance::suggest_name(&crate::link::machine_host_name()),
     })
 }
 
