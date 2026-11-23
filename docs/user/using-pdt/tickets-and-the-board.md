@@ -96,8 +96,8 @@ its own.
 A parent is never started itself: **Start next part** starts its first unblocked open part. The parent moves to **In
 progress** with its first part, and can't be closed while a part is open. On the board each parent gets its own lane,
 with a stepper showing progress: a dot per part, or one bar when there are many parts or little room (hover it for
-the counts). Each part's card shows its own pull request. A closed parent's lane stays as long as **Done** shows it. A
-part's agent also gets the parent's description and the list of other parts.
+the counts). Tickets that aren't parts sit above the lanes under **No parent**. Each part's card shows its own pull
+request. A closed parent's lane stays as long as **Done** shows it. A part's agent also gets the parent's description and the list of other parts.
 
 When the last open part reaches **Done** or **Won't do**, the parent closes too: to **Done**, or to **Won't do** if
 every part was **Won't do**. It gets an "All parts closed" comment and you get a notification. A parent that has work
@@ -161,6 +161,8 @@ who watches. A workflow run has the same eye, on its page under the workflow's *
 - Filter by **Stage**, **Priority**, **Labels**, **Blocked** and **Overlap**; **Show closed** adds **Done** and
   **Won't do**; **Clear filters** resets.
 - Sort by rank, priority, updated or created; group by stage, priority or label.
+- The board has the same search and filters, without **Stage** (its columns are the stages); while a filter is set,
+  only the parents' lanes with matching parts show. Filters stay as you switch between **Backlog** and **Board**.
 - **Save filter…** keeps the current filters. The built-in **Ready to start** shows **Ready** tickets nothing blocks or
   conflicts with.
 

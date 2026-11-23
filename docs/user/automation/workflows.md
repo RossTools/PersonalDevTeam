@@ -47,7 +47,7 @@ PDT then runs it whenever its trigger happens. Turning it off stops new runs; ru
 
 ## Add a workflow from a template
 
-1. In **Workflows**, click **New workflow**.
+1. In **Workflows**, click **＋ New** at the top of the list.
 2. Pick a template: search, or browse **CI & pull requests**, **Tickets**, **Issues**, **Notifications**,
    **Releases** and **Documents**. **Start from scratch** gives you an empty one; your own templates are under **Yours**, and copies of
    the built-ins under **Built-in**.
@@ -194,7 +194,7 @@ one back.
 
 - **Save as template…** (in the workflow's **⋯**) adds it to **New workflow** under **Yours**.
 - **Duplicate** copies it; **Delete…** removes it with its runs.
-- **Export…** and **Import…** (at the top of the list) move workflows between PDT hosts as a file.
+- **Export…** and **Import…** (in the **⋯** beside **＋ New**, at the top of the list) move workflows between PDT hosts as a file.
 - Workflows kept in a project's repository, under `.pdt/workflows/`, are added off and marked **In the repo**. Edit
   them in the repository, not in PDT. Once you turn one on, a change to its file doesn't run until you accept it: it
   waits as a proposal from the repo under **Workflow proposals** in the Inbox. A change you discard stays discarded

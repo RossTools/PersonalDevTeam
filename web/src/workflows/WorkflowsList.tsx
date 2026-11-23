@@ -1,10 +1,9 @@
-// The Workflows view's list column: New workflow, Import and Export (PDT-155), and the workflows by
+// The Workflows view's list column: New workflow, with Import and Export (PDT-155) under its ⋯, and the workflows by
 // where they apply; templates are in the New workflow gallery (PDT-229). On a phone there is no New workflow or Import
 // (workflows are view-only there, PDT-120).
 import { lazy, Suspense, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
-import { Badge, Button, EmptyState, List, ListHeading, ListRow, StatusDot } from '@ui';
+import { Badge, EmptyState, List, ListHeading, ListRow, MenuButton, StatusDot } from '@ui';
 import { api } from '../api/client';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
 import type { Project } from '../api/gen/Project';
@@ -15,6 +14,7 @@ import type { WorkflowTab } from './WorkflowPage';
 import { workflowKeys } from './queries';
 import { POLL } from '../common/poll';
 import { LoadError } from '../common/QueryStatus';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 
 // Import is loaded the first time it opens, not with the app.
 const ImportDialog = lazy(() => import('./ImportDialog').then((m) => ({ default: m.ImportDialog })));
@@ -41,15 +41,23 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
   const phone = useMediaQuery(PHONE_QUERY);
   const [moving, setMoving] = useState<'import' | 'export' | null>(null);
   return (
-    <nav aria-label="Workflows" className="flex flex-col gap-0.5 py-1">
+    <nav aria-label="Workflows" className="flex flex-col gap-0.5 pb-1">
       {!phone && (
-        <div className="flex flex-col gap-1 px-2 pt-2">
-          <Button size="sm" className="w-full" onClick={onNew}><Plus aria-hidden /> New workflow</Button>
-          <div className="flex gap-1">
-            <Button size="sm" variant="secondary" className="flex-1" onClick={() => setMoving('import')}>Import…</Button>
-            <Button size="sm" variant="secondary" className="flex-1" disabled={!workflows.data?.length} onClick={() => setMoving('export')}>Export…</Button>
-          </div>
-        </div>
+        <ListColumnHeader
+          title="Workflows"
+          newLabel="New workflow"
+          onNew={onNew}
+          extra={(
+            <MenuButton
+              label="Import or export workflows"
+              size="sm"
+              entries={() => [
+                { label: 'Import…', onSelect: () => setMoving('import') },
+                { label: 'Export…', onSelect: () => setMoving('export'), disabled: !workflows.data?.length },
+              ]}
+            />
+          )}
+        />
       )}
       {moving === 'import' && <Suspense fallback={null}><ImportDialog projects={projects} onClose={() => setMoving(null)} onImported={(id) => onOpen({ kind: 'workflow', id })} /></Suspense>}
       {moving === 'export' && <ExportDialog workflows={groups.flatMap((g) => g.items)} onClose={() => setMoving(null)} />}

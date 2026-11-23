@@ -112,6 +112,19 @@ export function useLabels(projectId: string | null) {
   });
 }
 
+/**
+ * Every label in a scope, sorted: one project's, or (null) every project's, from the same per-project queries. The
+ * filters' Label options, which must not depend on which tickets happen to be loaded (the Board loads no backlog rows).
+ */
+export function useScopeLabels(projectId: string | null, projectIds: string[]): string[] {
+  const ids = projectId ? [projectId] : projectIds;
+  const results = useQueries({
+    queries: ids.map((id) => ({ queryKey: ticketKeys.labels(id), queryFn: () => api.projectLabels(id), staleTime: 10_000 })),
+  });
+  const key = JSON.stringify(results.map((r) => r.data ?? []));
+  return useMemo(() => [...new Set((JSON.parse(key) as string[][]).flat())].sort(), [key]);
+}
+
 /** The project's forge (null: none); it changes rarely (its origin or `.pdt/project.toml`). */
 export function useProjectForge(projectId: string | null) {
   return useQuery({

@@ -14,9 +14,10 @@ import { BoardViewMenu } from './BoardViewMenu';
 import { SaveFilterDialog } from './TicketsList';
 import type { BacklogState, TicketsMode } from './useBacklog';
 
-/** How many filters are set (the ⚲ count): search, grouping and sorting don't count. */
-function filterCount(f: BacklogFilters): number {
-  return [f.stages.length > 0, f.priorities.length > 0, f.labels.length > 0, f.showClosed, f.blocked !== null, f.conflicts !== null]
+/** How many filters are set (the ⚲ count): search, grouping and sorting don't count, nor stage and closed on the Board. */
+function filterCount(f: BacklogFilters, mode: TicketsMode): number {
+  const backlog = mode === 'backlog';
+  return [backlog && f.stages.length > 0, f.priorities.length > 0, f.labels.length > 0, backlog && f.showClosed, f.blocked !== null, f.conflicts !== null]
     .filter(Boolean).length;
 }
 
@@ -71,7 +72,10 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/** The backlog's filters in a bottom sheet: stage, priority, label, blocked, overlap, closed, grouping, sorting. */
+/**
+ * The filters in a bottom sheet: stage, priority, label, blocked, overlap, closed, grouping, sorting. The Board's
+ * columns are the stages, so it has only priority, label, blocked and overlap.
+ */
 function FilterSheet({ backlog, labels, open, onOpenChange }: {
   backlog: BacklogState;
   /** Every label in the scope. */
@@ -79,7 +83,8 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { filters: f, setFilters } = backlog;
+  const { filters: f, setFilters, mode } = backlog;
+  const board = mode === 'board';
   const [saving, setSaving] = useState(false);
   return (
     <>
@@ -91,19 +96,21 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
         className="max-h-[85dvh]"
         footer={
           <>
-            <Button onClick={backlog.resetFilters} disabled={filterCount(f) === 0}>Clear</Button>
+            <Button onClick={backlog.resetFilters} disabled={filterCount(f, mode) === 0}>Clear</Button>
             <Button onClick={() => { onOpenChange(false); setSaving(true); }}>Save filter…</Button>
             <Button variant="primary" onClick={() => onOpenChange(false)}>Done</Button>
           </>
         }
       >
         <div className="flex flex-col gap-4 pb-2">
-          <Checks<TicketStage>
-            title="Stage"
-            options={STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))}
-            selected={f.stages}
-            onChange={(stages) => setFilters({ stages })}
-          />
+          {!board && (
+            <Checks<TicketStage>
+              title="Stage"
+              options={STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))}
+              selected={f.stages}
+              onChange={(stages) => setFilters({ stages })}
+            />
+          )}
           <Checks<Priority>
             title="Priority"
             options={PRIORITIES.map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))}
@@ -130,13 +137,17 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
                 onChange={(v) => setFilters({ conflicts: fromTri(v) })}
               />
             </Row>
-            <Row label="Group by">
-              <Select<GroupBy> aria-label="Group by" className="w-40" options={GROUPS} value={f.group} onChange={(group) => setFilters({ group })} />
-            </Row>
-            <Row label="Sort by">
-              <Select<TicketSort> aria-label="Sort by" className="w-40" options={SORTS} value={f.sort} onChange={(sort) => setFilters({ sort })} />
-            </Row>
-            <Switch checked={f.showClosed} onChange={(showClosed) => setFilters({ showClosed })}>Show closed</Switch>
+            {!board && (
+              <>
+                <Row label="Group by">
+                  <Select<GroupBy> aria-label="Group by" className="w-40" options={GROUPS} value={f.group} onChange={(group) => setFilters({ group })} />
+                </Row>
+                <Row label="Sort by">
+                  <Select<TicketSort> aria-label="Sort by" className="w-40" options={SORTS} value={f.sort} onChange={(sort) => setFilters({ sort })} />
+                </Row>
+                <Switch checked={f.showClosed} onChange={(showClosed) => setFilters({ showClosed })}>Show closed</Switch>
+              </>
+            )}
           </div>
         </div>
       </Sheet>
@@ -145,17 +156,17 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
   );
 }
 
-/** Under the top bar: Backlog | Board, then (backlog) ⌕ to show the search box and ⚲ for the filters, with a count. */
+/** Under the top bar: Backlog | Board, (board) its View menu, then ⌕ to show the search box and ⚲ for the filters, with a count. */
 export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; labels: string[] }) {
   const { mode, filters } = backlog;
   const [searching, setSearching] = useState(false);
   const [filtering, setFiltering] = useState(false);
   const search = useRef<HTMLInputElement>(null);
-  const showSearch = mode === 'backlog' && (searching || filters.q !== '');
+  const showSearch = searching || filters.q !== '';
   useEffect(() => {
     if (searching) search.current?.focus();
   }, [searching]);
-  const n = filterCount(filters);
+  const n = filterCount(filters, mode);
   return (
     <div className="shrink-0 border-b border-border">
       <div className="flex items-center gap-1 px-3 py-1.5">
@@ -168,29 +179,25 @@ export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; label
         />
         <span className="flex-1" />
         {mode === 'board' && backlog.projectId && <BoardViewMenu projectId={backlog.projectId} compact />}
-        {mode === 'backlog' && (
-          <>
-            <IconButton
-              label="Search tickets"
-              noTooltip
-              pressed={showSearch}
-              onClick={() => {
-                if (showSearch) { backlog.setFilters({ q: '' }); setSearching(false); } else setSearching(true);
-              }}
-            >
-              <Search aria-hidden />
-            </IconButton>
-            <Button
-              variant={n > 0 ? 'secondary' : 'ghost'}
-              aria-label={n > 0 ? `Filters (${n})` : 'Filters'}
-              aria-haspopup="dialog"
-              onClick={() => setFiltering(true)}
-            >
-              <Filter aria-hidden />
-              {n > 0 && <span className="tabular-nums">{n}</span>}
-            </Button>
-          </>
-        )}
+        <IconButton
+          label="Search tickets"
+          noTooltip
+          pressed={showSearch}
+          onClick={() => {
+            if (showSearch) { backlog.setFilters({ q: '' }); setSearching(false); } else setSearching(true);
+          }}
+        >
+          <Search aria-hidden />
+        </IconButton>
+        <Button
+          variant={n > 0 ? 'secondary' : 'ghost'}
+          aria-label={n > 0 ? `Filters (${n})` : 'Filters'}
+          aria-haspopup="dialog"
+          onClick={() => setFiltering(true)}
+        >
+          <Filter aria-hidden />
+          {n > 0 && <span className="tabular-nums">{n}</span>}
+        </Button>
       </div>
       {showSearch && (
         <FilterBar
