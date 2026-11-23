@@ -15,6 +15,17 @@ describe('Page', () => {
     expect(page.className).toContain('max-w-3xl');
     expect((container.firstChild as HTMLElement).className).toContain('overflow-auto');
   });
+
+  it('has a breadcrumb, hidden on a phone, and its actions wrap under the text rather than squeeze it', () => {
+    render(<Page crumb="Settings" title="Notifications" description="What reaches you." actions={<button type="button">Reset</button>}><p>body</p></Page>);
+    const crumb = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(crumb).toHaveTextContent('Settings');
+    expect(crumb.className).toContain('max-md:hidden');
+    const text = screen.getByRole('heading', { name: 'Notifications' }).parentElement!;
+    expect(text.className).toContain('basis-64');
+    expect(text.className).not.toContain('flex-1');
+    expect(screen.getByText('What reaches you.').className).toContain('text-sm');
+  });
 });
 
 describe('Section', () => {

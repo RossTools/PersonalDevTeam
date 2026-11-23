@@ -279,6 +279,19 @@ describe('RunView', () => {
 });
 
 describe('ProjectSettingsPanel', () => {
+  it('with no plugin that links to projects on, Plugins says so and opens the Plugins page', async () => {
+    stubApi({
+      'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },
+      'GET /api/projects/p/run-config': { ...config, effective: { ...config.effective, areas: [], ignored: [] } },
+      'GET /api/integrations/project-settings': [],
+    });
+    renderWithQuery(<ProjectSettingsPanel project={project} />);
+    const plugins = await screen.findByRole('region', { name: 'Plugins' });
+    expect(await within(plugins).findByText(/No plugin that links to projects is on/)).toBeInTheDocument();
+    await userEvent.click(within(plugins).getByRole('button', { name: 'Open Plugins' }));
+    expect(window.location.pathname).toBe('/settings/plugins');
+  });
+
   it('notes sections of the file that this version skipped', async () => {
     stubApi({
       'GET /api/projects/p/settings': { agentCredentials: null, effectiveCredentials: 'subscription', runOverrides: null },

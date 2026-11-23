@@ -81,6 +81,7 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
   };
   return (
     <Page
+      crumb="Settings"
       title="Plugins"
       className="max-w-5xl"
       description="What this PDT works with. Turn one on and it adds its connections, workflow steps, templates and PM tools. Turning one off keeps its settings, connections and workflows for later."

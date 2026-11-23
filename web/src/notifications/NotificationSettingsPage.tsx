@@ -44,6 +44,7 @@ export function NotificationSettingsPage() {
   const editable = !!v && !v.customized;
   return (
     <Page
+      crumb="Settings"
       title="Notifications"
       description="Needs you counts in the Inbox's badge and the page title; Updates wait on nothing."
       actions={
