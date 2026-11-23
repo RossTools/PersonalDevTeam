@@ -187,7 +187,8 @@ pub struct PrApprovalConfig {
     pub number: Value,
     /// Its head (`{{trigger.headSha}}`): the one approved, or the one to check.
     pub head_sha: String,
-    /// `record` (the user approved this head) or `check` (does an approval hold for it).
+    /// `record` (the user approved this head), `forget` (they decided otherwise since) or `check` (does an approval
+    /// hold for it).
     pub action: String,
 }
 
@@ -205,11 +206,19 @@ impl NodeKind for PrApproval {
             Category::Action,
             "The user's approval of a pull request",
             "`record`: remembers that the user approved the pull request at `headSha`, with an id of its own diff \
-             (against its merge base, as git's patch-id: line numbers left out). `check`: whether an approval holds \
-             for `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base \
-             changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when it was never \
-             approved. A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
-            &[("out", "Recorded"), ("kept", "Approval holds"), ("changed", "Diff changed"), ("none", "Not approved")],
+             (against its merge base, as git's patch-id: line numbers left out); a pull request whose head is no \
+             longer `headSha` (pushed since) records nothing and leaves by `moved`. `forget`: the user decided \
+             otherwise since (Request changes, Close): the approval is gone. `check`: whether an approval holds for \
+             `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base \
+             changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when there is none. \
+             A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
+            &[
+                ("out", "Recorded or forgotten"),
+                ("moved", "Pushed since"),
+                ("kept", "Approval holds"),
+                ("changed", "Diff changed"),
+                ("none", "Not approved"),
+            ],
             false,
         )
     }
@@ -217,8 +226,8 @@ impl NodeKind for PrApproval {
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: PrApprovalConfig = parse(config)?;
         check_repo(&c.repo)?;
-        if !["record", "check"].contains(&c.action.trim()) {
-            return Err(format!("action {:?} is not record or check", c.action));
+        if !["record", "check", "forget"].contains(&c.action.trim()) {
+            return Err(format!("action {:?} is not record, check or forget", c.action));
         }
         if c.head_sha.trim().is_empty() {
             return Err("headSha is empty ({{trigger.headSha}})".into());
@@ -235,38 +244,62 @@ impl NodeKind for PrApproval {
             let c: PrApprovalConfig = parse(&input)?;
             let n = number(&c.number)?;
             let head = c.head_sha.trim().to_string();
-            let record = c.action.trim() == "record";
+            let action = c.action.trim();
             if cx.dry_run {
-                return Ok(if record {
-                    Outcome::would("out", format!("remember the approval of #{n} at {head}"))
-                } else {
-                    Outcome::next("none", json!({"would": format!("check for an approval of #{n}"), "quiet": true}))
+                return Ok(match action {
+                    "record" => Outcome::would("out", format!("remember the approval of #{n} at {head}")),
+                    "forget" => Outcome::would("out", format!("forget any approval of #{n}")),
+                    _ => {
+                        Outcome::next("none", json!({"would": format!("check for an approval of #{n}"), "quiet": true}))
+                    }
                 });
             }
             let store = &cx.st.store;
             let RepoOf { repo, forge, .. } = repo_for_step(cx, &c.repo).await?;
             let state_key = key("approval", &repo, n);
+            let set = async |value: &Value| {
+                store
+                    .set_workflow_state(&cx.workflow.id, &state_key, value, false, now_ms())
+                    .await
+                    .map_err(crate::workflow::err)
+            };
+            if action == "forget" {
+                set(&Value::Null).await?;
+                return Ok(Outcome::next("out", json!({"forgotten": true, "quiet": true})));
+            }
             let state = store.workflow_state(&cx.workflow.id).await.map_err(crate::workflow::err)?;
-            let approved = state.get(&state_key).cloned();
+            let approved = state.get(&state_key).cloned().filter(|a| !a.is_null());
+            let record = action == "record";
             if !record && approved.is_none() {
                 return Ok(Outcome::next("none", json!({"quiet": true})));
             }
             if !record && approved.as_ref().and_then(|a| a["headSha"].as_str()) == Some(head.as_str()) {
                 return Ok(Outcome::next("kept", json!({"note": "Approved at this head", "headSha": head})));
             }
-            let r = repo.clone();
-            let diff = forge_call(&forge, move |f| f.change_request_files(&r, n)).await.map(|f| own_diff(&f))?;
+            // The files are the head's at the time they are read: only while it is still the head approved (read
+            // before and after them) are they the approved diff.
+            let (r, h) = (repo.clone(), head.clone());
+            let read = forge_call(&forge, move |f| {
+                let head_now = |f: &dyn pdt_forge::Forge| {
+                    f.change_request_number(&r, n).map(|p| p.map(|p| p.head_sha).unwrap_or_default())
+                };
+                let before = head_now(f)?;
+                let files = f.change_request_files(&r, n)?;
+                let after = head_now(f)?;
+                Ok((before == h && after == h).then(|| own_diff(&files)).ok_or(after))
+            })
+            .await?;
             if record {
-                let value = json!({"headSha": head, "diff": diff, "at": now_ms()});
-                store
-                    .set_workflow_state(&cx.workflow.id, &state_key, &value, false, now_ms())
-                    .await
-                    .map_err(crate::workflow::err)?;
+                let diff = match read {
+                    Ok(diff) => diff,
+                    Err(now) => return Ok(Outcome::next("moved", json!({"headSha": now, "quiet": true}))),
+                };
+                set(&json!({"headSha": head, "diff": diff, "at": now_ms()})).await?;
                 return Ok(Outcome::next("out", json!({"headSha": head, "diff": diff, "quiet": true})));
             }
             let was = approved.as_ref().and_then(|a| a["diff"].as_str()).map(String::from);
             let approved_head = approved.as_ref().and_then(|a| a["headSha"].as_str()).unwrap_or_default().to_string();
-            match (was, diff) {
+            match (was, read.ok().flatten()) {
                 (Some(a), Some(b)) if a == b => Ok(Outcome::next(
                     "kept",
                     json!({"note": APPROVAL_KEPT, "approvedHead": approved_head, "headSha": head}),
@@ -289,7 +322,8 @@ mod tests {
         let a = |action: &str| json!({"number": 3, "headSha": "{{trigger.headSha}}", "action": action});
         assert!(PrApproval.check(&a("record")).is_ok());
         assert!(PrApproval.check(&a("check")).is_ok());
-        assert!(PrApproval.check(&a("forget")).unwrap_err().contains("record or check"));
+        assert!(PrApproval.check(&a("forget")).is_ok());
+        assert!(PrApproval.check(&a("drop")).unwrap_err().contains("record, check or forget"));
         assert_eq!(key("approval", "O/R", 7), "_pdt.approval.o/r#7");
     }
 }

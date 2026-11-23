@@ -14,6 +14,7 @@ number: number | string,
  */
 headSha: string, 
 /**
- * `record` (the user approved this head) or `check` (does an approval hold for it).
+ * `record` (the user approved this head), `forget` (they decided otherwise since) or `check` (does an approval
+ * hold for it).
  */
 action: string, };

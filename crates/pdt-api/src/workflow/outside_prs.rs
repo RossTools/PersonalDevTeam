@@ -467,7 +467,6 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             "blocked",
             "This pull request can't merge yet: {{steps.merge.reason}} {{steps.why.ciUrl}}",
         ),
-        end("blocked_requested", 2620, -480, "Changes requested", false),
         close("blocked_close", 2360, -360, "blocked"),
         // Everyone else, majors and other bots: the PR Reviewer reads the diff, the user decides.
         node(
@@ -532,7 +531,28 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             "decide",
             "Changes are needed before this can merge.\n\n{{steps.review.data.feedback}}",
         ),
-        end("requested", 2360, 120, "Changes requested", false),
+        // The user's last word was not Approve: an approval from before no longer holds (PDT-641).
+        {
+            let mut n = node(
+                "forget_changes",
+                "github.pr.approval",
+                2360,
+                120,
+                "Forget the approval",
+                with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "forget"})),
+            );
+            n["maxVisits"] = json!(10);
+            n
+        },
+        end("requested", 2620, 120, "Changes requested", false),
+        node(
+            "forget_close",
+            "github.pr.approval",
+            2360,
+            360,
+            "Forget the approval",
+            with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "forget"})),
+        ),
         close("decide_close", 2100, 360, "decide"),
         node("wont_do", "ticket.move", 2620, 360, "Won't do", json!({"ticket": ticket, "stage": "wont_do"})),
         end("closed_pr", 2880, 360, "Closed", false),
@@ -623,6 +643,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "approval", "port": "changed", "to": "dependabot"}),
         json!({"from": "approval", "port": "none", "to": "dependabot"}),
         json!({"from": "approved", "port": "out", "to": "wait_ci"}),
+        // Pushed between the answer and the record: the push's run asks about its head.
+        json!({"from": "approved", "port": "moved", "to": "superseded"}),
         json!({"from": "check_ci", "port": "merged", "to": "gone"}),
         json!({"from": "check_ci", "port": "closed", "to": "gone"}),
         json!({"from": "check_ci", "port": "none", "to": "gone"}),
@@ -668,10 +690,12 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "ci_now", "port": "merged", "to": "gone"}),
         json!({"from": "ci_now", "port": "closed", "to": "gone"}),
         json!({"from": "ci_now", "port": "none", "to": "gone"}),
-        json!({"from": "decide_request", "to": "requested"}),
-        json!({"from": "blocked_request", "to": "blocked_requested"}),
-        json!({"from": "decide_close", "to": "wont_do"}),
-        json!({"from": "blocked_close", "to": "wont_do"}),
+        json!({"from": "decide_request", "to": "forget_changes"}),
+        json!({"from": "blocked_request", "to": "forget_changes"}),
+        json!({"from": "forget_changes", "port": "out", "to": "requested"}),
+        json!({"from": "decide_close", "to": "forget_close"}),
+        json!({"from": "blocked_close", "to": "forget_close"}),
+        json!({"from": "forget_close", "port": "out", "to": "wont_do"}),
         json!({"from": "wont_do", "to": "closed_pr"}),
         json!({"from": "closed", "to": "find"}),
         json!({"from": "find", "port": "created", "to": "open_ticket"}),
@@ -695,8 +719,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             json!({"from": "review", "port": "merge", "to": "ci_now"}),
             json!({"from": "review", "port": "changes", "to": "ci_now"}),
             json!({"from": "review", "port": "close", "to": "ci_now"}),
-            json!({"from": "decide_close", "to": "closed_pr"}),
-            json!({"from": "blocked_close", "to": "closed_pr"}),
+            json!({"from": "forget_close", "port": "out", "to": "closed_pr"}),
         ]);
         // The ticket steps' columns go: everything after them moves left.
         for n in &mut nodes {
@@ -848,7 +871,8 @@ mod tests {
             assert!(c.get("ticket").is_none() && c["event"]["type"] == "github.pull_request.pushed", "{c}");
         }
         assert_eq!(off.node("review").unwrap().config["ticket"], "");
-        assert!(off.edges.iter().any(|e| e.from == "decide_close" && e.to == "closed_pr"), "Close just closes it");
+        assert_eq!(off.next("decide_close", "out"), ["forget_close"]);
+        assert_eq!(off.next("forget_close", "out"), ["closed_pr"], "Close just closes it");
 
         let on = fill(&values(true)).unwrap();
         for k in ticket_kinds.iter().chain(&["github.pull_request.closed"]) {

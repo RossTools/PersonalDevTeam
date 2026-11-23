@@ -1255,3 +1255,60 @@ async fn a_failure_main_passes_still_asks() {
     assert!(gate["body"]["question"].as_str().unwrap().contains("CI: test (linux)"), "{gate}");
     assert!(env.gh.change_comments_added.lock().unwrap().is_empty(), "not asked to rebase");
 }
+
+/// Request changes after an approval takes it back: a later push with the same own diff (a rebase) is reviewed and
+/// asked about again, never merged on the old approval.
+#[tokio::test]
+async fn request_changes_after_approve_forgets_the_approval() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    the_files(&env, 44, "new");
+    let pr = outside(44, "al", "Fix the board", "patch-44", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    // Its own check fails (main has no runs): Didn't merge asks, and the user asks for changes.
+    env.gh.set_runs("patch-44", vec![ci_run(&env, "patch-44", "sha-44", "10", CiState::Failed, &["test"], 2)]);
+    time_passes(&env, &run_id).await;
+    let (node, step) = waiting(&env, &run_id).await;
+    assert_eq!(node, "blocked");
+    answer(&env, &run_id, &step, "request_changes", Some("Fix the test.")).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "succeeded", "{r}");
+    assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "forget_changes"), "{r}");
+
+    // A rebase: a new head with the same own diff. It is reviewed again, not merged.
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-44b".into(), updated_at: at(4), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-44b"));
+    let next = newest_run(&env).await;
+    let r = run(&env, &next).await;
+    let approval = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approval").cloned().unwrap();
+    assert_eq!(approval["port"], "none", "{approval}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")));
+}
+
+/// An approval recorded only for the head approved: pushed between the answer and the record, nothing is recorded
+/// and the push's run asks about its head.
+#[tokio::test]
+async fn an_approval_is_not_recorded_for_a_head_pushed_since() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    the_files(&env, 45, "new");
+    let pr = outside(45, "al", "Fix the board", "patch-45", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    // GitHub has the new head already; PDT hasn't looked yet.
+    env.gh.set_pr("patch-45", Some(change(&RepoChangeRequest { head_sha: "sha-45b".into(), ..pr.clone() })));
+    the_files(&env, 45, "pushed");
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    let r = run(&env, &run_id).await;
+    assert_eq!(r["status"], "quiet", "{r}");
+    let approved = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approved").cloned().unwrap();
+    assert_eq!(approved["port"], "moved", "{approved}");
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-45b".into(), updated_at: at(4), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-45b"), "the pushed head is reviewed, not merged");
+}
