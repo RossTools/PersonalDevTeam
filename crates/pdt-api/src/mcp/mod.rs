@@ -270,6 +270,10 @@ fn unauthorized() -> Response {
 /// `POST /api/mcp`. A request whose session's tools changed since it listed them, from a client that takes a stream,
 /// is answered as one with `notifications/tools/list_changed` first (the client may not hold the `GET` stream open).
 pub(crate) async fn post(State(st): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    // An owner's session this instance runs (a remote project's): its owner answers (PDT-632).
+    if let Some(r) = crate::exec::relay_mcp(&st, &headers, &body).await {
+        return r;
+    }
     let session = match authorize(&st, &headers).await {
         Ok(s) => s,
         Err(r) => return r.into_response(),

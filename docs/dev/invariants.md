@@ -433,6 +433,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `remote_project`, so the PM (overview, briefing, tools), workflows, pickup, the Inbox and every project route never
   see it. Only `remote_projects.rs` and the link reach it (`list_remote_projects`, `get_remote_project`). Don't look
   projects up another way, and don't give a remote project tickets, sessions or settings of this instance's.
+- **A remote instance runs only what its owner asks, and keeps no sessions of its own for it.** The owner's sessions
+  it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
+  checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
+  is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
+  instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
+  through its route (session and process); an exit removes the route, and events of another process are dropped.
 - **An instance has a project either local or remote, never both**: joining refuses a project whose repository
   (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
 - **A project-link request is acted on only once signed by the link's other end for that project**

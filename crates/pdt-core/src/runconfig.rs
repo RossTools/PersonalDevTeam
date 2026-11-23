@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use ts_rs::TS;
 
 /// The top-level sections (and keys) this PDT understands. Any other is skipped (see [`parse`]).
-const SECTIONS: [&str; 9] = ["run", "test", "area", "forge", "ci", "push", "storage", "merge", "branch"];
+const SECTIONS: [&str; 10] = ["run", "test", "area", "forge", "ci", "push", "storage", "merge", "branch", "placement"];
 
 /// Unknown top-level keys are skipped by serde (no `deny_unknown_fields` here, unlike the entries).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -38,6 +38,9 @@ pub struct ConfigFile {
     /// `[branch]`: how new tickets' branches are named (PDT-594).
     #[serde(default)]
     pub branch: Option<BranchFile>,
+    /// `[[placement]]`: what instance a kind of ticket needs (remote projects).
+    #[serde(default)]
+    pub placement: Option<Vec<PlacementFile>>,
     /// Top-level sections this PDT does not know (e.g. written for a newer PDT), skipped rather than refused.
     #[serde(skip)]
     pub ignored: Vec<String>,
@@ -79,6 +82,27 @@ pub struct MergeFile {
 pub struct BranchFile {
     pub template: Option<String>,
     pub types: Option<BTreeMap<String, String>>,
+}
+
+/// A `[[placement]]` as written: `when = { labels = ["windows"] }`, `needs = { os = "windows", tools = ["godot"] }`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementFile {
+    pub when: Option<PlacementWhen>,
+    pub needs: Option<PlacementNeeds>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementWhen {
+    pub labels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementNeeds {
+    pub os: Option<String>,
+    pub tools: Option<Vec<String>>,
 }
 
 /// A `[[merge.regenerate]]` as written: `paths = ["Cargo.lock"]`, `run = "cargo update -w"`.
@@ -202,6 +226,8 @@ pub struct RunConfig {
     /// meanwhile, while runs keep working.
     pub branch: Option<crate::branch_name::BranchSettings>,
     pub branch_error: Option<String>,
+    /// `[[placement]]`: what instance each kind of ticket needs (the overrides' list wins when they give one).
+    pub placement: Vec<crate::placement::RepoRule>,
     /// Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
     pub ignored: Vec<String>,
 }
@@ -256,6 +282,8 @@ pub enum RunConfigError {
     BadPushRemote(String),
     #[error("{0}")]
     BadBuildOutput(String),
+    #[error("a [[placement]] needs `when.labels` and something in `needs`")]
+    BadPlacement,
     #[error("a [[merge.regenerate]] needs at least one path and a `run` command")]
     EmptyRegenerate,
     #[error("[[merge.regenerate]] has a path that is not a valid pattern ({path:?}): {message}")]
@@ -431,6 +459,8 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
         .as_ref()
         .and_then(|b| crate::branch_name::BranchNaming::new(b).err())
         .map(|e| format!("[branch] in {PROJECT_CONFIG_FILE}: {e}"));
+    let placement = over.placement.or(file.placement).unwrap_or_default();
+    let placement = placement.into_iter().map(finish_placement).collect::<Result<_, _>>()?;
     let mut ignored = file.ignored;
     ignored.extend(over.ignored.into_iter().filter(|s| !ignored.contains(s)).collect::<Vec<_>>());
     Ok(RunConfig {
@@ -445,8 +475,21 @@ pub fn merge(file: Option<ConfigFile>, overrides: Option<ConfigFile>) -> Result<
         regenerate,
         branch,
         branch_error,
+        placement,
         ignored,
     })
+}
+
+fn finish_placement(p: PlacementFile) -> Result<crate::placement::RepoRule, RunConfigError> {
+    let clean = |v: Vec<String>| v.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let labels: Vec<String> = clean(p.when.and_then(|w| w.labels).unwrap_or_default());
+    let needs = p.needs.unwrap_or_default();
+    let os = needs.os.map(|o| o.trim().to_string()).filter(|o| !o.is_empty());
+    let tools: Vec<String> = clean(needs.tools.unwrap_or_default());
+    if labels.is_empty() || (os.is_none() && tools.is_empty()) {
+        return Err(RunConfigError::BadPlacement);
+    }
+    Ok(crate::placement::RepoRule { labels: labels.iter().map(|l| l.to_lowercase()).collect(), os, tools })
 }
 
 fn finish_regenerate(r: RegenerateFile) -> Result<RegenerateDef, RunConfigError> {
@@ -820,6 +863,24 @@ command = "cargo run"
             assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadPushRemote(_))), "{bad}");
         }
         assert!(matches!(parse("[push]\nurl = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn placement_rules_are_read_and_checked() {
+        let text =
+            "[[placement]]\nwhen = { labels = [\"Windows\"] }\nneeds = { os = \"windows\", tools = [\"godot\"] }\n";
+        let f = parse(text, Source::File).unwrap();
+        assert!(f.ignored.is_empty(), "{:?}", f.ignored);
+        let c = merge(Some(f), None).unwrap();
+        let want = crate::placement::RepoRule {
+            labels: vec!["windows".into()],
+            os: Some("windows".into()),
+            tools: vec!["godot".into()],
+        };
+        assert_eq!(c.placement, [want]);
+        let bad = parse("[[placement]]\nwhen = { labels = [\"x\"] }\n", Source::File).unwrap();
+        assert_eq!(merge(Some(bad), None), Err(RunConfigError::BadPlacement));
+        assert!(matches!(parse("[[placement]]\nwhere = 1\n", Source::File), Err(RunConfigError::Parse { .. })));
     }
 
     #[test]

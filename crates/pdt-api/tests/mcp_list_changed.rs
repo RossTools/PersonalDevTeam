@@ -89,6 +89,7 @@ async fn setup() -> Env {
             permission_mode: None,
             persona: Some(SessionPersona { id: persona_id.clone(), name: "Poker".into(), version: 1, step_id: None }),
             background: vec![],
+            instance: None,
         })
         .await
         .unwrap();

@@ -26,6 +26,10 @@ pub struct RemoteProjectView {
     pub state: LinkState,
     /// The owner's board, for "Open on <owner>".
     pub open_url: String,
+    /// Where this instance keeps the project's checkout and worktrees (the link's setting, else the default).
+    pub checkout_path: String,
+    /// The owner's sessions this instance runs now (read-only here).
+    pub running: Vec<crate::exec::RunningView>,
 }
 
 /// Add project → Remote project of another PDT.
@@ -43,24 +47,36 @@ pub struct JoinRemoteProject {
     pub address: Option<String>,
 }
 
-/// Pause or resume a remote project here.
+/// Pause or resume a remote project here, or move where its checkout goes.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RemoteProjectPatch {
-    pub paused: bool,
+    #[serde(default)]
+    #[ts(optional)]
+    pub paused: Option<bool>,
+    /// The checkout's folder; empty: the default one. Used from the next worktree made (a checkout already there
+    /// stays where it is).
+    #[serde(default)]
+    #[ts(optional)]
+    pub checkout_path: Option<String>,
 }
 
-fn view_of(project: Project, link: OwnerLink, now: i64) -> RemoteProjectView {
+async fn view_of(st: &AppState, project: Project, link: OwnerLink, now: i64) -> RemoteProjectView {
     let state = pdt_core::link::state(link.last_contact_at, true, link.paused, now);
     let open_url = format!("{}/tickets?view=board", link.owner_url);
-    RemoteProjectView { project, link, state, open_url }
+    let checkout_path = crate::exec::checkout_dir(st, &link).to_string_lossy().into_owned();
+    let running = crate::exec::running_view(st, &link.link_id).await;
+    RemoteProjectView { project, link, state, open_url, checkout_path, running }
 }
 
 async fn list(State(st): State<AppState>) -> Result<Json<Vec<RemoteProjectView>>, ApiError> {
     let now = now_ms();
-    let all = st.store.list_remote_projects().await?;
-    Ok(Json(all.into_iter().map(|(p, l)| view_of(p, l, now)).collect()))
+    let mut out = vec![];
+    for (p, l) in st.store.list_remote_projects().await? {
+        out.push(view_of(&st, p, l, now).await);
+    }
+    Ok(Json(out))
 }
 
 async fn one(st: &AppState, id: &str) -> Result<(Project, OwnerLink), ApiError> {
@@ -162,6 +178,7 @@ async fn join(
         owner_version: reply.owner.version.clone(),
         owner_public_key: reply.public_key.clone(),
         repo_url: reply.project.repo_url.clone(),
+        checkout_path: None,
         paused: false,
         last_contact_at: Some(now_ms()),
         created_at: now_ms(),
@@ -231,7 +248,7 @@ async fn join(
         return Err(undo(e.into()).await);
     }
     tracing::info!(project = %project.name, owner = %link.owner_name, "joined a remote project");
-    Ok((StatusCode::CREATED, Json(view_of(project, link, now_ms()))))
+    Ok((StatusCode::CREATED, Json(view_of(&st, project, link, now_ms()).await)))
 }
 
 async fn patch(
@@ -240,15 +257,27 @@ async fn patch(
     ApiJson(body): ApiJson<RemoteProjectPatch>,
 ) -> Result<Json<RemoteProjectView>, ApiError> {
     one(&st, &id).await?;
-    st.store.set_remote_project_paused(&id, body.paused).await?;
+    if let Some(paused) = body.paused {
+        st.store.set_remote_project_paused(&id, paused).await?;
+    }
+    if let Some(path) = body.checkout_path {
+        let path = path.trim();
+        if !path.is_empty()
+            && !std::path::Path::new(&crate::host::expand_home(path, st.home_dir.get().as_deref())).is_absolute()
+        {
+            return Err(ApiError::invalid("the checkout's folder must be a full path"));
+        }
+        st.store.set_remote_project_checkout(&id, Some(path).filter(|p| !p.is_empty())).await?;
+    }
     let (p, l) = one(&st, &id).await?;
-    Ok(Json(view_of(p, l, now_ms())))
+    Ok(Json(view_of(&st, p, l, now_ms()).await))
 }
 
 /// Leaves a remote project: the owner is told, and the project and this end's key go.
 async fn remove(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<StatusCode, ApiError> {
     let (p, l) = one(&st, &id).await?;
     tell_owner_left(&st, &l, None).await;
+    crate::exec::close_link(&st, &l.link_id).await;
     st.store.delete_project(&p.id).await?;
     link::delete_key(&st, &l.link_id).await;
     tracing::info!(project = %p.name, owner = %l.owner_name, "left a remote project");

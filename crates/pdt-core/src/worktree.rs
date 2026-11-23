@@ -19,6 +19,10 @@ pub struct Worktree {
     /// The folder is gone (removed outside PDT). Filled in by the API, never stored.
     #[serde(default)]
     pub missing: bool,
+    /// The remote instance it is on (a remote attempt's, on the project's owner; `path` is on that instance); None:
+    /// this instance.
+    #[serde(default)]
+    pub instance: Option<crate::placement::InstanceRef>,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]

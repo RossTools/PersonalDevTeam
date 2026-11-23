@@ -61,6 +61,8 @@ pub struct LinkRuntime {
     nonces: Mutex<HashMap<String, i64>>,
     /// The protocol this instance speaks: [`link::PROTOCOL`] (a test sets another to stand for another version).
     protocol: AtomicU32,
+    /// Every call to the other end fails as unreachable (tests: the link dropped).
+    offline: std::sync::atomic::AtomicBool,
     client: reqwest::Client,
 }
 
@@ -77,6 +79,7 @@ impl Default for LinkRuntime {
             failures: AtomicU32::new(0),
             nonces: Default::default(),
             protocol: AtomicU32::new(link::PROTOCOL),
+            offline: Default::default(),
             client,
         }
     }
@@ -90,6 +93,12 @@ impl LinkRuntime {
     /// Makes this instance speak another protocol (tests: an instance of another version).
     pub fn set_protocol(&self, p: u32) {
         self.protocol.store(p, Ordering::SeqCst);
+    }
+
+    /// Drops (true) or restores the link from this end: while dropped, every call to another instance fails as
+    /// unreachable (tests).
+    pub fn set_offline(&self, offline: bool) {
+        self.offline.store(offline, Ordering::SeqCst);
     }
 
     /// A new code for `project_id`, replacing the one it had.
@@ -178,7 +187,7 @@ pub(crate) async fn save_key(st: &AppState, link_id: &str, key: &SigningKey) -> 
         .map_err(ApiError::keychain)
 }
 
-async fn load_key(st: &AppState, link_id: &str) -> Result<SigningKey, ApiError> {
+pub(crate) async fn load_key(st: &AppState, link_id: &str) -> Result<SigningKey, ApiError> {
     let (secrets, account) = (st.secrets.clone(), key_account(link_id));
     let raw = tokio::task::spawn_blocking(move || secrets.get(&account))
         .await
@@ -339,9 +348,29 @@ pub(crate) async fn post<T: DeserializeOwned>(
     signed: Option<(&SigningKey, &str, &str)>,
     body: &impl Serialize,
 ) -> Result<T, PeerError> {
+    post_within(st, CALL_TIMEOUT, base_url, path, signed, body).await
+}
+
+/// [`post`], for a call that may take up to `timeout` (an agent starting, a fetch, a tool call waiting on the user).
+pub(crate) async fn post_within<T: DeserializeOwned>(
+    st: &AppState,
+    timeout: Duration,
+    base_url: &str,
+    path: &str,
+    signed: Option<(&SigningKey, &str, &str)>,
+    body: &impl Serialize,
+) -> Result<T, PeerError> {
+    if st.link.offline.load(Ordering::SeqCst) {
+        return Err(PeerError::Unreachable("the link is down".into()));
+    }
     let bytes = serde_json::to_vec(body).expect("a link body serializes");
-    let mut req =
-        st.link.client.post(format!("{base_url}{path}")).header("content-type", "application/json").body(bytes.clone());
+    let mut req = st
+        .link
+        .client
+        .post(format!("{base_url}{path}"))
+        .timeout(timeout)
+        .header("content-type", "application/json")
+        .body(bytes.clone());
     if let Some((key, link_id, project)) = signed {
         for (k, v) in sign_headers(key, path, link_id, project, &bytes, st.link.protocol(), now_ms()) {
             req = req.header(k, v);
@@ -542,7 +571,7 @@ struct HeartbeatBody {
 
 /// A remote project's request from its owner, checked: the link it names is one of this instance's remote
 /// projects, for the project it names, and signed with that owner's key.
-async fn from_owner(
+pub(crate) async fn from_owner(
     st: &AppState,
     method: &Method,
     uri: &OriginalUri,
@@ -558,6 +587,26 @@ async fn from_owner(
         .ok_or_else(|| refused("this instance isn't paired on that link"))?;
     parts.check(st, method, uri.path(), body, &link.owner_project_id, &link.owner_public_key)?;
     Ok(link)
+}
+
+/// A report from one of this instance's remote instances, checked: the link it names is a joined instance's, and it
+/// is signed with that instance's key.
+pub(crate) async fn from_remote(
+    st: &AppState,
+    method: &Method,
+    uri: &OriginalUri,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<pdt_core::link::RemoteInstance, ApiError> {
+    crate::host_guard::optional_json::<Value>(headers, body)?;
+    let parts = SignedParts::read(st, headers).await?;
+    let instance = st
+        .store
+        .get_remote_instance(&parts.link_id)
+        .await?
+        .ok_or_else(|| refused("this instance has no remote instance on that link"))?;
+    parts.check(st, method, uri.path(), body, &instance.project_id, &instance.public_key)?;
+    Ok(instance)
 }
 
 /// The remote instance answers its owner's heartbeat with itself and its facts.
@@ -584,6 +633,7 @@ async fn revoke_route(
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
     let link = from_owner(&st, &method, &uri, &headers, &body).await?;
+    crate::exec::close_link(&st, &link.link_id).await;
     st.store.delete_project(&link.project_id).await?;
     delete_key(&st, &link.link_id).await;
     tracing::info!(owner = %link.owner_name, link = %link.link_id, "the owner removed this instance from a project");
@@ -598,14 +648,7 @@ async fn leave_route(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    crate::host_guard::optional_json::<Value>(&headers, &body)?;
-    let parts = SignedParts::read(&st, &headers).await?;
-    let instance = st
-        .store
-        .get_remote_instance(&parts.link_id)
-        .await?
-        .ok_or_else(|| refused("this instance has no remote instance on that link"))?;
-    parts.check(&st, &method, uri.path(), &body, &instance.project_id, &instance.public_key)?;
+    let instance = from_remote(&st, &method, &uri, &headers, &body).await?;
     st.store.delete_remote_instance(&instance.link_id).await?;
     delete_key(&st, &instance.link_id).await;
     tracing::info!(instance = %instance.name, link = %instance.link_id, "a remote instance left a project");
@@ -747,6 +790,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/heartbeat", post(heartbeat_route))
         .route("/link/revoke", post(revoke_route))
         .route("/link/leave", post(leave_route))
+        .merge(crate::exec::router())
 }
 
 #[cfg(test)]

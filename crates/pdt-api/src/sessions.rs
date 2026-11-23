@@ -98,7 +98,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
             return Err(ApiError::bad_request(codes::AGENT_OFF, why));
         }
     }
-    let (worktree_id, mut cwd, place) = match &valid.worktree_id {
+    let (worktree_id, mut cwd, place, instance) = match &valid.worktree_id {
         Some(wid) => {
             let wt = st
                 .store
@@ -106,10 +106,19 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
                 .await?
                 .filter(|w| w.project_id == project.id)
                 .ok_or_else(|| ApiError::invalid("worktree does not belong to this project"))?;
-            (Some(wt.id), wt.path, wt.branch)
+            (Some(wt.id), wt.path, wt.branch, wt.instance)
         }
-        None => (None, project.repo_path.clone(), project.name.clone()),
+        None => (None, project.repo_path.clone(), project.name.clone(), None),
     };
+    // A remote worktree's sessions run on its instance (PDT-632): conversations only, for now.
+    if let Some(i) = &instance
+        && valid.mode != SessionMode::Conversation
+    {
+        return Err(ApiError::conflict(
+            codes::PLACEMENT,
+            format!("this worktree is on {}, where agents run as conversations for now", i.name),
+        ));
+    }
     if let Some(dir) = &req.cwd {
         cwd = dir.clone();
     }
@@ -145,6 +154,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         permission_mode: valid.permission_mode,
         persona: req.persona,
         background: vec![],
+        instance,
     };
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;

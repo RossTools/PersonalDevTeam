@@ -9,7 +9,7 @@ import { PlacePicker } from './PlacePicker';
 const project = (id: string, name: string, key: string): Project =>
   ({ id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, forge: null, kind: 'repo' });
 const wt = (id: string, projectId: string, branch: string, missing = false): Worktree =>
-  ({ id, projectId, branch, path: `/r/${projectId}/.worktrees/${branch}`, baseCommit: 'abc', createdAt: 0, missing });
+  ({ id, projectId, branch, path: `/r/${projectId}/.worktrees/${branch}`, baseCommit: 'abc', createdAt: 0, missing, instance: null });
 
 const projects = [project('p1', 'PersonalDevTeam', 'PDT'), project('p2', 'Demo', 'DEMO')];
 

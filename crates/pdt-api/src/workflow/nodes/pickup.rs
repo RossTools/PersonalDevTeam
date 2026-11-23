@@ -576,6 +576,7 @@ impl NodeKind for Start {
                     no_session: Some(no_session),
                     // A parent (candidates kept parents) starts its next part.
                     next: Some(true),
+                    runs_on: None,
                     cols: None,
                     rows: None,
                 };

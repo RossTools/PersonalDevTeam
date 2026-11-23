@@ -165,6 +165,20 @@ pub(crate) async fn start_ticket(
         Some(sid) => Some(startable_chat(&st, sid, &project).await?),
         None => None,
     };
+    // Where it runs (PDT-632): the Runs on choice, the project's label rules and the repository's needs; None here.
+    let placed = match (&chat, &personal) {
+        (None, None) => crate::placement::place(&st, &project, &ticket.summary.labels, v.runs_on.as_deref()).await?,
+        _ => None,
+    };
+    if let Some(i) = &placed
+        && v.session_mode == SessionMode::Terminal
+        && !v.no_session
+    {
+        return Err(ApiError::conflict(
+            codes::PLACEMENT,
+            format!("{key} runs on {}, where agents run as conversations for now: start it as a conversation", i.name),
+        ));
+    }
     // Whether PDT named the branch from the project's template (PDT-594): Won't do may delete such a branch from the
     // remote, whatever its name. Only a name `start_branch` chose (and checked was free) is PDT's.
     let named = chat.is_none() && personal.is_none() && v.branch.is_none();
@@ -177,9 +191,10 @@ pub(crate) async fn start_ticket(
                 None => crate::branch_names::start_branch(&st, &project, &ticket, &ticket.default_branch).await?,
             };
             let existing = st.store.list_worktrees(&project.id).await?.into_iter().find(|w| w.branch == branch);
-            let wt = match existing {
-                Some(w) => w,
-                None => {
+            let wt = match (existing, &placed) {
+                (Some(w), _) => w,
+                (None, Some(i)) => crate::exec::make_worktree(&st, &project, i, &branch, &base, true).await?,
+                (None, None) => {
                     let from = match fetched {
                         Some((b, from)) if b == base => from,
                         _ => newest_base(&project.repo_path, &base).await,
@@ -638,6 +653,31 @@ pub(crate) async fn check_merge(State(st): State<AppState>, Path(id): Path<Strin
     Ok(Json(crate::overlap::load_ticket(&st, &id).await?))
 }
 
+/// Merge detection for an attempt on a remote instance (PDT-632): its branch is there, so only its pull request,
+/// merged at the branch's head, says it merged. None for an attempt here.
+async fn remote_merged(st: &AppState, info: &AttemptInfo) -> Option<bool> {
+    let wt = st.store.get_worktree(info.attempt.worktree_id.as_deref()?).await.ok().flatten()?;
+    wt.instance.as_ref()?;
+    let i = match crate::exec::worktree_instance(st, &wt).await {
+        Ok(Some(i)) => i,
+        _ => return Some(false),
+    };
+    let head = match crate::exec::branch_head(st, &i, &info.attempt.branch).await {
+        Ok(h) => h.or(info.attempt.last_head.clone()),
+        Err(e) => {
+            tracing::debug!(attempt = %info.attempt.id, error = %e, "could not read a remote branch's head");
+            info.attempt.last_head.clone()
+        }
+    };
+    let Some(head) = head else { return Some(false) };
+    if info.attempt.last_head.as_deref() != Some(head.as_str())
+        && let Err(e) = st.store.set_attempt_head(&info.attempt.id, &head, true).await
+    {
+        tracing::warn!(attempt = %info.attempt.id, error = %e, "could not record the branch head");
+    }
+    Some(crate::github::watched_pr(st, &info.attempt.id).is_some_and(|p| p.merged_at(&head)))
+}
+
 /// Merge detection for one active attempt now, without fetching (the local forge merged it here, PDT-178): ends it
 /// as `merged` when its branch is. Whether it ended.
 pub(crate) async fn end_if_merged(st: &AppState, info: &AttemptInfo) -> bool {
@@ -693,6 +733,9 @@ pub(crate) async fn end_for_close(
 /// older head than the branch's logs `attempt.late_commits` (PDT-151): the commits pushed after the merge keep the
 /// attempt open, and the user decides what becomes of them.
 async fn is_merged(st: &AppState, info: &AttemptInfo, fetch: bool, news: bool) -> bool {
+    if let Some(merged) = remote_merged(st, info).await {
+        return merged;
+    }
     let repo = PathBuf::from(&info.repo_path);
     let (branch, base) = (info.attempt.branch.clone(), info.attempt.base_branch.clone());
     let (base_commit, last_head) = (info.base_commit.clone(), info.attempt.last_head.clone());

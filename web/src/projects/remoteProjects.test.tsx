@@ -33,12 +33,13 @@ const view = (o: Partial<{ instances: RemoteInstanceView[]; pairing: { code: str
 describe('Remote instances (the owner)', () => {
   it('lists each instance with its state, version, OS, agents and disk, and removes one after asking', async () => {
     const calls = stubApi({
-      'GET /api/projects/p/remote-instances': view({ instances: [winBox, { ...winBox, linkId: 'l2', name: 'old-box', state: 'incompatible', problem: 'update old-box to v0.7.0 to link it with studio' }] }),
+      'GET /api/projects/p/remote-instances': view({ instances: [winBox, { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'old-box', state: 'incompatible', problem: 'update old-box to v0.7.0 to link it with studio' }] }),
       'DELETE /api/projects/p/remote-instances/l1': undefined,
+      'GET /api/projects/p/placement': { rules: [] },
     });
     renderWithQuery(<RemoteInstances project={project} />);
     const section = await screen.findByRole('region', { name: 'Remote instances' });
-    const row = (await within(section).findByText('win-box')).closest('li')!;
+    const row = (await within(section).findAllByText('win-box')).map((e) => e.closest('li')).find((li) => li?.textContent?.includes('connected'))!;
     expect(within(row).getByText('connected')).toBeInTheDocument();
     expect(within(row).getByText('v0.7.0')).toBeInTheDocument();
     expect(row).toHaveTextContent('Windows · 8 CPUs');
@@ -51,6 +52,20 @@ describe('Remote instances (the owner)', () => {
     await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p/remote-instances/l1', body: undefined }));
+  });
+
+  it('maps a label to an instance in Placement', async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/remote-instances': view({ instances: [winBox] }),
+      'GET /api/projects/p/placement': { rules: [] },
+      'PUT /api/projects/p/placement': { rules: [{ label: 'windows', instance: winBox.instanceId }] },
+    });
+    renderWithQuery(<RemoteInstances project={project} />);
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Label' }), 'windows');
+    await userEvent.click(screen.getByRole('button', { name: /Add rule/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PUT', path: '/api/projects/p/placement', body: { rules: [{ label: 'windows', instance: winBox.instanceId }] } }));
+    expect(await screen.findByText('→ win-box')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove the rule for windows' })).toBeInTheDocument();
   });
 
   it('shows a pairing code with this instance\'s address on Add', async () => {
@@ -72,10 +87,12 @@ const remote: RemoteProjectView = {
   project: { ...project, id: 'rp', kind: 'remote', repoPath: 'remote:l1' },
   link: {
     projectId: 'rp', linkId: 'l1', ownerProjectId: 'p', ownerInstanceId: 'o', ownerName: 'studio', ownerUrl: 'https://studio.example.ts.net',
-    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, paused: false, lastContactAt: Date.now(), createdAt: 1,
+    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, lastContactAt: Date.now(), createdAt: 1,
   },
   state: 'connected',
   openUrl: 'https://studio.example.ts.net/tickets?view=board',
+  checkoutPath: '/data/checkouts/l1',
+  running: [],
 };
 
 describe('Remote projects (the remote instance)', () => {
@@ -90,11 +107,31 @@ describe('Remote projects (the remote instance)', () => {
     const row = (await screen.findByText('Valley')).closest('li')!;
     expect(row).toHaveTextContent('· remote project of studio');
     expect(within(row).getByText('connected')).toBeInTheDocument();
-    expect(row).toHaveTextContent('Nothing runs here yet.');
+    expect(row).toHaveTextContent('Nothing runs here for studio now.');
     await userEvent.click(within(row).getByRole('button', { name: 'Open on studio' }));
     expect(open).toHaveBeenCalledWith('https://studio.example.ts.net/tickets?view=board', '_blank', 'noopener,noreferrer');
     await userEvent.click(within(row).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { paused: true } }));
+  });
+
+  it('lists what runs here for the owner, read-only, and moves the checkout', async () => {
+    const running = { ...remote, running: [{ sessionId: 's', title: 'Coder · VAL-4', agent: 'claude', ticketKey: 'VAL-4', startedAt: Date.now(), live: true }] };
+    const calls = stubApi({
+      'GET /api/remote-projects': [running],
+      'PATCH /api/remote-projects/rp': { ...running, checkoutPath: '/work/valley' },
+      'GET /api/host/settings': { settings: {}, remote: { active: true } },
+    });
+    renderWithQuery(<RemoteProjectsPage />);
+    const list = await screen.findByRole('list', { name: 'Running for studio' });
+    expect(list).toHaveTextContent('VAL-4');
+    expect(list).toHaveTextContent('Coder · VAL-4');
+    expect(within(list).getByText('running')).toBeInTheDocument();
+    const folder = screen.getByRole('textbox', { name: 'Checkout folder of Valley' });
+    expect(folder).toHaveValue('/data/checkouts/l1');
+    await userEvent.clear(folder);
+    await userEvent.type(folder, '/work/valley');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { checkoutPath: '/work/valley' } }));
   });
 
   it('joins with the owner\'s address and code from Add project, and shows why it was refused', async () => {

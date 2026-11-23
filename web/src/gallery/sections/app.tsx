@@ -48,7 +48,7 @@ const projects: Project[] = [
   { id: 'p2', name: 'Demo', key: 'DEMO', repoPath: '/work/demo', baseBranch: 'trunk', createdAt: 0, forge: null, kind: 'repo' },
 ];
 const wt = (id: string, projectId: string, branch: string): Worktree =>
-  ({ id, projectId, branch, path: `/work/${branch}`, baseCommit: 'abc', createdAt: 0, missing: false });
+  ({ id, projectId, branch, path: `/work/${branch}`, baseCommit: 'abc', createdAt: 0, missing: false, instance: null });
 
 /** A query cache seeded with static worktrees, so PlacePicker needs no daemon. */
 const seeded = (() => {
