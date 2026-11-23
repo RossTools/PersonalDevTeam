@@ -494,7 +494,7 @@ fn now_ms() -> i64 {
 /// Writes a Codex rollout file for a conversation that began `offset_ms` after `base`, as Codex does after a turn.
 fn rollout(codex_home: &Path, id: &str, cwd: &Path, base: i64, offset_ms: i64) {
     let began = jiff::Timestamp::from_millisecond(base + offset_ms).unwrap();
-    let day = began.to_zoned(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
+    let day = began.to_zoned_datetime(jiff::tz::TimeZone::UTC).strftime("%Y/%m/%d").to_string();
     let dir = codex_home.join("sessions").join(day);
     std::fs::create_dir_all(&dir).unwrap();
     let began = began.to_string();

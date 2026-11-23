@@ -252,7 +252,7 @@ async fn a_refused_forge_login_fires_once() {
 async fn a_todo_coming_due_fires_once() {
     let env = setup(vec![]).await;
     // A week either side of today, so a run across midnight sees the same: one overdue, one not yet due.
-    let today = jiff::Zoned::now().date();
+    let today = jiff::ZonedDateTime::now().date();
     let yesterday = today.checked_sub(jiff::Span::new().days(7)).unwrap().to_string();
     let tomorrow = today.checked_add(jiff::Span::new().days(7)).unwrap().to_string();
     let add = |body: Value| async {
