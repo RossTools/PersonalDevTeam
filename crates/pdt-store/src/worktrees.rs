@@ -1,20 +1,25 @@
 use crate::{Store, StoreError};
 use pdt_core::worktree::Worktree;
 
-type WorktreeRow = (String, String, String, String, String, i64, Option<String>, Option<String>);
+type WorktreeRow = (String, String, String, String, String, i64, Option<String>, Option<String>, Option<i64>);
 
 fn to_worktree(
-    (id, project_id, branch, path, base_commit, created_at, instance_id, instance_name): WorktreeRow,
+    (id, project_id, branch, path, base_commit, created_at, instance_id, instance_name, last_seen_at): WorktreeRow,
 ) -> Worktree {
-    let instance = instance_id
-        .map(|id| pdt_core::placement::InstanceRef { name: instance_name.unwrap_or_else(|| id.clone()), id });
+    let instance = instance_id.map(|id| pdt_core::placement::InstanceRef {
+        name: instance_name.unwrap_or_else(|| id.clone()),
+        id,
+        last_seen_at,
+    });
     Worktree { id, project_id, branch, path, base_commit, created_at, missing: false, instance }
 }
 
 /// For `FROM worktrees` (unaliased), with the name of the instance a remote worktree is on.
 const COLUMNS: &str = "id, project_id, branch, path, base_commit, created_at, instance_id, \
                        (SELECT ri.name FROM remote_instances ri WHERE ri.project_id = worktrees.project_id \
-                       AND ri.instance_id = worktrees.instance_id) AS instance_name";
+                       AND ri.instance_id = worktrees.instance_id) AS instance_name, \
+                       (SELECT ri.last_seen_at FROM remote_instances ri WHERE ri.project_id = worktrees.project_id \
+                       AND ri.instance_id = worktrees.instance_id) AS instance_seen_at";
 
 /// A worktree's ticket: the one of the attempt working in it (its active one, else the newest).
 #[derive(Debug, Clone, PartialEq)]

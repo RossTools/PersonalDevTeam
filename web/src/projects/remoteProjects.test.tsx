@@ -19,6 +19,7 @@ const project: Project = { id: 'p', name: 'Valley', repoPath: '/r', baseBranch: 
 const winBox: RemoteInstanceView = {
   linkId: 'l1', projectId: 'p', instanceId: 'i1', name: 'win-box', url: 'https://win-box.example.ts.net', publicKey: 'k',
   version: '0.7.0', protocol: 1, paused: false, lastSeenAt: Date.now() - 1000, lastError: null, createdAt: 1, state: 'connected', problem: null,
+  cap: null, remoteCap: null, poolCap: 1,
   facts: {
     os: 'windows', arch: 'x86_64', cpus: 8, diskFreeBytes: 50 * 1024 ** 3,
     agents: [{ agent: 'claude', installed: true, loggedIn: true }, { agent: 'codex', installed: true, loggedIn: false }, { agent: 'devin', installed: false, loggedIn: false }],
@@ -68,6 +69,21 @@ describe('Remote instances (the owner)', () => {
     expect(screen.getByRole('button', { name: 'Remove the rule for windows' })).toBeInTheDocument();
   });
 
+  it('sets how many tickets an instance takes at once, beside its own cap', async () => {
+    const capped = { ...winBox, cap: 3, remoteCap: 2, poolCap: 2 };
+    const calls = stubApi({
+      'GET /api/projects/p/remote-instances': view({ instances: [{ ...winBox, remoteCap: 2, poolCap: 2 }] }),
+      'GET /api/projects/p/placement': { rules: [] },
+      'PATCH /api/projects/p/remote-instances/l1': view({ instances: [capped] }),
+    });
+    renderWithQuery(<RemoteInstances project={project} />);
+    const cap = await screen.findByRole('textbox', { name: 'Cap for win-box' });
+    expect(cap.closest('span')?.parentElement).toHaveTextContent("(win-box's own cap: 2). Now 2.");
+    await userEvent.type(cap, '3{Enter}');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/projects/p/remote-instances/l1', body: { cap: 3 } }));
+    expect(await screen.findByDisplayValue('3')).toBeInTheDocument();
+  });
+
   it('shows a pairing code with this instance\'s address on Add', async () => {
     let shown = view();
     const calls = stubApi({
@@ -87,7 +103,7 @@ const remote: RemoteProjectView = {
   project: { ...project, id: 'rp', kind: 'remote', repoPath: 'remote:l1' },
   link: {
     projectId: 'rp', linkId: 'l1', ownerProjectId: 'p', ownerInstanceId: 'o', ownerName: 'studio', ownerUrl: 'https://studio.example.ts.net',
-    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, lastContactAt: Date.now(), createdAt: 1,
+    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, cap: null, lastContactAt: Date.now(), createdAt: 1,
   },
   state: 'connected',
   openUrl: 'https://studio.example.ts.net/tickets?view=board',
@@ -132,6 +148,17 @@ describe('Remote projects (the remote instance)', () => {
     await userEvent.type(folder, '/work/valley');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { checkoutPath: '/work/valley' } }));
+  });
+
+  it('sets this instance\'s own cap for the project; blank leaves it to the owner', async () => {
+    const calls = stubApi({
+      'GET /api/remote-projects': [remote],
+      'PATCH /api/remote-projects/rp': { ...remote, link: { ...remote.link, cap: 2 } },
+      'GET /api/host/settings': { settings: {}, remote: { active: true } },
+    });
+    renderWithQuery(<RemoteProjectsPage />);
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Cap for Valley' }), '2{Enter}');
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { cap: 2 } }));
   });
 
   it('joins with the owner\'s address and code from Add project, and shows why it was refused', async () => {

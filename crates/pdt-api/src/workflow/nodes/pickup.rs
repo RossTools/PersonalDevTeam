@@ -9,7 +9,7 @@ use crate::start::Starter;
 use crate::workflow::catalog::{BoxFut, Category, KindSpec, NodeKind, Outcome, StepCx, parse, parses, spec};
 use pdt_core::pickup::{
     ActiveTicket, CandidateFilter, ChooseRules, DEFAULT_LIMIT, OverlapOverride, OverlapPolicy, OverlapRule,
-    PickupOrder, PickupProject, PickupTicket, choose,
+    PassedReason, PickupOrder, PickupProject, PickupTicket, Place, choose,
 };
 use pdt_core::policy::AutoStartOrder;
 use pdt_core::start::{StartMode, StartTicket};
@@ -120,8 +120,9 @@ impl NodeKind for Candidates {
             "Find tickets to start",
             "Lists the tickets of a project (or of every project the workflow covers) that could start, in order: no \
              active attempt, not waiting, in the given stages, filtered by labels, priority and areas. Each project \
-             comes with its auto-start cap, start delay, overlap rule (its hot areas) and tickets in flight (their \
-             labels and areas). Fields left \
+             comes with its auto-start cap, start delay, overlap rule (its hot areas), tickets in flight (their \
+             labels, areas and instance) and its remote instances' caps; each ticket with where it would run (`place`: \
+             here, a remote instance, waiting for one that is offline, or none that can run it). Fields left \
              out take the project's auto-start settings; a project with no stages is left out.",
             &[("out", "Then")],
             false,
@@ -162,12 +163,24 @@ impl NodeKind for Candidates {
                 for t in page.items.iter_mut() {
                     idx.apply_summary(t);
                 }
-                let tickets = filter.apply(&page.items).into_iter().map(PickupTicket::from).collect();
+                let mut tickets: Vec<PickupTicket> =
+                    filter.apply(&page.items).into_iter().map(PickupTicket::from).collect();
+                // Where each would run (PDT-636): the owner, or a remote instance's pool of its own.
+                let mut instances = vec![];
+                if p.has_repo() {
+                    let placer =
+                        crate::placement::Placer::load(cx.st, &p).await.map_err(|e| e.message().to_string())?;
+                    for t in tickets.iter_mut() {
+                        t.place = placer.pickup_place(&t.labels);
+                    }
+                    instances = placer.pools();
+                }
                 out.push(PickupProject {
                     project_id: p.id.clone(),
                     key: p.key.clone(),
                     name: p.name.clone(),
                     cap: policy.auto_start_cap(),
+                    instances,
                     start_delay_seconds: policy.start_delay_seconds,
                     overlap: OverlapPolicy::from_policy(&policy),
                     active: in_flight(cx.st, &p.id).await?,
@@ -207,7 +220,7 @@ async fn in_flight(st: &AppState, project_id: &str) -> Result<Vec<ActiveTicket>,
         }
         let t = st.store.get_ticket_summary(&a.ticket_id).await.map_err(crate::workflow::err)?;
         let (labels, areas) = t.map(|t| (t.labels, t.areas)).unwrap_or_default();
-        out.push(ActiveTicket { id: a.ticket_id, key: a.ticket_key, labels, areas });
+        out.push(ActiveTicket { id: a.ticket_id, key: a.ticket_key, labels, areas, instance: a.instance_id });
     }
     Ok(out)
 }
@@ -219,7 +232,8 @@ pub struct ChooseConfig {
     /// The candidates step's output (`{{steps.candidates}}`).
     #[ts(type = "unknown")]
     pub candidates: Value,
-    /// The most tickets in flight per project. Left out: the project's auto-start cap (its running cap, else 1).
+    /// The most tickets in flight per project on this instance. Left out: the project's auto-start cap (its running
+    /// cap, else 1). Each remote instance has its own cap (Project Settings → Remote instances).
     #[ts(optional)]
     pub cap: Option<u32>,
     /// The most tickets in flight in an area (`{"web": 1}`).
@@ -275,8 +289,9 @@ impl NodeKind for Choose {
             1,
             Category::Condition,
             "Choose tickets to start",
-            "From the candidates, the tickets that may start now: under the project's cap (and any area or label \
-             caps), unchanged for the start delay, not a ticket that failed to start and hasn't changed since, and \
+            "From the candidates, the tickets that may start now: under the project's cap, or the cap of the remote \
+             instance they run on (and any area or label caps), not waiting for an instance that is offline, \
+             unchanged for the start delay, not a ticket that failed to start and hasn't changed since, and \
              clear of work in flight under the overlap rule (by default, nothing in a hot area while another ticket \
              in it is in flight; the Board shows why a ticket waits). \
              `chosen`: `ticket` (the first) and `tickets` (every one, each project's in order: Start takes the first \
@@ -326,16 +341,20 @@ impl NodeKind for Choose {
     }
 }
 
-/// Keeps why choose passed over each of `projects`' candidates for overlap, for the Board, in place of what the
-/// last choose said of those projects.
+/// Keeps why choose passed over each of `projects`' candidates for overlap or where it runs (an instance offline, none
+/// that can run it), for the Board, in place of what the last choose said of those projects.
 fn record_holds(st: &AppState, projects: &[PickupProject], passed: &[pdt_core::pickup::Passed], now: i64) {
     let mut holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
     holds.retain(|_, h| !projects.iter().any(|p| p.project_id == h.project_id));
     for p in projects {
         for t in &p.tickets {
-            if let Some(x) = passed.iter().find(|x| x.id == t.id && x.reason.is_overlap()) {
-                let hold =
-                    crate::scheduler::PickupHold { project_id: p.project_id.clone(), why: x.why.clone(), at: now };
+            if let Some(x) = passed.iter().find(|x| x.id == t.id && x.reason.shows_on_board()) {
+                let hold = crate::scheduler::PickupHold {
+                    project_id: p.project_id.clone(),
+                    why: x.why.clone(),
+                    at: now,
+                    waits_for: t.place.waits_for().map(String::from),
+                };
                 holds.insert(t.id.clone(), hold);
             }
         }
@@ -375,7 +394,7 @@ pub struct StartConfig {
     pub session_mode: Option<String>,
     /// Who takes it over: `auto`, `session` or `workflow`.
     pub hand_to: HandTo,
-    /// How many tickets of one project it starts at most (default 1).
+    /// How many tickets of one project it starts at most (default 1), on this instance and on each remote one.
     #[ts(optional)]
     pub per_project: Option<u32>,
 }
@@ -438,6 +457,12 @@ impl StartConfig {
 #[serde(rename_all = "camelCase")]
 struct Caps {
     cap: u32,
+    /// Its slot pool: the remote instance (its id), else the owner.
+    #[serde(default)]
+    instance: Option<String>,
+    /// Where it runs, for the pool's name.
+    #[serde(default)]
+    place: Place,
     #[serde(default)]
     area_caps: BTreeMap<String, u32>,
     #[serde(default)]
@@ -467,7 +492,8 @@ impl NodeKind for Start {
             "Starts a ticket as auto-start does (a branch, a worktree and an attempt), with the host's default agent, \
              permission mode and view unless given; handed to the workflow on `attempt.started` (the Pipeline) or an \
              agent session of its own. Given choose's tickets, it starts the first of each project still free (no \
-             active attempt, under the cap it was chosen under, an agent slot free when it needs one). `started`: \
+             active attempt, under the cap it was chosen under, an agent slot free when it needs one), and the first \
+             of each remote instance's. `started`: \
              `ticketId`, `key`, `attemptId`; `skipped`: none was free, Start refused for now (an overlap, a blocker; \
              tried again next run), or pickup is paused; `failed`: a start failed, and that ticket is passed \
              over until it changes (or the user's Try again).",
@@ -501,19 +527,22 @@ impl NodeKind for Start {
             let trying =
                 cx.rerun.then(|| cx.step.output.get(TRYING).and_then(Value::as_str).map(String::from)).flatten();
             let (mut started, mut skipped, mut failed) = (vec![], vec![], vec![]);
-            let mut per: HashMap<String, u32> = HashMap::new();
+            // Started per project and slot pool (PDT-636): each remote instance's pool takes its own.
+            let mut per: HashMap<(String, Option<String>), u32> = HashMap::new();
             for (id, caps) in tickets {
+                let pool = caps.as_ref().and_then(|c| c.instance.clone());
                 let Some(t) = cx.st.store.get_ticket_summary(&id).await.map_err(crate::workflow::err)? else {
                     skipped.push(json!({"ticketId": id, "reason": "no such ticket"}));
                     continue;
                 };
                 let note = |reason: &str| json!({"ticketId": t.id, "key": t.key, "reason": reason});
-                if per.get(&t.project_id).is_some_and(|n| *n >= per_project) {
+                let key = (t.project_id.clone(), pool.clone());
+                if per.get(&key).is_some_and(|n| *n >= per_project) {
                     continue;
                 }
                 if let Some(a) = t.attempt.as_ref().filter(|a| a.state == AttemptState::Active) {
                     if trying.as_deref() == Some(t.id.as_str()) {
-                        *per.entry(t.project_id.clone()).or_default() += 1;
+                        *per.entry(key).or_default() += 1;
                         started.push(json!({"ticketId": t.id, "key": t.key, "attemptId": a.id}));
                     } else {
                         skipped.push(note("already started"));
@@ -524,14 +553,22 @@ impl NodeKind for Start {
                 // started a ticket since this one chose.
                 if let Some(caps) = &caps {
                     let in_flight = in_flight(cx.st, &t.project_id).await?;
-                    let active = u32::try_from(in_flight.len()).unwrap_or(u32::MAX);
+                    let in_pool = in_flight.iter().filter(|a| a.instance == caps.instance).count();
+                    let active = u32::try_from(in_pool).unwrap_or(u32::MAX);
                     if active >= caps.cap {
-                        skipped.push(note(&format!("the project is at its cap ({active} of {} in flight)", caps.cap)));
+                        let full = match &caps.place {
+                            Place::Instance { name, .. } if caps.instance.is_some() => {
+                                PassedReason::InstanceAtCap { instance: name.clone(), cap: caps.cap, active }
+                            }
+                            _ => PassedReason::AtCap { cap: caps.cap, active },
+                        };
+                        skipped.push(note(&full.describe()));
                         continue;
                     }
                     let pick = pdt_core::pickup::Pick {
                         ticket: PickupTicket::from(&t),
                         cap: caps.cap,
+                        instance: caps.instance.clone(),
                         area_caps: caps.area_caps.clone(),
                         label_caps: caps.label_caps.clone(),
                         overlap_rule: caps.overlap_rule.clone(),
@@ -557,8 +594,9 @@ impl NodeKind for Start {
                     HandTo::Session => false,
                     HandTo::Workflow => true,
                 };
-                // A start with its own session runs a turn at once: it waits for a slot like an agent step.
-                if !no_session && !crate::scheduler::slot_free(cx.st).await {
+                // A start with its own session runs a turn at once: it waits for a slot like an agent step. One on a
+                // remote instance runs its agent there, under that instance's cap.
+                if !no_session && pool.is_none() && !crate::scheduler::slot_free(cx.st).await {
                     skipped.push(note("no agent slot is free"));
                     continue;
                 }
@@ -589,7 +627,7 @@ impl NodeKind for Start {
                 match crate::start::start_ticket(cx.st, t.id.clone(), v, Starter::Auto).await {
                     Ok(r) => {
                         tracing::info!(ticket = %t.key, workflow = %cx.workflow.name, "a workflow started a ticket");
-                        *per.entry(t.project_id.clone()).or_default() += 1;
+                        *per.entry(key).or_default() += 1;
                         started.push(json!({"ticketId": r.ticket.summary.id, "key": r.ticket.summary.key,
                                             "attemptId": r.attempt.id}));
                     }
@@ -597,13 +635,15 @@ impl NodeKind for Start {
                     Err(e) if e.code() == codes::TICKET_ACTIVE => skipped.push(note("already started")),
                     // Refused for now (an overlap, a blocker, the cap): it waits, and the next run tries it again
                     // (PDT-381). The Board says why, as for choose's overlaps.
-                    Err(e) if e.code() == codes::START_BLOCKED => {
+                    // Refused for now, or its instance went offline since choose (PDT-636): it waits the same way.
+                    Err(e) if e.code() == codes::START_BLOCKED || e.code() == codes::PLACEMENT => {
                         let message = e.message().to_string();
                         let why = message.strip_prefix(&format!("{} ", t.key)).unwrap_or(&message).to_string();
                         let hold = crate::scheduler::PickupHold {
                             project_id: t.project_id.clone(),
                             why: why.clone(),
                             at: crate::routes::now_ms(),
+                            waits_for: None,
                         };
                         cx.st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner()).insert(t.id.clone(), hold);
                         skipped.push(note(&why));
@@ -644,13 +684,13 @@ impl NodeKind for Start {
     }
 }
 
-/// What a dry run would start: the first ticket of each project.
+/// What a dry run would start: the first ticket of each project and slot pool.
 async fn dry_run(st: &AppState, tickets: &[(String, Option<Caps>)], per_project: u32) -> Vec<String> {
-    let mut per: HashMap<String, u32> = HashMap::new();
+    let mut per: HashMap<(String, Option<String>), u32> = HashMap::new();
     let mut out = vec![];
-    for (id, _) in tickets {
+    for (id, caps) in tickets {
         let Ok(Some(t)) = st.store.get_ticket_summary(id).await else { continue };
-        let n = per.entry(t.project_id.clone()).or_default();
+        let n = per.entry((t.project_id.clone(), caps.as_ref().and_then(|c| c.instance.clone()))).or_default();
         if *n < per_project {
             *n += 1;
             out.push(format!("start {}", t.key));

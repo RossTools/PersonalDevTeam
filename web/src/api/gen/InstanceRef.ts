@@ -3,4 +3,9 @@
 /**
  * An instance a session or worktree runs on, as the owner shows it: the remote instance's id and its name.
  */
-export type InstanceRef = { id: string, name: string, };
+export type InstanceRef = { id: string, name: string, 
+/**
+ * When the owner last heard from it (None: never yet, or it left the project): the chip says it's offline when
+ * that is a while ago.
+ */
+lastSeenAt: number | null, };

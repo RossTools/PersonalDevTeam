@@ -122,12 +122,13 @@ What any workflow may merge is the project's policy, set apart from workflows: s
 
 **Pick up tickets** is auto-start. It runs when a ticket can start (it has gone the quiet period unchanged, or its
 last blocker closed), when there's room for another (a ticket in flight merged or was abandoned, the project's cap
-rose, an agent slot freed up), and every minute. It has three steps:
+or a remote instance's rose, a remote instance came back online, an agent slot freed up), and every minute. It has three steps:
 
 1. **Find tickets to start** lists the project's tickets that could start, in order: the stages, labels, priority and
    areas to take, whether to leave out blocked, conflicting and parent tickets, and the order (`priority`, `rank` or
    `age`).
-2. **Choose tickets to start** keeps to the caps (per project, and optionally per area or label), the quiet period,
+2. **Choose tickets to start** keeps to the caps (per project, each [remote instance](../your-machine/remote-projects.md#auto-start-across-instances)'s
+   own, and optionally per area or label), waits for a remote instance that is offline, the quiet period,
    and passes over a ticket that failed to start until it changes (or you click **Try again** on it). It also keeps tickets apart from work in progress,
    by area (**Overlap**):
    - `avoid` (the default when the project has hot areas): no ticket in a hot area while another ticket in that area

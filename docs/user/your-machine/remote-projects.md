@@ -40,7 +40,8 @@ Each remote instance shows:
   half), or **needs an update**;
 - its version, operating system, CPUs and free disk space;
 - the agents it has, and whether each is logged in, and tools such as git, Godot and MSVC;
-- when it was last seen.
+- when it was last seen;
+- **At most … tickets in flight on it at once**: its cap for this project (below).
 
 **Check now** asks each one again. **Remove…** stops it working on the project and revokes the link at both ends;
 pairing again needs a new code.
@@ -69,6 +70,24 @@ A `windows` ticket then runs on a joined instance that runs Windows and has Godo
 instance, or one of the remote instances. Placement goes in this order: **Runs on**, then the project's label rules,
 then the repository's needs, then the owner. A ticket placed on an instance that is offline or paused doesn't start;
 Start says why.
+
+## Auto-start across instances
+
+With auto-start on, the owner and each remote instance take tickets side by side, each up to its own cap:
+
+- **The owner** takes up to the project's **Running tickets at once**, counting only the tickets running on it.
+- **Each remote instance** takes up to its cap under **Remote instances**. Its own **Remote projects** page can set
+  a cap too; the lower of the two applies. With neither set, it takes one at a time.
+
+A ticket placed on an instance that is **offline** or **paused** waits in **To do**. Its card says "waiting for
+win-box (offline)", and it starts once win-box is back. It never goes to another instance instead. If win-box stays
+offline for two hours with work waiting, the owner sends a notification; it clears once win-box is back.
+
+A ticket whose repository needs something no instance has, the owner included, waits with "no instance can run this
+(needs os=windows, godot)". Join an instance that has it, or change the ticket's labels.
+
+The **on win-box** mark on a ticket's sessions says **offline** while the owner can't reach it; hover it for when it
+was last seen.
 
 ## What runs on the remote instance
 
@@ -127,6 +146,8 @@ last heard from.
 - **Leave…** stops working on the project and revokes the link; the owner keeps the project.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
+- **At most … of its tickets here at once** caps how many of the project's tickets run here at once. Leave it blank
+  to let the owner's cap decide.
 
 It also lists what runs here for the owner now, read-only: each agent's or shell's ticket, title and how long it has
 run.

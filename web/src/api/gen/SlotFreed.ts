@@ -9,6 +9,6 @@ export type SlotFreed = {
  */
 projectId: string | null, 
 /**
- * `attempt`, `cap` or `agent`.
+ * `attempt`, `cap`, `instance` (a remote instance came back online) or `agent`.
  */
 reason: string, };

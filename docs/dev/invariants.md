@@ -451,6 +451,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.
+- **A ticket placed on an unavailable instance waits; it never runs elsewhere.** `placement::place` returns
+  `Unavailable` for an offline or paused instance (even when the repository's needs pick it), and pickup turns that
+  into a `waiting` hold, never the owner or another instance. Pickup counts each pool by the worktree's
+  `instance_id`, so an attempt's worktree keeps the instance it was made on.
 - **An owner's terminal runs on a remote instance only in that project's folders.** The owner names a branch, never a
   folder: `exec/remote_pty.rs` (`folder`) runs it in that branch's worktree of the remote project's checkout (a valid
   branch name whose worktree is there) or in the checkout itself, whatever the session row says. Its WebSocket opens

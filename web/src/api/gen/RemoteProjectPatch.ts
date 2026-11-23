@@ -8,4 +8,8 @@ export type RemoteProjectPatch = { paused?: boolean,
  * The checkout's folder; empty: the default one. Used from the next worktree made (a checkout already there
  * stays where it is).
  */
-checkoutPath?: string, };
+checkoutPath?: string, 
+/**
+ * The most of the project's tickets this instance takes at once; 0: no cap of its own (the owner's decides).
+ */
+cap?: number, };
