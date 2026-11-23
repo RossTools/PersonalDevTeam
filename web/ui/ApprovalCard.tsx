@@ -62,6 +62,21 @@ export interface ApprovalCardProps {
   className?: string;
 }
 
+/**
+ * The answers a question card sends, keyed by question: the choices picked and the user's own words (a multi-select
+ * question sends both; a single one its own words when it has them, else its choice). `at(n)` is question n's answer.
+ */
+export function requestAnswers(questions: ApprovalQuestion[], at: (n: number) => QuestionAnswer | undefined): Record<string, string[]> {
+  return Object.fromEntries(
+    questions.map((q, n) => {
+      const a = at(n) ?? NO_ANSWER;
+      const own = a.other?.trim();
+      if (q.multiSelect) return [q.question, [...(a.choices ?? []), ...(own ? [own] : [])]];
+      return [q.question, a.other !== null ? (own ? [own] : []) : a.choice ? [a.choice] : []];
+    }),
+  );
+}
+
 /** How soon a confirming press counts after the first (ms): never the second click of a double-click. Tests set 0. */
 export const approvalTiming = { confirmAfterMs: 500 };
 
@@ -161,10 +176,13 @@ export function ApprovalCard({
     if (e.key === 'y' && kind !== 'question') {
       e.preventDefault();
       approve();
-    } else if (e.key === 'n') {
+    } else if (e.key === 'e' && kind === 'question') {
+      // Dismiss is `e`, as on the Inbox's items; `n` is only ever Deny.
       e.preventDefault();
-      if (kind === 'question') void answer('deny', { type: 'deny' });
-      else setDenying(true);
+      void answer('deny', { type: 'deny' });
+    } else if (e.key === 'n' && kind !== 'question') {
+      e.preventDefault();
+      setDenying(true);
     }
   };
   useEffect(() => {
@@ -185,15 +203,7 @@ export function ApprovalCard({
     }
   };
 
-  const answersOf = (): Record<string, string[]> =>
-    Object.fromEntries(
-      questions.map((q) => {
-        const a = picked[q.question] ?? NO_ANSWER;
-        const own = a.other?.trim();
-        if (q.multiSelect) return [q.question, [...(a.choices ?? []), ...(own ? [own] : [])]];
-        return [q.question, a.other !== null ? (own ? [own] : []) : a.choice ? [a.choice] : []];
-      }),
-    );
+  const answersOf = () => requestAnswers(questions, (n) => picked[questions[n].question]);
   const allAnswered = questions.length > 0 && Object.values(answersOf()).every((a) => a.length > 0);
   const hint = (k: string) => (keyboard ? <span aria-hidden className="ml-1 pointer-coarse:hidden"><Kbd>{k}</Kbd></span> : null);
 
@@ -204,10 +214,13 @@ export function ApprovalCard({
       aria-label={title}
       className={cn('flex w-full scroll-mt-4 flex-col gap-2 rounded-lg border border-waiting bg-card p-3 text-sm shadow-popover outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}
     >
-      <header className="flex items-center gap-2 font-medium">
-        <ShieldQuestion aria-hidden className="size-4 shrink-0 text-waiting" />
-        <span className="min-w-0">{title}</span>
-      </header>
+      {/* A question shows itself; a header over it would only say it again. */}
+      {kind !== 'question' && (
+        <header className="flex items-center gap-2 font-medium">
+          <ShieldQuestion aria-hidden className="size-4 shrink-0 text-waiting" />
+          <span className="min-w-0">{title}</span>
+        </header>
+      )}
       {subject && (
         <PreviewBox as="pre" className="max-h-48 overflow-auto p-2 font-mono text-xs whitespace-pre-wrap break-words">
           {subject}
@@ -261,15 +274,16 @@ export function ApprovalCard({
           </div>
         </div>
       ) : (
-        // On a phone the answers sit at the card's foot as big buttons, Deny on the left and Allow on the right.
+        // Allow, then Always allow, with Deny on the right, as in the Inbox. On a phone the answers sit at the card's foot as
+        // big buttons, Deny on the left and Allow on the right, with Always allow under them, as in the phone's Inbox.
         <div className="flex flex-wrap items-center gap-2 max-md:grid max-md:grid-cols-2 max-md:[&_button]:min-h-control-touch">
           {kind === 'question' ? (
             <>
               <Button variant="primary" pending={pending === 'question'} disabled={busy || !allAnswered} onClick={() => void answer('question', { type: 'question', answers: answersOf() })}>
-                Submit
+                Send answers
               </Button>
-              <Button variant="ghost" pending={pending === 'deny'} disabled={busy} onClick={() => void answer('deny', { type: 'deny' })}>
-                Dismiss{hint('n')}
+              <Button variant="ghost" pending={pending === 'deny'} disabled={busy} onClick={() => void answer('deny', { type: 'deny' })} className="md:ml-auto">
+                Dismiss{hint('e')}
               </Button>
             </>
           ) : (
@@ -294,14 +308,14 @@ export function ApprovalCard({
               >
                 {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : approveLabel}{hint('y')}
               </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => setDenying(true)} className={cn('max-md:order-1', kind === 'plan' && 'max-md:col-span-2')}>
-                {kind === 'plan' ? 'Keep planning' : 'Deny'}{hint('n')}
-              </Button>
               {canAlways && kind === 'approval' && (
-                <Button variant={alwaysArmed === null ? 'ghost' : 'danger'} pending={pending === 'always'} disabled={busy} onClick={always} className="max-md:order-3 max-md:col-span-2">
-                  {alwaysArmed === null ? 'Always allow in this session' : 'Confirm: always allow in this session'}
+                <Button variant={alwaysArmed === null ? 'secondary' : 'danger'} pending={pending === 'always'} disabled={busy} onClick={always} className="max-md:order-3 max-md:col-span-2">
+                  {alwaysArmed === null ? 'Always allow in this session' : 'Confirm always allow in this session'}
                 </Button>
               )}
+              <Button variant={kind === 'plan' ? 'secondary' : 'danger'} disabled={busy} onClick={() => setDenying(true)} className={cn('max-md:order-1 md:ml-auto', kind === 'plan' && 'max-md:col-span-2')}>
+                {kind === 'plan' ? 'Keep planning' : 'Deny'}{hint('n')}
+              </Button>
             </>
           )}
         </div>
