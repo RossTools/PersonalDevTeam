@@ -149,6 +149,45 @@ pub struct PickupTicket {
     pub created_at: i64,
     #[ts(type = "number")]
     pub updated_at: i64,
+    /// Where it would run: the owner, a remote instance, or nowhere for now.
+    #[serde(default)]
+    pub place: Place,
+}
+
+/// Where a candidate would run (its placement, PDT-636): each place is a slot pool of its own.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum Place {
+    /// This instance, under the project's cap.
+    #[default]
+    Owner,
+    /// A remote instance (`id`), under its own cap.
+    Instance { id: String, name: String },
+    /// A remote instance that is offline (or paused there): the ticket waits for it.
+    Waiting { id: String, name: String, paused: bool },
+    /// No instance can run it (`why`: what it needs that none has).
+    NoInstance { why: String },
+}
+
+impl Place {
+    /// The remote instance it waits for to come back (its id), if it waits for one.
+    pub fn waits_for(&self) -> Option<&str> {
+        match self {
+            Place::Waiting { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}
+
+/// A remote instance's slot pool: the most of the project's tickets in flight on it at once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InstancePool {
+    pub id: String,
+    pub name: String,
+    pub cap: u32,
 }
 
 impl From<&TicketSummary> for PickupTicket {
@@ -169,6 +208,7 @@ impl From<&TicketSummary> for PickupTicket {
             has_parts: t.parts.is_some(),
             created_at: t.created_at,
             updated_at: t.updated_at,
+            place: Place::Owner,
         }
     }
 }
@@ -182,6 +222,9 @@ pub struct ActiveTicket {
     pub key: String,
     pub labels: Vec<String>,
     pub areas: Vec<String>,
+    /// The remote instance it runs on (its id); None: the owner.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// One project's candidates, with what choose needs to know of it: its auto-start cap and start delay, and the
@@ -193,8 +236,11 @@ pub struct PickupProject {
     pub project_id: String,
     pub key: String,
     pub name: String,
-    /// The project's auto-start cap (its running cap, else 1).
+    /// The project's auto-start cap (its running cap, else 1): the most tickets in flight on the owner itself.
     pub cap: u32,
+    /// The slot pools of the remote instances that joined the project.
+    #[serde(default)]
+    pub instances: Vec<InstancePool>,
     /// The project's start delay.
     pub start_delay_seconds: u32,
     /// How the project keeps candidates apart from work in flight (its hot areas).
@@ -366,6 +412,15 @@ pub enum PassedReason {
     /// It is in hot area `area`, and `with` is in flight without areas.
     #[serde(rename = "untagged_in_flight")]
     UntaggedInFlight { with: String, area: String },
+    /// It runs on remote instance `instance`, which has `active` of the project's tickets in flight, at its cap.
+    #[serde(rename = "instance_at_cap")]
+    InstanceAtCap { instance: String, cap: u32, active: u32 },
+    /// It runs on remote instance `instance`, which is offline (or paused there).
+    #[serde(rename = "waiting")]
+    Waiting { instance: String, paused: bool },
+    /// No instance can run it.
+    #[serde(rename = "no_instance")]
+    NoInstance { why: String },
 }
 
 impl PassedReason {
@@ -387,7 +442,19 @@ impl PassedReason {
             PassedReason::UntaggedInFlight { with, area } => {
                 format!("{with} is in flight with no areas yet (this is in {area})")
             }
+            PassedReason::InstanceAtCap { instance, cap, active } => {
+                format!("{instance} is at its cap ({active} of {cap} in flight)")
+            }
+            PassedReason::Waiting { instance, paused } => {
+                format!("waiting for {instance} ({})", if *paused { "paused" } else { "offline" })
+            }
+            PassedReason::NoInstance { why } => why.clone(),
         }
+    }
+
+    /// Whether the Board shows it as the ticket's reason to wait: overlapping work in flight, or where it runs.
+    pub fn shows_on_board(&self) -> bool {
+        self.is_overlap() || matches!(self, PassedReason::Waiting { .. } | PassedReason::NoInstance { .. })
     }
 
     /// Whether it waits on overlapping work in flight (the Board shows it as the ticket's reason to wait).
@@ -419,7 +486,11 @@ pub struct Pick {
     #[serde(flatten)]
     #[ts(flatten)]
     pub ticket: PickupTicket,
+    /// The cap of its slot pool: the project's on the owner, the instance's on a remote one.
     pub cap: u32,
+    /// Its slot pool: the remote instance it runs on (its id); None: the owner.
+    #[serde(default)]
+    pub instance: Option<String>,
     /// The area caps that bind it: those of its own areas.
     pub area_caps: BTreeMap<String, u32>,
     /// The label caps that bind it: those of its own labels.
@@ -477,8 +548,8 @@ pub fn choose(
 ) -> Choice {
     let mut out = Choice::default();
     for p in projects {
-        let cap = rules.cap.unwrap_or(p.cap);
-        let active = u32::try_from(p.active.len()).unwrap_or(u32::MAX);
+        let owner_cap = rules.cap.unwrap_or(p.cap);
+        let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         let delay_ms = i64::from(rules.start_delay_seconds.unwrap_or(p.start_delay_seconds)) * 1000;
         let overlap = rules.overlap.over(&p.overlap);
         let in_flight = |pick: &dyn Fn(&ActiveTicket) -> &Vec<String>, name: &str| {
@@ -493,8 +564,33 @@ pub fn choose(
                         .map(|c| (x.clone(), *c))
                 })
             };
-            let reason = if active >= cap {
-                Some(PassedReason::AtCap { cap, active })
+            // Its slot pool (PDT-636): the owner's under the project's cap, each remote instance's under its own.
+            let pool = match &t.place {
+                Place::Owner => {
+                    let active = count(p.active.iter().filter(|a| a.instance.is_none()).count());
+                    Ok((None, owner_cap, active))
+                }
+                Place::Instance { id, name } => {
+                    let cap =
+                        p.instances.iter().find(|i| i.id == *id).map_or(crate::link::DEFAULT_INSTANCE_CAP, |i| i.cap);
+                    let active = count(p.active.iter().filter(|a| a.instance.as_deref() == Some(id)).count());
+                    Ok((Some((id.clone(), name.clone())), cap, active))
+                }
+                Place::Waiting { name, paused, .. } => {
+                    Err(PassedReason::Waiting { instance: name.clone(), paused: *paused })
+                }
+                Place::NoInstance { why } => Err(PassedReason::NoInstance { why: why.clone() }),
+            };
+            let reason = match &pool {
+                Err(r) => Some(r.clone()),
+                Ok((None, cap, active)) if active >= cap => Some(PassedReason::AtCap { cap: *cap, active: *active }),
+                Ok((Some((_, name)), cap, active)) if active >= cap => {
+                    Some(PassedReason::InstanceAtCap { instance: name.clone(), cap: *cap, active: *active })
+                }
+                Ok(_) => None,
+            };
+            let reason = if reason.is_some() {
+                reason
             } else if at > now {
                 Some(PassedReason::Settling { at })
             } else if let Some(f) = failed.get(&t.id).filter(|f| rules.skip_failed && f.holds(t.updated_at)) {
@@ -511,6 +607,10 @@ pub fn choose(
                     out.passed.push(Passed { id: t.id.clone(), key: t.key.clone(), why: reason.describe(), reason })
                 }
                 None => {
+                    let (instance, cap) = match pool {
+                        Ok((instance, cap, _)) => (instance.map(|(id, _)| id), cap),
+                        Err(_) => (None, owner_cap),
+                    };
                     let binding = |caps: &BTreeMap<String, u32>, of: &[String]| -> BTreeMap<String, u32> {
                         caps.iter().filter(|(n, _)| of.contains(n)).map(|(n, c)| (n.clone(), *c)).collect()
                     };
@@ -519,6 +619,7 @@ pub fn choose(
                         label_caps: binding(&rules.label_caps, &t.labels),
                         ticket: t.clone(),
                         cap,
+                        instance,
                         overlap_rule: overlap.clone(),
                     })
                 }
@@ -543,10 +644,17 @@ mod tests {
             key: "P".into(),
             name: "P".into(),
             cap: policy.auto_start_cap(),
+            instances: vec![],
             start_delay_seconds: policy.start_delay_seconds,
             overlap: OverlapPolicy::from_policy(policy),
             active: (0..active)
-                .map(|n| ActiveTicket { id: format!("a{n}"), key: format!("P-a{n}"), labels: vec![], areas: vec![] })
+                .map(|n| ActiveTicket {
+                    id: format!("a{n}"),
+                    key: format!("P-a{n}"),
+                    labels: vec![],
+                    areas: vec![],
+                    instance: None,
+                })
                 .collect(),
             tickets: CandidateFilter::from_policy(policy).apply(list).into_iter().map(PickupTicket::from).collect(),
         }
@@ -757,6 +865,7 @@ mod tests {
             key: "P-x".into(),
             labels: vec!["agentic".into()],
             areas: vec!["web".into()],
+            instance: None,
         }];
         let rules = ChooseRules {
             area_caps: BTreeMap::from([("web".into(), 1)]),
@@ -792,6 +901,7 @@ mod tests {
             key: key.into(),
             labels: vec![],
             areas: areas.iter().map(|s| s.to_string()).collect(),
+            instance: None,
         }
     }
 
@@ -914,5 +1024,65 @@ mod tests {
         assert_eq!(choose(std::slice::from_ref(&p), &off, &HashMap::new(), LATER).chosen.len(), 3);
         let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
         assert_eq!(chosen_and_passed(&c).0, ["docs", "web"]);
+    }
+
+    #[test]
+    fn each_instance_is_a_slot_pool_of_its_own() {
+        let policy = ProjectPolicy { auto_start: AutoStart::Todo, start_delay_seconds: 0, ..ProjectPolicy::default() };
+        let list = vec![tagged("home", &[]), tagged("win1", &[]), tagged("win2", &[]), tagged("mac", &[])];
+        let mut p = project(&policy, 0, &list);
+        let on = |id: &str, name: &str| Place::Instance { id: id.into(), name: name.into() };
+        for t in p.tickets.iter_mut() {
+            t.place = match t.id.as_str() {
+                "win1" | "win2" => on("w", "win-box"),
+                "mac" => on("m", "mini"),
+                _ => Place::Owner,
+            };
+        }
+        p.instances = vec![InstancePool { id: "w".into(), name: "win-box".into(), cap: 1 }];
+        // The owner's one slot is taken: its ticket waits; each instance still has room for one.
+        p.active = vec![in_flight("P-1", &[])];
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        let picks: Vec<(&str, Option<&str>)> =
+            c.chosen.iter().map(|x| (x.ticket.id.as_str(), x.instance.as_deref())).collect();
+        assert_eq!(picks, [("mac", Some("m")), ("win1", Some("w")), ("win2", Some("w"))]);
+        assert_eq!(c.passed[0].reason, PassedReason::AtCap { cap: 1, active: 1 });
+        assert_eq!(c.chosen[0].cap, crate::link::DEFAULT_INSTANCE_CAP, "a pool the project doesn't list");
+        // win-box's slot is taken: both its tickets wait, and the owner's slot is free again.
+        p.active = vec![ActiveTicket { instance: Some("w".into()), ..in_flight("P-1", &[]) }];
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(chosen_and_passed(&c).0, ["home", "mac"]);
+        let why: Vec<&str> = c.passed.iter().map(|x| x.why.as_str()).collect();
+        assert_eq!(why, ["win-box is at its cap (1 of 1 in flight)"; 2]);
+        assert!(!c.passed[0].reason.shows_on_board());
+    }
+
+    #[test]
+    fn tickets_wait_for_an_offline_instance_and_say_when_none_can_run_them() {
+        let policy = ProjectPolicy { auto_start: AutoStart::Todo, start_delay_seconds: 0, ..ProjectPolicy::default() };
+        let list = vec![tagged("win", &[]), tagged("godot", &[]), tagged("home", &[])];
+        let mut p = project(&policy, 0, &list);
+        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: false };
+        p.tickets[0].place = Place::NoInstance { why: "no instance can run this (needs os=windows, godot)".into() };
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(
+            chosen_and_passed(&c),
+            (
+                vec!["home"],
+                vec![
+                    ("godot", "no instance can run this (needs os=windows, godot)"),
+                    ("win", "waiting for win-box (offline)")
+                ]
+            )
+        );
+        assert!(c.passed.iter().all(|x| x.reason.shows_on_board()));
+        assert_eq!(p.tickets[2].place.waits_for(), Some("w"));
+        // Paused there says so; back online, it starts on it.
+        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: true };
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(c.passed[1].why, "waiting for win-box (paused)");
+        p.tickets[2].place = Place::Instance { id: "w".into(), name: "win-box".into() };
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(chosen_and_passed(&c).0, ["home", "win"]);
     }
 }

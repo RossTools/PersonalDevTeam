@@ -13,4 +13,8 @@ checkoutPath?: string,
 /**
  * An update the owner asks for uses this instance's own update channel (false: the owner's).
  */
-ownUpdateChannel?: boolean, };
+ownUpdateChannel?: boolean, 
+/**
+ * The most of the project's tickets this instance takes at once; 0: no cap of its own (the owner's decides).
+ */
+cap?: number, };

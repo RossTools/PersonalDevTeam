@@ -96,6 +96,10 @@ pub(crate) struct PickupWatch {
     active: HashMap<String, (HashSet<String>, u32)>,
     /// Free agent slots on the host (None before the first pass).
     free: Option<usize>,
+    /// The remote instances connected per project (their ids), so one coming back is told (PDT-636).
+    connected: HashMap<String, HashSet<String>>,
+    /// Each project's remote instances' caps (by instance id), so one rising is told.
+    pools: HashMap<String, HashMap<String, u32>>,
 }
 
 /// How long a start may take between its attempt and its announcement before the watch calls it half-done.
@@ -119,10 +123,13 @@ pub async fn watch_pickup(st: &AppState) {
     let mut active: HashMap<String, (HashSet<String>, u32)> = HashMap::new();
     let Ok(in_flight) = st.store.list_active_attempts().await else { return };
     let mut events: Vec<NewLogEvent> = vec![];
-    let (seen, was_active) = {
+    let (seen, was_active, was_connected, was_pools) = {
         let w = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner());
-        (w.startable.clone(), w.active.clone())
+        (w.startable.clone(), w.active.clone(), w.connected.clone(), w.pools.clone())
     };
+    let instances = st.store.list_remote_instances(None).await.unwrap_or_default();
+    let mut connected: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut pools: HashMap<String, HashMap<String, u32>> = HashMap::new();
     for p in projects {
         let Ok(settings) = st.store.get_project_settings(&p.id).await else { continue };
         let policy = settings.policy;
@@ -133,9 +140,28 @@ pub async fn watch_pickup(st: &AppState) {
         let now_active: HashSet<String> =
             in_flight.iter().filter(|a| a.project_id == p.id).map(|a| a.attempt.id.clone()).collect();
         let cap = policy.auto_start_cap();
+        let now_connected: HashSet<String> = instances
+            .iter()
+            .filter(|i| {
+                i.project_id == p.id
+                    && pdt_core::link::state(i.last_seen_at, true, i.paused, now)
+                        == pdt_core::link::LinkState::Connected
+            })
+            .map(|i| i.instance_id.clone())
+            .collect();
+        let back = was_connected.get(&p.id).is_some_and(|before| now_connected.iter().any(|i| !before.contains(i)));
+        connected.insert(p.id.clone(), now_connected);
+        let now_pools: HashMap<String, u32> =
+            instances.iter().filter(|i| i.project_id == p.id).map(|i| (i.instance_id.clone(), i.pool_cap())).collect();
+        let pool_rose = was_pools
+            .get(&p.id)
+            .is_some_and(|before| now_pools.iter().any(|(id, c)| before.get(id).is_some_and(|b| c > b)));
+        pools.insert(p.id.clone(), now_pools);
         let freed = match was_active.get(&p.id) {
             Some((before, _)) if before.iter().any(|a| !now_active.contains(a)) => Some("attempt"),
-            Some((_, was_cap)) if cap > *was_cap => Some("cap"),
+            Some((_, was_cap)) if cap > *was_cap || pool_rose => Some("cap"),
+            // A remote instance came back (or was resumed): tickets waiting for it can start.
+            _ if back => Some("instance"),
             _ => None,
         };
         active.insert(p.id.clone(), (now_active, cap));
@@ -192,7 +218,7 @@ pub async fn watch_pickup(st: &AppState) {
         }
     }
     let mut w = st.pickup_watch.lock().unwrap_or_else(|e| e.into_inner());
-    (w.startable, w.active, w.free) = (startable, active, Some(free));
+    (w.startable, w.active, w.free, w.connected, w.pools) = (startable, active, Some(free), connected, pools);
 }
 
 /// Announces starts left half-done (PDT-327): an attempt and worktree made, but its `attempt.started` never logged
@@ -377,13 +403,15 @@ pub(crate) async fn apply_auto_start(st: &AppState, items: &mut [TicketSummary])
     apply_pickup_holds(st, items, &policies, now);
 }
 
-/// Why a choose passed a ticket over for overlapping work in flight (PDT-329).
+/// Why a choose passed a ticket over: overlapping work in flight (PDT-329), or where it runs (PDT-636).
 #[derive(Debug, Clone)]
 pub(crate) struct PickupHold {
     pub project_id: String,
     pub why: String,
     /// When that choose ran.
     pub at: i64,
+    /// The remote instance it waits for to come back online (its id, PDT-636).
+    pub waits_for: Option<String>,
 }
 
 /// How long a hold shows after the choose that made it: the built-in runs every minute, so a hold no choose has

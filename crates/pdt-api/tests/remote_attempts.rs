@@ -471,3 +471,116 @@ async fn the_remote_instance_clones_the_checkout_on_first_use() {
     assert!(checkout.join(".git").exists(), "cloned");
     assert!(checkout.join(".worktrees").join(branch).is_dir());
 }
+
+/// Pickup per instance (PDT-636): win-box is a slot pool of its own beside the owner's; a ticket placed on it waits in
+/// To do while it is offline (the Board says why, and the owner notifies once it has been gone a while), and starts
+/// once it is back; a ticket whose repository needs no instance has says so; and each end's cap sizes the pool.
+#[tokio::test]
+async fn pickup_fills_each_instance_on_its_own_and_waits_while_one_is_offline() {
+    let p = paired().await;
+    let owner = &p.owner;
+    // Starts hand over to a workflow, so they make no agent session.
+    let doc = json!({"name": "Takes over", "nodes": [
+        {"id": "started", "kind": "attempt.started", "version": 1},
+        {"id": "end", "kind": "end", "version": 1}],
+        "edges": [{"from": "started", "to": "end"}]});
+    let body = json!({"doc": doc, "scope": "project", "projectId": p.project, "enabled": true});
+    let (s, v) = call(&owner.app, "POST", "/api/workflows", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let settings = json!({"agentCredentials": null, "runOverrides": null, "autoStart": "todo", "startDelaySeconds": 0});
+    let (s, v) = call(&owner.app, "PUT", &format!("/api/projects/{}/settings", p.project), Some(settings)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    // The repository says `plan9` tickets need an OS nobody has.
+    let main = owner.tmp.path().join("valley");
+    std::fs::create_dir_all(main.join(".pdt")).unwrap();
+    let toml = "[[placement]]\nwhen = { labels = [\"plan9\"] }\nneeds = { os = \"plan9\" }\n";
+    std::fs::write(main.join(".pdt/project.toml"), toml).unwrap();
+
+    let stage = async |id: &str| get_ticket(&p, id).await["stage"].as_str().unwrap().to_string();
+    let todo = async |title: &str, labels: &[&str]| {
+        let body = json!({"title": title, "labels": labels, "stage": "todo"});
+        let (s, t) = call_as_ui(&owner.app, "POST", &format!("/api/projects/{}/tickets", p.project), Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{t}");
+        t["id"].as_str().unwrap().to_string()
+    };
+    let home = todo("Docs", &[]).await;
+    let w1 = todo("Client one", &["windows"]).await;
+    let w2 = todo("Client two", &["windows"]).await;
+    let nine = todo("Port to Plan 9", &["plan9"]).await;
+
+    // One run fills both pools: the owner's cap of one and win-box's (one when neither end sets it).
+    common::pick_up(&owner.state).await;
+    let started = [stage(&home).await, stage(&w1).await, stage(&w2).await, stage(&nine).await];
+    assert_eq!(started.iter().filter(|s| *s == "in_progress").count(), 2, "{started:?}");
+    assert_eq!(started[0], "in_progress", "the owner's pool");
+    let (on_box, waiting) = if started[1] == "in_progress" { (&w1, &w2) } else { (&w2, &w1) };
+    let branch = get_ticket(&p, on_box).await["attempts"][0]["branch"].as_str().unwrap().to_string();
+    let wt = worktrees(&p).await.into_iter().find(|w| w["branch"] == branch.as_str()).unwrap();
+    assert_eq!(wt["instance"]["name"], "win-box", "{wt}");
+    assert!(wt["instance"]["lastSeenAt"].is_number(), "{wt}");
+    assert_eq!(get_ticket(&p, &nine).await["pickupHold"], "no instance can run this (needs os=plan9)");
+
+    // win-box goes offline (gone for three hours) while the project's cap for it rises to two: the other windows
+    // ticket waits for it, and says so.
+    owner.state.link.set_offline(true);
+    let (_, v) = call(&owner.app, "GET", &format!("/api/projects/{}/remote-instances", p.project), None).await;
+    let link = v["instances"][0]["linkId"].as_str().unwrap().to_string();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    let gone = now - 3 * 60 * 60 * 1000;
+    let facts = pdt_core::link::InstanceFacts::default();
+    let old = pdt_store::Heard::Answer {
+        name: "win-box",
+        version: v["instances"][0]["version"].as_str().unwrap(),
+        protocol: pdt_core::link::PROTOCOL,
+        facts: &facts,
+        paused: false,
+        secrets: &[],
+        cap: None,
+        at: gone,
+    };
+    owner.state.store.record_heartbeat(&link, old).await.unwrap();
+    let url = format!("/api/projects/{}/remote-instances/{link}", p.project);
+    let (s, v) = call(&owner.app, "PATCH", &url, Some(json!({"cap": 2}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!((v["instances"][0]["cap"].as_u64(), v["instances"][0]["poolCap"].as_u64()), (Some(2), Some(2)));
+    assert_eq!(v["instances"][0]["state"], "offline");
+    common::pick_up(&owner.state).await;
+    assert_eq!(stage(waiting).await, "todo");
+    assert_eq!(get_ticket(&p, waiting).await["pickupHold"], "waiting for win-box (offline)");
+
+    // Gone that long with work waiting: the owner says so, once.
+    let offline_notes = async || {
+        let (_, v) = call(&owner.app, "GET", "/api/notifications?section=updates", None).await;
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|n| n["dedupeKey"] == format!("instance-offline:{link}").as_str() && n["clearedAt"].is_null())
+            .cloned()
+            .collect::<Vec<Value>>()
+    };
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let notes = offline_notes().await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert_eq!(notes[0]["title"], "win-box is offline with work waiting");
+    assert_eq!(notes[0]["target"]["id"], waiting.as_str());
+
+    // Back: the notification clears, and the ticket starts on win-box.
+    owner.state.link.set_offline(false);
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    assert!(offline_notes().await.is_empty());
+    common::pick_up(&owner.state).await;
+    assert_eq!(stage(waiting).await, "in_progress");
+    let (_, events) = call(&owner.app, "GET", "/api/events?type=slot.freed&limit=50", None).await;
+    assert!(events.as_array().unwrap().iter().any(|e| e["payload"]["reason"] == "instance"), "{events}");
+
+    // win-box's own cap for the project is the lower one.
+    let patch = json!({"cap": 1});
+    let (s, v) = call(&p.remote.app, "PATCH", &format!("/api/remote-projects/{}", p.remote_project), Some(patch)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(v["link"]["cap"], 1);
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let (_, v) = call(&owner.app, "GET", &format!("/api/projects/{}/remote-instances", p.project), None).await;
+    assert_eq!((v["instances"][0]["remoteCap"].as_u64(), v["instances"][0]["poolCap"].as_u64()), (Some(1), Some(1)));
+}

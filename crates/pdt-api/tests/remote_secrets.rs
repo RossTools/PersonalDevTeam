@@ -34,7 +34,8 @@ impl Write for Logs {
 }
 
 impl Logs {
-    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+    /// The captured logs, and what keeps the capture on: drop them at the test's end.
+    fn capture() -> (Self, (tracing::subscriber::DefaultGuard, tracing::Dispatch)) {
         let logs = Logs::default();
         let writer = logs.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -42,10 +43,14 @@ impl Logs {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
+        // Callsite interest is cached process-wide (as in pdt-api `loops.rs`'s test): with one dispatcher registered,
+        // a test on another thread that reaches a callsite first with no subscriber caches "never". A second
+        // dispatcher alive for the whole test makes every thread ask all of them, this one included.
+        let second = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
         let guard = tracing::subscriber::set_default(subscriber);
-        // Callsites other tests in this process saw with no subscriber are cached as never logging: ask them again.
+        // And callsites registered before the two dispatchers were.
         tracing::callsite::rebuild_interest_cache();
-        (logs.clone(), guard)
+        (logs.clone(), (guard, second))
     }
 
     fn text(&self) -> String {

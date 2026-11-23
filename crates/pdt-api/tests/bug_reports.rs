@@ -132,6 +132,8 @@ async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
         last_seen_at: None,
         last_error: None,
         secrets: vec![],
+        cap: None,
+        remote_cap: None,
         created_at: 1,
     };
     env.state.store.insert_remote_instance(&joined).await.unwrap();
@@ -158,6 +160,7 @@ async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
         checkout_path: None,
         paused: false,
         own_update_channel: false,
+        cap: None,
         last_contact_at: None,
         created_at: 1,
     };

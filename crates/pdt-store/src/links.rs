@@ -10,7 +10,7 @@ use sqlx::sqlite::SqliteRow;
 
 const OWNER_LINK_COLUMNS: &str = "project_id, link_id, owner_project_id, owner_instance_id, owner_name, owner_url, \
                                   owner_version, owner_public_key, repo_url, paused, last_contact_at, created_at, \
-                                  checkout_path, own_update_channel";
+                                  checkout_path, own_update_channel, cap";
 
 fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
     Ok(OwnerLink {
@@ -26,13 +26,19 @@ fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
         checkout_path: r.try_get("checkout_path")?,
         paused: r.try_get::<i64, _>("paused")? != 0,
         own_update_channel: r.try_get::<i64, _>("own_update_channel")? != 0,
+        cap: cap(r, "cap")?,
         last_contact_at: r.try_get("last_contact_at")?,
         created_at: r.try_get("created_at")?,
     })
 }
 
 const INSTANCE_COLUMNS: &str = "link_id, project_id, instance_id, name, url, public_key, version, protocol, facts, \
-                                paused, last_seen_at, last_error, created_at, secrets";
+                                paused, last_seen_at, last_error, created_at, secrets, cap, remote_cap";
+
+/// A cap column: None when unset (or not a count).
+fn cap(r: &SqliteRow, column: &str) -> Result<Option<u32>, StoreError> {
+    Ok(r.try_get::<Option<i64>, _>(column)?.and_then(|n| u32::try_from(n).ok()))
+}
 
 fn to_instance(r: &SqliteRow) -> Result<RemoteInstance, StoreError> {
     let protocol: i64 = r.try_get("protocol")?;
@@ -51,6 +57,8 @@ fn to_instance(r: &SqliteRow) -> Result<RemoteInstance, StoreError> {
         last_seen_at: r.try_get("last_seen_at")?,
         last_error: r.try_get("last_error")?,
         secrets: serde_json::from_str(&r.try_get::<String, _>("secrets")?).unwrap_or_default(),
+        cap: cap(r, "cap")?,
+        remote_cap: cap(r, "remote_cap")?,
         created_at: r.try_get("created_at")?,
     })
 }
@@ -77,6 +85,8 @@ pub enum Heard<'a> {
         paused: bool,
         /// The names of the secrets it keeps for the project.
         secrets: &'a [String],
+        /// The cap the instance set for the project.
+        cap: Option<u32>,
         at: i64,
     },
     Failed {
@@ -103,7 +113,7 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         let sql = format!(
-            "INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&p.id)
@@ -120,6 +130,7 @@ impl Store {
             .bind(link.created_at)
             .bind(&link.checkout_path)
             .bind(link.own_update_channel)
+            .bind(link.cap.map(i64::from))
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -197,6 +208,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Sets (None: unsets) this instance's own cap on a remote project's tickets. False when there is no such remote
+    /// project.
+    pub async fn set_remote_project_cap(&self, project_id: &str, cap: Option<u32>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE remote_projects SET cap = ? WHERE project_id = ?")
+            .bind(cap.map(i64::from))
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Sets (None: back to the default) where this instance keeps a remote project's checkout.
     pub async fn set_remote_project_checkout(&self, project_id: &str, path: Option<&str>) -> Result<bool, StoreError> {
         let r = sqlx::query("UPDATE remote_projects SET checkout_path = ? WHERE project_id = ?")
@@ -242,7 +264,7 @@ impl Store {
     /// Joins an instance to one of this instance's projects.
     pub async fn insert_remote_instance(&self, i: &RemoteInstance) -> Result<(), StoreError> {
         let sql = format!(
-            "INSERT INTO remote_instances ({INSTANCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO remote_instances ({INSTANCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&i.link_id)
@@ -259,6 +281,8 @@ impl Store {
             .bind(&i.last_error)
             .bind(i.created_at)
             .bind(serde_json::to_string(&i.secrets).expect("names serialize"))
+            .bind(i.cap.map(i64::from))
+            .bind(i.remote_cap.map(i64::from))
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -283,10 +307,10 @@ impl Store {
     /// Records a heartbeat's outcome for `link_id`.
     pub async fn record_heartbeat(&self, link_id: &str, heard: Heard<'_>) -> Result<(), StoreError> {
         match heard {
-            Heard::Answer { name, version, protocol, facts, paused, secrets, at } => {
+            Heard::Answer { name, version, protocol, facts, paused, secrets, cap, at } => {
                 sqlx::query(
                     "UPDATE remote_instances SET name = ?, version = ?, protocol = ?, facts = ?, paused = ?, \
-                     secrets = ?, last_seen_at = ?, last_error = NULL WHERE link_id = ?",
+                     secrets = ?, remote_cap = ?, last_seen_at = ?, last_error = NULL WHERE link_id = ?",
                 )
                 .bind(name)
                 .bind(version)
@@ -294,6 +318,7 @@ impl Store {
                 .bind(serde_json::to_string(facts).expect("facts serialize"))
                 .bind(paused)
                 .bind(serde_json::to_string(secrets).expect("names serialize"))
+                .bind(cap.map(i64::from))
                 .bind(at)
                 .bind(link_id)
                 .execute(&self.pool)
@@ -357,6 +382,16 @@ impl Store {
             .collect()
     }
 
+    /// Sets (None: unsets) the owner's cap on a joined instance. False when there is no such instance.
+    pub async fn set_remote_instance_cap(&self, link_id: &str, cap: Option<u32>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE remote_instances SET cap = ? WHERE link_id = ?")
+            .bind(cap.map(i64::from))
+            .bind(link_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Removes a joined instance. False when there was none.
     pub async fn delete_remote_instance(&self, link_id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM remote_instances WHERE link_id = ?").bind(link_id).execute(&self.pool).await?;
@@ -393,6 +428,7 @@ pub(crate) mod tests {
             checkout_path: None,
             paused: false,
             own_update_channel: false,
+            cap: None,
             last_contact_at: None,
             created_at: 1,
         };
@@ -419,6 +455,10 @@ pub(crate) mod tests {
         let got = store.get_owner_link("r").await.unwrap().unwrap();
         assert_eq!((got.last_contact_at, got.owner_version.as_str(), got.paused), (Some(50), "1.1.0", true));
         assert!(got.own_update_channel);
+        assert!(store.set_remote_project_cap("r", Some(2)).await.unwrap());
+        let got = store.get_owner_link("r").await.unwrap().unwrap();
+        assert_eq!((got.last_contact_at, got.owner_version.as_str(), got.paused), (Some(50), "1.1.0", true));
+        assert_eq!(got.cap, Some(2));
 
         // The same owner's project can't be joined twice.
         let (mut again, mut link2) = remote("r2");
@@ -459,6 +499,8 @@ pub(crate) mod tests {
             last_seen_at: None,
             last_error: None,
             secrets: vec![],
+            cap: None,
+            remote_cap: None,
             created_at: 2,
         };
         store.insert_remote_instance(&i).await.unwrap();
@@ -474,12 +516,15 @@ pub(crate) mod tests {
             facts: &facts,
             paused: true,
             secrets: &secrets,
+            cap: Some(3),
             at: 9,
         };
         store.record_heartbeat("l", answer).await.unwrap();
+        assert!(store.set_remote_instance_cap("l", Some(2)).await.unwrap());
         let got = store.get_remote_instance("l").await.unwrap().unwrap();
         assert_eq!((got.name.as_str(), got.version.as_str(), got.paused), ("win", "1.1.0", true));
         assert_eq!(got.secrets, secrets);
+        assert_eq!((got.cap, got.remote_cap, got.pool_cap()), (Some(2), Some(3), 2));
         assert_eq!((got.facts, got.last_seen_at), (Some(facts), Some(9)));
 
         store.record_heartbeat("l", Heard::Failed { error: "offline", protocol: Some((2, "2.0.0")) }).await.unwrap();

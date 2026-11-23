@@ -8,7 +8,7 @@ use pdt_agents::{PtyError, SpawnSpec};
 use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
-    default_title, is_scrubbed, launch, prompt_arg, shim_prompt,
+    default_title, is_scrubbed, launch, prompt_arg, shim_prompt, title_from_message,
 };
 use pdt_core::ticket::{AttemptState, SessionTicket};
 use pdt_core::workspace::TabPlacement;
@@ -145,7 +145,11 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         kind: valid.kind,
         agent: valid.agent,
         bypass_permissions: valid.bypass_permissions,
-        title: req.title.unwrap_or_else(|| default_title(&place)),
+        // Untitled, it is named after its first message when it starts with one (PDT-683).
+        title: req.title.unwrap_or_else(|| {
+            let prompt = valid.initial_prompt.as_deref().unwrap_or("");
+            title_from_message(&default_title(&place), &place, prompt).unwrap_or_else(|| default_title(&place))
+        }),
         cwd,
         status: SessionStatus::Running,
         exit_code: None,
@@ -716,6 +720,19 @@ pub(crate) async fn settle_exit(st: &AppState, id: &str) {
     let handle = st.exit_tasks.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
     if let Some(h) = handle {
         let _ = h.await;
+    }
+}
+
+/// The user wrote `text` to session `s`: one still called its default title (its branch, or its project for the main
+/// checkout) is named after the message (PDT-683). A rename the user made first, or meanwhile, stays.
+pub(crate) async fn user_wrote(st: &AppState, s: &Session, text: &str) {
+    let place = match &s.worktree_id {
+        Some(wid) => st.store.get_worktree(wid).await.ok().flatten().map(|w| w.branch),
+        None => st.store.get_project(&s.project_id).await.ok().flatten().map(|p| p.name),
+    };
+    let Some(title) = place.and_then(|place| title_from_message(&s.title, &place, text)) else { return };
+    if let Err(e) = st.store.retitle_session(&s.id, &s.title, &title).await {
+        tracing::warn!(session = %s.id, error = %e, "could not title a conversation after its first message");
     }
 }
 

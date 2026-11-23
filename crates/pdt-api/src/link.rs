@@ -611,6 +611,8 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
         last_seen_at: None,
         last_error: None,
         secrets: vec![],
+        cap: None,
+        remote_cap: None,
         created_at: now_ms(),
     };
     if let Err(e) = st.store.insert_remote_instance(&instance).await {
@@ -725,7 +727,13 @@ async fn heartbeat_route(
     let owner_version = sent.owner.map(|o| o.version);
     st.store.owner_contact(&link.link_id, now_ms(), owner_version.as_deref()).await?;
     let secrets = crate::exec::own_secret_names(&st, &link.project_id).await?;
-    Ok(Json(HeartbeatReply { instance: hello(&st).await?, facts: facts(&st).await, paused: link.paused, secrets }))
+    Ok(Json(HeartbeatReply {
+        instance: hello(&st).await?,
+        facts: facts(&st).await,
+        paused: link.paused,
+        secrets,
+        cap: link.cap,
+    }))
 }
 
 /// The owner removed this instance from the project: the remote project goes, with this end's key.
@@ -828,6 +836,7 @@ pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance)
                         facts: &reply.facts,
                         paused: reply.paused,
                         secrets: &reply.secrets,
+                        cap: reply.cap,
                         at: now_ms(),
                     },
                 )
@@ -885,6 +894,10 @@ pub async fn heartbeat_all(st: &AppState) {
         }
     };
     futures_util::future::join_all(instances.iter().map(|i| heartbeat(st, i))).await;
+    match st.store.list_remote_instances(None).await {
+        Ok(heard) => crate::offline_instances::check(st, &heard).await,
+        Err(e) => tracing::warn!(error = %e, "could not list the remote instances"),
+    }
 }
 
 /// The link's own routes (the other instance calls them); `routes::router` merges them under `/api`.

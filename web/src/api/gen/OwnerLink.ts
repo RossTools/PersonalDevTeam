@@ -29,6 +29,10 @@ paused: boolean,
  */
 ownUpdateChannel: boolean, 
 /**
+ * The most of the project's tickets this instance takes at once (reported to the owner); None: no cap of its own.
+ */
+cap: number | null, 
+/**
  * When the owner last reached this instance, in ms.
  */
 lastContactAt: number | null, createdAt: number, };

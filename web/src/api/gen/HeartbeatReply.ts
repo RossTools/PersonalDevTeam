@@ -14,4 +14,8 @@ paused: boolean,
  * The names of the secrets the remote instance keeps for the project itself (never their values): they win
  * over the owner's of the same name, which then isn't forwarded (PDT-637).
  */
-secrets: Array<string>, };
+secrets: Array<string>, 
+/**
+ * The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
+ */
+cap: number | null, };

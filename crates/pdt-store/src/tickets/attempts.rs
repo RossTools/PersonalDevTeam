@@ -27,6 +27,8 @@ pub struct AttemptInfo {
     /// PDT named the branch from the project's template (true) or was given the name (false); None for attempts
     /// from before PDT recorded it (PDT-594).
     pub branch_named: Option<bool>,
+    /// The remote instance its worktree is on (its id, PDT-632); None: the owner.
+    pub instance_id: Option<String>,
 }
 
 const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, a.created_at, \
@@ -34,7 +36,7 @@ const ATTEMPT_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch,
 const ATTEMPT_INFO_SELECT: &str = "SELECT a.id, a.ticket_id, a.branch, a.base_branch, a.worktree_id, a.state, \
                                    a.created_at, a.ended_at, a.last_head, a.workspace_id, a.base_commit, a.own_commits, \
                                    a.finish_on_merge, a.finish_delete_branch, a.merge_requested, a.merge_refused, a.branch_named, t.project_id, COALESCE(p.key, '') AS pkey, t.number, p.repo_path, \
-                                   w.path AS worktree_path \
+                                   w.path AS worktree_path, w.instance_id AS worktree_instance \
                                    FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
                                    JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
 
@@ -65,6 +67,7 @@ fn to_attempt_info(r: &SqliteRow) -> Result<AttemptInfo, StoreError> {
         merge_requested: r.try_get::<i64, _>("merge_requested")? != 0,
         merge_refused: r.try_get::<i64, _>("merge_refused")? != 0,
         branch_named: r.try_get::<Option<i64>, _>("branch_named")?.map(|n| n != 0),
+        instance_id: r.try_get("worktree_instance")?,
     })
 }
 

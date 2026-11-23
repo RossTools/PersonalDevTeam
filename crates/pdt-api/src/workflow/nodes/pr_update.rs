@@ -284,9 +284,10 @@ impl NodeKind for PrApproval {
                     f.change_request_number(&r, n).map(|p| p.map(|p| p.head_sha).unwrap_or_default())
                 };
                 let before = head_now(f)?;
-                let files = f.change_request_files(&r, n)?;
+                // A list cut off (more files than the forge lists) is no diff: no approval is kept over it (PDT-696).
+                let files = f.change_request_files_whole(&r, n)?;
                 let after = head_now(f)?;
-                Ok((before == h && after == h).then(|| own_diff(&files)).ok_or(after))
+                Ok((before == h && after == h).then(|| files.and_then(|f| own_diff(&f))).ok_or(after))
             })
             .await?;
             if record {

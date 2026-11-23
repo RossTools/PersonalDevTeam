@@ -65,6 +65,10 @@ pub struct RemoteProjectPatch {
     #[serde(default)]
     #[ts(optional)]
     pub own_update_channel: Option<bool>,
+    /// The most of the project's tickets this instance takes at once; 0: no cap of its own (the owner's decides).
+    #[serde(default)]
+    #[ts(optional)]
+    pub cap: Option<u32>,
 }
 
 async fn view_of(st: &AppState, project: Project, link: OwnerLink, now: i64) -> RemoteProjectView {
@@ -186,6 +190,7 @@ async fn join(
         checkout_path: None,
         paused: false,
         own_update_channel: false,
+        cap: None,
         last_contact_at: Some(now_ms()),
         created_at: now_ms(),
     };
@@ -277,6 +282,9 @@ async fn patch(
     }
     if let Some(own) = body.own_update_channel {
         st.store.set_remote_project_own_channel(&id, own).await?;
+    }
+    if let Some(cap) = body.cap {
+        st.store.set_remote_project_cap(&id, Some(cap).filter(|c| *c > 0)).await?;
     }
     let (p, l) = one(&st, &id).await?;
     Ok(Json(view_of(&st, p, l, now_ms()).await))

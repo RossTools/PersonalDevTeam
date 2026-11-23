@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
+import { AutoSaveText } from '../common/AutoSave';
 import { LoadError } from '../common/QueryStatus';
 import { formatBytes } from '../common/text';
 import { useAction } from '../common/useAction';
@@ -20,6 +21,13 @@ export const LINK_STATE: Record<LinkState, { label: string; tone: BadgeTone }> =
 };
 
 const OS: Record<string, string> = { macos: 'macOS', windows: 'Windows', linux: 'Linux' };
+
+/** A cap as typed: blank (or 0) for none. */
+export function capOf(text: string): number {
+  const n = Number(text.trim() || '0');
+  if (!Number.isInteger(n) || n < 0) throw new Error('Enter a whole number, or leave it blank.');
+  return n;
+}
 
 /** "3 min ago" for a time in ms. */
 export function ago(at: number, now = Date.now()): string {
@@ -70,6 +78,21 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
         {!!f?.tools.length && <span>{f.tools.map((t) => t.name).join(', ')}</span>}
         <span>{i.lastSeenAt ? `last seen ${ago(i.lastSeenAt)}` : 'not heard from yet'}</span>
         {i.lastError && i.state === 'offline' && <span>{i.lastError}</span>}
+      </span>
+      <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+        At most
+        <AutoSaveText
+          aria-label={`Cap for ${i.name}`}
+          inputMode="numeric"
+          size="sm"
+          className="w-14"
+          placeholder={String(i.poolCap)}
+          value={i.cap == null ? '' : String(i.cap)}
+          onSave={async (t) => {
+            qc.setQueryData(projectKeys.remoteInstances(project.id), await api.patchRemoteInstance(project.id, i.linkId, { cap: capOf(t) }));
+          }}
+        />
+        tickets in flight on it at once{i.remoteCap != null && ` (${i.name}'s own cap: ${i.remoteCap})`}. Now {i.poolCap}.
       </span>
     </li>
   );

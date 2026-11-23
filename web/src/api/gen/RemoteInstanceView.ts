@@ -9,7 +9,11 @@ export type RemoteInstanceView = { state: LinkState,
 /**
  * What to do about an incompatible one ("update win-box to v0.7.2 to link it with studio").
  */
-problem: string | null, linkId: string, projectId: string, instanceId: string, name: string, 
+problem: string | null, 
+/**
+ * The most of the project's tickets in flight on it at once: the lower of this project's cap for it and its own.
+ */
+poolCap: number, linkId: string, projectId: string, instanceId: string, name: string, 
 /**
  * Where the owner reaches it.
  */
@@ -37,4 +41,12 @@ lastError: string | null,
 /**
  * The names of the secrets it keeps for the project itself, from its last heartbeat (PDT-637).
  */
-secrets: Array<string>, createdAt: number, };
+secrets: Array<string>, 
+/**
+ * The most tickets in flight on it at once, as the owner's project settings say; None: no cap set here.
+ */
+cap: number | null, 
+/**
+ * The cap the remote instance set for the project (its last heartbeat said so).
+ */
+remoteCap: number | null, createdAt: number, };
