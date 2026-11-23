@@ -20,6 +20,9 @@ Each project has a **Key** of 2–10 letters and digits, suggested from its name
 `ALP-2` and so on.
 
 Clones go in your projects folder, `~/work` unless you change it in **Settings › This host › Projects folder**.
+While a clone runs, the form shows git's progress and a **Cancel** button, which stops it and removes what it had
+cloned. The clone carries on if you reload or close the page, and the project is added when it finishes. A clone
+that makes no progress for five minutes (a host that stopped answering) is stopped and reported.
 
 ## What PDT uses from your repository
 

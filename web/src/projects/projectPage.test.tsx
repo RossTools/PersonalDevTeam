@@ -208,4 +208,18 @@ describe('AddProjectForm', () => {
     await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/projects/clone', body: { url: 'https://github.com/o/r', key: 'rr' } }));
     expect(onAdded).toHaveBeenCalledWith(expect.objectContaining({ id: 'n' }));
   });
+
+  it('shows a clone under way with its progress, and cancels it', async () => {
+    const calls = stubApi({
+      'GET /api/host/settings': { settings: {}, projectsDir: '/home/me/work', ownerFromEnv: null, tokenPresent: false, tokenError: null, remote: {} },
+      'GET /api/projects/clones': [{ id: 'c1', url: 'https://github.com/o/big', dest: '/home/me/work/big', name: 'big', progress: 'Receiving objects:  45% (450/1000)', startedAt: 1 }],
+      'DELETE /api/projects/clones/c1': undefined,
+    });
+    renderWithQuery(<AddProjectForm initialMode="clone" />);
+    const job = await screen.findByRole('group', { name: 'Cloning big' });
+    expect(job).toHaveTextContent('/home/me/work/big');
+    expect(job).toHaveTextContent('Receiving objects: 45% (450/1000)');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'DELETE', path: '/api/projects/clones/c1' })));
+  });
 });

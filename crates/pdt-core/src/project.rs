@@ -134,6 +134,24 @@ pub struct CloneProject {
     pub key: Option<String>,
 }
 
+/// A clone under way (`GET /api/projects/clones`). It runs on whether or not the page that started it stays open;
+/// the project is added when it finishes.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CloneJob {
+    pub id: String,
+    pub url: String,
+    /// The folder it clones into.
+    pub dest: String,
+    /// The project's name once added.
+    pub name: String,
+    /// git's latest progress report (`Receiving objects:  45% (450/1000)`); empty before the first.
+    pub progress: String,
+    #[ts(type = "number")]
+    pub started_at: i64,
+}
+
 /// Brings a local branch of the main checkout up to date with `origin` (PDT-56): `POST /api/projects/{id}/pull`.
 #[derive(Debug, Clone, Default, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

@@ -61,6 +61,7 @@ pub mod pickup_pause;
 mod placement;
 mod pm;
 mod pm_checkpoint;
+mod project_clones;
 mod project_settings;
 mod projects;
 mod pty_ws;

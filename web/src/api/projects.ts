@@ -1,5 +1,6 @@
 import { enc, request } from './core';
 import type { Branch } from './gen/Branch';
+import type { CloneJob } from './gen/CloneJob';
 import type { CloneProject } from './gen/CloneProject';
 import type { NewProject } from './gen/NewProject';
 import type { NewWorktree } from './gen/NewWorktree';
@@ -17,6 +18,9 @@ export const projectsApi = {
   listProjects: () => request<Project[]>('/api/projects'),
   createProject: (p: NewProject) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(p) }),
   cloneProject: (p: CloneProject) => request<Project>('/api/projects/clone', { method: 'POST', body: JSON.stringify(p) }),
+  /** The clones under way, with git's progress. */
+  listClones: () => request<CloneJob[]>('/api/projects/clones'),
+  cancelClone: (id: string) => request<void>(`/api/projects/clones/${enc(id)}`, { method: 'DELETE' }),
   updateProject: (id: string, p: ProjectPatch) => request<Project>(`/api/projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
   pullBranch: (id: string, p: PullBranch = {}) =>
     request<PullResult>(`/api/projects/${enc(id)}/pull`, { method: 'POST', body: JSON.stringify(p) }),
