@@ -161,17 +161,29 @@ pub async fn refresh_overlaps(st: &AppState) {
         }
         let Some(path) = info.worktree_path.clone() else { continue };
         let (base, start) = (info.attempt.base_branch.clone(), info.base_commit.clone());
-        let found =
-            tokio::task::spawn_blocking(move || pdt_git::changed_files(std::path::Path::new(&path), &base, &start))
-                .await;
-        let files = match found {
-            Ok(Ok(files)) => Some(files),
-            Ok(Err(e)) => {
-                tracing::debug!(attempt = %info.attempt.id, error = %e, "could not list changed files");
-                None
-            }
+        // An attempt on a remote instance: that instance lists them (PDT-635).
+        let remote = match crate::exec::attempt_instance(st, &info).await {
+            Ok(r) => r,
             Err(e) => {
-                tracing::warn!(error = %e, "the changed-files task failed");
+                tracing::debug!(attempt = %info.attempt.id, error = %e, "the attempt's remote instance has left");
+                if let Some(files) = old.get(&info.attempt.id) {
+                    fresh.insert(info.attempt.id.clone(), files.clone());
+                }
+                continue;
+            }
+        };
+        let found = match remote {
+            Some(i) => crate::exec::changed_files(st, &i, &info.attempt.branch, &base, &start).await,
+            None => tokio::task::spawn_blocking(move || {
+                pdt_git::changed_files(std::path::Path::new(&path), &base, &start).map_err(|e| e.to_string())
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("the changed-files task failed: {e}"))),
+        };
+        let files = match found {
+            Ok(files) => Some(files),
+            Err(e) => {
+                tracing::debug!(attempt = %info.attempt.id, error = %e, "could not list changed files");
                 None
             }
         };

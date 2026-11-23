@@ -327,6 +327,15 @@ pub fn merge_preview(repo: &Path, branch: &str, base: &str) -> Result<MergePrevi
     Ok(MergePreview { commits, conflicts, base_checkout, base_dirty })
 }
 
+/// `branch`'s commits that the revision `base` lacks, and the files a merge of `branch` into it would conflict on.
+/// Unlike [`merge_preview`], `base` may be any revision (`origin/main`, when it is ahead of the local `main`).
+pub fn merge_conflicts(repo: &Path, branch: &str, base: &str) -> Result<(u32, Vec<String>), GitError> {
+    let range = format!("{base}..{}", head_ref(branch));
+    let commits = run(repo, &["rev-list", "--count", &range])?.trim().parse().unwrap_or(0);
+    let conflicts = if commits == 0 { vec![] } else { merge_tree(repo, base, &head_ref(branch))?.1 };
+    Ok((commits, conflicts))
+}
+
 fn head_ref(branch: &str) -> String {
     format!("refs/heads/{branch}")
 }
@@ -543,6 +552,23 @@ mod tests {
         let wt = tmp.join("wt");
         git(&repo, &["worktree", "add", "-q", "-b", "feature", wt.to_str().unwrap(), "main"]);
         (repo, wt, base)
+    }
+
+    #[test]
+    fn merge_conflicts_checks_against_any_revision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, wt, _) = setup(tmp.path());
+        assert_eq!(merge_conflicts(&repo, "feature", "main").unwrap(), (0, vec![]));
+        write(&wt, "a.txt", b"one\nfeature\nthree\n");
+        commit_all(&wt, "feature");
+        assert_eq!(merge_conflicts(&repo, "feature", "main").unwrap(), (1, vec![]));
+        // `main` moves on elsewhere: only a check against where it is now finds the conflict.
+        git(&repo, &["branch", "ahead", "main"]);
+        git(&repo, &["checkout", "-q", "ahead"]);
+        write(&repo, "a.txt", b"one\nahead\nthree\n");
+        let ahead = commit_all(&repo, "ahead");
+        assert_eq!(merge_conflicts(&repo, "feature", "main").unwrap(), (1, vec![]));
+        assert_eq!(merge_conflicts(&repo, "feature", &ahead).unwrap(), (1, vec!["a.txt".to_string()]));
     }
 
     #[test]

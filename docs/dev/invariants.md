@@ -442,6 +442,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
   checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
   is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **The owner never names a path on a remote instance's disk.** Files and Changes requests name a branch (or none, for
+  the remote project's checkout) and paths inside it; the remote instance finds the folder itself
+  (`exec::files::place`: a valid branch name, `pdt_git::check_worktree_path`, inside its checkout) and cleans and
+  checks every path again with the Files view's own checks. A remote worktree's `path` on the owner is for display:
+  never read it here, ask `exec::worktree_instance` first.
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.

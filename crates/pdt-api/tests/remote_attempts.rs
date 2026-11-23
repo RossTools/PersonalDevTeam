@@ -125,7 +125,7 @@ pub(crate) async fn ticket(p: &Pair, title: &str, labels: &[&str]) -> String {
     t["id"].as_str().unwrap().to_string()
 }
 
-async fn get_ticket(p: &Pair, id: &str) -> Value {
+pub(crate) async fn get_ticket(p: &Pair, id: &str) -> Value {
     call(&p.owner.app, "GET", &format!("/api/tickets/{id}"), None).await.1
 }
 

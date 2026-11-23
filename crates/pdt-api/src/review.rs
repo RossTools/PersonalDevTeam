@@ -1,6 +1,9 @@
 //! Review: a worktree's changes and the two sides of a
 //! file, line comments, Send feedback into the coder session, Approve, and Merge (a local merge, or auto-merge of the
 //! attempt's pull request on the project's forge).
+//!
+//! A worktree on a remote instance (PDT-635) is read there: the whole diff, both sides of each file with it, in one
+//! call over the project link, kept on the owner until the worktree changes (`exec::changes`).
 
 use crate::error::{ApiError, OrNotFound, codes};
 use crate::extract::ApiQuery;
@@ -15,6 +18,7 @@ use axum::http::{HeaderMap, StatusCode};
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::conversation::SessionMode;
 use pdt_core::forge::ForgeKind;
+use pdt_core::link::RemoteInstance;
 use pdt_core::policy::{MergeBy, Merger, may_merge};
 use pdt_core::pr::{CiGate, Mergeable, PrState};
 use pdt_core::project::Project;
@@ -36,15 +40,24 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The worktree, its project and the attempt working in it; 409 `worktree_missing` when its folder is gone.
-async fn load(st: &AppState, worktree_id: &str) -> Result<(Worktree, Project, Option<AttemptInfo>), ApiError> {
+/// The worktree, its project, the attempt working in it, and the remote instance it is on (if it is on one); 409
+/// `worktree_missing` when its folder here is gone.
+async fn load(
+    st: &AppState,
+    worktree_id: &str,
+) -> Result<(Worktree, Project, Option<AttemptInfo>, Option<RemoteInstance>), ApiError> {
     let wt = st.store.get_worktree(worktree_id).await?.or_404("worktree")?;
     let project = st.project(&wt.project_id).await?;
-    if !PathBuf::from(&wt.path).is_dir() {
-        return Err(ApiError::conflict(codes::WORKTREE_MISSING, "this worktree's folder is gone"));
+    let remote = crate::exec::worktree_instance(st, &wt).await?;
+    if remote.is_none() && !PathBuf::from(&wt.path).is_dir() {
+        return Err(missing());
     }
     let attempt = st.store.attempt_for_worktree(worktree_id).await?;
-    Ok((wt, project, attempt))
+    Ok((wt, project, attempt, remote))
+}
+
+pub(crate) fn missing() -> ApiError {
+    ApiError::conflict(codes::WORKTREE_MISSING, "this worktree's folder is gone")
 }
 
 /// The base branch and the fallback commit the changes are measured from.
@@ -53,6 +66,34 @@ fn base_of(wt: &Worktree, project: &Project, attempt: Option<&AttemptInfo>) -> (
         Some(a) => (a.attempt.base_branch.clone(), a.base_commit.clone()),
         None => (project.base_branch.clone(), wt.base_commit.clone()),
     }
+}
+
+/// A worktree's changes against `base` (`fallback` when it has no merge base with it): the merge base, the head,
+/// whether it is dirty, and the files. Blocking.
+pub(crate) fn changes_in(
+    path: &std::path::Path,
+    base: &str,
+    fallback: &str,
+) -> Result<(String, String, bool, Vec<ChangedFile>), ApiError> {
+    let mb = pdt_git::review_base(path, base, fallback);
+    let head = pdt_git::rev_parse(path, "HEAD").unwrap_or_default();
+    let dirty = pdt_git::is_dirty(path)?;
+    let files = pdt_git::diff_files(path, &mb)?
+        .into_iter()
+        .map(|f| ChangedFile {
+            generated: f.generated || pdt_core::review::is_lockfile(&f.path),
+            path: f.path,
+            old_path: f.old_path,
+            status: to_status(f.status),
+            untracked: f.untracked,
+            binary: f.binary,
+            added: f.added,
+            removed: f.removed,
+            uncommitted: f.uncommitted,
+            version: f.version,
+        })
+        .collect();
+    Ok((mb, head, dirty, files))
 }
 
 fn to_status(s: pdt_git::FileStatus) -> ChangeStatus {
@@ -66,19 +107,15 @@ fn to_status(s: pdt_git::FileStatus) -> ChangeStatus {
 
 /// `GET /api/worktrees/{id}/changes`.
 pub(crate) async fn changes(State(st): State<AppState>, Path(id): Path<String>) -> Result<Json<Changes>, ApiError> {
-    let (wt, project, attempt) = load(&st, &id).await?;
+    let (wt, project, attempt, remote) = load(&st, &id).await?;
     let (base, fallback) = base_of(&wt, &project, attempt.as_ref());
-    let path = PathBuf::from(&wt.path);
-    let base_for_git = base.clone();
-    let (merge_base, head, dirty, files) = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-        let mb = pdt_git::review_base(&path, &base_for_git, &fallback);
-        let head = pdt_git::rev_parse(&path, "HEAD").unwrap_or_default();
-        let dirty = pdt_git::is_dirty(&path)?;
-        let files = pdt_git::diff_files(&path, &mb)?;
-        Ok((mb, head, dirty, files))
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let (merge_base, head, dirty, files) = match &remote {
+        Some(i) => crate::exec::changes(&st, i, &wt, &base, &fallback).await?.summary(),
+        None => {
+            let (path, base) = (PathBuf::from(&wt.path), base.clone());
+            crate::files::blocking(move || changes_in(&path, &base, &fallback)).await?
+        }
+    };
     let approved = match &attempt {
         Some(a) => st
             .store
@@ -94,21 +131,7 @@ pub(crate) async fn changes(State(st): State<AppState>, Path(id): Path<String>) 
         merge_base,
         head,
         dirty,
-        files: files
-            .into_iter()
-            .map(|f| ChangedFile {
-                generated: f.generated || pdt_core::review::is_lockfile(&f.path),
-                path: f.path,
-                old_path: f.old_path,
-                status: to_status(f.status),
-                untracked: f.untracked,
-                binary: f.binary,
-                added: f.added,
-                removed: f.removed,
-                uncommitted: f.uncommitted,
-                version: f.version,
-            })
-            .collect(),
+        files,
         attempt_active: attempt.as_ref().is_some_and(|a| a.attempt.state == AttemptState::Active),
         attempt_id: attempt.as_ref().map(|a| a.attempt.id.clone()),
         ticket_id: attempt.map(|a| a.ticket_id),
@@ -143,7 +166,7 @@ pub(crate) async fn file(
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<FileQuery>,
 ) -> Result<Json<FileSides>, ApiError> {
-    let (wt, project, attempt) = load(&st, &id).await?;
+    let (wt, project, attempt, remote) = load(&st, &id).await?;
     let (base, fallback) = base_of(&wt, &project, attempt.as_ref());
     let rel = crate::files::clean_path(&q.path)?;
     let old_rel = match q.old_path.as_deref().filter(|p| !p.is_empty()) {
@@ -153,27 +176,49 @@ pub(crate) async fn file(
     if rel.is_empty() || old_rel.is_empty() {
         return Err(ApiError::invalid("name a file"));
     }
-    let checkout = PathBuf::from(&wt.path);
-    let sides = tokio::task::spawn_blocking(move || -> Result<FileSides, ApiError> {
-        let mb = pdt_git::review_base(&checkout, &base, &fallback);
-        let old = pdt_git::file_at(&checkout, &mb, &old_rel)?;
-        crate::files::contained(&checkout, &rel)?;
-        let dir = crate::files::checkout_dir(&checkout)?;
-        let (new, new_huge) = match dir.metadata(&rel) {
-            Ok(m) if m.is_file() && m.len() > MAX_SIDE_BYTES as u64 => (None, true),
-            Ok(m) if m.is_file() => (Some(dir.read(&rel).map_err(crate::files::io_err)?), false),
-            _ => (None, false),
-        };
-        let (old, old_bin, old_big) = side_text(old);
-        let (new, new_bin, new_big) = side_text(new);
-        let new_big = new_big || new_huge;
-        let (binary, too_large) = (old_bin || new_bin, old_big || new_big);
-        let (old, new) = if binary || too_large { (None, None) } else { (old, new) };
-        Ok(FileSides { path: rel, old, new, binary, too_large })
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let sides = match &remote {
+        Some(i) => crate::exec::file_sides(&st, i, &wt, &base, &fallback, rel, old_rel).await?,
+        None => {
+            let checkout = PathBuf::from(&wt.path);
+            crate::files::blocking(move || sides_in(&checkout, &base, &fallback, rel, old_rel)).await?
+        }
+    };
     Ok(Json(sides))
+}
+
+/// A changed file's two sides: `old_rel` at the merge base with `base`, `rel` in the working tree. Blocking.
+pub(crate) fn sides_in(
+    checkout: &std::path::Path,
+    base: &str,
+    fallback: &str,
+    rel: String,
+    old_rel: String,
+) -> Result<FileSides, ApiError> {
+    let mb = pdt_git::review_base(checkout, base, fallback);
+    sides_at(checkout, &mb, rel, &old_rel)
+}
+
+/// [`sides_in`], with the merge base known. Blocking.
+pub(crate) fn sides_at(
+    checkout: &std::path::Path,
+    mb: &str,
+    rel: String,
+    old_rel: &str,
+) -> Result<FileSides, ApiError> {
+    let old = pdt_git::file_at(checkout, mb, old_rel)?;
+    crate::files::contained(checkout, &rel)?;
+    let dir = crate::files::checkout_dir(checkout)?;
+    let (new, new_huge) = match dir.metadata(&rel) {
+        Ok(m) if m.is_file() && m.len() > MAX_SIDE_BYTES as u64 => (None, true),
+        Ok(m) if m.is_file() => (Some(dir.read(&rel).map_err(crate::files::io_err)?), false),
+        _ => (None, false),
+    };
+    let (old, old_bin, old_big) = side_text(old);
+    let (new, new_bin, new_big) = side_text(new);
+    let new_big = new_big || new_huge;
+    let (binary, too_large) = (old_bin || new_bin, old_big || new_big);
+    let (old, new) = if binary || too_large { (None, None) } else { (old, new) };
+    Ok(FileSides { path: rel, old, new, binary, too_large })
 }
 
 /// `GET /api/worktrees/{id}/comments`.
@@ -404,8 +449,13 @@ pub(crate) async fn approve(State(st): State<AppState>, Path(id): Path<String>) 
     Ok(Json(crate::overlap::load_ticket(&st, &info.ticket_id).await?))
 }
 
-/// The branch's head commit, if it has one.
-async fn branch_head(info: &AttemptInfo) -> Result<Option<String>, ApiError> {
+/// The branch's head commit, if it has one (on the remote instance the attempt runs on, if it runs on one).
+async fn branch_head(st: &AppState, info: &AttemptInfo) -> Result<Option<String>, ApiError> {
+    if let Some(i) = crate::exec::attempt_instance(st, info).await? {
+        return crate::exec::branch_head(st, &i, &info.attempt.branch)
+            .await
+            .map_err(|e| ApiError::upstream(codes::LINK_UNREACHABLE, e));
+    }
     let repo = PathBuf::from(&info.repo_path);
     let branch = format!("refs/heads/{}", info.attempt.branch);
     tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &branch)).await.map_err(ApiError::internal)
@@ -418,7 +468,7 @@ pub(crate) async fn record_approval(
     info: &AttemptInfo,
     extra: serde_json::Value,
 ) -> Result<(), ApiError> {
-    let head = branch_head(info).await?;
+    let head = branch_head(st, info).await?;
     let mut data = json!({"attemptId": info.attempt.id, "verdict": "approved", "head": head});
     if let (Some(d), serde_json::Value::Object(x)) = (data.as_object_mut(), extra) {
         d.extend(x);
@@ -429,7 +479,7 @@ pub(crate) async fn record_approval(
 
 /// Whether a person approved the attempt at its branch's current head.
 async fn approved_at_head(st: &AppState, info: &AttemptInfo) -> Result<bool, ApiError> {
-    let Some(head) = branch_head(info).await? else { return Ok(false) };
+    let Some(head) = branch_head(st, info).await? else { return Ok(false) };
     Ok(st
         .store
         .latest_event_data(&info.ticket_id, EventKind::Review)
@@ -484,6 +534,23 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         };
         return Ok(p);
     }
+    // On a remote instance the branch is there: it merges through a pull request, and the conflict check runs there.
+    if let Some(i) = crate::exec::attempt_instance(st, info).await? {
+        let c = crate::exec::merge_check(st, &i, &branch, &base).await?;
+        p.method = MergeMethod::Forge;
+        p.commits = c.commits;
+        p.conflicts = c.conflicts;
+        p.problem = Some(if c.dirty {
+            MergeProblem::Dirty
+        } else if p.commits == 0 {
+            MergeProblem::Nothing
+        } else if !p.conflicts.is_empty() {
+            MergeProblem::Conflict
+        } else {
+            MergeProblem::NoPr
+        });
+        return Ok(p);
+    }
     if st.store.get_project_settings(&info.project_id).await?.merge_via_pr {
         p.method = MergeMethod::Forge;
         p.problem = Some(MergeProblem::NoPr);
@@ -491,15 +558,8 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
     }
     let repo = PathBuf::from(&info.repo_path);
     let worktree = info.worktree_path.clone().map(PathBuf::from);
-    let (dirty, preview) = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-        let dirty = match &worktree {
-            Some(w) if w.is_dir() => pdt_git::is_dirty(w)?,
-            _ => false,
-        };
-        Ok((dirty, pdt_git::merge_preview(&repo, &branch, &base)?))
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    let (dirty, preview) =
+        crate::files::blocking(move || merge_check_in(&repo, worktree.as_deref(), &branch, &base)).await?;
     p.commits = preview.commits;
     p.conflicts = preview.conflicts;
     p.base_checkout = preview.base_checkout.map(|c| c.to_string_lossy().into_owned());
@@ -515,6 +575,20 @@ async fn preview(st: &AppState, info: &AttemptInfo) -> Result<MergePreview, ApiE
         None
     };
     Ok(p)
+}
+
+/// Whether the worktree has uncommitted changes, and what merging `branch` into `base` in `repo` would do. Blocking.
+pub(crate) fn merge_check_in(
+    repo: &std::path::Path,
+    worktree: Option<&std::path::Path>,
+    branch: &str,
+    base: &str,
+) -> Result<(bool, pdt_git::MergePreview), ApiError> {
+    let dirty = match worktree {
+        Some(w) if w.is_dir() => pdt_git::is_dirty(w)?,
+        _ => false,
+    };
+    Ok((dirty, pdt_git::merge_preview(repo, branch, base)?))
 }
 
 /// `GET /api/attempts/{id}/merge`.
