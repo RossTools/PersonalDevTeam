@@ -134,7 +134,7 @@ describe('notes: a note', () => {
     expect(screen.getByRole('checkbox')).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByText(/Created .* · 3 words/)).toBeInTheDocument();
     expect(props.onKind).toHaveBeenCalledWith('user');
-    await userEvent.click(screen.getByRole('radio', { name: 'Write' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Edit' }));
     const body = await screen.findByRole('textbox', { name: 'Note' });
     expect(body).toHaveFocus();
     expect(editorText(body)).toBe('### Layout\n\n- [x] Ask Sam');
@@ -155,7 +155,7 @@ describe('notes: a note', () => {
   it('in Write, a tap below the text puts the caret at its end (PDT-264)', async () => {
     stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'Short' }), 'GET /api/projects': [] });
     renderWithQuery(<NoteScreen {...screenProps()} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const box = await screen.findByRole('textbox', { name: 'Note' });
     await userEvent.click(screen.getByRole('textbox', { name: 'Title' }));
     await userEvent.click(screen.getByTestId('end-of-text'));
@@ -178,7 +178,7 @@ describe('notes: a note', () => {
   it('saves AUTOSAVE_MS after typing stops', async () => {
     const calls = stubApi({ 'GET /api/pm/notes/a': note('a', { title: 'Plan', body: 'Hello' }), 'PATCH /api/pm/notes/a': note('a', { title: 'Plan', body: 'Hello world' }), 'GET /api/projects': [] });
     renderWithQuery(<NoteScreen {...screenProps()} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const body = await screen.findByRole('textbox', { name: 'Note' });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     setEditorText(body, 'Hello wor');
@@ -197,7 +197,7 @@ describe('notes: a note', () => {
     let theirs = note('a', { title: 'Plan', body: 'Hello' });
     stubApi({ 'GET /api/pm/notes/a': () => theirs, 'PATCH /api/pm/notes/a': (c: Call) => ({ ...theirs, ...(c.body as object) }), 'GET /api/projects': [] });
     const { qc } = renderWithQuery(<NoteScreen {...screenProps()} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const body = await screen.findByRole('textbox', { name: 'Note' });
     setEditorText(body, 'Mine, unsaved');
     theirs = note('a', { title: 'Plan', body: 'Changed elsewhere', updatedAt: NOW + 1 });
@@ -218,7 +218,7 @@ describe('notes: a note', () => {
       'GET /api/projects': [],
     });
     renderWithQuery(<NoteScreen {...screenProps()} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const title = screen.getByRole('textbox', { name: 'Title' });
     fireEvent.change(title, { target: { value: '' } });
     fireEvent.blur(title);
@@ -273,7 +273,7 @@ describe('notes: a note', () => {
       'GET /api/projects': [],
     });
     renderWithQuery(<NoteScreen {...screenProps()} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const body = await screen.findByRole('textbox', { name: 'Note' });
     setEditorText(body, 'Hi');
     fireEvent.focusOut(body);

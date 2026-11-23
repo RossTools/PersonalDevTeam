@@ -234,7 +234,8 @@ describe('documents', () => {
     });
     renderWithQuery(<DocumentPage id="d3" phone={false} onGone={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'Goal', level: 2 })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('radio', { name: 'Write' }));
+    expect(screen.getByRole('radiogroup', { name: 'View' })).toHaveTextContent(/^PreviewEdit$/);
+    await userEvent.click(screen.getByRole('radio', { name: 'Edit' }));
     const box = await screen.findByRole('textbox', { name: 'Document text' });
     expect(editorText(box)).toBe('# Notes\n\n## Goal\n');
     setEditorText(box, '# Notes\n\n## Goal\n\nShip it.\n');
@@ -269,7 +270,7 @@ describe('documents', () => {
       },
     });
     renderWithQuery(<DocumentPage id="d4" phone={false} onGone={() => {}} />);
-    await userEvent.click(await screen.findByRole('radio', { name: 'Write' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Edit' }));
     const box = await screen.findByRole('textbox', { name: 'Document text' });
     setEditorText(box, 'AB\n');
     await waitFor(() => expect(release).not.toBeNull());

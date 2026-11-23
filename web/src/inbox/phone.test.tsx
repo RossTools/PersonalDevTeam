@@ -139,7 +139,7 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     const calls = stubApi({ 'POST /api/notifications/read-all': undefined, 'POST /api/sessions/sess/requests/req-9': undefined });
     renderWithQuery(<PhoneInbox items={[asked, asking]} />);
     expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
-    expect(screen.getByText('PM · Question')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Questions' })).toHaveTextContent('Which library?');
     await userEvent.click(screen.getByText('Which library?'));
     // A question, laid out as PDT's own questions are (PDT-684), not a permission check on the tool.
     expect(screen.queryByText('A question for you')).not.toBeInTheDocument();

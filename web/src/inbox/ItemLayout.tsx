@@ -10,7 +10,7 @@ import { ItemLinks } from './ItemLinks';
 import type { ItemAction, ItemSpec } from './itemView';
 import { KindChip } from './kinds';
 import { longTitle } from './model';
-import { SnoozeMenu } from './snooze';
+import { SnoozeMenu, snoozedLine, UnsnoozeButton } from './snooze';
 
 /** The kind, the ticket's key and title, the persona and the age; then the title and the links row. */
 export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: ItemSpec; className?: string }) {
@@ -36,7 +36,7 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
             {p}
           </Fragment>
         ))}
-        <span className="ml-auto"><SnoozeMenu item={item} /></span>
+        <span className="ml-auto">{item.snooze ? <UnsnoozeButton item={item} /> : <SnoozeMenu item={item} />}</span>
       </div>
       {/* A long old-style question (the card below has it whole) is clamped, so it shows once. */}
       <h2 className={cn('text-base leading-snug font-semibold break-words', longTitle(item) && 'line-clamp-2')} title={longTitle(item) ? item.title : undefined}>
@@ -44,6 +44,19 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
       </h2>
       <ItemLinks item={item} extra={spec.links} />
     </header>
+  );
+}
+
+/**
+ * A snoozed item's content (PDT-686): to be read, not answered. The line says until when it is away; its controls are
+ * disabled until Unsnooze.
+ */
+export function SnoozedContent({ item, children }: { item: InboxItem; children: ReactNode }) {
+  return (
+    <>
+      <Why>Snoozed {snoozedLine(item)}. Unsnooze it to answer.</Why>
+      <fieldset disabled aria-label="Snoozed: read-only" className="flex min-w-0 flex-col gap-4">{children}</fieldset>
+    </>
   );
 }
 
@@ -81,15 +94,19 @@ function ActionButton({ a, enter }: { a: ItemAction; enter: boolean }) {
 export function ItemLayout({ item, spec, note, onNote }: { item: InboxItem; spec: ItemSpec; note: string; onNote: (s: string) => void }) {
   const main = [...spec.actions.filter((a) => a.primary && !a.end), ...spec.actions.filter((a) => !a.primary && !a.end)];
   const end = spec.actions.filter((a) => a.end);
-  const hasBar = spec.actions.length > 0 || !!spec.note;
+  // A snoozed item opens read-only: no action bar.
+  const hasBar = !item.snooze && (spec.actions.length > 0 || !!spec.note);
+  const body = <>
+    {spec.why && <Why>{spec.why}</Why>}
+    {spec.content}
+  </>;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ItemHeader item={item} spec={spec} className="px-gutter pt-4 pb-3" />
       <div className="min-h-0 flex-1 overflow-auto px-gutter py-5">
         <div className="flex max-w-3xl flex-col gap-4">
           <section aria-label={spec.region} className="flex flex-col gap-4">
-            {spec.why && <Why>{spec.why}</Why>}
-            {spec.content}
+            {item.snooze ? <SnoozedContent item={item}>{body}</SnoozedContent> : body}
           </section>
         </div>
       </div>

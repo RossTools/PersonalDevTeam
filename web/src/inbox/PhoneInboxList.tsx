@@ -65,15 +65,15 @@ export function PhoneInboxList({ items, updates, loading, failed, updatesFailed,
         {segment === 'needs' ? (
           <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
             <NeedsYouGroups items={items} selectedId={null} onSelect={onOpen} loading={loading} failed={failed} />
-            <Snoozed />
+            <Snoozed onSelect={onOpen} />
             <RecentlyAnswered />
           </nav>
         ) : (
           <section aria-label="Updates" className="flex flex-col gap-0.5 py-1">
             <div className="flex items-center gap-1 pr-2">
               <ListHeading className="flex-1">Updates</ListHeading>
-              <Button size="sm" variant="ghost" disabled={!unread} onClick={onReadAll}>Mark all read</Button>
-              <Button size="sm" variant="ghost" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>
+              {unread && <Button size="sm" variant="ghost" onClick={onReadAll}>Mark all read</Button>}
+              {updates.length > 0 && <Button size="sm" variant="ghost" onClick={onClearAll}>Clear all</Button>}
               <Button size="sm" variant="ghost" onClick={onSettings}>Settings</Button>
             </div>
             <UpdatesList updates={updates} selectedId={null} onSelect={onOpen} onClear={onClear} loading={loading} failed={updatesFailed} />

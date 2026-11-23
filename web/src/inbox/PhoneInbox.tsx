@@ -19,7 +19,7 @@ import { useAnswer } from './useAnswer';
 import { useReadItemNotifications } from '../notifications/queries';
 import { useItemView } from './itemView';
 import { useChangeSize, useItemAttempt } from './itemAttempt';
-import { ItemHeader, Why } from './ItemLayout';
+import { ItemHeader, SnoozedContent, Why } from './ItemLayout';
 import { capitalize, plural } from '../common/text';
 
 /** Opens the pull request a gate is about on its forge, in a new tab. */
@@ -96,8 +96,10 @@ function Rows({ rows, disabled, onPick, label }: {
  * decisions fixed at the bottom. After a decision the next item slides in; "All clear" at the end. A swipe moves
  * between items without answering. ⋯ has Open session, Open ticket and Dismiss.
  */
-export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList, onOpenTarget }: {
+export function PhoneInboxItem({ items, snoozed = [], updates, itemId, loading, onMove, onList, onOpenTarget }: {
   items: InboxItem[];
+  /** Snoozed items: one opens read-only, with Unsnooze (PDT-686). */
+  snoozed?: InboxItem[];
   updates: Notification[];
   itemId: string;
   loading?: boolean;
@@ -111,7 +113,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
   const live = items.filter((i) => !done.has(i.id));
   const updateId = selectedUpdate(itemId);
   const update = updateId ? updates.find((u) => u.id === updateId) ?? null : null;
-  const item = updateId ? null : live.find((i) => i.id === itemId) ?? null;
+  const item = updateId ? null : live.find((i) => i.id === itemId) ?? snoozed.find((i) => i.id === itemId) ?? null;
   // Which way the item came in: 1 from the right (next), -1 from the left (back).
   const [dir, setDir] = useState<1 | -1>(1);
   const move = (id: string | null, by: 1 | -1) => {
@@ -137,7 +139,7 @@ export function PhoneInboxItem({ items, updates, itemId, loading, onMove, onList
     ...(session ? [{ label: 'Open session', onSelect: () => openSession(session) }] : []),
     ...(ticket ? [{ label: 'Open ticket', onSelect: () => openTicket(ticket) }] : []),
     ...(item.changeRequest ? [{ label: changeRequestLabel(item)!, onSelect: () => openChangeRequest(item) }] : []),
-    ...(dismissable(item) ? [{ label: 'Dismiss', onSelect: () => void dismiss() }] : []),
+    ...(dismissable(item) && !item.snooze ? [{ label: 'Dismiss', onSelect: () => void dismiss() }] : []),
     ];
   } : null);
 
@@ -220,7 +222,8 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDis
   // except for a notice, whose bar has it as its one other way out.
   const actions = [...spec.actions.filter((a) => a.end), ...spec.actions.filter((a) => !a.end)]
     .filter((a) => a.id !== 'dismiss' || item.kind === 'notice');
-  const decisions: Decision[] = actions.map((a) => ({ id: a.id, title: a.wide ? a.title : a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming, wide: a.wide }));
+  // A snoozed item is read, not answered (PDT-686).
+  const decisions: Decision[] = item.snooze ? [] : actions.map((a) => ({ id: a.id, title: a.wide ? a.title : a.short ?? a.title, primary: a.primary, disabled: a.disabled, confirming: a.confirming, wide: a.wide }));
   const pick = (id: string) => {
     // Merge (and Accept) asks first.
     if (merges(item, id)) return setConfirming(id);
@@ -233,10 +236,17 @@ function TriageItem({ item, busy, className, onAnswer, onApproved, onUndo, onDis
       <div className={cn('flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4', className)}>
         <ItemHeader item={item} spec={spec} className="pb-3" />
         <section aria-label={spec.region} className="flex flex-col gap-4">
-          {spec.why && <Why>{spec.why}</Why>}
-          {spec.content}
+          {item.snooze ? (
+            <SnoozedContent item={item}>
+              {spec.why && <Why>{spec.why}</Why>}
+              {spec.content}
+            </SnoozedContent>
+          ) : <>
+            {spec.why && <Why>{spec.why}</Why>}
+            {spec.content}
+          </>}
         </section>
-        {spec.note && (
+        {spec.note && !item.snooze && (
           <div className="flex flex-col gap-1">
             <Textarea aria-label={spec.note.label} placeholder={spec.note.placeholder} value={note} onChange={(e) => setNote(e.target.value)} rows={3} />
             {spec.note.hint && <p className="text-meta text-muted-foreground">{spec.note.hint}</p>}

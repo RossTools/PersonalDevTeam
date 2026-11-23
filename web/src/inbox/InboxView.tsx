@@ -28,8 +28,10 @@ function foreign(e: KeyboardEvent): boolean {
  * a question's choices, `y`/`n` answer an approval; answering moves to the next item. An Update (PDT-108) shows what
  * it says and opens what it is about.
  */
-export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTarget, loading, failed }: {
+export function InboxView({ items, snoozed = [], updates = [], selectedId, onSelect, onOpenTarget, loading, failed }: {
   items: InboxItem[];
+  /** Snoozed items: one opens read-only, with Unsnooze (PDT-686). */
+  snoozed?: InboxItem[];
   /** The Inbox hasn't loaded yet: a placeholder, not that nothing waits. */
   loading?: boolean;
   /** The Inbox can't be loaded (or the host reached): no item says so rather than that nothing waits. */
@@ -41,7 +43,7 @@ export function InboxView({ items, updates = [], selectedId, onSelect, onOpenTar
 }) {
   const updateId = selectedUpdate(selectedId);
   const update = updateId ? updates.find((u) => u.id === updateId) ?? null : null;
-  const item = updateId ? null : items.find((i) => i.id === selectedId) ?? null;
+  const item = updateId ? null : items.find((i) => i.id === selectedId) ?? snoozed.find((i) => i.id === selectedId) ?? null;
 
   // An item that went away (answered elsewhere): show the first one left.
   useEffect(() => {
@@ -83,6 +85,8 @@ function ItemPane({ item, items, onSelect }: { item: InboxItem; items: InboxItem
     const onKey = (e: KeyboardEvent) => {
       if (foreign(e)) return;
       const k = keys.current;
+      // A snoozed item is read, not answered: only moving and opening its ticket.
+      if (k.item.snooze && !['j', 'k', 'o'].includes(e.key)) return;
       switch (e.key) {
         case 'j': k.onSelect(step(k.items, k.item.id, 1)); break;
         case 'k': k.onSelect(step(k.items, k.item.id, -1)); break;
