@@ -115,6 +115,7 @@ mod tests {
             data: false,
             detach: false,
             env: BTreeMap::new(),
+            os: vec![],
         }
     }
 

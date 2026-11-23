@@ -286,7 +286,7 @@ fn write_zip(
 
 /// A file's modified time as a zip entry keeps it: local time, to the even second (`None` before 1980).
 fn zip_time(t: std::time::SystemTime) -> Option<zip::DateTime> {
-    let t = jiff::Timestamp::try_from(t).ok()?.to_zoned(jiff::tz::TimeZone::system());
+    let t = jiff::Timestamp::try_from(t).ok()?.to_zoned_datetime(jiff::tz::TimeZone::system());
     let as_u8 = |n: i8| n as u8;
     zip::DateTime::from_date_and_time(
         u16::try_from(t.year()).ok()?,

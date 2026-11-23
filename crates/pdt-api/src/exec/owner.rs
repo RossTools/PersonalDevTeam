@@ -326,9 +326,9 @@ pub async fn resume_pollers(st: &AppState) {
     }
 }
 
-/// How many sessions run on the instance, as the owner's store says.
+/// How many sessions and active runs are on the instance, as the owner's store says.
 async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
-    match st.store.list_sessions(&i.project_id).await {
+    let sessions = match st.store.list_sessions(&i.project_id).await {
         Ok(list) => list
             .iter()
             .filter(|s| {
@@ -336,7 +336,8 @@ async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
             })
             .count(),
         Err(_) => 1,
-    }
+    };
+    sessions + super::runs::active_on(st, i).await.len()
 }
 
 /// Reads a joined instance's events into their conversations until nothing on it is followed any more.
@@ -366,14 +367,17 @@ async fn poll_loop(st: &AppState, link_id: &str) {
 }
 
 async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&str>, after: i64, sent_at: i64) {
-    let mut last = if boot == Some(batch.boot.as_str()) { after } else { 0 };
+    let start = if boot == Some(batch.boot.as_str()) { after } else { 0 };
+    let mut last = start;
     for e in batch.events {
-        if e.seq <= last {
+        if e.seq <= start {
             continue;
         }
-        last = e.seq;
+        last = last.max(e.seq);
         route(st, i, e).await;
     }
+    last = last.max(super::runs::apply(st, i, batch.runs, start).await);
+    super::runs::reconcile(st, i, &batch.runs_alive, sent_at).await;
     if let Err(e) = st.store.set_events_cursor(&i.link_id, &batch.boot, last).await {
         tracing::warn!(instance = %i.name, error = %e, "could not record how far a remote instance's events were read");
     }

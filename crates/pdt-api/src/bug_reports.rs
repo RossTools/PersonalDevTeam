@@ -208,7 +208,8 @@ async fn hostnames(st: &AppState) -> Vec<String> {
 /// The user's own names, for redaction: each project's name, key and folder, its origin's `owner/repo` (and each
 /// part), and its git worktrees' branches and folders. The project of the release repository is left out: its names
 /// are PDT's own. With them, the names of the instances it is linked with: its own instance name, its remote
-/// instances', its remote projects' owners', and those projects' names and keys.
+/// instances', its remote projects' owners', and those projects' names, keys, checkout folders, repositories and
+/// worktrees.
 async fn own_names(st: &AppState) -> Vec<String> {
     let release = st.update.client.repo();
     let mut names = vec![];
@@ -217,18 +218,27 @@ async fn own_names(st: &AppState) -> Vec<String> {
         names.push(i.name);
     }
     for (p, l) in st.store.list_remote_projects().await.unwrap_or_default() {
-        names.extend([p.name, p.key, l.owner_name]);
+        names.extend([p.name, p.key, l.owner_name.clone()]);
+        // Its checkout here: the folder when the user picked it (the default one is named after the link's id), its
+        // repository's `owner/repo`, and its worktrees' branches and folders.
+        let checkout = crate::exec::checkout_dir(st, &l);
+        if l.checkout_path.as_deref().is_some_and(|c| !c.trim().is_empty()) {
+            names.extend(folder(&checkout));
+        }
+        let (origin, worktrees) = git_names(Some(checkout)).await;
+        let repo = l.repo_url.as_deref().or(origin.as_deref()).and_then(pdt_core::git_url::parse_remote);
+        if let Some(path) = repo.map(|r| r.path) {
+            names.push(path.join("/"));
+            names.extend(path);
+        }
+        for w in worktrees {
+            names.extend(w.branch);
+            names.extend(folder(&w.path));
+        }
     }
     for p in st.store.list_projects().await.unwrap_or_default() {
         let repo = std::path::PathBuf::from(&p.repo_path);
-        let folder = |path: &std::path::Path| path.file_name().map(|n| n.to_string_lossy().into_owned());
-        let git = p.has_repo().then_some(repo.clone());
-        let (remote, worktrees) = tokio::task::spawn_blocking(move || match git {
-            Some(r) => (pdt_git::remote_url(&r, "origin"), pdt_git::list_worktrees(&r).unwrap_or_default()),
-            None => (None, vec![]),
-        })
-        .await
-        .unwrap_or_default();
+        let (remote, worktrees) = git_names(p.has_repo().then_some(repo.clone())).await;
         let remote = remote.as_deref().and_then(pdt_core::git_url::parse_remote).map(|r| r.path);
         if remote.as_ref().is_some_and(|path| path.join("/").eq_ignore_ascii_case(&release)) {
             continue;
@@ -251,6 +261,20 @@ async fn own_names(st: &AppState) -> Vec<String> {
     names.sort();
     names.dedup();
     names
+}
+
+fn folder(path: &std::path::Path) -> Option<String> {
+    path.file_name().map(|n| n.to_string_lossy().into_owned())
+}
+
+/// A checkout's origin URL and git worktrees (none when it isn't a repository).
+async fn git_names(repo: Option<std::path::PathBuf>) -> (Option<String>, Vec<pdt_git::WorktreeEntry>) {
+    tokio::task::spawn_blocking(move || match repo.filter(|r| r.exists()) {
+        Some(r) => (pdt_git::remote_url(&r, "origin"), pdt_git::list_worktrees(&r).unwrap_or_default()),
+        None => (None, vec![]),
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// The newest pdtd log's last lines (`<data dir>/logs/pdtd.<date>.log`).
