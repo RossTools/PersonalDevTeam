@@ -37,7 +37,8 @@ didn't open (from outside contributors and bots):
    - **Request changes** posts your note (or the reviewer's suggested feedback) on the pull request as a review;
    - **Close** closes it, with your note as a comment.
 
-Nothing is posted on the pull request until you choose. When its author pushes again, the question is replaced and
+Nothing is posted on the pull request until you choose (bringing an approved one up to date with its base, below, is
+the only exception). When its author pushes again, the question is replaced and
 it's reviewed again; when it's merged or closed on GitHub, the question goes away.
 
 ### When something goes wrong
@@ -48,6 +49,21 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
   queue drops it, it's taken off auto-merge, or it still hasn't merged after 12 hours, your Inbox shows **Didn't
   merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. A push hands it to
   the review of the new head instead; one that merges asks nothing.
+- **It fails only what your base branch fails.** When every failing check on the pull request also fails on the base
+  branch's latest run (a broken `main`), PDT doesn't ask: the run waits, and its row in the workflow's **Runs** says
+  **Waiting on main**, with the open ticket that looks like the fix when there is one (it mentions the failing job or
+  an advisory in its log). It checks again every 15 minutes and whenever something merges into the base. Once the base
+  passes those checks, PDT brings the pull request up to date: Dependabot's gets an `@dependabot rebase` comment (once
+  for each fix of the base), any other gets its base merged in, where GitHub allows it. A failure the base doesn't
+  have still asks **Didn't merge** at once, as does a base that is still broken after a week.
+
+### Approvals across updates
+
+When the pull request's branch only takes in its base (a rebase, or its base merged in), its own changes stay the same,
+and so does your **Approve & merge**: it merges once CI passes, without asking again, and its run says **Approval
+kept: only the base changed**. If its own changes are different (a new commit, a file changed), it's reviewed and
+you're asked again. A file GitHub shows no changes for (a binary file, or one too large) always asks again. Choosing
+**Request changes** or **Close** after approving takes the approval back, so the next update is asked about again.
 
 ### A ticket for each pull request
 

@@ -6,6 +6,10 @@ import type { InboxItem } from "./InboxItem";
  */
 export type InboxList = { items: Array<InboxItem>, 
 /**
+ * Snoozed items (each with its `snooze`), left out of `items` and `total` until they come back.
+ */
+snoozed: Array<InboxItem>, 
+/**
  * Open items, sessions waiting included: the Needs-you count the rail badge and the page title show.
  */
 total: number, };

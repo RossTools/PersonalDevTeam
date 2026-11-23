@@ -61,6 +61,16 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   outsiders' text is refused as in the caller; the triage cap counts a workflow whose calls reach an agent step
   (`engine::reaches_agent`). New code that reads "was this run started by outside input" goes through
   `untrusted::untrusted_run` / `run_source`, never the run's own trigger alone.
+- **An outside pull request merges only on the user's approval of its own diff, or the Dependabot rule.** In "Review
+  outside pull requests" (`workflow/outside_prs.rs`) every `github.pr.merge` and `github.pr.update` is reached only
+  through a gate's Approve & merge, the Dependabot condition, or `github.pr.approval` `kept`, which holds only when the
+  new head's own diff id (`base_ci::diff_id`: per-file patches without hunk positions; None for no files or a file
+  without a patch) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
+  `record` saves a diff only while the PR's head is the approved one (read before and after its files), and Request
+  changes and Close `forget` it, so only the user's last word counts.
+  What these nodes remember (the approval, the base fix a pull request was updated for) is workflow state under
+  `_pdt.` keys (`schedule::RESERVED_STATE`), which `state.set` refuses, so a workflow can't forge an approval. The
+  update is asked once per base fix (`github.pr.update`'s `key`).
 - **What every user's agents read is about their project, not PDT's development.** The built-in personas'
   instructions, the PM's prompt, the tools' descriptions and schemas (doc comments on their argument types too), the
   agent context and the served guides name no ticket keys of PDT's own (examples use `ABC-12`), and nothing of PDT's own
@@ -262,6 +272,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   dismiss or the ticket closing (`start::end_for_close`) ends it. A node that merges or moves a ticket to Done waits
   first with `workflow::hold::wait_for_answers`, and `review::merge_attempt` refuses an automated merge
   (`question_open`); the user's own merge and move go through. Ending a held question calls `hold::wake`.
+- **A snoozed Inbox item only hides; it never ends.** Snoozes (`inbox_snoozes`, keyed by item id, so listed items
+  like approvals snooze too) are applied in `inbox::list` alone: the item stays open in the store, its step keeps
+  waiting, and holds (`holds_ticket`), sensors and the Notifier see it as before. `GET /api/inbox` moves it to
+  `snoozed` (out of `items` and `total`) while `InboxSnooze::hides`; a snooze whose time came, whose ticket closed or
+  went, or whose stored item is no longer open is deleted as the list is read.
 - **A login failure is never nudged, and never waits without an item for long.** A step goes to `waiting_login`
   (under the agent's `agent_login_locks`) or is held with `wait.login` while its agent's `agent_login` item is open;
   closing that item (`agent_login::resume`) takes every such step up again, and the login watch takes up any left

@@ -862,6 +862,7 @@ async fn apply(
             step.status = StepStatus::Waiting;
             step.wait = wait;
             step.wake_at = until;
+            set_note(st, run, output.get("note").and_then(Value::as_str)).await?;
             step.output = output;
             st.store.put_step(&step).await.map_err(err)?;
             // The event may have come already, while the run was on an earlier step (PDT-131).
@@ -882,6 +883,27 @@ async fn apply(
         }
         Err(e) => fail_step(st, doc, run, step, e, !cut_short).await,
     }
+}
+
+/// What the run waits on, in a few words (a `wait` step's `note`, PDT-641: "Waiting on main · PDT-639"): the run's
+/// `output.note` while it waits there, so its row in Runs says it. The next wait sets its own or none; the end's output
+/// replaces it.
+async fn set_note(st: &AppState, run: &mut Run, note: Option<&str>) -> R<()> {
+    let note = note.map(str::trim).filter(|n| !n.is_empty());
+    let had = run.output.get("note").and_then(Value::as_str);
+    if had == note {
+        return Ok(());
+    }
+    let mut out = match std::mem::take(&mut run.output) {
+        Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    match note {
+        Some(n) => out.insert("note".into(), json!(n)),
+        None => out.remove("note"),
+    };
+    run.output = Value::Object(out);
+    st.store.update_workflow_run(run).await.map_err(err)
 }
 
 /// An event a step that starts waiting for one would have taken had it been waiting already: one of its type and

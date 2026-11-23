@@ -121,6 +121,22 @@ export const plugins: IntegrationInfo[] = [
         "title": "Close a GitHub pull request"
       },
       {
+        "id": "github.pr.update",
+        "title": "Bring a pull request up to date"
+      },
+      {
+        "id": "github.pr.approval",
+        "title": "The user's approval of a pull request"
+      },
+      {
+        "id": "github.pr.base_ci",
+        "title": "Failures from the base branch?"
+      },
+      {
+        "id": "ci.branch_checks",
+        "title": "Checks on a branch"
+      },
+      {
         "id": "github.workflow.run",
         "title": "Run a GitHub Actions workflow"
       },

@@ -89,6 +89,26 @@
           "title": "Close a GitHub pull request"
         },
         {
+          "description": "Updates a pull request with its base branch: Dependabot's gets a `@dependabot rebase` comment, any other the forge's update-branch (it merges the base in, where the repository allows it). Once per `key` (the base's fix): asked before, it leaves by `already` and does nothing. `updated` once asked; `moved` when its head isn't `headSha`; `gone` when it isn't open; `refused` (with `reason`) when the forge won't.",
+          "id": "github.pr.update",
+          "title": "Bring a pull request up to date"
+        },
+        {
+          "description": "`record`: remembers that the user approved the pull request at `headSha`, with an id of its own diff (against its merge base, as git's patch-id: line numbers left out); a pull request whose head is no longer `headSha` (pushed since) records nothing and leaves by `moved`. `forget`: the user decided otherwise since (Request changes, Close): the approval is gone. `check`: whether an approval holds for `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when there is none. A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
+          "id": "github.pr.approval",
+          "title": "The user's approval of a pull request"
+        },
+        {
+          "description": "Reads the pull request's failed checks (`workflow: job`) on its head and the base branch's latest finished run of each, through the project's CI providers. Every failure fails on the base too: `inherited`, with `checks`, the open ticket that looks like the fix (`fix`: one that mentions an advisory in the base's failed logs, or a failed job) and `note` (`Waiting on main · PDT-639`). Any that passes there, or never ran there: `own`, with `own`. Nothing failing on its head: `none`. Closed, merged or gone: `gone`.",
+          "id": "github.pr.base_ci",
+          "title": "Failures from the base branch?"
+        },
+        {
+          "description": "Reads how a branch stands on `checks` (`workflow: job`), from the latest finished run of each workflow there, through the project's CI providers: `fixed` when every one passes, `failing` while one fails, `pending` while one has no finished run yet. Output: `sha`, the commit those runs ran on.",
+          "id": "ci.branch_checks",
+          "title": "Checks on a branch"
+        },
+        {
           "description": "Starts a GitHub Actions workflow by hand (`workflow_dispatch`) on a branch (default `main`) with inputs, as PDT's GitHub login. The repository is the run's project's unless `repo` names one. GitHub doesn't say which run it started: read what it makes (a pull request, a release) with the other GitHub nodes, or the run with `github.workflow.latest` and `since` set to its `dispatchedAt`.",
           "id": "github.workflow.run",
           "title": "Run a GitHub Actions workflow"

@@ -31,8 +31,16 @@ const STEP_STATUS: Record<WorkflowStep['status'], StepRow['status']> = {
 };
 
 function triggerOf(r: WorkflowRun): string {
-  const t = r.trigger as { type?: string; ticketKey?: string } | null;
-  return [t?.type ?? r.triggerNode, t?.ticketKey].filter(Boolean).join(' · ');
+  const t = r.trigger as { type?: string; ticketKey?: string; repo?: string; number?: number } | null;
+  // A pull request's run names it (PDT-641: its row is where it says what it waits on).
+  const pr = t?.repo && typeof t.number === 'number' ? `${t.repo}#${t.number}` : null;
+  return [t?.type ?? r.triggerNode, t?.ticketKey, pr].filter(Boolean).join(' · ');
+}
+
+/** What a waiting run waits on ("Waiting on main · PDT-639"): its waiting step's note. */
+function noteOf(r: WorkflowRun): string | null {
+  const note = (r.output as { note?: unknown } | null)?.note;
+  return r.status === 'waiting' && typeof note === 'string' && note ? note : null;
 }
 
 interface Answer { question: string; choices: string[] }
@@ -81,6 +89,7 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge tone={status.tone}>{status.text}</Badge>
         <span className="font-medium">{triggerOf(r)}</span>
+        {noteOf(r) && <span className="text-sm text-muted-foreground">{noteOf(r)}</span>}
         <span className="text-meta text-muted-foreground">
           version {r.version} · started <RelativeTime time={r.startedAt} />{r.endedAt ? ` · took ${formatDuration(r.endedAt - r.startedAt)}` : ''}
         </span>
@@ -163,6 +172,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
         <List aria-label="Runs" onAction={onRunChange} className="p-1">
           {list.map((r) => {
             const s = RUN_STATUS[r.status];
+            const note = noteOf(r);
             return (
               <ListRow
                 key={r.id}
@@ -172,7 +182,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
                 className="py-1.5"
                 leading={<Badge tone={s.tone}>{s.text}</Badge>}
                 title={triggerOf(r)}
-                secondary={<><RelativeTime time={r.startedAt} /> · v{r.version}</>}
+                secondary={<><RelativeTime time={r.startedAt} /> · v{r.version}{note && <> · {note}</>}</>}
               />
             );
           })}

@@ -273,6 +273,26 @@ describe('runs view', () => {
     expect(within(steps).getByText(/"ticket": "PDT-1"/)).toBeInTheDocument();
   });
 
+  it('says on a pull request\'s row and its step what its run waits on', async () => {
+    const waiting = {
+      ...run('waiting', [step('s1', 'ci', 'succeeded'), step('s2', 'tell', 'waiting', { kind: 'wait', output: { note: 'Waiting on main · PDT-639' } })]),
+      trigger: { type: 'github.pull_request.opened', repo: 'o/r', number: 633 },
+      output: { note: 'Waiting on main · PDT-639' },
+    };
+    stubApi({
+      'GET /api/workflow-runs': [waiting],
+      'GET /api/workflow-runs/r1': waiting,
+      'GET /api/workflows/w1/versions/1': { workflowId: 'w1', version: 1, author: 'user', status: 'saved', note: '', createdAt: 1, doc: DOC },
+      'POST /api/workflows/check': check,
+    });
+    renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={() => {}} />);
+    const list = await screen.findByRole('navigation', { name: 'Runs' });
+    const row = await within(list).findByRole('row', { name: /o\/r#633/ });
+    expect(within(row).getByText(/Waiting on main · PDT-639/)).toBeInTheDocument();
+    const steps = await screen.findByRole('list', { name: 'Steps' });
+    expect(within(steps).getByText('Waiting on main · PDT-639')).toBeInTheDocument();
+  });
+
   it('leaves the "Nothing to do" runs out until they are asked for', async () => {
     const failed = run('failed', [step('s1', 'ci', 'succeeded')]);
     const quiet = { ...run('quiet', [step('s1', 'ci', 'succeeded')]), id: 'r2', trigger: { type: 'schedule.fired' } };

@@ -115,7 +115,7 @@ impl CiRun {
     }
 
     /// Orders runs of one name: by start, then id (numbers as numbers), then attempt.
-    fn order(&self, other: &CiRun) -> std::cmp::Ordering {
+    pub(crate) fn order(&self, other: &CiRun) -> std::cmp::Ordering {
         let id = |r: &CiRun| (r.id.len(), r.id.clone());
         let ids = match (self.id.parse::<u64>(), other.id.parse::<u64>()) {
             (Ok(a), Ok(b)) => a.cmp(&b),

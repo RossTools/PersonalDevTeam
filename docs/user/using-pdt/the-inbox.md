@@ -50,6 +50,20 @@ Under **Needs you**, **Recently answered** lists your last answers, newest first
 chose (and what you wrote), and how you gave it (a click or a key, on a computer or a phone), or that an agent
 answered. Answers still waiting out their five seconds are at the top, with **Undo**. Pick a row to open its ticket.
 
+## Snooze
+
+Something you can't act on yet (a pull request waiting for another fix to land, say) needn't sit in **Needs you**.
+**Snooze** at the top of any item puts it out of sight:
+
+- **Until tomorrow**: back at 9:00 tomorrow morning;
+- **For 1 week**;
+- **Until a ticket is done…**: back once that ticket is Done or Won't do. The item's own ticket is filled in; type
+  another ticket's key to wait for that one.
+
+A snoozed item isn't counted on the rail. It is listed under **Snoozed**, below **Needs you**, with when it comes
+back; **Unsnooze** brings it back now. It comes back by itself when its time comes or its ticket closes. One that is
+answered or goes away meanwhile (its workflow moved on) stays gone.
+
 ## What lands in Needs you
 
 Items are listed in five sections, most urgent first.

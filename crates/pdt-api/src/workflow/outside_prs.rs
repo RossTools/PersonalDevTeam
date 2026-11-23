@@ -5,7 +5,9 @@
 //! it reviews it again. With `tickets` on (PDT-333; off by default), each one also gets an external ticket, which
 //! holds the review and follows the pull request when it is closed or merged. A review that fails asks the user to
 //! retry it (PDT-609), and one set to merge is watched until it merges: a merge queue that drops it, failed CI or a
-//! long wait asks "Didn't merge".
+//! long wait asks "Didn't merge". A pull request whose only failures are its base branch's waits for the base
+//! instead of asking (PDT-641), is brought up to date once the base is fixed, and keeps the user's approval across that
+//! update while its own diff is the same.
 
 use super::doc_build::node;
 use super::templates::{doc as parse_doc, params as parse_params};
@@ -25,6 +27,12 @@ const CI_POLL_MS: u64 = 2 * 60_000;
 const CI_POLLS: u32 = 360;
 /// How often one set to merge is read until it merges, and for how long before the user is asked (12 hours).
 const WATCH_POLLS: u32 = 360;
+/// How often one failing only what its base fails reads the base again (and on a merge into it), and for how long
+/// before the user is asked (a week).
+const BASE_POLL_MS: u64 = 15 * 60_000;
+const BASE_POLLS: u32 = 4 * 24 * 7;
+/// How long one brought up to date waits for the push that does it before CI is read again (2 hours).
+const UPDATE_WAIT_MS: u64 = 2 * 60 * 60_000;
 
 pub fn params() -> Vec<TemplateParam> {
     parse_params(json!([
@@ -77,7 +85,8 @@ as a review; it is reviewed again when its author pushes. Close closes it, with 
 /// long), from a read of the pull request just before asking (`why`).
 const BLOCKED: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})** by {{trigger.author}} didn't \
 merge: {{trigger.title}}\n\nCI on its head: {{steps.why.ci}} {{steps.why.ciUrl}}\n\
-{{steps.why.failedJobs}}\n\n{{steps.why.mergeNote}} {{steps.merge.reason}}\n\n{{steps.review.summary}}\n\n\
+{{steps.why.failedJobs}}\n\n{{steps.why.mergeNote}} {{steps.merge.reason}} {{steps.update.reason}}\n\n\
+{{steps.review.summary}}\n\n\
 Approve & merge tries again once CI passes. Request changes posts your note on it as a review. Close closes it.";
 
 /// The Inbox question when the review itself failed (its session didn't start, or its prompt couldn't be sent).
@@ -109,7 +118,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         {"left": "{{event.repo}}", "op": "eq", "right": "{{trigger.repo}}"},
         {"left": "{{event.number}}", "op": "eq", "right": "{{trigger.number}}"}]);
     let moot = json!({"type": "github.pull_request.pushed", "also": ["github.pull_request.closed"],
-                      "where": same_pr});
+                      "where": same_pr.clone()});
     let ticket = if tickets { "{{steps.ticket.ticketId}}" } else { "" };
     let gate_of = |id: &str, x: i32, y: i32, title: &str, question: &str, choices: Value| {
         let mut config = json!({"question": question, "choices": choices, "event": moot});
@@ -184,7 +193,15 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             {"left": "{{trigger.updateType}}", "op": "in", "right": "{{params.autoMergeTypes}}"}]}),
         ),
         {
-            let mut n = node("wait_ci", "wait", 1060, -100, "Wait for CI", json!({"ms": CI_POLL_MS}));
+            // An approval kept from an earlier head says so on the run while it waits (PDT-641).
+            let mut n = node(
+                "wait_ci",
+                "wait",
+                1060,
+                -100,
+                "Wait for CI",
+                json!({"ms": CI_POLL_MS, "note": "{{steps.approval.note}}"}),
+            );
             n["maxVisits"] = json!(CI_POLLS);
             n
         },
@@ -305,6 +322,127 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             {"left": "{{steps.watch.headSha}}", "op": "eq", "right": "{{trigger.headSha}}"}]}),
         ),
         end("merged", 2880, 20, "Merged", false),
+        // An approval holds for a later head with the same own diff (only the base changed, PDT-641).
+        node(
+            "approval",
+            "github.pr.approval",
+            800,
+            -60,
+            "Approved before?",
+            with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "check"})),
+        ),
+        {
+            let mut n = node(
+                "approved",
+                "github.pr.approval",
+                1060,
+                -230,
+                "Remember the approval",
+                with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "record"})),
+            );
+            n["maxVisits"] = json!(10);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
+        // A failure its base branch has too is the base's to fix: wait for it, not the user (PDT-641).
+        {
+            let mut n = node(
+                "head_failed",
+                "condition",
+                1580,
+                -620,
+                "A check on its head failed?",
+                json!({"conditions": [{"left": "{{steps.check_ci.failure}}", "op": "eq", "right": "ci"}]}),
+            );
+            n["maxVisits"] = json!(CI_POLLS);
+            n
+        },
+        {
+            let mut n = node(
+                "base",
+                "github.pr.base_ci",
+                1840,
+                -620,
+                "Failures from the base?",
+                json!({"repo": "{{trigger.repo}}", "number": "{{trigger.number}}", "branch": "{{trigger.headBranch}}",
+                       "base": "{{trigger.base}}"}),
+            );
+            n["maxVisits"] = json!(CI_POLLS);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
+        {
+            let mut n = node(
+                "wait_base",
+                "wait",
+                2100,
+                -620,
+                "Wait for the base",
+                json!({"timeoutMs": BASE_POLL_MS, "note": "{{steps.base.note}}", "event": {
+                    "type": "attempt.merged",
+                    "also": ["github.pull_request.pushed", "github.pull_request.closed"],
+                    "where": [{"left": "{{event.projectId}}", "op": "eq", "right": "{{trigger.projectId}}"}],
+                    "any": [
+                        {"left": "{{event.baseBranch}}", "op": "eq", "right": "{{steps.base.base}}"},
+                        {"left": "{{event.base}}", "op": "eq", "right": "{{steps.base.base}}"}]}}),
+            );
+            n["maxVisits"] = json!(BASE_POLLS);
+            n
+        },
+        {
+            let mut n = node(
+                "this_pr",
+                "condition",
+                2360,
+                -740,
+                "Pushed or closed?",
+                json!({"conditions": [
+                    {"left": "{{steps.wait_base.repo}}", "op": "eq", "right": "{{trigger.repo}}"},
+                    {"left": "{{steps.wait_base.number}}", "op": "eq", "right": "{{trigger.number}}"}]}),
+            );
+            n["maxVisits"] = json!(BASE_POLLS);
+            n
+        },
+        {
+            let mut n = node(
+                "base_now",
+                "ci.branch_checks",
+                2360,
+                -620,
+                "Base fixed?",
+                json!({"repo": "{{trigger.repo}}", "branch": "{{steps.base.base}}", "checks": "{{steps.base.checks}}"}),
+            );
+            n["maxVisits"] = json!(BASE_POLLS);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
+        {
+            let mut n = node(
+                "update",
+                "github.pr.update",
+                2620,
+                -620,
+                "Bring it up to date",
+                with_pr(json!({"headSha": "{{trigger.headSha}}", "author": "{{trigger.author}}",
+                               "key": "{{steps.base_now.sha}}"})),
+            );
+            n["maxVisits"] = json!(10);
+            n
+        },
+        {
+            let mut n = node(
+                "wait_update",
+                "wait",
+                2880,
+                -620,
+                "Wait for the update",
+                json!({"timeoutMs": UPDATE_WAIT_MS, "note": "Updating with {{steps.base.base}}", "event": {
+                    "type": "github.pull_request.pushed", "also": ["github.pull_request.closed"],
+                    "where": same_pr}}),
+            );
+            n["maxVisits"] = json!(10);
+            n
+        },
         // What the user is asked about, read just before asking.
         {
             let mut n = node(
@@ -329,7 +467,6 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             "blocked",
             "This pull request can't merge yet: {{steps.merge.reason}} {{steps.why.ciUrl}}",
         ),
-        end("blocked_requested", 2620, -480, "Changes requested", false),
         close("blocked_close", 2360, -360, "blocked"),
         // Everyone else, majors and other bots: the PR Reviewer reads the diff, the user decides.
         node(
@@ -394,7 +531,28 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             "decide",
             "Changes are needed before this can merge.\n\n{{steps.review.data.feedback}}",
         ),
-        end("requested", 2360, 120, "Changes requested", false),
+        // The user's last word was not Approve: an approval from before no longer holds (PDT-641).
+        {
+            let mut n = node(
+                "forget_changes",
+                "github.pr.approval",
+                2360,
+                120,
+                "Forget the approval",
+                with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "forget"})),
+            );
+            n["maxVisits"] = json!(10);
+            n
+        },
+        end("requested", 2620, 120, "Changes requested", false),
+        node(
+            "forget_close",
+            "github.pr.approval",
+            2360,
+            360,
+            "Forget the approval",
+            with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "forget"})),
+        ),
         close("decide_close", 2100, 360, "decide"),
         node("wont_do", "ticket.move", 2620, 360, "Won't do", json!({"ticket": ticket, "stage": "wont_do"})),
         end("closed_pr", 2880, 360, "Closed", false),
@@ -448,7 +606,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "ticket", "port": "exists", "to": "finished"}),
         json!({"from": "ticket", "port": "none", "to": "already_done"}),
         json!({"from": "finished", "port": "true", "to": "already_done"}),
-        json!({"from": "finished", "port": "false", "to": "dependabot"}),
+        json!({"from": "finished", "port": "false", "to": "approval"}),
         json!({"from": "dependabot", "port": "true", "to": "wait_ci"}),
         json!({"from": "dependabot", "port": "false", "to": "review"}),
         json!({"from": "wait_ci", "port": "timeout", "to": "check_ci"}),
@@ -457,7 +615,36 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "check_ci", "port": "open", "to": "same_head"}),
         json!({"from": "same_head", "port": "true", "to": "passed"}),
         json!({"from": "same_head", "port": "false", "to": "superseded"}),
-        json!({"from": "check_ci", "port": "failed", "to": "why"}),
+        json!({"from": "check_ci", "port": "failed", "to": "head_failed"}),
+        json!({"from": "head_failed", "port": "true", "to": "base"}),
+        json!({"from": "head_failed", "port": "false", "to": "why"}),
+        json!({"from": "base", "port": "inherited", "to": "wait_base"}),
+        json!({"from": "base", "port": "own", "to": "why"}),
+        json!({"from": "base", "port": "none", "to": "wait_ci"}),
+        json!({"from": "base", "port": "gone", "to": "gone"}),
+        json!({"from": "wait_base", "port": "event", "to": "this_pr"}),
+        json!({"from": "wait_base", "port": "timeout", "to": "base_now"}),
+        // Waited too long for the base (its loop limit): ask.
+        json!({"from": "wait_base", "port": "error", "to": "why"}),
+        json!({"from": "this_pr", "port": "true", "to": "superseded"}),
+        json!({"from": "this_pr", "port": "false", "to": "base_now"}),
+        json!({"from": "base_now", "port": "fixed", "to": "update"}),
+        json!({"from": "base_now", "port": "failing", "to": "wait_base"}),
+        json!({"from": "base_now", "port": "pending", "to": "wait_base"}),
+        json!({"from": "update", "port": "updated", "to": "wait_update"}),
+        json!({"from": "update", "port": "already", "to": "wait_update"}),
+        json!({"from": "update", "port": "moved", "to": "superseded"}),
+        json!({"from": "update", "port": "gone", "to": "gone"}),
+        json!({"from": "update", "port": "refused", "to": "why"}),
+        // The update's push hands the pull request to the push's run, which keeps an approval of the same diff.
+        json!({"from": "wait_update", "port": "event", "to": "superseded"}),
+        json!({"from": "wait_update", "port": "timeout", "to": "wait_ci"}),
+        json!({"from": "approval", "port": "kept", "to": "wait_ci"}),
+        json!({"from": "approval", "port": "changed", "to": "dependabot"}),
+        json!({"from": "approval", "port": "none", "to": "dependabot"}),
+        json!({"from": "approved", "port": "out", "to": "wait_ci"}),
+        // Pushed between the answer and the record: the push's run asks about its head.
+        json!({"from": "approved", "port": "moved", "to": "superseded"}),
         json!({"from": "check_ci", "port": "merged", "to": "gone"}),
         json!({"from": "check_ci", "port": "closed", "to": "gone"}),
         json!({"from": "check_ci", "port": "none", "to": "gone"}),
@@ -503,10 +690,12 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "ci_now", "port": "merged", "to": "gone"}),
         json!({"from": "ci_now", "port": "closed", "to": "gone"}),
         json!({"from": "ci_now", "port": "none", "to": "gone"}),
-        json!({"from": "decide_request", "to": "requested"}),
-        json!({"from": "blocked_request", "to": "blocked_requested"}),
-        json!({"from": "decide_close", "to": "wont_do"}),
-        json!({"from": "blocked_close", "to": "wont_do"}),
+        json!({"from": "decide_request", "to": "forget_changes"}),
+        json!({"from": "blocked_request", "to": "forget_changes"}),
+        json!({"from": "forget_changes", "port": "out", "to": "requested"}),
+        json!({"from": "decide_close", "to": "forget_close"}),
+        json!({"from": "blocked_close", "to": "forget_close"}),
+        json!({"from": "forget_close", "port": "out", "to": "wont_do"}),
         json!({"from": "wont_do", "to": "closed_pr"}),
         json!({"from": "closed", "to": "find"}),
         json!({"from": "find", "port": "created", "to": "open_ticket"}),
@@ -525,13 +714,12 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         nodes.retain(|n| !gone(n["id"].as_str().unwrap_or_default()));
         edges.retain(|e| !gone(e["from"].as_str().unwrap_or_default()) && !gone(e["to"].as_str().unwrap_or_default()));
         edges.extend([
-            json!({"from": "opened", "to": "dependabot"}),
-            json!({"from": "pushed", "to": "dependabot"}),
+            json!({"from": "opened", "to": "approval"}),
+            json!({"from": "pushed", "to": "approval"}),
             json!({"from": "review", "port": "merge", "to": "ci_now"}),
             json!({"from": "review", "port": "changes", "to": "ci_now"}),
             json!({"from": "review", "port": "close", "to": "ci_now"}),
-            json!({"from": "decide_close", "to": "closed_pr"}),
-            json!({"from": "blocked_close", "to": "closed_pr"}),
+            json!({"from": "forget_close", "port": "out", "to": "closed_pr"}),
         ]);
         // The ticket steps' columns go: everything after them moves left.
         for n in &mut nodes {
@@ -545,7 +733,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         [("decide", "decide_request", "decide_close"), ("blocked", "blocked_request", "blocked_close")]
     {
         edges.extend([
-            json!({"from": gate, "port": "approve_merge", "to": "wait_ci"}),
+            json!({"from": gate, "port": "approve_merge", "to": "approved"}),
             json!({"from": gate, "port": "request_changes", "to": request}),
             json!({"from": gate, "port": "close", "to": close}),
             json!({"from": gate, "port": "event", "to": "superseded"}),
@@ -559,24 +747,31 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
          the locked-down PR Reviewer from the diff GitHub gives (it never checks the code out or runs it), the review \
          goes on the ticket, and your Inbox asks: Approve & merge (once CI passes), Request changes (posted on the pull \
          request as a review; a push reviews it again) or Close (the ticket goes to Won't do). Nothing is posted on the \
-         pull request until you choose, and nothing is pushed to its branch. A review that fails asks you to retry it. \
+         pull request until you choose, and nothing is pushed to its branch but its base (below). A review that fails \
+         asks you to retry it. \
          One set to merge is watched until it merges: if the merge queue drops it, CI fails or it hasn't merged in 12 \
-         hours, your Inbox asks again. One merged or closed on GitHub finishes its ticket to match."
+         hours, your Inbox asks again. One whose only failures fail on its base branch too waits for the base, with \
+         nothing in your Inbox; once the base is fixed it is brought up to date, and your approval holds while its own \
+         changes are the same (Dependabot's is asked to rebase; any other gets its base merged in, where GitHub allows \
+         it). One merged or closed on GitHub finishes its ticket to match."
     } else {
         "For each pull request PDT didn't open (an outsider's or a bot's): Dependabot's patch and minor updates merge \
          once CI passes, with nothing in your Inbox unless it fails. Every other one is reviewed by the locked-down PR \
          Reviewer from the diff GitHub gives (it never checks the code out or runs it), and your Inbox asks, with the \
          review: Approve & merge (once CI passes), Request changes (posted on the pull request as a review; a push \
          reviews it again) or Close. Nothing is posted on the pull request until you choose, and nothing is pushed to \
-         its branch. A review that fails asks you to retry it. One set to merge is watched until it merges: if the \
-         merge queue drops it, CI fails or it hasn't merged in 12 hours, your Inbox asks again."
+         its branch but its base (below). A review that fails asks you to retry it. One set to merge is watched until it merges: if the \
+         merge queue drops it, CI fails or it hasn't merged in 12 hours, your Inbox asks again. One whose only \
+         failures fail on its base branch too waits for the base, with nothing in your Inbox; once the base is fixed \
+         it is brought up to date, and your approval holds while its own changes are the same (Dependabot's is asked \
+         to rebase; any other gets its base merged in, where GitHub allows it)."
     };
     parse_doc(json!({
         "name": "Review outside pull requests",
         "description": description,
         "nodes": nodes,
         "edges": edges,
-        "settings": {"maxSteps": 4 * CI_POLLS + 3 * WATCH_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
+        "settings": {"maxSteps": 4 * CI_POLLS + 3 * WATCH_POLLS + 3 * BASE_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
     }))
 }
 
@@ -676,7 +871,8 @@ mod tests {
             assert!(c.get("ticket").is_none() && c["event"]["type"] == "github.pull_request.pushed", "{c}");
         }
         assert_eq!(off.node("review").unwrap().config["ticket"], "");
-        assert!(off.edges.iter().any(|e| e.from == "decide_close" && e.to == "closed_pr"), "Close just closes it");
+        assert_eq!(off.next("decide_close", "out"), ["forget_close"]);
+        assert_eq!(off.next("forget_close", "out"), ["closed_pr"], "Close just closes it");
 
         let on = fill(&values(true)).unwrap();
         for k in ticket_kinds.iter().chain(&["github.pull_request.closed"]) {
@@ -741,8 +937,13 @@ mod tests {
         for k in ["github.pr.merge", "github.pr.review", "github.pr.close"] {
             assert!(kinds(k).iter().all(|n| all.contains(n)), "{k} is used");
         }
-        let gated = reachable(d, &[("dependabot", "true"), ("decide", "approve_merge"), ("blocked", "approve_merge")]);
+        // An approval kept from an earlier head of the same diff is the user's Approve (PDT-641).
+        let gated = reachable(
+            d,
+            &[("dependabot", "true"), ("decide", "approve_merge"), ("blocked", "approve_merge"), ("approval", "kept")],
+        );
         assert!(kinds("github.pr.merge").iter().all(|n| !gated.contains(n)), "a merge without Approve");
+        assert!(kinds("github.pr.update").iter().all(|n| !gated.contains(n)), "an update without Approve");
         let asked = reachable(
             d,
             &[("decide", "request_changes"), ("decide", "close"), ("blocked", "request_changes"), ("blocked", "close")],

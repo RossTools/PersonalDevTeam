@@ -115,6 +115,7 @@ async fn a_ticket_proposal_waits_off_the_lists() {
         resolution: serde_json::Value::Null,
         created_at: 1,
         resolved_at: None,
+        snooze: None,
     };
     let t = ValidNewTicket { source: TicketSource::Agent, ..new("Follow-up") };
     let held = |reason| Made { reason, proposal: true, ..Made::default() };

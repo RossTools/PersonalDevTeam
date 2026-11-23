@@ -1,7 +1,7 @@
 //! The Inbox's stored items and agent steps' session bindings.
 
 use crate::{Store, StoreError};
-use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxStatus};
+use pdt_core::inbox::{InboxChoice, InboxGroup, InboxItem, InboxKind, InboxSnooze, InboxStatus};
 use pdt_core::workflow::agent::{AgentStep, AgentStepState, Escalation};
 use serde_json::Value;
 use sqlx::Row;
@@ -50,6 +50,7 @@ fn to_item(r: &SqliteRow) -> Result<InboxItem, StoreError> {
         resolution: json(r.try_get("resolution")?),
         created_at: r.try_get("created_at")?,
         resolved_at: r.try_get("resolved_at")?,
+        snooze: None,
     })
 }
 
@@ -341,6 +342,56 @@ impl Store {
         Ok(())
     }
 
+    /// Snoozes an item (PDT-641), replacing a snooze it had.
+    pub async fn snooze_inbox_item(&self, s: &InboxSnooze) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO inbox_snoozes (item_id, until_ms, ticket_id, created_at) VALUES (?, ?, ?, ?) \
+             ON CONFLICT(item_id) DO UPDATE SET until_ms = excluded.until_ms, ticket_id = excluded.ticket_id, \
+             created_at = excluded.created_at",
+        )
+        .bind(&s.item_id)
+        .bind(s.until)
+        .bind(&s.ticket_id)
+        .bind(s.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Ends items' snoozes: they are back. Returns how many there were.
+    pub async fn unsnooze_inbox_items(&self, ids: &[String]) -> Result<u64, StoreError> {
+        let mut n = 0;
+        for id in ids {
+            n += sqlx::query("DELETE FROM inbox_snoozes WHERE item_id = ?")
+                .bind(id)
+                .execute(&self.pool)
+                .await?
+                .rows_affected();
+        }
+        Ok(n)
+    }
+
+    /// Every snooze, but those of stored items no longer open (deleted as they are read: their item is gone).
+    pub async fn inbox_snoozes(&self) -> Result<Vec<InboxSnooze>, StoreError> {
+        sqlx::query("DELETE FROM inbox_snoozes WHERE item_id IN (SELECT id FROM inbox_items WHERE status != 'open')")
+            .execute(&self.pool)
+            .await?;
+        let rows = sqlx::query("SELECT item_id, until_ms, ticket_id, created_at FROM inbox_snoozes ORDER BY item_id")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter()
+            .map(|r| {
+                Ok(InboxSnooze {
+                    item_id: r.try_get("item_id")?,
+                    until: r.try_get("until_ms")?,
+                    ticket_id: r.try_get("ticket_id")?,
+                    ticket_key: None,
+                    created_at: r.try_get("created_at")?,
+                })
+            })
+            .collect()
+    }
+
     /// Deletes items resolved or closed before `before` (open ones stay however old). Returns how many went.
     pub async fn prune_inbox_items(&self, before: i64) -> Result<u64, StoreError> {
         let r = sqlx::query("DELETE FROM inbox_items WHERE status != 'open' AND resolved_at < ?")
@@ -577,6 +628,32 @@ mod tests {
             .run("r1".to_string())
             .step(step.map(String::from))
             .choices(vec![InboxChoice::new("yes", "Yes", true)])
+    }
+
+    #[tokio::test]
+    async fn snoozes_are_kept_replaced_and_dropped_with_their_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store_with_project(dir.path()).await;
+        let i = store.open_inbox_item(&item("g1", Some("s1"), 1)).await.unwrap();
+        let snooze = |until: Option<i64>, ticket: Option<&str>| InboxSnooze {
+            item_id: i.id.clone(),
+            until,
+            ticket_id: ticket.map(String::from),
+            ticket_key: None,
+            created_at: 5,
+        };
+        store.snooze_inbox_item(&snooze(Some(100), None)).await.unwrap();
+        store.snooze_inbox_item(&snooze(None, Some("t1"))).await.unwrap();
+        // One that isn't stored (an approval's) is kept too.
+        store.snooze_inbox_item(&InboxSnooze { item_id: "approval:x".into(), ..snooze(Some(9), None) }).await.unwrap();
+        let all = store.inbox_snoozes().await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[1], snooze(None, Some("t1")), "replaced");
+        assert!(store.end_inbox_item(&i.id, InboxStatus::Resolved, &json!({}), 6).await.unwrap());
+        let left: Vec<_> = store.inbox_snoozes().await.unwrap().into_iter().map(|s| s.item_id).collect();
+        assert_eq!(left, ["approval:x"], "its item answered, the snooze goes");
+        assert_eq!(store.unsnooze_inbox_items(&left).await.unwrap(), 1);
+        assert!(store.inbox_snoozes().await.unwrap().is_empty());
     }
 
     #[tokio::test]

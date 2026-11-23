@@ -166,6 +166,16 @@ impl Forge for GithubApi {
         let v = self.send_json("POST", &format!("repos/{repo}/pulls/{number}/reviews"), body)?;
         Ok(s(&v, "html_url"))
     }
+    /// GitHub merges the base in (202 Accepted; the push follows). 422 when it can't: a conflict, or a fork's branch it
+    /// may not push to.
+    fn update_change_request_branch(&self, repo: &str, number: u32, head: Option<&str>) -> Result<(), ForgeError> {
+        let body = match head {
+            Some(h) => json!({"expected_head_sha": h}),
+            None => json!({}),
+        };
+        self.send_json("PUT", &format!("repos/{repo}/pulls/{number}/update-branch"), body)?;
+        Ok(())
+    }
     fn close_change_request(&self, repo: &str, number: u32) -> Result<(), ForgeError> {
         self.send_json("PATCH", &format!("repos/{repo}/pulls/{number}"), json!({"state": "closed"}))?;
         Ok(())

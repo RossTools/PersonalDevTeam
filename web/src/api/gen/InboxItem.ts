@@ -3,6 +3,7 @@ import type { ChangeRequestLink } from "./ChangeRequestLink";
 import type { InboxChoice } from "./InboxChoice";
 import type { InboxGroup } from "./InboxGroup";
 import type { InboxKind } from "./InboxKind";
+import type { InboxSnooze } from "./InboxSnooze";
 import type { InboxStatus } from "./InboxStatus";
 
 export type InboxItem = { id: string, kind: InboxKind, group: InboxGroup, status: InboxStatus, projectId: string | null, ticketId: string | null, 
@@ -29,4 +30,9 @@ title: string,
  * `summary`/`issue`/`external` (admit), `tool`/`toolTitle`/`input`/`agent`/`sessionTitle` (confirm),
  * `description`/`priority`/`labels`/`reason`/`persona`/`fromTicket`/`fromTicketId` (ticket proposal).
  */
-body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown, createdAt: number, resolvedAt: number | null, };
+body: Record<string, unknown>, choices: Array<InboxChoice>, resolution: unknown, createdAt: number, resolvedAt: number | null, 
+/**
+ * Snoozed until a time or a ticket is closed: left out of the Inbox until then. Filled in by the API, never
+ * stored with the item.
+ */
+snooze?: InboxSnooze, };

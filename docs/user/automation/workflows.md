@@ -205,7 +205,8 @@ kept for two days, other runs for 30. Open one to see the graph of the version i
 it took, and each step's input, output or error. **Open session** on an agent step shows what the agent did (step
 sessions aren't in the sidebar's **Agents** list; open them here or from the ticket).
 
-- A run is **Waiting** while a step waits for an agent, for you, for CI or for a time. **Cancel** stops it.
+- A run is **Waiting** while a step waits for an agent, for you, for CI or for a time. **Cancel** stops it. A **Wait**
+  step can say what it waits on (its **note**, such as **Waiting on main**): the run's row shows it while it waits.
 - **Retry from the failed step** runs a failed run again from where it stopped, with the same ticket and data.
 - **Resume from** restarts an agent step that stopped or timed out, in the same session, with an optional note.
 
