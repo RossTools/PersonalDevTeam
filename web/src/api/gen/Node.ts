@@ -22,4 +22,9 @@ timeoutMs?: number | null,
 /**
  * Loop limit: more visits in one run fail the step. Default [`DEFAULT_MAX_VISITS`].
  */
-maxVisits?: number | null, };
+maxVisits?: number | null, 
+/**
+ * A visit here starts every loop limit over: visits count from the last time the run passed it (a person's
+ * go-ahead, so a path taken again after it gets its whole budget again).
+ */
+resetsVisits?: boolean, };

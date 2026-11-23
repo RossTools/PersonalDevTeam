@@ -331,6 +331,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             "Approved before?",
             with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "check"})),
         ),
+        // Each Approve & merge starts the loop limits over: CI is waited for, and the merge watched, as long as the
+        // first time (PDT-708).
         {
             let mut n = node(
                 "approved",
@@ -342,6 +344,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             );
             n["maxVisits"] = json!(10);
             n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n["resetsVisits"] = json!(true);
             n
         },
         // A failure its base branch has too is the base's to fix: wait for it, not the user (PDT-641).
@@ -672,6 +675,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "why", "port": "merged", "to": "merged"}),
         json!({"from": "why", "port": "closed", "to": "gone"}),
         json!({"from": "why", "port": "none", "to": "gone"}),
+        // Its read failed (or its loop limit): ask all the same.
+        json!({"from": "why", "port": "error", "to": "blocked"}),
         json!({"from": "review", "port": "merge", "to": "note"}),
         json!({"from": "review", "port": "changes", "to": "note"}),
         json!({"from": "review", "port": "close", "to": "note"}),
@@ -771,7 +776,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         "description": description,
         "nodes": nodes,
         "edges": edges,
-        "settings": {"maxSteps": 4 * CI_POLLS + 3 * WATCH_POLLS + 3 * BASE_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
+        // Room for three approvals' whole CI waits and merge watches (each starts the loop limits over).
+        "settings": {"maxSteps": 3 * (4 * CI_POLLS + 3 * WATCH_POLLS) + 3 * BASE_POLLS + 200, "maxRuntimeMs": 30_i64 * 24 * 60 * 60 * 1000},
     }))
 }
 
@@ -921,9 +927,13 @@ mod tests {
             assert_eq!(d.node("merged").unwrap().kind, "end", "a merge asks nothing");
             assert_eq!(next("still_set", "true"), ["watch_wait"]);
             assert_eq!(next("watch_head", "true"), ["why"], "off the queue, same head");
-            for p in ["open", "failed"] {
+            for p in ["open", "failed", "error"] {
                 assert_eq!(next("why", p), ["blocked"]);
             }
+            // PDT-708: each Approve & merge gets the whole CI wait and watch again, and nothing else starts them over.
+            let resets: Vec<_> = d.nodes.iter().filter(|n| n.resets_visits).map(|n| n.id.as_str()).collect();
+            assert_eq!(resets, ["approved"]);
+            assert_eq!(next("blocked", "approve_merge"), ["approved"]);
             for from in ["check_ci", "moved"] {
                 assert!(!d.edges.iter().any(|e| e.from == from && e.to == "blocked"), "asked after a fresh read");
             }

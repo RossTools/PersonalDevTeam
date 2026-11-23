@@ -47,8 +47,9 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
   the error. **Retry review** runs it again; **Skip review** asks you to decide without one.
 - **It doesn't merge.** Once set to merge, PDT watches the pull request until it merges. If CI fails, the merge
   queue drops it, it's taken off auto-merge, or it still hasn't merged after 12 hours, your Inbox shows **Didn't
-  merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. A push hands it to
-  the review of the new head instead; one that merges asks nothing.
+  merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. **Approve & merge**
+  there waits for CI and watches the merge for as long again. A push hands it to the review of the new head instead;
+  one that merges asks nothing.
 - **It fails only what your base branch fails.** When every failing check on the pull request also fails on the base
   branch's latest run (a broken `main`), PDT doesn't ask: the run waits, and its row in the workflow's **Runs** says
   **Waiting on main**, with the open ticket that looks like the fix when there is one (it mentions the failing job or
