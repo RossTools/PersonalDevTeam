@@ -62,7 +62,8 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
 When the pull request's branch only takes in its base (a rebase, or its base merged in), its own changes stay the same,
 and so does your **Approve & merge**: it merges once CI passes, without asking again, and its run says **Approval
 kept: only the base changed**. If its own changes are different (a new commit, a file changed), it's reviewed and
-you're asked again. A file GitHub shows no changes for (a binary file, or one too large) always asks again. Choosing
+you're asked again. A file GitHub shows no changes for (a binary file, or one too large) always asks again, as does a pull request with
+more than 1,000 files. Choosing
 **Request changes** or **Close** after approving takes the approval back, so the next update is asked about again.
 
 ### A ticket for each pull request

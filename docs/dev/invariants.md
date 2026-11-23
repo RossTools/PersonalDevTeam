@@ -70,7 +70,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   outside pull requests" (`workflow/outside_prs.rs`) every `github.pr.merge` and `github.pr.update` is reached only
   through a gate's Approve & merge, the Dependabot condition, or `github.pr.approval` `kept`, which holds only when the
   new head's own diff id (`base_ci::diff_id`: per-file patches without hunk positions; None for no files or a file
-  without a patch) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
+  without a patch, or for a file list the forge cut off: `Forge::change_request_files_whole`) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
   `record` saves a diff only while the PR's head is the approved one (read before and after its files), and Request
   changes and Close `forget` it, so only the user's last word counts.
   What these nodes remember (the approval, the base fix a pull request was updated for) is workflow state under
