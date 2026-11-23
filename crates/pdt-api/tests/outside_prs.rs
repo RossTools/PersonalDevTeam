@@ -371,6 +371,8 @@ async fn a_fork_pr_gets_a_ticket_a_review_and_merges_once_approved_and_green() {
     let diff = say(&env, &session, r#"mcp: change_request_diff {"number": 7}"#).await;
     assert!(diff.contains("diff --git a/src/a.rs b/src/a.rs"), "{diff}");
     assert!(diff.contains("<untrusted id="), "the diff is fenced: {diff}");
+    // PDT-645: so are the files' names (git allows newlines in them).
+    assert!(diff.contains("\"path\": \"<untrusted id=\\\"") && diff.contains("\\nsrc/a.rs\\n"), "{diff}");
     let refused = say(&env, &session, r#"mcp: change_request_comment {"number": 7, "body": "hi"}"#).await;
     assert!(refused.contains("not one of this session's tools"), "{refused}");
     let refused = say(&env, &session, r#"mcp: run_with_secrets {"command": ["true"]}"#).await;
