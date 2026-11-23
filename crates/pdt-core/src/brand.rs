@@ -2,9 +2,8 @@
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
 //! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe), scripts/release-stable.* (product name, slug, port) and the
 //! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository, HOST_LABEL,
-//! HOST_SYSTEMD_UNIT, HOST_AUTOSTART_NAME, MACOS_TEAM_ID, APP_BUNDLE_ID; a test checks), the cloud bootstrap scripts
-//! site/public/cloud/{linux.sh,windows.ps1} (website, port; a test checks), site/src/links.mjs (port; a test checks)
-//! only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
+//! HOST_SYSTEMD_UNIT, HOST_AUTOSTART_NAME, MACOS_TEAM_ID, APP_BUNDLE_ID; a test checks),
+//! site/src/links.mjs (port; a test checks) only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
 pub const SLUG: &str = "pdt";
@@ -196,12 +195,6 @@ mod tests {
         ] {
             assert!(ps1.contains(&line), "install.ps1 lacks {line}");
         }
-        let linux = include_str!("../../../site/public/cloud/linux.sh");
-        assert!(linux.contains(&format!("site=\"{WEBSITE}\"")) && linux.contains(&format!("port={STABLE_PORT}")));
-        let windows = include_str!("../../../site/public/cloud/windows.ps1");
-        assert!(
-            windows.contains(&format!("$site = '{WEBSITE}'")) && windows.contains(&format!("$port = {STABLE_PORT}"))
-        );
         let links = include_str!("../../../site/src/links.mjs");
         assert!(links.contains(&format!("export const STABLE_PORT = {STABLE_PORT};")), "links.mjs lacks the port");
     }

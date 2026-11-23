@@ -291,27 +291,6 @@ pub const KNOWN: &[KnownIntegration] = &[
         kind_prefixes: &["plex."],
         branch_part: None,
     },
-    KnownIntegration {
-        id: "aws",
-        label: "AWS",
-        description: "EC2 instances as remote instances that start when work is placed on them and stop when idle.",
-        category: PluginCategory::Dev,
-        icon: Icon { letters: "AW", color: "#ff9900" },
-        connection_kinds: &["aws"],
-        kind_prefixes: &[],
-        branch_part: None,
-    },
-    KnownIntegration {
-        id: "azure",
-        label: "Azure",
-        description: "Azure VMs as remote instances that start when work is placed on them and are deallocated when \
-                      idle.",
-        category: PluginCategory::Dev,
-        icon: Icon { letters: "Az", color: "#0078d4" },
-        connection_kinds: &["azure"],
-        kind_prefixes: &[],
-        branch_part: None,
-    },
 ];
 
 /// The known integration with this id.

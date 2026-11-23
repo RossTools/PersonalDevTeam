@@ -11,9 +11,6 @@ A ticket that has to run elsewhere (a Windows client, say) runs on a remote inst
 there, and so are its agents. You follow and steer it from the owner as if it ran there: its sessions are under the
 ticket, marked **on win-box**.
 
-A remote instance can also be a virtual machine at AWS or Azure that PDT starts when work needs it and stops when
-it's idle: see [Cloud instances](cloud-instances.md).
-
 ## Before you start
 
 - **Name each instance** in **Settings › This host › Remote access** (or in **Get started**), so you can tell them apart.

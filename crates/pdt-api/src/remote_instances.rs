@@ -26,10 +26,6 @@ pub struct RemoteInstanceView {
     pub problem: Option<String>,
     /// The most of the project's tickets in flight on it at once: the lower of this project's cap for it and its own.
     pub pool_cap: u32,
-    /// The agents installed on it that aren't logged in there (PDT-638: "needs login").
-    pub needs_login: Vec<String>,
-    /// Set when it is a VM at a cloud provider that the owner starts and stops (PDT-638).
-    pub cloud: Option<crate::cloud::CloudView>,
 }
 
 /// A joined instance's settings on the owner.
@@ -75,8 +71,6 @@ pub struct RemoteInstancesView {
     pub address: Option<String>,
     pub instances: Vec<RemoteInstanceView>,
     pub pairing: Option<PairingView>,
-    /// The connection kinds of the enabled cloud providers (PDT-638): a joined instance can be one's VM.
-    pub cloud_providers: Vec<crate::cloud::CloudProviderView>,
 }
 
 pub(crate) fn view_of(i: RemoteInstance, me: Side<'_>, now: i64) -> RemoteInstanceView {
@@ -87,12 +81,11 @@ pub(crate) fn view_of(i: RemoteInstance, me: Side<'_>, now: i64) -> RemoteInstan
         pdt_core::link::incompatible_message(them, me)
     });
     let pool_cap = i.pool_cap();
-    let needs_login = i.facts.as_ref().map(pdt_core::cloud::needs_login).unwrap_or_default();
-    RemoteInstanceView { instance: i, state, problem, pool_cap, needs_login, cloud: None }
+    RemoteInstanceView { instance: i, state, problem, pool_cap }
 }
 
 /// A project of this instance's own that can have remote instances: one with a repository.
-pub(crate) async fn own_project(st: &AppState, id: &str) -> Result<Project, ApiError> {
+async fn own_project(st: &AppState, id: &str) -> Result<Project, ApiError> {
     let p = st.project(id).await?;
     if !p.has_repo() {
         return Err(ApiError::bad_request(
@@ -103,29 +96,14 @@ pub(crate) async fn own_project(st: &AppState, id: &str) -> Result<Project, ApiE
     Ok(p)
 }
 
-pub(crate) async fn view(st: &AppState, project: &Project) -> Result<RemoteInstancesView, ApiError> {
+async fn view(st: &AppState, project: &Project) -> Result<RemoteInstancesView, ApiError> {
     let me = link::hello(st).await?;
     let us = Side { name: &me.name, protocol: me.protocol, version: &me.version };
     let now = now_ms();
-    let mut clouds = crate::cloud::views(st, &project.id).await?;
-    let instances = st
-        .store
-        .list_remote_instances(Some(&project.id))
-        .await?
-        .into_iter()
-        .map(|i| {
-            let cloud = clouds.remove(&i.link_id);
-            RemoteInstanceView { cloud, ..view_of(i, us, now) }
-        })
-        .collect();
+    let instances =
+        st.store.list_remote_instances(Some(&project.id)).await?.into_iter().map(|i| view_of(i, us, now)).collect();
     let pairing = st.link.code_for(&project.id, now).map(|p| PairingView { code: p.code, expires_at: p.expires_at });
-    Ok(RemoteInstancesView {
-        name: me.name.clone(),
-        address: link::own_url(st),
-        instances,
-        pairing,
-        cloud_providers: crate::cloud::provider_views(st),
-    })
+    Ok(RemoteInstancesView { name: me.name.clone(), address: link::own_url(st), instances, pairing })
 }
 
 async fn list(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<RemoteInstancesView>, ApiError> {

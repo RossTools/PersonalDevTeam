@@ -11,7 +11,6 @@ pub mod branch_name;
 pub mod brand;
 pub mod bug_report;
 pub mod ci_retry;
-pub mod cloud;
 pub mod command_trust;
 pub mod conversation;
 pub mod document;

@@ -100,7 +100,7 @@ and `backups/` (a copy taken before migrations).
 | `pdt-sheet` | Local sheets on IronCalc: `.xlsx` and `.csv` in and out, cells with computed values, formats, sheets, sort and filter, and IronCalc's sync diffs. |
 | `pdt-host` | The supervisor: running pdtd, installing updates, rolling back, login registration. |
 | `pdtd` | The daemon binary: config, logging, startup (`main.rs`: the state, the startup resume and the poll), `pdtd hook`, the demo seed (`seed.rs`), and which integrations it is built with (`src/integrations/`). |
-| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex, aws, azure), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), each plugin's label, its accounts' sign-in in the browser (`Integration::sign_in`, pdt-core `integration::SignIn`: the routes under its `api`, which the web's `AccountSignIn` calls), a document provider's own file picker (`DocumentProvider::picker`, `ProviderPicker`: an ES module the provider serves, which the import dialog loads and runs for an account) and a forge's name for a change request (`ForgeLoginView.changeRequestName`). |
+| `pdt-int-*` | The optional integrations (discord, jira, buildkite, gitlab, google, arr, scryer, plex), one crate each, built on pdt-api's `sdk` and `Integration` trait. Each is a pdtd cargo feature (all on by default) and is enabled per host in Settings → Plugins. Outside their crates, only pdt-core `integration::KNOWN` and pdtd's features name them; the web shows what they declare: a connection kind's fields (switches, patterns, conditions), invite link (`link`), row summary (`summary`) and status line (`status`, `Integration::connection_status`, `GET /api/connections/{id}/status`), a project settings schema's import by key (`import`, `Integration::import_by_key`, `POST /api/projects/{id}/import/{integration}`), each plugin's label, its accounts' sign-in in the browser (`Integration::sign_in`, pdt-core `integration::SignIn`: the routes under its `api`, which the web's `AccountSignIn` calls), a document provider's own file picker (`DocumentProvider::picker`, `ProviderPicker`: an ES module the provider serves, which the import dialog loads and runs for an account) and a forge's name for a change request (`ForgeLoginView.changeRequestName`). |
 
 Errors from the API are JSON `{code, message}` (pdt-api `error.rs`); clients match on `code`. Every code is a constant
 in `error::codes`, with one status each (the module's doc says which status means what), built with `ApiError`'s
@@ -236,23 +236,6 @@ waiting for an instance records it (`PickupHold::waits_for`), and after each rou
 `offline_instances::check` notifies (`connection.failed`, key `instance-offline:<link>`) once an instance with work
 waiting has been offline for `link::OFFLINE_NOTIFY_AFTER_MS`, and clears it once it is back. The pickup watch tells
 `slot.freed` (`instance`) when an instance comes back online and (`cap`) when an instance's pool grows.
-
-**Cloud instances.** A joined instance can be a VM at a cloud provider (`cloud_instances`, keyed by its link; its meter
-in `cloud_usage`, per UTC month). A provider is a plugin's `cloud::CloudProvider` (`Integration::cloud_provider`:
-pdt-int-aws, EC2's Query API signed with SigV4; pdt-int-azure, ARM with a client-credentials token), reached with a
-connection of its kind (`CloudProvider::kind`) through a `pdt_forge::transport::Transport`, blocking, so pdt-api calls
-it in `spawn_blocking`. The `cloud instances` loop (every 30 s, `cloud::check_all`) reads each VM's power and runs
-pdt-core `cloud::step` on it: a stopped VM that pickup holds tickets for (`offline_instances::waiting_for`) is started;
-a running one with no live sessions or runs on it (`Store::instance_busy`) and nothing waiting is stopped once
-`last_busy_at` is `idle_minutes` old; a `halted` one (shut down from inside but still allocated and billed, Azure's
-`stopped`) is deallocated at once unless work waits for it; billed time between checks is metered. A start or stop isn't asked again for
-`cloud::RETRY_AFTER_MS`, and a start whose PDT hasn't answered a heartbeat within `START_TIMEOUT_MS` is an error.
-Dispatch is pickup's own: the heartbeats see the instance come back, `slot.freed` (`instance`) fires and pickup starts
-the held ticket. While a cloud instance's last check went well, `Placer::pickup_place` marks its `waiting` place
-`starting` ("starting win-cloud…"). Routes: `PUT`/`DELETE /api/projects/{id}/remote-instances/{link}/cloud` and
-`…/cloud/start|stop` (pdt-api `cloud.rs`); `RemoteInstanceView` carries `cloud` and `needsLogin` (installed agents not
-logged in there). The bootstrap scripts the docs use are the site's `public/cloud/` (`linux.sh`, `cloud-init.yaml`,
-`windows.ps1`), linted in CI's site job.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.
@@ -932,7 +915,7 @@ shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with s
 
 | Area | Rust | Web |
 | --- | --- | --- |
-| Remote projects, the project link and remote attempts | pdt-api `link.rs`, `remote_instances.rs`, `remote_projects.rs`, `exec/`, `placement.rs`, `cloud.rs`; pdt-core `link.rs`, `placement.rs`, `cloud.rs`; pdt-store `links.rs`, `exec.rs`, `cloud.rs`; `crates/pdt-int-aws`, `crates/pdt-int-azure`; `site/public/cloud` | `web/src/projects/RemoteInstances.tsx`, `CloudInstance.tsx`, `RemoteProjectsPage.tsx`, `web/src/common/InstanceChip.tsx` |
+| Remote projects, the project link and remote attempts | pdt-api `link.rs`, `remote_instances.rs`, `remote_projects.rs`, `exec/`, `placement.rs`; pdt-core `link.rs`, `placement.rs`; pdt-store `links.rs`, `exec.rs` | `web/src/projects/RemoteInstances.tsx`, `RemoteProjectsPage.tsx`, `web/src/common/InstanceChip.tsx` |
 | Host, settings, updates, remote access | pdt-api `host.rs`, `update.rs`, `remote.rs`, guards (`host_guard.rs`, `identity_guard.rs`, `untrusted.rs`); `crates/pdt-host`; `crates/pdt-update` | `web/src/host`, `web/src/setup` |
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
 | Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |

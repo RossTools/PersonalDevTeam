@@ -30,7 +30,6 @@ The optional plugins:
 | **Sonarr and Radarr** | Search Radarr and Sonarr, add films and series, and read their download queues from workflows. |
 | **Scryer** | Films, series and anime from a Scryer media manager, in workflows and for the PM. |
 | **Plex** | Search a Plex server, list what it added lately and refresh its libraries from workflows. |
-| **AWS** and **Azure** | Virtual machines as remote instances that start when work is placed on them and stop when idle ([Cloud instances](../your-machine/cloud-instances.md)). |
 
 **GitHub** is built in but has a switch, for a machine whose projects don't use GitHub. It can't be turned off while a
 project's pull requests are on GitHub; its page says which.

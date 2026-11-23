@@ -3,4 +3,4 @@
 /**
  * Where a candidate would run (its placement, PDT-636): each place is a slot pool of its own.
  */
-export type Place = { "kind": "owner" } | { "kind": "instance", id: string, name: string, } | { "kind": "waiting", id: string, name: string, paused: boolean, starting: boolean, } | { "kind": "no_instance", why: string, };
+export type Place = { "kind": "owner" } | { "kind": "instance", id: string, name: string, } | { "kind": "waiting", id: string, name: string, paused: boolean, } | { "kind": "no_instance", why: string, };

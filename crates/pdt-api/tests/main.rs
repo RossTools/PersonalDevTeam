@@ -21,7 +21,6 @@ mod branch_names;
 mod bug_reports;
 mod checks;
 mod close_parents;
-mod cloud_instances;
 mod codex_conversations;
 mod command_trust;
 mod conversations;
