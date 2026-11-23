@@ -145,8 +145,9 @@ pub const EVENT_TYPES: &[EventType] = &[
         id: SLOT_FREED,
         title: "Room to start another",
         description: "In a project with auto-start on, fewer tickets are in flight (an attempt merged or was \
-                      abandoned) or its cap rose; or an agent slot freed on this host (`reason`: `attempt`, `cap` or \
-                      `agent`; an agent slot has no project).",
+                      abandoned), its cap (or a remote instance's) rose or one of its remote instances came back online; or an agent slot \
+                      freed on this host (`reason`: `attempt`, `cap`, `instance` or `agent`; an agent slot has no \
+                      project).",
         schema: schema_of::<SlotFreed>,
         outside: &[],
     },

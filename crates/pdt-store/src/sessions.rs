@@ -11,7 +11,7 @@ const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent,
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
                       s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
                       s.persona_id, s.persona_version, s.step_id, s.background_tasks, pe.name AS persona_name, \
-                      s.instance_id, ri.name AS instance_name, t.id AS ticket_id, \
+                      s.instance_id, ri.name AS instance_name, ri.last_seen_at AS instance_seen_at, t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
                       LEFT JOIN tickets t ON t.id = COALESCE(a.ticket_id, s.ticket_id) LEFT JOIN projects p ON p.id = t.project_id \
@@ -91,11 +91,13 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     })
 }
 
-/// A row's `instance_id` with the joined instance's name (`instance_name`; its id once it has left the project).
+/// A row's `instance_id` with the joined instance's name (`instance_name`; its id once it has left the project) and
+/// when it was last heard from (`instance_seen_at`).
 pub(crate) fn instance_ref(r: &SqliteRow) -> Result<Option<pdt_core::placement::InstanceRef>, StoreError> {
     let id: Option<String> = r.try_get("instance_id")?;
     let name: Option<String> = r.try_get("instance_name")?;
-    Ok(id.map(|id| pdt_core::placement::InstanceRef { name: name.unwrap_or_else(|| id.clone()), id }))
+    let last_seen_at: Option<i64> = r.try_get("instance_seen_at")?;
+    Ok(id.map(|id| pdt_core::placement::InstanceRef { name: name.unwrap_or_else(|| id.clone()), id, last_seen_at }))
 }
 
 impl Store {

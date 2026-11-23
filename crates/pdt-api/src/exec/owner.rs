@@ -413,7 +413,11 @@ pub(crate) async fn make_worktree(
         base_commit: made.base_commit,
         created_at: now_ms(),
         missing: false,
-        instance: Some(pdt_core::placement::InstanceRef { id: i.instance_id.clone(), name: i.name.clone() }),
+        instance: Some(pdt_core::placement::InstanceRef {
+            id: i.instance_id.clone(),
+            name: i.name.clone(),
+            last_seen_at: i.last_seen_at,
+        }),
     };
     st.store.insert_worktree(&wt).await?;
     Ok(wt)

@@ -142,6 +142,20 @@ in without the regeneration rules) and removing the worktree (`/link/exec/remove
 worktree until Clean up, since the owner can't see what it holds. Terminals, runs, Files and Changes of a remote
 attempt are not remote yet.
 
+**Pickup per instance.** `tickets.candidates` places each candidate (`placement::Placer::pickup_place`,
+read once per project) as a pdt-core `pickup::Place`: the owner, a remote instance, `waiting` (offline or paused
+there) or `no_instance` (no one meets the repository's needs). Each place is a slot pool: the owner's under the
+project's cap counting only attempts whose worktree has no `instance_id` (`AttemptInfo::instance_id`), each remote
+instance's under `RemoteInstance::pool_cap` (the lower of the owner's `remote_instances.cap` and the cap the instance
+reports in its heartbeat, `remote_instances.remote_cap` from its `remote_projects.cap`; one when neither is set).
+`ticket.start` re-checks the pick's pool under the pickup lock, takes the first pick per project and pool, skips the
+host's agent-slot check for a remote pool, and treats a `placement` refusal (the instance went offline since choose)
+as a hold. Waiting and no-instance reasons are pickup holds like overlaps (`PassedReason::shows_on_board`); a hold
+waiting for an instance records it (`PickupHold::waits_for`), and after each round of heartbeats
+`offline_instances::check` notifies (`connection.failed`, key `instance-offline:<link>`) once an instance with work
+waiting has been offline for `link::OFFLINE_NOTIFY_AFTER_MS`, and clears it once it is back. The pickup watch tells
+`slot.freed` (`instance`) when an instance comes back online and (`cap`) when an instance's pool grows.
+
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.
 
@@ -528,8 +542,9 @@ the rules, pure, in pdt-core `pickup.rs`). A config field left out is the projec
 edits the built-in's parameters without editing the workflow. The pickup watch (pdt-api `scheduler.rs`, every 10 s)
 emits the triggers, for projects with auto-start on: `ticket.startable` once per ticket each time it becomes startable
 (`policy::startable` and the start delay over; what it told is kept in `AppState::pickup_watch`, so a restart tells
-again), and `slot.freed` when a ticket in flight ended (room under the cap, or a hot area free), its cap rose, or the
-host's free agent slots went from none to some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
+again), and `slot.freed` when a ticket in flight ended (room under the cap, or a hot area free), its cap (or a remote
+instance's) rose, one of its remote instances came back online, or the host's free agent slots went from none to
+some. `ticket.start` holds `AppState::pickup_lock` while it checks and starts, so concurrent pickup runs
 neither start a ticket twice (the store's one-active-attempt rule is the backstop) nor go over the caps a pick was
 chosen under (project, area and label, and the overlap rule, carried on each pick); it takes the first of each project's chosen tickets
 still free. Having checked the caps and the overlap rule itself, it sets `ValidStart::pickup_checked`, so Start

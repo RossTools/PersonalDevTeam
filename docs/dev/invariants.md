@@ -444,6 +444,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.
+- **A ticket placed on an unavailable instance waits; it never runs elsewhere.** `placement::place` returns
+  `Unavailable` for an offline or paused instance (even when the repository's needs pick it), and pickup turns that
+  into a `waiting` hold, never the owner or another instance. Pickup counts each pool by the worktree's
+  `instance_id`, so an attempt's worktree keeps the instance it was made on.
 - **An instance has a project either local or remote, never both**: joining refuses a project whose repository
   (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
 - **A project-link request is acted on only once signed by the link's other end for that project**

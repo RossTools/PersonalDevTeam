@@ -7,7 +7,8 @@ export type ChooseConfig = {
  */
 candidates: unknown, 
 /**
- * The most tickets in flight per project. Left out: the project's auto-start cap (its running cap, else 1).
+ * The most tickets in flight per project on this instance. Left out: the project's auto-start cap (its running
+ * cap, else 1). Each remote instance has its own cap (Project Settings → Remote instances).
  */
 cap?: number, 
 /**

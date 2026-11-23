@@ -3,7 +3,7 @@
 //! the link at both ends). The link itself is `crate::link`.
 
 use crate::error::{ApiError, codes};
-use crate::extract::ApiPath;
+use crate::extract::{ApiJson, ApiPath};
 use crate::link;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
@@ -11,7 +11,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use pdt_core::link::{LinkState, RemoteInstance, Side};
 use pdt_core::project::Project;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 /// An instance joined to the project, as Remote instances lists it.
@@ -24,6 +24,19 @@ pub struct RemoteInstanceView {
     pub state: LinkState,
     /// What to do about an incompatible one ("update win-box to v0.7.2 to link it with studio").
     pub problem: Option<String>,
+    /// The most of the project's tickets in flight on it at once: the lower of this project's cap for it and its own.
+    pub pool_cap: u32,
+}
+
+/// A joined instance's settings on the owner.
+#[derive(Debug, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RemoteInstancePatch {
+    /// The most of the project's tickets in flight on it at once; 0: no cap set here (its own, else one).
+    #[serde(default)]
+    #[ts(optional)]
+    pub cap: Option<u32>,
 }
 
 /// A pairing code on show.
@@ -57,7 +70,8 @@ pub(crate) fn view_of(i: RemoteInstance, me: Side<'_>, now: i64) -> RemoteInstan
         let them = Side { name: &i.name, protocol: i.protocol, version: &i.version };
         pdt_core::link::incompatible_message(them, me)
     });
-    RemoteInstanceView { instance: i, state, problem }
+    let pool_cap = i.pool_cap();
+    RemoteInstanceView { instance: i, state, problem, pool_cap }
 }
 
 /// A project of this instance's own that can have remote instances: one with a repository.
@@ -114,6 +128,22 @@ async fn check(
     Ok(Json(view(&st, &p).await?))
 }
 
+/// Sets a joined instance's cap.
+async fn patch(
+    State(st): State<AppState>,
+    ApiPath((id, link_id)): ApiPath<(String, String)>,
+    ApiJson(body): ApiJson<RemoteInstancePatch>,
+) -> Result<Json<RemoteInstancesView>, ApiError> {
+    let p = own_project(&st, &id).await?;
+    if st.store.get_remote_instance(&link_id).await?.is_none_or(|i| i.project_id != p.id) {
+        return Err(ApiError::not_found("remote instance"));
+    }
+    if let Some(cap) = body.cap {
+        st.store.set_remote_instance_cap(&link_id, Some(cap).filter(|c| *c > 0)).await?;
+    }
+    Ok(Json(view(&st, &p).await?))
+}
+
 /// Removes a joined instance: it is told (so it drops the remote project and its key), and the owner's key and row
 /// go. An instance that can't be reached is removed all the same: its key no longer signs anything this one takes.
 async fn remove(
@@ -148,5 +178,5 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/projects/{id}/remote-instances", get(list))
         .route("/projects/{id}/remote-instances/pairing", post(new_pairing).delete(cancel_pairing))
         .route("/projects/{id}/remote-instances/check", post(check))
-        .route("/projects/{id}/remote-instances/{link}", delete(remove))
+        .route("/projects/{id}/remote-instances/{link}", delete(remove).patch(patch))
 }
