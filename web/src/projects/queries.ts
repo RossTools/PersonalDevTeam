@@ -28,9 +28,16 @@ export function useRemoteProjects() {
   return useQuery({ queryKey: projectKeys.remote, queryFn: api.listRemoteProjects, refetchInterval: POLL.steady });
 }
 
+/** The query for a project's remote instances, polled for their heartbeats (and the pairing code's expiry). */
+export const remoteInstancesQuery = (projectId: string) => ({
+  queryKey: projectKeys.remoteInstances(projectId),
+  queryFn: () => api.remoteInstances(projectId),
+  refetchInterval: POLL.steady,
+});
+
 /** A project's remote instances, polled for their heartbeats (and the pairing code's expiry). */
 export function useRemoteInstances(projectId: string, { enabled = true }: { enabled?: boolean } = {}) {
-  return useQuery({ queryKey: projectKeys.remoteInstances(projectId), queryFn: () => api.remoteInstances(projectId), refetchInterval: POLL.steady, enabled });
+  return useQuery({ ...remoteInstancesQuery(projectId), enabled });
 }
 
 export function usePlacement(projectId: string) {

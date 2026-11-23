@@ -5,33 +5,53 @@ import { cn } from '@ui/lib/utils';
 import { CommandList, type CommandItem } from '@ui/CommandList';
 import { Popover } from '@ui/Popover';
 import type { Project } from '../api/gen/Project';
+import { remoteInstancesQuery } from '../projects/queries';
 import { worktreesQuery } from './worktrees';
 
-export type Place = { projectId: string; worktreeId: string | null };
+/**
+ * A checkout of a project: its own, one of its worktrees (`worktreeId`), or (`instanceId`, the Files view only) the
+ * project's checkout on a joined remote instance.
+ */
+export type Place = { projectId: string; worktreeId: string | null; instanceId?: string | null };
 
 const REPOSITORY = 'Repository';
-const idOf = (p: Place) => `${p.projectId}:${p.worktreeId ?? ''}`;
+/** A place as one string (for keys and remembered state): `<project>:<worktree>`, or `<project>:@<instance>`. */
+export const placeKey = (p: Place) => `${p.projectId}:${p.instanceId ? `@${p.instanceId}` : p.worktreeId ?? ''}`;
 function placeOf(id: string): Place {
   const i = id.indexOf(':');
-  const worktreeId = id.slice(i + 1);
-  return { projectId: id.slice(0, i), worktreeId: worktreeId || null };
+  const rest = id.slice(i + 1);
+  const projectId = id.slice(0, i);
+  if (rest.startsWith('@')) return { projectId, worktreeId: null, instanceId: rest.slice(1) };
+  return { projectId, worktreeId: rest || null };
 }
 
-/** The list inside the popover: every project, each with its main checkout and its worktrees (missing ones left out). */
-function Places({ projects, place, onPick }: { projects: Project[]; place: Place; onPick: (p: Place) => void }) {
+/**
+ * The list inside the popover: every project, each with its main checkout, (with `remote`) its checkout on each joined
+ * instance, and its worktrees (missing ones left out).
+ */
+function Places({ projects, place, remote, onPick }: { projects: Project[]; place: Place; remote: boolean; onPick: (p: Place) => void }) {
   const worktrees = useQueries({
     queries: projects.map((p) => worktreesQuery(p.id)),
   });
-  const current = idOf(place);
+  const instances = useQueries({
+    queries: projects.map((p) => ({ ...remoteInstancesQuery(p.id), enabled: remote && p.kind === 'repo' })),
+  });
+  const current = placeKey(place);
   const icon = (id: string, fallback: ReactNode) => (id === current ? <Check aria-hidden /> : fallback);
   const items: CommandItem[] = projects.flatMap((p, i) => {
-    const repoId = idOf({ projectId: p.id, worktreeId: null });
+    const repoId = placeKey({ projectId: p.id, worktreeId: null });
     return [
       { id: repoId, label: REPOSITORY, group: p.name, keywords: [p.name, p.key, p.baseBranch], icon: icon(repoId, <FolderGit2 aria-hidden />) },
+      ...(remote ? instances[i]?.data?.instances ?? [] : [])
+        .filter((r) => r.state !== 'removed')
+        .map((r) => {
+          const id = placeKey({ projectId: p.id, worktreeId: null, instanceId: r.instanceId });
+          return { id, label: REPOSITORY, detail: `on ${r.name}`, group: p.name, keywords: [p.name, p.key, r.name], icon: icon(id, <FolderGit2 aria-hidden />) };
+        }),
       ...(worktrees[i]?.data ?? [])
         .filter((w) => !w.missing)
         .map((w) => {
-          const id = idOf({ projectId: p.id, worktreeId: w.id });
+          const id = placeKey({ projectId: p.id, worktreeId: w.id });
           return {
             id,
             label: w.branch,
@@ -47,21 +67,27 @@ function Places({ projects, place, onPick }: { projects: Project[]; place: Place
 }
 
 /**
- * Picks a project and a place in it (the main checkout or one of its worktrees): one chip "Project › place" that opens
- * a filterable list. The trigger is named "Place: <project> › <place>".
+ * Picks a project and a place in it (the main checkout or one of its worktrees; with `remote`, also the project's
+ * checkout on each joined instance): one chip "Project › place" that opens a filterable list. The trigger is named
+ * "Place: <project> › <place>".
  */
-export function PlacePicker({ projects, place, onPick, className }: {
+export function PlacePicker({ projects, place, onPick, remote = false, className }: {
   projects: Project[];
   place: Place;
   onPick: (p: Place) => void;
+  remote?: boolean;
   className?: string;
 }) {
-  const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId });
+  const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId && !place.instanceId });
+  const instances = useQuery({ ...remoteInstancesQuery(place.projectId), enabled: !!place.projectId && !!place.instanceId });
   const project = projects.find((p) => p.id === place.projectId);
   const worktree = place.worktreeId ? worktrees.data?.find((w) => w.id === place.worktreeId) : undefined;
-  const where = place.worktreeId
-    ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
-    : REPOSITORY;
+  const instance = place.instanceId ? instances.data?.instances.find((r) => r.instanceId === place.instanceId) : undefined;
+  const where = place.instanceId
+    ? `${REPOSITORY} · on ${instance?.name ?? '…'}`
+    : place.worktreeId
+      ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
+      : REPOSITORY;
   const projectName = project?.name ?? 'No project';
   return (
     <Popover
@@ -87,6 +113,7 @@ export function PlacePicker({ projects, place, onPick, className }: {
         <Places
           projects={projects}
           place={place}
+          remote={remote}
           onPick={(p) => {
             close();
             onPick(p);

@@ -22,8 +22,8 @@ export function FileSearch({ state, place, children }: { state: FolderViewState;
   const searching = asked.q !== '';
   // A new search cancels the one in flight: the query's signal aborts once its key is left.
   const r = useQuery({
-    queryKey: fileKeys.search(place.projectId, place.worktreeId, asked),
-    queryFn: ({ signal }) => api.searchFiles(place.projectId, place.worktreeId, asked, signal),
+    queryKey: fileKeys.search(place.projectId, place, asked),
+    queryFn: ({ signal }) => api.searchFiles(place.projectId, place, asked, signal),
     enabled: searching,
     placeholderData: keepPreviousData,
     staleTime: 10_000,

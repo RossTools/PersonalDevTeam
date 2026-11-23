@@ -38,9 +38,10 @@ export type Route =
   | { view: 'personas'; personaId: string | null }
   /**
    * A file in a checkout, or a folder (its path ends in `/`: the phone's drill-down, PDT-120); `project` (a key) and
-   * `worktree` say which checkout when the user picked one.
+   * `worktree` (or `instance`, the project's checkout on a joined remote instance) say which checkout when the user
+   * picked one.
    */
-  | { view: 'files'; path: string | null; project: string | null; worktree: string | null }
+  | { view: 'files'; path: string | null; project: string | null; worktree: string | null; instance: string | null }
   | { view: 'settings'; page: SettingsPage }
   /** Get started (PDT-230): the first-run checklist, in the Sessions view's place. */
   | { view: 'setup' };
@@ -92,6 +93,7 @@ export function parseRoute(pathname: string, search = ''): Route {
         path: seg.length > 1 ? `${seg.slice(1).join('/')}${pathname.endsWith('/') ? '/' : ''}` : null,
         project: q.get('project'),
         worktree: q.get('worktree'),
+        instance: q.get('instance'),
       };
     case 'setup':
       return { view: 'setup' };
@@ -146,6 +148,7 @@ export function routePath(r: Route): string {
       const q = new URLSearchParams();
       if (r.project) q.set('project', r.project);
       if (r.worktree) q.set('worktree', r.worktree);
+      if (r.instance) q.set('instance', r.instance);
       const search = q.toString();
       return `/files${r.path ? `/${r.path.split('/').map(enc).join('/')}` : ''}${search ? `?${search}` : ''}`;
     }
@@ -177,7 +180,7 @@ export function viewRoute(view: ViewId): Route {
     case 'documents': return { view, doc: null };
     case 'workflows': return { view, target: null };
     case 'personas': return { view, personaId: null };
-    case 'files': return { view, path: null, project: null, worktree: null };
+    case 'files': return { view, path: null, project: null, worktree: null, instance: null };
     case 'settings': return { view, page: { kind: 'index' } };
   }
 }

@@ -26,8 +26,8 @@ export function useFileFind(checkouts: FileCheckout[], query: string, enabled: b
   const asking = enabled && typed.length >= MIN_FILE_QUERY && q.length >= MIN_FILE_QUERY;
   const results = useQueries({
     queries: checkouts.map((c) => ({
-      queryKey: fileKeys.find(c.projectId, c.worktreeId, q),
-      queryFn: ({ signal }: { signal: AbortSignal }) => api.findFiles(c.projectId, c.worktreeId, q, signal),
+      queryKey: fileKeys.find(c.projectId, c, q),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.findFiles(c.projectId, c, q, signal),
       enabled: asking,
       placeholderData: keepPreviousData,
       staleTime: 5000,

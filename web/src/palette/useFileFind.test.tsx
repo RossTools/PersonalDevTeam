@@ -21,8 +21,8 @@ describe('useFileFind', () => {
     expect(find).not.toHaveBeenCalled();
     rerender({ q: 'ab', open: true });
     await waitFor(() => expect(result.current.map((f) => f.path)).toEqual(['p1.ts', 'p2.ts']));
-    expect(find).toHaveBeenCalledWith('p1', 'wt1', 'ab', expect.anything());
-    expect(find).toHaveBeenCalledWith('p2', null, 'ab', expect.anything());
+    expect(find).toHaveBeenCalledWith('p1', expect.objectContaining({ worktreeId: 'wt1' }), 'ab', expect.anything());
+    expect(find).toHaveBeenCalledWith('p2', expect.objectContaining({ worktreeId: null }), 'ab', expect.anything());
     expect(result.current[0].checkout.label).toBe('PDT-1');
     rerender({ q: 'ab', open: false });
     expect(result.current).toEqual([]);
