@@ -114,11 +114,13 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 ..Default::default()
             };
             let Json(page) = crate::tickets::list(State(st.clone()), crate::extract::ApiQuery(q)).await.map_err(api)?;
+            // An external ticket's title is what an outsider wrote (PDT-645): fenced.
+            let outside = crate::untrusted::Outside::new();
             let tickets: Vec<Value> = page
                 .items
                 .iter()
                 .map(|t| {
-                    let mut v = json!({"key": t.key, "id": t.id, "title": t.title, "stage": t.stage,
+                    let mut v = json!({"key": t.key, "id": t.id, "title": outside.title(&t.title, t.source), "stage": t.stage,
                                        "priority": t.priority, "labels": t.labels,
                                        "state": pdt_core::pm::ticket_state(t)});
                     if let Some(at) = t.auto_start_at {
@@ -127,7 +129,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                     v
                 })
                 .collect();
-            Ok(json!({"tickets": tickets, "total": page.total}))
+            Ok(outside.noted(json!({"tickets": tickets, "total": page.total})))
         }
         "get_session" => {
             let a: GetSession = args(a)?;
@@ -187,6 +189,8 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
         .collect();
     let keys: std::collections::HashMap<String, String> =
         projects.iter().map(|p| (p.id.clone(), p.key.clone())).collect();
+    // External tickets' titles, and the Inbox items about them (titled with them), are what outsiders wrote (PDT-645).
+    let outside = crate::untrusted::Outside::new();
     let mut out_projects = vec![];
     for p in &projects {
         let stages: serde_json::Map<String, Value> =
@@ -200,21 +204,24 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
         .map_err(api)?
         .iter()
         .map(|t| {
-            json!({"key": t.key, "id": t.id, "title": t.title, "project": keys.get(&t.project_id),
+            json!({"key": t.key, "id": t.id, "title": outside.title(&t.title, t.source), "project": keys.get(&t.project_id),
                    "state": pdt_core::pm::ticket_state(t), "attemptId": t.attempt.as_ref().map(|a| &a.id)})
         })
         .collect();
     let Json(inbox) =
         crate::inbox::list(State(st.clone()), crate::extract::ApiQuery(Default::default())).await.map_err(api)?;
-    let inbox: Vec<Value> = inbox
-        .items
-        .iter()
-        .filter(|i| only.is_none() || i.project_id == only)
-        .map(|i| {
-            json!({"id": i.id, "group": i.group, "ticket": i.ticket_key, "title": i.title, "sessionId": i.session_id,
-                   "persona": i.persona_name, "at": i.created_at})
-        })
-        .collect();
+    let mut external = std::collections::HashMap::new();
+    let mut out_inbox = vec![];
+    for i in inbox.items.iter().filter(|i| only.is_none() || i.project_id == only) {
+        let title = match &i.ticket_id {
+            Some(t) if crate::untrusted::external_ticket(st, t, &mut external).await.map_err(api)? => {
+                outside.wrap(&i.title)
+            }
+            _ => i.title.clone(),
+        };
+        out_inbox.push(json!({"id": i.id, "group": i.group, "ticket": i.ticket_key, "title": title,
+                              "sessionId": i.session_id, "persona": i.persona_name, "at": i.created_at}));
+    }
     let sessions: Vec<Value> = st
         .store
         .list_sessions_by_status(pdt_core::session::SessionStatus::Running)
@@ -248,12 +255,12 @@ async fn overview(cx: &Cx<'_>, project: Option<&str>) -> Result<Value, String> {
         page.items.sort_by_key(|t| t.stage != pdt_core::ticket::TicketStage::Todo);
         auto_starting.extend(page.items.iter().filter_map(|t| {
             let at = t.auto_start_at?;
-            Some(json!({"key": t.key, "id": t.id, "title": t.title, "project": p.key,
+            Some(json!({"key": t.key, "id": t.id, "title": outside.title(&t.title, t.source), "project": p.key,
                         "autoStartsInSeconds": starts_in(at)}))
         }));
     }
-    Ok(json!({"projects": out_projects, "inProgress": in_flight, "autoStarting": auto_starting, "inbox": inbox,
-              "runningSessions": sessions}))
+    Ok(outside.noted(json!({"projects": out_projects, "inProgress": in_flight, "autoStarting": auto_starting,
+                            "inbox": out_inbox, "runningSessions": sessions})))
 }
 
 /// Whole seconds from now until `at` (ms), rounded up.
