@@ -64,12 +64,13 @@ Something you can't act on yet (a pull request waiting for another fix to land, 
 - **Until tomorrow**: back at 9:00 tomorrow morning;
 - **For 1 week**;
 - **Until a ticket is done…**: back once that ticket is Done or Won't do. The item's own ticket is filled in; type
-  another ticket's key to wait for that one.
+  another ticket's key to wait for that one. A blocking question or a workflow's gate can't wait for its own ticket,
+  which can't be done until you answer it: snooze it until a time, or until another ticket.
 
 A snoozed item isn't counted on the rail. It is listed under **Snoozed**, below **Needs you**, with when it comes
-back. Pick one to read it (you can't answer it while it's snoozed); **Unsnooze**, in its row or at the top of the
-item, brings it back now. It comes back by itself when its time comes or its ticket closes. One that is
-answered or goes away meanwhile (its workflow moved on) stays gone.
+back, and whether its ticket is waiting on it. Pick one to read it (you can't answer it while it's snoozed);
+**Unsnooze**, in its row or at the top of the item, brings it back now. It comes back by itself when its time comes or
+its ticket closes. One that is answered or goes away meanwhile (its workflow moved on) stays gone.
 
 ## What lands in Needs you
 

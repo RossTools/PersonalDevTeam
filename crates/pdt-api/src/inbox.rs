@@ -91,9 +91,8 @@ pub(crate) async fn snooze(
 ) -> Result<StatusCode, ApiError> {
     let Json(r) = payload?;
     let now = now_ms();
-    if let Some(item) = st.store.get_inbox_item(&id).await?
-        && item.status != InboxStatus::Open
-    {
+    let item = st.store.get_inbox_item(&id).await?;
+    if item.as_ref().is_some_and(|i| i.status != InboxStatus::Open) {
         return Err(ApiError::conflict(codes::CANNOT_ANSWER, "this item was already answered"));
     }
     if r.until.is_some_and(|u| u <= now) {
@@ -112,6 +111,17 @@ pub(crate) async fn snooze(
             let t = found.ok_or_else(|| ApiError::invalid(format!("there is no ticket {given}")))?;
             if t.stage.is_closed() {
                 return Err(ApiError::invalid(format!("{} is already closed", t.key)));
+            }
+            // PDT-698: its own ticket can't close while it waits on the item, so the item would never come back.
+            if let Some(i) = &item
+                && i.ticket_waits_on()
+                && i.ticket_id.as_deref() == Some(t.id.as_str())
+            {
+                return Err(ApiError::invalid(format!(
+                    "{key} is waiting on this, so it can't be done until you answer it: snooze it until a time or \
+                     another ticket",
+                    key = t.key
+                )));
             }
             Some(t.id)
         }
@@ -148,6 +158,7 @@ pub(crate) async fn decorate(st: &AppState, items: &mut [InboxItem]) -> Result<(
     let mut tickets: HashMap<String, Option<TicketFacts>> = HashMap::new();
     let mut personas: HashMap<String, Option<String>> = HashMap::new();
     for i in items.iter_mut() {
+        i.ticket_waits = i.ticket_waits_on();
         if let Some(t) = &i.ticket_id {
             if !tickets.contains_key(t) {
                 let found = st.store.get_ticket(t).await?.map(|x| TicketFacts {

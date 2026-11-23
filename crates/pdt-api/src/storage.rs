@@ -346,6 +346,8 @@ async fn measure_all(st: &AppState, force: bool) {
 pub struct DiskView {
     /// PDT's data folder and the projects' folders on this disk.
     pub folders: Vec<String>,
+    /// What each of `folders` is, in the same order: "PDT data", or the project's name.
+    pub labels: Vec<String>,
     pub space: DiskSpace,
     pub level: DiskLevel,
     /// Which disk it is (`disk_id`), for the disk events.
@@ -374,9 +376,13 @@ pub fn disk_id(path: &FsPath) -> Option<String> {
 
 /// One entry per disk from what each folder's probe read: folders on the same disk (by `disk_id`; without one, by
 /// equal sizes) go together, with the least free space any of them read, since each was read at its own moment.
-fn group_disks(found: Vec<(String, Option<String>, DiskSpace)>, low_gb: u32, critical_gb: u32) -> Vec<DiskView> {
+fn group_disks(
+    found: Vec<(String, String, Option<String>, DiskSpace)>,
+    low_gb: u32,
+    critical_gb: u32,
+) -> Vec<DiskView> {
     let mut groups: Vec<(Option<String>, DiskView)> = vec![];
-    for (folder, id, space) in found {
+    for (folder, label, id, space) in found {
         let same = |(gid, d): &&mut (Option<String>, DiskView)| match (&id, gid) {
             (Some(a), Some(b)) => a == b,
             (None, None) => d.space == space,
@@ -386,12 +392,16 @@ fn group_disks(found: Vec<(String, Option<String>, DiskSpace)>, low_gb: u32, cri
             Some((_, d)) => {
                 if !d.folders.contains(&folder) {
                     d.folders.push(folder);
+                    d.labels.push(label);
                 }
                 if space.free < d.space.free {
                     d.space = space;
                 }
             }
-            None => groups.push((id.clone(), DiskView { folders: vec![folder], space, level: DiskLevel::Ok, id })),
+            None => groups.push((
+                id.clone(),
+                DiskView { folders: vec![folder], labels: vec![label], space, level: DiskLevel::Ok, id },
+            )),
         }
     }
     groups
@@ -424,15 +434,17 @@ pub(crate) async fn disks(st: &AppState) -> Vec<DiskView> {
 
 /// [`disks`] at other thresholds (`storage.measure`'s own).
 pub(crate) async fn disks_at(st: &AppState, low_gb: u32, critical_gb: u32) -> Vec<DiskView> {
-    let mut folders = vec![st.data_dir.clone()];
-    folders.extend(st.store.list_projects().await.unwrap_or_default().into_iter().map(|p| PathBuf::from(p.repo_path)));
+    let mut folders = vec![(st.data_dir.clone(), format!("{} data", pdt_core::brand::SHORT_NAME))];
+    folders.extend(
+        st.store.list_projects().await.unwrap_or_default().into_iter().map(|p| (PathBuf::from(p.repo_path), p.name)),
+    );
     let probe = st.disk_space.clone();
     let found = tokio::task::spawn_blocking(move || {
         folders
             .into_iter()
-            .filter_map(|f| {
+            .filter_map(|(f, label)| {
                 let space = probe(&f)?;
-                Some((f.to_string_lossy().into_owned(), disk_id(&f), space))
+                Some((f.to_string_lossy().into_owned(), label, disk_id(&f), space))
             })
             .collect::<Vec<_>>()
     })
@@ -904,17 +916,18 @@ mod tests {
         let space = |free| DiskSpace { free: free * gb, total: 500 * gb };
         let d = group_disks(
             vec![
-                ("/data".into(), Some("1".into()), space(30)),
-                ("/work/a".into(), Some("1".into()), space(19)),
-                ("/ext".into(), Some("2".into()), space(19)),
-                ("/x".into(), None, space(40)),
-                ("/y".into(), None, space(40)),
+                ("/data".into(), "PDT data".into(), Some("1".into()), space(30)),
+                ("/work/a".into(), "A".into(), Some("1".into()), space(19)),
+                ("/ext".into(), "Ext".into(), Some("2".into()), space(19)),
+                ("/x".into(), "X".into(), None, space(40)),
+                ("/y".into(), "Y".into(), None, space(40)),
             ],
             20,
             5,
         );
         assert_eq!(d.len(), 3, "{d:?}");
         assert_eq!(d[0].folders, ["/data", "/work/a"]);
+        assert_eq!(d[0].labels, ["PDT data", "A"], "each folder keeps what it is");
         assert_eq!((d[0].space.free, d[0].level), (19 * gb, DiskLevel::Low), "the least free it read");
         assert_eq!(d[1].folders, ["/ext"]);
         assert_eq!(d[2].folders, ["/x", "/y"]);
