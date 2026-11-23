@@ -52,6 +52,10 @@ pub enum GitError {
          git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\""
     )]
     NoIdentity,
+    /// The folder a worktree would go in is a symlink, not a folder, or resolves outside the repository (a cloned
+    /// repository can commit `.worktrees` as a symlink to put PDT's worktrees anywhere on the disk).
+    #[error("{0}")]
+    UnsafeWorktreePath(String),
 }
 
 /// A failed git command's error from its `stderr`: [`GitError::NoIdentity`] when git refused to commit without an
@@ -231,6 +235,51 @@ pub fn check_branch_name(repo: &Path, branch: &str) -> Result<(), GitError> {
     }
 }
 
+/// Refuses a worktree `path` under `repo` that a symlink (or a file) on the way would send outside the repository:
+/// each folder from `repo` down to `path` must be a real folder or not exist yet, `path` itself must not be a
+/// symlink, and what exists of it must resolve inside the repository. A `path` outside `repo` is the caller's choice
+/// and isn't checked. PDT-643: a cloned repository can commit `.worktrees -> ../../.config`, so a ticket's worktree
+/// (with the repository's top-level `config`) would land in `~/.config/git` and become the user's git config.
+pub fn check_worktree_path(repo: &Path, path: &Path) -> Result<(), GitError> {
+    let Ok(rel) = path.strip_prefix(repo) else { return Ok(()) };
+    let unsafe_path =
+        |why: &str| GitError::UnsafeWorktreePath(format!("won't make a worktree at {}: {why}", path.display()));
+    if !rel.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return Err(unsafe_path("the path leaves the repository"));
+    }
+    let mut at = repo.to_path_buf();
+    let mut existing = repo.to_path_buf();
+    for c in rel.components() {
+        at.push(c);
+        match std::fs::symlink_metadata(&at) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(unsafe_path(&format!("{} is a symbolic link", at.display())));
+            }
+            Ok(m) if !m.is_dir() => return Err(unsafe_path(&format!("{} is not a folder", at.display()))),
+            Ok(_) => existing.clone_from(&at),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break,
+            Err(e) => return Err(GitError::Command(format!("checking {}: {e}", at.display()))),
+        }
+    }
+    let canon =
+        |p: &Path| std::fs::canonicalize(p).map_err(|e| GitError::Command(format!("resolving {}: {e}", p.display())));
+    if !canon(&existing)?.starts_with(canon(repo)?) {
+        return Err(unsafe_path("it resolves outside the repository"));
+    }
+    Ok(())
+}
+
+/// Makes the folder `path` goes in, after [`check_worktree_path`], and checks it again once made (a folder swapped
+/// for a symlink in between).
+fn make_worktree_parent(repo: &Path, path: &Path) -> Result<(), GitError> {
+    check_worktree_path(repo, path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
+    }
+    check_worktree_path(repo, path)
+}
+
 /// Creates `path` as a new worktree on new branch `branch`, starting at `base`. Returns the base commit SHA.
 pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Result<String, GitError> {
     check_branch_name(repo, branch)?;
@@ -249,10 +298,7 @@ pub fn add_worktree(repo: &Path, path: &Path, branch: &str, base: &str) -> Resul
     if path.exists() {
         return Err(GitError::Command(format!("worktree path already exists: {}", path.display())));
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
-    }
+    make_worktree_parent(repo, path)?;
     let path_str = path.to_string_lossy();
     match git_with_env(repo, &["worktree", "add", "-b", branch, &path_str, &sha], &[])? {
         Ok(_) => {
@@ -362,10 +408,7 @@ pub fn add_worktree_for_branch(repo: &Path, path: &Path, branch: &str) -> Result
         }
         vec!["worktree", "add", "--track", "-b", branch, &path_str, &remote]
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
-    }
+    make_worktree_parent(repo, path)?;
     if let Err(f) = git_with_env(repo, &args, &[])? {
         return Err(command_failed(f.stderr));
     }
@@ -650,6 +693,49 @@ mod tests {
             assert!(matches!(&r, Err(GitError::UnknownRef(b)) if b == base), "{base}: {r:?}");
         }
         assert!(!wt("d").exists() && !wt("e").exists());
+    }
+
+    // PDT-643: a repository that commits `.worktrees` as a symlink can't send a worktree outside it.
+    #[cfg(unix)]
+    #[test]
+    fn worktrees_never_follow_a_symlink_out_of_the_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        repo_with_commit(&repo);
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink("../outside", repo.join(".worktrees")).unwrap();
+        let wt = repo.join(".worktrees").join("git");
+        let r = add_worktree(&repo, &wt, "git", "main");
+        assert!(matches!(&r, Err(GitError::UnsafeWorktreePath(m)) if m.contains("symbolic link")), "{r:?}");
+        git_ok(&repo, &["branch", "existing"]);
+        let r = add_worktree_for_branch(&repo, &wt, "existing");
+        assert!(matches!(&r, Err(GitError::UnsafeWorktreePath(_))), "{r:?}");
+        assert!(!outside.join("git").exists());
+        assert!(!branch_exists(&repo, "git"));
+
+        // A real `.worktrees` with the worktree's own folder a (dangling) symlink out.
+        std::fs::remove_file(repo.join(".worktrees")).unwrap();
+        std::fs::create_dir_all(repo.join(".worktrees")).unwrap();
+        std::os::unix::fs::symlink(outside.join("new"), &wt).unwrap();
+        let r = add_worktree(&repo, &wt, "git", "main");
+        assert!(matches!(&r, Err(GitError::UnsafeWorktreePath(_))), "{r:?}");
+        assert!(!outside.join("new").exists());
+    }
+
+    #[test]
+    fn worktrees_folder_that_is_a_file_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        repo_with_commit(&repo);
+        std::fs::write(repo.join(".worktrees"), "x").unwrap();
+        let r = add_worktree(&repo, &repo.join(".worktrees").join("a"), "a", "main");
+        assert!(matches!(&r, Err(GitError::UnsafeWorktreePath(m)) if m.contains("not a folder")), "{r:?}");
+        // The usual case still works, and a path outside the repository is the caller's choice.
+        std::fs::remove_file(repo.join(".worktrees")).unwrap();
+        check_worktree_path(&repo, &repo.join(".worktrees").join("a")).unwrap();
+        check_worktree_path(&repo, &tmp.path().join("elsewhere")).unwrap();
+        assert!(check_worktree_path(&repo, &repo.join(".worktrees").join("..").join("..").join("x")).is_err());
     }
 
     #[test]
