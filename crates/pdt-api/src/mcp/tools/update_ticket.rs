@@ -50,7 +50,9 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
                 .await
                 .map_err(|e| api(e.into()))?
                 .ok_or("that ticket no longer exists")?;
-            Ok(json!({"updated": true, "key": t.summary.key, "title": t.summary.title, "areas": t.summary.areas}))
+            let outside = crate::untrusted::Outside::new();
+            let title = outside.title(&t.summary.title, t.summary.source);
+            Ok(outside.noted(json!({"updated": true, "key": t.summary.key, "title": title, "areas": t.summary.areas})))
         }
         other => Err(format!("no tool is called {other}")),
     }
