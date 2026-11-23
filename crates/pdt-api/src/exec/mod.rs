@@ -18,6 +18,8 @@
 //! - **Files, Changes and overlaps** (PDT-635, [`files`], [`review`]): one call per request, each run there by the
 //!   functions a local one uses, in a folder the remote instance picks; Changes come whole and are kept on the owner
 //!   until the diff changes.
+//! - **Secrets** (PDT-637, [`secrets`]): a remote session's `run_with_secrets` and `write_secret_file` run there, with
+//!   the owner's values forwarded for that one call and the remote instance's own secrets for the project winning.
 //!
 //! Owner → remote calls are signed with the owner's key for the link and checked by `link::from_owner`; the remote's
 //! with its key, checked by `link::from_remote`.
@@ -27,6 +29,7 @@ mod owner;
 mod remote;
 mod remote_pty;
 mod review;
+mod secrets;
 mod terminals;
 
 pub(crate) use files::{FilesOp, download, files};
@@ -39,6 +42,7 @@ pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
 pub(crate) use remote_pty::relay_activity;
 pub(crate) use review::{changed_files, changes, file_sides, merge_check};
+pub(crate) use secrets::{SecretOp, own_secret_names, remote_secrets, use_secrets};
 pub(crate) use terminals::{
     bridge as bridge_pty, close as close_terminal, is_remote_terminal, open as open_terminal, write as write_terminal,
 };
@@ -72,6 +76,7 @@ pub(crate) const PTY_WRITE_PATH: &str = "/api/link/exec/pty/write";
 /// The WebSocket a ticket from [`PTY_ATTACH_PATH`] opens: `<this>/<ticket>`.
 pub(crate) const PTY_WS_PATH: &str = "/api/link/exec/pty/ws";
 pub(crate) const ACTIVITY_PATH: &str = "/api/link/exec/activity";
+pub(crate) const SECRETS_PATH: &str = "/api/link/exec/secrets";
 
 /// What the executor keeps in memory, on both ends.
 #[derive(Default)]
@@ -443,6 +448,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/pty/write", post(remote_pty::write_route))
         .route("/link/exec/pty/ws/{ticket}", axum::routing::get(remote_pty::ws_route))
         .route("/link/exec/activity", post(terminals::activity_route))
+        .route("/link/exec/secrets", post(secrets::secrets_route))
 }
 
 #[cfg(test)]

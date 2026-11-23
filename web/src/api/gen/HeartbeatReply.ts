@@ -9,4 +9,9 @@ export type HeartbeatReply = { instance: InstanceHello, facts: InstanceFacts,
 /**
  * The user paused the project on the remote instance: it takes no work for it.
  */
-paused: boolean, };
+paused: boolean, 
+/**
+ * The names of the secrets the remote instance keeps for the project itself (never their values): they win
+ * over the owner's of the same name, which then isn't forwarded (PDT-637).
+ */
+secrets: Array<string>, };

@@ -43,6 +43,8 @@ pub const PAIR_PATH: &str = "/api/link/pair";
 pub const HEARTBEAT_PATH: &str = "/api/link/heartbeat";
 pub const REVOKE_PATH: &str = "/api/link/revoke";
 pub const LEAVE_PATH: &str = "/api/link/leave";
+/// The owner asks a joined instance to update (PDT-637); it is taken whatever protocol the owner speaks.
+pub const UPDATE_PATH: &str = "/api/link/update";
 
 /// A pairing code a project's owner is showing.
 #[derive(Debug, Clone)]
@@ -496,6 +498,12 @@ pub(crate) struct SignedParts {
 impl SignedParts {
     /// Reads the headers and checks what needs no link: the protocol and the time.
     pub(crate) async fn read(st: &AppState, headers: &HeaderMap) -> Result<Self, ApiError> {
+        Self::read_with(st, headers, false).await
+    }
+
+    /// [`read`](Self::read), taking any protocol when `any_protocol`: the owner's request to update this instance,
+    /// which must get through when the two ends speak different ones (PDT-637).
+    async fn read_with(st: &AppState, headers: &HeaderMap, any_protocol: bool) -> Result<Self, ApiError> {
         let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
         let (Some(link_id), Some(project), Some(protocol), Some(time), Some(nonce), Some(sig)) =
             (get(h::LINK), get(h::PROJECT), get(h::PROTOCOL), get(h::TIME), get(h::NONCE), get(h::SIGNATURE))
@@ -503,7 +511,7 @@ impl SignedParts {
             return Err(refused("not a signed project-link request"));
         };
         let protocol: u32 = protocol.parse().map_err(|_| refused("a project-link protocol that isn't a number"))?;
-        if !link::compatible(st.link.protocol(), protocol) {
+        if !any_protocol && !link::compatible(st.link.protocol(), protocol) {
             let me = hello(st).await?;
             return Err(ApiError::conflict(
                 codes::LINK_INCOMPATIBLE,
@@ -602,6 +610,7 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
         paused: false,
         last_seen_at: None,
         last_error: None,
+        secrets: vec![],
         created_at: now_ms(),
     };
     if let Err(e) = st.store.insert_remote_instance(&instance).await {
@@ -650,8 +659,30 @@ pub(crate) async fn from_owner(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<pdt_core::link::OwnerLink, ApiError> {
+    from_owner_with(st, method, uri, headers, body, false).await
+}
+
+/// [`from_owner`], whatever protocol the owner speaks: only for its request to update this instance.
+pub(crate) async fn from_owner_any_protocol(
+    st: &AppState,
+    method: &Method,
+    uri: &OriginalUri,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<pdt_core::link::OwnerLink, ApiError> {
+    from_owner_with(st, method, uri, headers, body, true).await
+}
+
+async fn from_owner_with(
+    st: &AppState,
+    method: &Method,
+    uri: &OriginalUri,
+    headers: &HeaderMap,
+    body: &[u8],
+    any_protocol: bool,
+) -> Result<pdt_core::link::OwnerLink, ApiError> {
     crate::host_guard::optional_json::<Value>(headers, body)?;
-    let parts = SignedParts::read(st, headers).await?;
+    let parts = SignedParts::read_with(st, headers, any_protocol).await?;
     let link = st
         .store
         .owner_link_by_id(&parts.link_id)
@@ -693,7 +724,8 @@ async fn heartbeat_route(
     let sent: HeartbeatBody = crate::host_guard::optional_json(&headers, &body)?;
     let owner_version = sent.owner.map(|o| o.version);
     st.store.owner_contact(&link.link_id, now_ms(), owner_version.as_deref()).await?;
-    Ok(Json(HeartbeatReply { instance: hello(&st).await?, facts: facts(&st).await, paused: link.paused }))
+    let secrets = crate::exec::own_secret_names(&st, &link.project_id).await?;
+    Ok(Json(HeartbeatReply { instance: hello(&st).await?, facts: facts(&st).await, paused: link.paused, secrets }))
 }
 
 /// The owner removed this instance from the project: the remote project goes, with this end's key.
@@ -795,6 +827,7 @@ pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance)
                         protocol: reply.instance.protocol,
                         facts: &reply.facts,
                         paused: reply.paused,
+                        secrets: &reply.secrets,
                         at: now_ms(),
                     },
                 )
@@ -862,6 +895,7 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/heartbeat", post(heartbeat_route))
         .route("/link/revoke", post(revoke_route))
         .route("/link/leave", post(leave_route))
+        .route("/link/update", post(crate::update_instances::link_route))
         .merge(crate::exec::router())
 }
 

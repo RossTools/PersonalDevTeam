@@ -107,7 +107,7 @@ impl Store {
     pub async fn record_secret_use(&self, u: &SecretUse) -> Result<i64, StoreError> {
         let mut tx = self.pool.begin().await?;
         let id = sqlx::query(
-            "INSERT INTO secret_uses (secret_id, at, by, how, session_id, run_id) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO secret_uses (secret_id, at, by, how, session_id, run_id, instance) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&u.secret_id)
         .bind(u.at)
@@ -115,6 +115,7 @@ impl Store {
         .bind(&u.how)
         .bind(&u.session_id)
         .bind(&u.run_id)
+        .bind(&u.instance)
         .execute(&mut *tx)
         .await?
         .last_insert_rowid();
@@ -131,7 +132,7 @@ impl Store {
     /// A secret's uses, newest first, at most `limit`.
     pub async fn secret_uses(&self, secret_id: &str, limit: i64) -> Result<Vec<SecretUse>, StoreError> {
         let rows = sqlx::query(
-            "SELECT id, secret_id, at, by, how, session_id, run_id FROM secret_uses WHERE secret_id = ? \
+            "SELECT id, secret_id, at, by, how, session_id, run_id, instance FROM secret_uses WHERE secret_id = ? \
              ORDER BY at DESC, id DESC LIMIT ?",
         )
         .bind(secret_id)
@@ -148,6 +149,7 @@ impl Store {
                     how: r.try_get("how")?,
                     session_id: r.try_get("session_id")?,
                     run_id: r.try_get("run_id")?,
+                    instance: r.try_get("instance")?,
                 })
             })
             .collect()
@@ -193,9 +195,12 @@ mod tests {
             how: "run_with_secrets".into(),
             session_id: Some("s".into()),
             run_id: None,
+            instance: None,
         };
         store.record_secret_use(&u).await.unwrap();
-        store.record_secret_use(&SecretUse { at: 6, how: "write_secret_file".into(), ..u.clone() }).await.unwrap();
+        let forwarded =
+            SecretUse { at: 6, how: "write_secret_file".into(), instance: Some("win-box".into()), ..u.clone() };
+        store.record_secret_use(&forwarded).await.unwrap();
         let got = store.get_secret("a").await.unwrap().unwrap();
         assert_eq!(
             (got.personas, got.last_used_at, got.last_used_by.as_deref()),
@@ -203,6 +208,7 @@ mod tests {
         );
         let uses = store.secret_uses("a", 10).await.unwrap();
         assert_eq!(uses.iter().map(|u| u.how.as_str()).collect::<Vec<_>>(), ["write_secret_file", "run_with_secrets"]);
+        assert_eq!((uses[0].instance.as_deref(), uses[1].instance.as_deref()), (Some("win-box"), None));
         assert!(store.delete_secret("a").await.unwrap());
         assert!(store.secret_uses("a", 10).await.unwrap().is_empty());
         assert!(store.list_secrets().await.unwrap().is_empty());

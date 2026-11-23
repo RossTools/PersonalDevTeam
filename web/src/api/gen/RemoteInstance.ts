@@ -28,4 +28,8 @@ lastSeenAt: number | null,
 /**
  * Why its last heartbeat failed, when it did.
  */
-lastError: string | null, createdAt: number, };
+lastError: string | null, 
+/**
+ * The names of the secrets it keeps for the project itself, from its last heartbeat (PDT-637).
+ */
+secrets: Array<string>, createdAt: number, };

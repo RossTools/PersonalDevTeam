@@ -15,7 +15,7 @@ use pdt_core::limits::OUTPUT_CAP;
 use pdt_core::secret::{self, NewSecret, Secret, SecretPatch, SecretUse, User};
 use pdt_core::session::Session;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -80,7 +80,7 @@ fn forget(st: &AppState, s: &Secret) {
 }
 
 /// A secret's value: known already, else from the keychain (and known from then on).
-async fn value(st: &AppState, s: &Secret) -> Result<String, String> {
+pub(crate) async fn value(st: &AppState, s: &Secret) -> Result<String, String> {
     if let Some(v) = st.store.redactor().value(&account(&s.id)) {
         return Ok(v);
     }
@@ -136,38 +136,47 @@ async fn values_checked(
         if out.contains_key(n) {
             continue;
         }
-        let s = st.store.secret_by_name(n).await.map_err(|e| e.to_string())?.ok_or_else(|| {
-            format!("no secret is called {n}: the user adds it in Settings → Secrets (agents ask with request_secret)")
-        })?;
-        if who.is_some_and(|w| !s.allows(w)) {
-            return Err(format!(
-                "the secret {} may not be used here: the user can allow it in Settings → Secrets",
-                s.name
-            ));
-        }
-        let v = value(st, &s).await?;
-        let u = SecretUse {
-            id: 0,
-            secret_id: s.id.clone(),
-            at: now_ms(),
-            by: usage.by.clone(),
-            how: usage.how.clone(),
-            session_id: usage.session_id.clone(),
-            run_id: usage.run_id.clone(),
-        };
-        if let Err(e) = st.store.record_secret_use(&u).await {
-            tracing::warn!(secret = %s.name, error = %e, "could not record a secret's use");
-        }
+        let (s, v) = lookup(st, n, who).await?;
+        record_use(st, &s, usage, None).await;
         out.insert(n.clone(), v);
     }
     Ok(out)
 }
 
-fn session_user(s: &Session) -> User<'_> {
+/// The secret called `n` and its value, when `who` (None: the user) may use it; Err says why not.
+pub(crate) async fn lookup(st: &AppState, n: &str, who: Option<User<'_>>) -> Result<(Secret, String), String> {
+    let s = st.store.secret_by_name(n).await.map_err(|e| e.to_string())?.ok_or_else(|| {
+        format!("no secret is called {n}: the user adds it in Settings → Secrets (agents ask with request_secret)")
+    })?;
+    if who.is_some_and(|w| !s.allows(w)) {
+        return Err(format!("the secret {} may not be used here: the user can allow it in Settings → Secrets", s.name));
+    }
+    let v = value(st, &s).await?;
+    Ok((s, v))
+}
+
+/// Records a use of `s` (on `instance`, a remote instance it was forwarded to; None: here).
+pub(crate) async fn record_use(st: &AppState, s: &Secret, usage: &Usage, instance: Option<&str>) {
+    let u = SecretUse {
+        id: 0,
+        secret_id: s.id.clone(),
+        at: now_ms(),
+        by: usage.by.clone(),
+        how: usage.how.clone(),
+        session_id: usage.session_id.clone(),
+        run_id: usage.run_id.clone(),
+        instance: instance.map(String::from),
+    };
+    if let Err(e) = st.store.record_secret_use(&u).await {
+        tracing::warn!(secret = %s.name, error = %e, "could not record a secret's use");
+    }
+}
+
+pub(crate) fn session_user(s: &Session) -> User<'_> {
     User::Agent { project: &s.project_id, persona: s.persona.as_ref().map(|p| p.id.as_str()) }
 }
 
-fn session_usage(s: &Session, how: &str) -> Usage {
+pub(crate) fn session_usage(s: &Session, how: &str) -> Usage {
     Usage { by: s.title.clone(), how: how.into(), session_id: Some(s.id.clone()), run_id: None }
 }
 
@@ -191,7 +200,8 @@ async fn access(
     };
     let (projects, personas) = (clean(projects), clean(personas));
     for p in &projects {
-        if st.store.get_project(p).await?.is_none() {
+        // A remote project's own secrets are kept here for its owner's sessions (PDT-637).
+        if st.store.get_project(p).await?.is_none() && st.store.get_remote_project(p).await?.is_none() {
             return Err(ApiError::invalid(format!("no project has the id {p}")));
         }
     }
@@ -311,6 +321,7 @@ pub(crate) fn router() -> axum::Router<AppState> {
     axum::Router::new()
         .route("/secrets", get(list).post(create))
         .route("/secrets/store", get(store_info))
+        .route("/secrets/remote", get(crate::exec::remote_secrets))
         .route("/secrets/{id}", axum::routing::patch(patch).delete(delete))
         .route("/secrets/{id}/uses", get(uses))
 }
@@ -326,7 +337,7 @@ pub(crate) struct RequestSecret {
     pub purpose: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RunWithSecrets {
     /// A command line, run by the shell (`sh -c` on macOS and Linux, `cmd /C` on Windows). Secrets go in `env`,
@@ -343,7 +354,7 @@ pub(crate) struct RunWithSecrets {
     pub timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct WriteSecretFile {
     /// The file to write (made or replaced): a relative path is under the session's folder.
@@ -355,11 +366,20 @@ pub(crate) struct WriteSecretFile {
 /// `list_secrets`: the secrets this session may use.
 pub(crate) async fn list_tool(st: &AppState, s: &Session) -> Result<Value, String> {
     let all = st.store.list_secrets().await.map_err(|e| e.to_string())?;
-    let mine: Vec<Value> = all
+    let mut mine: Vec<Value> = all
         .iter()
         .filter(|x| x.allows(session_user(s)))
         .map(|x| json!({"name": x.name, "description": x.description}))
         .collect();
+    // On a remote instance, the secrets it keeps for the project too (they win on a name clash).
+    if let Some(i) = &s.instance
+        && let Ok(joined) = crate::exec::remote_instance(st, &s.project_id, &i.id).await
+    {
+        mine.retain(|x| !joined.secrets.iter().any(|n| x["name"].as_str().is_some_and(|m| m.eq_ignore_ascii_case(n))));
+        mine.extend(
+            joined.secrets.iter().map(|n| json!({"name": n, "description": format!("kept on {}", joined.name)})),
+        );
+    }
     Ok(json!({"secrets": mine,
               "use": "run_with_secrets (env: {\"VAR\": \"secret:<name>\"}) or write_secret_file ({{secret.<name>}}); \
                       request_secret asks the user for one that is missing."}))
@@ -427,8 +447,8 @@ pub(crate) async fn answer_request(st: &AppState, item: &InboxItem, answer: &Inb
 
 /// A folder or file a secret tool uses (PDT-404): inside the session's folder ([`secret::checkout_path`]), and what of
 /// it is already on disk resolves inside it too and into no `.git` folder, so a symlink can't lead it elsewhere.
-fn session_path(s: &Session, given: Option<&str>) -> Result<PathBuf, String> {
-    let base = PathBuf::from(&s.cwd);
+fn session_path(cwd: &str, given: Option<&str>) -> Result<PathBuf, String> {
+    let base = PathBuf::from(cwd);
     let path = secret::checkout_path(&base, given)?;
     let root = std::fs::canonicalize(&base).map_err(|e| format!("this session's folder {}: {e}", base.display()))?;
     let mut on_disk = path.as_path();
@@ -452,8 +472,18 @@ fn inside(root: &std::path::Path, on_disk: &std::path::Path, path: &std::path::P
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const MAX_TIMEOUT_SECS: u64 = 1800;
 
-/// What `run_with_secrets` refuses before it asks the user: the secrets it names and the folder it runs in.
-pub(crate) fn check_run(s: &Session, a: &RunWithSecrets) -> Result<(Vec<String>, PathBuf), String> {
+/// What `run_with_secrets` refuses before it asks the user: the secrets it names and (for a session on this
+/// instance) the folder it runs in; a remote instance checks its own folder.
+pub(crate) fn check_run(s: &Session, a: &RunWithSecrets) -> Result<Vec<String>, String> {
+    let names = run_names(a)?;
+    if s.instance.is_none() {
+        run_dir(&s.cwd, a)?;
+    }
+    Ok(names)
+}
+
+/// The secrets a `run_with_secrets` names: at least one, all in `env`.
+pub(crate) fn run_names(a: &RunWithSecrets) -> Result<Vec<String>, String> {
     if a.command.trim().is_empty() {
         return Err("the command is empty".into());
     }
@@ -467,34 +497,60 @@ pub(crate) fn check_run(s: &Session, a: &RunWithSecrets) -> Result<(Vec<String>,
                     one; run anything else with your own shell"
             .into());
     }
-    let dir = session_path(s, a.cwd.as_deref())?;
+    Ok(names)
+}
+
+/// The folder a `run_with_secrets` runs in, under the session's folder `cwd`.
+fn run_dir(cwd: &str, a: &RunWithSecrets) -> Result<PathBuf, String> {
+    let dir = session_path(cwd, a.cwd.as_deref())?;
     if !dir.is_dir() {
         return Err(format!("{} is not a folder", dir.display()));
     }
-    Ok((names, dir))
+    Ok(dir)
 }
 
-/// `run_with_secrets`: the command with the secrets in its environment; what it printed comes back redacted.
+/// `run_with_secrets`: the command with the secrets in its environment; what it printed comes back redacted. A session
+/// on a remote instance runs it there, with the owner's values forwarded for the call (`exec::use_secrets`).
 pub(crate) async fn run_tool(st: &AppState, s: &Session, a: RunWithSecrets) -> Result<Value, String> {
-    let (names, dir) = check_run(s, &a)?;
+    let names = check_run(s, &a)?;
+    if s.instance.is_some() {
+        return crate::exec::use_secrets(st, s, crate::exec::SecretOp::Run(a), names).await;
+    }
     let values = values_for(st, &names, session_user(s), &session_usage(s, "run_with_secrets")).await?;
+    let r = st.store.redactor();
+    run_in(&s.cwd, &a, &values, &|text, cut| r.string_cut(text, cut)).await
+}
+
+/// Runs a `run_with_secrets` in the session's folder `cwd` with `values` (by name as written), its output passed
+/// through `redact` (the text, and whether it was cut).
+pub(crate) async fn run_in(
+    cwd: &str,
+    a: &RunWithSecrets,
+    values: &HashMap<String, String>,
+    redact: &(dyn Fn(&str, bool) -> String + Sync),
+) -> Result<Value, String> {
+    let dir = run_dir(cwd, a)?;
     let env: BTreeMap<String, String> = a
         .env
         .iter()
         .map(|(k, v)| (k.clone(), secret::env_ref(v).and_then(|n| values.get(n)).cloned().unwrap_or_else(|| v.clone())))
         .collect();
-    let limit =
-        std::time::Duration::from_secs(a.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).clamp(1, MAX_TIMEOUT_SECS));
-    let out = run_shell(&a.command, &env, &dir, limit).await?;
-    let r = st.store.redactor();
+    let out = run_shell(&a.command, &env, &dir, run_limit(a)).await?;
+    let mut used: Vec<&String> = values.keys().collect();
+    used.sort();
     Ok(json!({
         "exitCode": out.code,
         "timedOut": out.timed_out,
-        "stdout": r.string_cut(&out.stdout, out.stdout_cut),
-        "stderr": r.string_cut(&out.stderr, out.stderr_cut),
+        "stdout": redact(&out.stdout, out.stdout_cut),
+        "stderr": redact(&out.stderr, out.stderr_cut),
         "truncated": out.stdout_cut || out.stderr_cut,
-        "secrets": values.keys().collect::<Vec<_>>(),
+        "secrets": used,
     }))
+}
+
+/// How long a `run_with_secrets` may run.
+pub(crate) fn run_limit(a: &RunWithSecrets) -> std::time::Duration {
+    std::time::Duration::from_secs(a.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).clamp(1, MAX_TIMEOUT_SECS))
 }
 
 struct ShellOutput {
@@ -568,8 +624,20 @@ async fn run_shell(
     }
 }
 
-/// What `write_secret_file` refuses before it asks the user: the secrets it names and the file it writes.
-pub(crate) fn check_write(s: &Session, a: &WriteSecretFile) -> Result<(Vec<String>, PathBuf), String> {
+/// What `write_secret_file` refuses before it asks the user: the secrets it names and (for a session on this
+/// instance) the file it writes; a remote instance checks its own folder.
+pub(crate) fn check_write(s: &Session, a: &WriteSecretFile) -> Result<Vec<String>, String> {
+    let names = write_names(a)?;
+    if s.instance.is_none() {
+        session_path(&s.cwd, Some(&a.path))?;
+    } else {
+        secret::checkout_path(std::path::Path::new(&s.cwd), Some(&a.path))?;
+    }
+    Ok(names)
+}
+
+/// The secrets a `write_secret_file` names: at least one, in its template.
+pub(crate) fn write_names(a: &WriteSecretFile) -> Result<Vec<String>, String> {
     if a.path.trim().is_empty() {
         return Err("the path is empty".into());
     }
@@ -580,19 +648,34 @@ pub(crate) fn check_write(s: &Session, a: &WriteSecretFile) -> Result<(Vec<Strin
                     in; write anything else with your own tools"
             .into());
     }
-    Ok((names, session_path(s, Some(&a.path))?))
+    Ok(names)
 }
 
 /// `write_secret_file`: the template with its secrets filled in, written to the file (owner-only on macOS and
-/// Linux); nothing of the content comes back.
+/// Linux); nothing of the content comes back. A session on a remote instance writes it there, with the owner's values
+/// forwarded for the call (`exec::use_secrets`).
 pub(crate) async fn write_file_tool(st: &AppState, s: &Session, a: WriteSecretFile) -> Result<Value, String> {
-    let (names, path) = check_write(s, &a)?;
+    let names = check_write(s, &a)?;
+    if s.instance.is_some() {
+        return crate::exec::use_secrets(st, s, crate::exec::SecretOp::Write(a), names).await;
+    }
     let values = values_for(st, &names, session_user(s), &session_usage(s, "write_secret_file")).await?;
-    let text = secret::fill_template(&a.template, &values);
+    write_in(&s.cwd, &a, &values, &names).await
+}
+
+/// Writes a `write_secret_file` under the session's folder `cwd` with `values` (by name as written).
+pub(crate) async fn write_in(
+    cwd: &str,
+    a: &WriteSecretFile,
+    values: &HashMap<String, String>,
+    names: &[String],
+) -> Result<Value, String> {
+    let path = session_path(cwd, Some(&a.path))?;
+    let text = secret::fill_template(&a.template, values);
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|e| format!("could not make {}: {e}", dir.display()))?;
         // Checked again now the folders are there.
-        let root = std::fs::canonicalize(&s.cwd).map_err(|e| format!("this session's folder {}: {e}", s.cwd))?;
+        let root = std::fs::canonicalize(cwd).map_err(|e| format!("this session's folder {cwd}: {e}"))?;
         inside(&root, dir, &path)?;
     }
     write_private(&path, text.as_bytes()).map_err(|e| format!("could not write {}: {e}", path.display()))?;

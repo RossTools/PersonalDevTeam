@@ -22,6 +22,8 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
   only, the check after installing and telling you what changed. These set the **Install updates** workflow. See
   [Installing updates by themselves](updates.md#installing-updates-by-themselves).
 - **Update channel**: **Stable releases**, or **Nightly builds too**.
+- **Remote instances**: the instances working on your projects, which need updating, and **Update** for each. See
+  [Updating remote instances](updates.md#updating-remote-instances).
 - **Check for updates**: how often PDT looks.
 - **Release repository**: where updates come from. Leave it empty.
 - **Advanced › GitHub token**: only for a private repository or a fork, or a higher rate limit; PDT reads its

@@ -46,7 +46,8 @@ Each remote instance shows:
 pairing again needs a new code.
 
 **Needs an update** means the two instances speak different versions of the link. The message says which one to
-update, and to which version, for example "update win-box to v0.7.2".
+update, and to which version, for example "update win-box to v0.7.2". You can update it from the owner: see
+[Updating remote instances](updates.md#updating-remote-instances).
 
 ## Choose where tickets run
 
@@ -98,8 +99,26 @@ For a ticket placed there:
 Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
 wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
 
-Runs and tests of a remote ticket aren't available yet. A remote session keeps the view it started in: it can't switch
+Runs and tests of a remote ticket aren't available yet. For secrets on a remote instance, see
+[Secrets on a remote instance](#secrets-on-a-remote-instance). A remote session keeps the view it started in: it can't switch
 between conversation and terminal.
+
+## Secrets on a remote instance
+
+Agents on a remote instance use secrets as they do on the owner (see [Secrets](secrets.md)), with **run with
+secrets** and **write a secret file** running there, in the ticket's worktree:
+
+- **Your secrets on the owner** work there by default. The owner sends a secret's value over the encrypted link for
+  that one command or file, and only after you allow it as usual. The remote instance never stores or logs it, and the
+  command's output comes back with the value replaced by `[secret:NAME]`.
+- **Secrets kept on the remote instance** are for what belongs to that machine: a code-signing certificate, a token
+  for a tool signed in there. Add them on the remote instance, under the project in **Settings › Remote projects**.
+  They stay in its keychain and are never sent to the owner or anywhere else.
+- **On a name clash**, the remote instance's own secret wins, and the owner doesn't send its value.
+
+The owner's **Settings › Secrets** lists both: its own, and under **On remote instances** the names of those kept on
+each one, as "on win-box (VAL)", never their values. Every use is recorded: a secret sent from the owner shows **on
+win-box** in its **Uses**, and a use of one kept on the remote instance shows there and, by name, on the owner.
 
 ## Shells on a remote instance
 
@@ -127,6 +146,10 @@ last heard from.
 - **Leave…** stops working on the project and revokes the link; the owner keeps the project.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
+- **Secrets** kept here for the project: the owner's agents here use them, and they never leave this machine. Add one
+  with its name and value; **Remove…** takes it off the project.
+- **Update channel**: when the owner updates this instance, it checks on the owner's channel unless you switch on
+  using this host's own.
 
 It also lists what runs here for the owner now, read-only: each agent's or shell's ticket, title and how long it has
 run.

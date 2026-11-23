@@ -18,7 +18,7 @@ const project: Project = { id: 'p', name: 'Valley', repoPath: '/r', baseBranch: 
 
 const winBox: RemoteInstanceView = {
   linkId: 'l1', projectId: 'p', instanceId: 'i1', name: 'win-box', url: 'https://win-box.example.ts.net', publicKey: 'k',
-  version: '0.7.0', protocol: 1, paused: false, lastSeenAt: Date.now() - 1000, lastError: null, createdAt: 1, state: 'connected', problem: null,
+  version: '0.7.0', protocol: 1, paused: false, lastSeenAt: Date.now() - 1000, lastError: null, secrets: [], createdAt: 1, state: 'connected', problem: null,
   facts: {
     os: 'windows', arch: 'x86_64', cpus: 8, diskFreeBytes: 50 * 1024 ** 3,
     agents: [{ agent: 'claude', installed: true, loggedIn: true }, { agent: 'codex', installed: true, loggedIn: false }, { agent: 'devin', installed: false, loggedIn: false }],
@@ -87,7 +87,7 @@ const remote: RemoteProjectView = {
   project: { ...project, id: 'rp', kind: 'remote', repoPath: 'remote:l1' },
   link: {
     projectId: 'rp', linkId: 'l1', ownerProjectId: 'p', ownerInstanceId: 'o', ownerName: 'studio', ownerUrl: 'https://studio.example.ts.net',
-    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, lastContactAt: Date.now(), createdAt: 1,
+    ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, ownUpdateChannel: false, lastContactAt: Date.now(), createdAt: 1,
   },
   state: 'connected',
   openUrl: 'https://studio.example.ts.net/tickets?view=board',
@@ -132,6 +132,34 @@ describe('Remote projects (the remote instance)', () => {
     await userEvent.type(folder, '/work/valley');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { checkoutPath: '/work/valley' } }));
+  });
+
+  it('keeps secrets here for the project, never for the owner to read, and picks whose update channel to use', async () => {
+    const cert = { id: 's1', name: 'CERT', description: 'For Valley', projects: ['rp'], personas: [], createdAt: 1, updatedAt: 1, lastUsedAt: null, lastUsedBy: null };
+    const other = { ...cert, id: 's2', name: 'OTHER', projects: [] };
+    const calls = stubApi({
+      'GET /api/remote-projects': [remote],
+      'GET /api/secrets': [cert, other],
+      'POST /api/secrets': { ...cert, id: 's3', name: 'SIGN_KEY' },
+      'DELETE /api/secrets/s1': undefined,
+      'PATCH /api/remote-projects/rp': { ...remote, link: { ...remote.link, ownUpdateChannel: true } },
+    });
+    renderWithQuery(<RemoteProjectsPage />);
+    const list = await screen.findByRole('list', { name: 'Secrets for Valley' });
+    expect(list).toHaveTextContent('CERT');
+    expect(list).not.toHaveTextContent('OTHER');
+    await userEvent.type(screen.getByRole('textbox', { name: "New secret's name for Valley" }), 'SIGN_KEY');
+    await userEvent.type(screen.getByLabelText("New secret's value for Valley"), 'sign-key-value');
+    await userEvent.click(screen.getByRole('button', { name: 'Add secret' }));
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'POST', path: '/api/secrets', body: { name: 'SIGN_KEY', description: 'For Valley', projects: ['rp'], value: 'sign-key-value' },
+    }));
+    await userEvent.click(within(list).getByRole('button', { name: 'Remove…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/secrets/s1', body: undefined }));
+
+    await userEvent.click(screen.getByRole('switch', { name: /use this host's own update channel/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { ownUpdateChannel: true } }));
   });
 
   it('joins with the owner\'s address and code from Add project, and shows why it was refused', async () => {

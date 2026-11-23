@@ -89,6 +89,7 @@ mod todos;
 pub mod toolchains;
 mod untrusted;
 pub mod update;
+mod update_instances;
 pub mod vault;
 mod watches;
 mod workflow;

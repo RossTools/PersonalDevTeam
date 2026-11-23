@@ -29,9 +29,21 @@ pub(crate) struct Instance {
 
 /// An instance named `name` with `fake-agent` as Claude, served on a free loopback port; with a fake GitHub when `gh`.
 pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
+    instance_with(name, gh, None).await
+}
+
+/// [`instance`], with its own update service when `update` is given.
+pub(crate) async fn instance_with(
+    name: &str,
+    gh: Option<&Arc<FakeForge>>,
+    update: Option<Arc<pdt_api::UpdateService>>,
+) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
+    if let Some(u) = update {
+        state.update = u;
+    }
     state.platform.claude_program = FAKE.to_string();
     state.platform.codex_program = FAKE.to_string();
     state.platform.login_path = None;
@@ -78,9 +90,14 @@ pub(crate) struct Pair {
 /// Owner and remote paired for the owner's project, with `windows` tickets placed on the remote instance. Its
 /// checkout is a clone of the owner's repository (a real one would be cloned from origin on first use).
 pub(crate) async fn paired() -> Pair {
+    paired_with(None).await
+}
+
+/// [`paired`], the remote instance with its own update service when `update` is given.
+pub(crate) async fn paired_with(update: Option<Arc<pdt_api::UpdateService>>) -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
-    let remote = instance("win-box", None).await;
+    let remote = instance_with("win-box", None, update).await;
     let main = owner.tmp.path().join("valley");
     repo(&main);
     let (s, p) =
@@ -139,12 +156,12 @@ pub(crate) async fn worktrees(p: &Pair) -> Vec<Value> {
     v.as_array().unwrap().clone()
 }
 
-async fn events(p: &Pair, session: &str) -> Vec<Value> {
+pub(crate) async fn events(p: &Pair, session: &str) -> Vec<Value> {
     let (_, v) = call(&p.owner.app, "GET", &format!("/api/sessions/{session}/events?after=0"), None).await;
     v.as_array().unwrap().clone()
 }
 
-async fn agent_says(p: &Pair, session: &str) -> Vec<String> {
+pub(crate) async fn agent_says(p: &Pair, session: &str) -> Vec<String> {
     events(p, session)
         .await
         .iter()
@@ -155,7 +172,7 @@ async fn agent_says(p: &Pair, session: &str) -> Vec<String> {
 
 /// Sends a message from the owner and waits for what the agent says after its first `n` things that starts with
 /// `prefix`.
-async fn said_after(p: &Pair, session: &str, n: usize, prefix: &str) -> String {
+pub(crate) async fn said_after(p: &Pair, session: &str, n: usize, prefix: &str) -> String {
     wait_until(&format!("the agent to say {prefix}"), async || {
         let said = agent_says(p, session).await;
         said.get(n..).and_then(|s| s.iter().find(|m| m.starts_with(prefix)).cloned()).ok_or(said)
@@ -163,7 +180,7 @@ async fn said_after(p: &Pair, session: &str, n: usize, prefix: &str) -> String {
     .await
 }
 
-async fn send(p: &Pair, session: &str, text: &str) {
+pub(crate) async fn send(p: &Pair, session: &str, text: &str) {
     let url = format!("/api/sessions/{session}/messages");
     let (s, v) = call(&p.owner.app, "POST", &url, Some(json!({"text": text}))).await;
     assert_eq!(s, StatusCode::ACCEPTED, "{v}");

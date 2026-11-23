@@ -25,6 +25,10 @@ checkoutPath: string | null,
  */
 paused: boolean, 
 /**
+ * An update the owner asks for uses this instance's own update channel, not the owner's (PDT-637).
+ */
+ownUpdateChannel: boolean, 
+/**
  * When the owner last reached this instance, in ms.
  */
 lastContactAt: number | null, createdAt: number, };
