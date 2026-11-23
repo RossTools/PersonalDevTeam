@@ -44,9 +44,20 @@ fn clone_with_ssh(url: &str, dest: &Path, ssh: &str, watch: CloneWatch<'_>) -> R
     std::fs::create_dir_all(parent).map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
     let result = run_clone(url, dest, parent, ssh, watch);
     if result.is_err() {
-        let _ = std::fs::remove_dir_all(dest);
+        remove_soon(dest);
     }
     result
+}
+
+/// Removes what a failed clone left. A killed git's transport helper (ssh, git-remote-https) can still hold a file
+/// open for a moment, which on Windows stops the removal: try again for a few seconds.
+fn remove_soon(dest: &Path) {
+    for _ in 0..20 {
+        if std::fs::remove_dir_all(dest).is_ok() || !dest.exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
 }
 
 fn run_clone(url: &str, dest: &Path, parent: &Path, ssh: &str, watch: CloneWatch<'_>) -> Result<(), GitError> {

@@ -52,6 +52,7 @@ pub mod codes {
     pub const CI_UNREADABLE: &str = "ci_unreadable";
     pub const CLONE_CANCELLED: &str = "clone_cancelled";
     pub const CLONE_FAILED: &str = "clone_failed";
+    pub const CLONE_FINISHED: &str = "clone_finished";
     pub const COMMENT_SENT: &str = "comment_sent";
     pub const CONFLICT: &str = "conflict";
     pub const CONNECTION_EXISTS: &str = "connection_exists";

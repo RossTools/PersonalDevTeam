@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 struct Running {
     job: Mutex<CloneJob>,
     cancel: AtomicBool,
+    /// Set once git is done: a Cancel then comes too late.
+    cloned: AtomicBool,
 }
 
 /// The clones under way in this pdtd, by id.
@@ -29,13 +31,24 @@ impl CloneJobs {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Registers `job`, unless another clone already goes into its folder.
+    /// Registers `job`, unless another clone already goes into its folder or the folder exists. The clone under way
+    /// is checked first: git makes its folder at once, and "add it by path" would be the wrong advice for it.
     fn start(&self, job: CloneJob) -> Result<Arc<Running>, ApiError> {
         let mut map = self.map();
         if map.values().any(|r| r.job.lock().unwrap_or_else(|e| e.into_inner()).dest == job.dest) {
             return Err(ApiError::conflict(codes::PATH_EXISTS, format!("{} is already being cloned", job.dest)));
         }
-        let running = Arc::new(Running { job: Mutex::new(job.clone()), cancel: AtomicBool::new(false) });
+        if std::path::Path::new(&job.dest).exists() {
+            return Err(ApiError::conflict(
+                codes::PATH_EXISTS,
+                format!("{} already exists; add it by path instead", job.dest),
+            ));
+        }
+        let running = Arc::new(Running {
+            job: Mutex::new(job.clone()),
+            cancel: AtomicBool::new(false),
+            cloned: AtomicBool::new(false),
+        });
         map.insert(job.id, running.clone());
         Ok(running)
     }
@@ -81,12 +94,6 @@ pub(crate) async fn clone(
     let check = parent.clone();
     tokio::task::spawn_blocking(move || ensure_parent(&check)).await.map_err(ApiError::internal)??;
     let dest = parent.join(&repo);
-    if dest.exists() {
-        return Err(ApiError::conflict(
-            codes::PATH_EXISTS,
-            format!("{} already exists; add it by path instead", dest.display()),
-        ));
-    }
     let running = st.clone_jobs.start(CloneJob {
         id: uuid::Uuid::now_v7().to_string(),
         url: url.clone(),
@@ -110,6 +117,7 @@ async fn run(
     let id = running.job.lock().unwrap_or_else(|e| e.into_inner()).id.clone();
     let _done = Done(st.clone_jobs.clone(), id);
     let target = dest.clone();
+    let job = running.clone();
     let cloned = tokio::task::spawn_blocking(move || {
         let mut progress =
             |line: &str| line.clone_into(&mut running.job.lock().unwrap_or_else(|e| e.into_inner()).progress);
@@ -129,6 +137,13 @@ async fn run(
         }
         other => other.into(),
     })?;
+    // A Cancel that got in as git finished still wins (see `cancel`): either it sees `cloned` and is refused, or
+    // this sees its flag.
+    job.cloned.store(true, Ordering::SeqCst);
+    if job.cancel.load(Ordering::SeqCst) {
+        let _ = std::fs::remove_dir_all(&dest);
+        return Err(pdt_git::GitError::Cancelled.into());
+    }
     match add(&st, dest.clone(), name, None, key).await {
         Ok(p) => Ok((StatusCode::CREATED, Json(p))),
         Err(e) => {
@@ -143,10 +158,14 @@ pub(crate) async fn list(State(st): State<AppState>) -> Json<Vec<CloneJob>> {
     Json(st.clone_jobs.list())
 }
 
-/// Stops a clone: git is killed and its folder removed; the request that started it answers `clone_cancelled`.
+/// Stops a clone: git is killed and its folder removed; the request that started it answers `clone_cancelled`. Once
+/// git is done and the project is being added, it is too late (409 `clone_finished`).
 pub(crate) async fn cancel(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
     let running = st.clone_jobs.map().get(&id).cloned().ok_or_else(|| ApiError::not_found("clone"))?;
-    running.cancel.store(true, Ordering::Relaxed);
+    if running.cloned.load(Ordering::SeqCst) {
+        return Err(ApiError::conflict(codes::CLONE_FINISHED, "the clone has finished; the project is being added"));
+    }
+    running.cancel.store(true, Ordering::SeqCst);
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -177,12 +196,22 @@ mod tests {
     #[test]
     fn one_clone_per_folder_and_off_the_list_when_done() {
         let jobs = Arc::new(CloneJobs::default());
-        jobs.start(job("a", "/w/r")).unwrap();
-        assert_eq!(jobs.start(job("b", "/w/r")).err().map(|e| e.code()), Some(codes::PATH_EXISTS));
-        jobs.start(job("c", "/w/s")).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let (r, s) = (tmp.path().join("r"), tmp.path().join("s"));
+        let (r, s) = (r.to_str().unwrap(), s.to_str().unwrap());
+        jobs.start(job("a", r)).unwrap();
+        // git has made the folder: a second clone hears it's under way, not "add it by path".
+        std::fs::create_dir(r).unwrap();
+        let busy = jobs.start(job("b", r)).err().unwrap();
+        assert_eq!(busy.code(), codes::PATH_EXISTS);
+        assert!(busy.message().contains("already being cloned"), "{}", busy.message());
+        jobs.start(job("c", s)).unwrap();
         assert_eq!(jobs.list().iter().map(|j| j.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
         drop(Done(jobs.clone(), "a".into()));
         assert_eq!(jobs.list().len(), 1);
-        jobs.start(job("b", "/w/r")).unwrap();
+        let there = jobs.start(job("b", r)).err().unwrap();
+        assert!(there.message().contains("add it by path"), "{}", there.message());
+        std::fs::remove_dir(r).unwrap();
+        jobs.start(job("b", r)).unwrap();
     }
 }

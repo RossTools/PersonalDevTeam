@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { FolderOpen, Link2, NotebookPen, Network } from 'lucide-react';
 import { Alert, Button, ChoiceCardGroup, Field, Input, Spinner } from '@ui';
 import { api } from '../api/client';
@@ -55,6 +55,14 @@ export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMo
   // The clones under way go on after a reload, so they're shown whoever started them.
   const clones = useClones({ enabled: mode === 'clone' });
   const cancel = useMutation({ mutationFn: api.cancelClone, onSettled: () => qc.invalidateQueries({ queryKey: projectKeys.clones }) });
+  // A clone that left the list has finished (or failed): one started before a reload adds its project unseen.
+  const seen = useRef<string[]>([]);
+  useEffect(() => {
+    if (!clones.data) return;
+    const now = clones.data.map((c) => c.id);
+    if (seen.current.some((id) => !now.includes(id))) void invalidateProjects(qc);
+    seen.current = now;
+  }, [clones.data, qc]);
   // A clone the user cancelled needs no error.
   const failed = m.isError && !(m.error instanceof ApiError && m.error.code === 'clone_cancelled');
   // A submit error moves focus to its Alert.
