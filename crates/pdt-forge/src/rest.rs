@@ -583,6 +583,18 @@ impl<F: Flavor> RestClient<F> {
 
     /// Every item of a list, following its `Link: next` pages (at most [`MAX_PAGES`]) on the API's own host.
     pub fn get_pages(&self, path: &str) -> Result<Vec<Value>, RestError<F>> {
+        Ok(self.pages(path)?.0)
+    }
+
+    /// The whole list, as [`Self::get_pages`]; None when it has more than [`MAX_PAGES`] pages (PDT-696: a list cut
+    /// off must not stand in for all of it).
+    pub fn get_whole_pages(&self, path: &str) -> Result<Option<Vec<Value>>, RestError<F>> {
+        let (items, whole) = self.pages(path)?;
+        Ok(whole.then_some(items))
+    }
+
+    /// The items of up to [`MAX_PAGES`] pages, and whether that was all of them.
+    fn pages(&self, path: &str) -> Result<(Vec<Value>, bool), RestError<F>> {
         let mut out = vec![];
         let mut next = Some(path.to_string());
         for _ in 0..MAX_PAGES {
@@ -601,7 +613,7 @@ impl<F: Flavor> RestClient<F> {
                 return Err(RestError::BadAnswer(format!("the next page is on another host: {}", bare_url(n))));
             }
         }
-        Ok(out)
+        Ok((out, next.is_none()))
     }
 }
 
@@ -783,6 +795,27 @@ mod tests {
             assert!(matches!(c.get_pages("a"), Err(RestError::BadAnswer(_))), "{elsewhere}");
             assert_eq!(t.sent().len(), 1, "{elsewhere} never received the token");
         }
+    }
+
+    #[test]
+    fn a_list_past_the_last_page_read_is_not_whole() {
+        // A client whose list `a` has `pages` pages of one item.
+        let list = |pages: usize| {
+            let (c, t) = client();
+            let url = |n: usize| {
+                if n == 1 { "https://f.example/api/a".into() } else { format!("https://f.example/api/a?page={n}") }
+            };
+            for n in 1..=pages {
+                let res = Response::new(200, "[1]");
+                let res =
+                    if n < pages { res.with_header("Link", &format!("<{}>; rel=\"next\"", url(n + 1))) } else { res };
+                t.on("GET", &url(n), res);
+            }
+            (c, t)
+        };
+        assert_eq!(list(MAX_PAGES + 1).0.get_pages("a").unwrap().len(), MAX_PAGES);
+        assert_eq!(list(MAX_PAGES + 1).0.get_whole_pages("a").unwrap(), None);
+        assert_eq!(list(MAX_PAGES).0.get_whole_pages("a").unwrap().map(|v| v.len()), Some(MAX_PAGES));
     }
 
     #[test]

@@ -4,7 +4,7 @@
 
 use crate::error::{ApiError, codes};
 use crate::extract::ApiQuery;
-use crate::files::{FilesQuery, at, checkout_dir, contained, io_err, is_git_name, resolve};
+use crate::files::{Checkout, FilesQuery, at, checkout_dir, contained, io_err, is_git_name, resolve};
 use crate::routes::AppState;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
@@ -24,6 +24,8 @@ const CHUNK: usize = 64 * 1024;
 pub(crate) struct DownloadQuery {
     #[serde(default, alias = "worktree")]
     worktree_id: Option<String>,
+    #[serde(default)]
+    instance_id: Option<String>,
     #[serde(default)]
     path: String,
     /// `1`: the path is a folder, sent as a `.zip`.
@@ -62,9 +64,14 @@ pub(crate) fn disposition(kind: &str, name: &str) -> String {
 /// The headers every download carries. `identity` keeps the response compression away from it: the bytes go as they
 /// are (a zip is compressed already), with their length when it is known.
 fn download(name: &str, media_type: &str, len: Option<u64>, body: Body) -> Response {
+    with_headers(media_type, &disposition("attachment", name), len, body)
+}
+
+/// [`download`]'s headers, with the type and `Content-Disposition` given: a remote instance's download passed on.
+pub(crate) fn with_headers(media_type: &str, disposition: &str, len: Option<u64>, body: Body) -> Response {
     let mut b = Response::builder()
         .header(header::CONTENT_TYPE, media_type)
-        .header(header::CONTENT_DISPOSITION, disposition("attachment", name))
+        .header(header::CONTENT_DISPOSITION, disposition)
         .header(header::CONTENT_ENCODING, "identity")
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
         .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox")
@@ -96,9 +103,31 @@ pub(crate) async fn get(
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<DownloadQuery>,
 ) -> Result<Response, ApiError> {
-    let (zip, ignored, check) = (flag(&q.zip), flag(&q.ignored), flag(&q.check));
-    let fq = FilesQuery { worktree_id: q.worktree_id, path: q.path };
-    let (checkout, rel, personal) = resolve(&st, &id, &fq).await?;
+    let how = Download { zip: flag(&q.zip), ignored: flag(&q.ignored), check: flag(&q.check) };
+    let fq = FilesQuery { worktree_id: q.worktree_id, instance_id: q.instance_id, path: q.path };
+    match resolve(&st, &id, &fq).await? {
+        (Checkout::Here { path, plain }, rel) => respond(path, rel, plain, how).await,
+        (Checkout::Remote { instance, branch }, rel) => crate::exec::download(&st, &instance, branch, rel, how).await,
+    }
+}
+
+/// How to download: a folder as a `.zip` (`ignored`: with what `.gitignore` leaves out), or (`check`) only whether it
+/// would.
+#[derive(Debug, Clone, Copy, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Download {
+    pub zip: bool,
+    pub ignored: bool,
+    pub check: bool,
+}
+
+/// The download of `rel` in `checkout`: the file, or the folder as a `.zip`.
+pub(crate) async fn respond(
+    checkout: std::path::PathBuf,
+    rel: String,
+    personal: bool,
+    Download { zip, ignored, check }: Download,
+) -> Result<Response, ApiError> {
     if zip {
         return folder(checkout, rel, personal, ignored, check).await;
     }

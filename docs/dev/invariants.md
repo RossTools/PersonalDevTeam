@@ -70,7 +70,7 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   outside pull requests" (`workflow/outside_prs.rs`) every `github.pr.merge` and `github.pr.update` is reached only
   through a gate's Approve & merge, the Dependabot condition, or `github.pr.approval` `kept`, which holds only when the
   new head's own diff id (`base_ci::diff_id`: per-file patches without hunk positions; None for no files or a file
-  without a patch) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
+  without a patch, or for a file list the forge cut off: `Forge::change_request_files_whole`) equals the one recorded at the approval (the test `merges_and_posts_are_gated` checks the paths).
   `record` saves a diff only while the PR's head is the approved one (read before and after its files), and Request
   changes and Close `forget` it, so only the user's last word counts.
   What these nodes remember (the approval, the base fix a pull request was updated for) is workflow state under
@@ -442,6 +442,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
   checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
   is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **The owner never names a path on a remote instance's disk.** Files and Changes requests name a branch (or none, for
+  the remote project's checkout) and paths inside it; the remote instance finds the folder itself
+  (`exec::files::place`: a valid branch name, `pdt_git::check_worktree_path`, inside its checkout) and cleans and
+  checks every path again with the Files view's own checks. A remote worktree's `path` on the owner is for display:
+  never read it here, ask `exec::worktree_instance` first.
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.

@@ -24,7 +24,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
@@ -63,6 +63,10 @@ pub struct LinkRuntime {
     protocol: AtomicU32,
     /// Every call to the other end fails as unreachable (tests: the link dropped).
     offline: std::sync::atomic::AtomicBool,
+    /// Added before each call to the other end, in ms (tests: a tailnet's round trip).
+    latency_ms: AtomicU64,
+    /// Calls made to other instances since this process started, by path (tests count round trips).
+    calls: Mutex<HashMap<String, u64>>,
     client: reqwest::Client,
 }
 
@@ -80,6 +84,8 @@ impl Default for LinkRuntime {
             nonces: Default::default(),
             protocol: AtomicU32::new(link::PROTOCOL),
             offline: Default::default(),
+            latency_ms: AtomicU64::new(0),
+            calls: Default::default(),
             client,
         }
     }
@@ -99,6 +105,16 @@ impl LinkRuntime {
     /// unreachable (tests).
     pub fn set_offline(&self, offline: bool) {
         self.offline.store(offline, Ordering::SeqCst);
+    }
+
+    /// Adds `latency` before every call to another instance (tests: a link slower than loopback).
+    pub fn set_latency(&self, latency: Duration) {
+        self.latency_ms.store(latency.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// How many calls this instance has made to others on `path` (`/api/link/…`).
+    pub fn calls_to(&self, path: &str) -> u64 {
+        self.calls.lock().unwrap_or_else(|e| e.into_inner()).get(path).copied().unwrap_or(0)
     }
 
     /// A new code for `project_id`, replacing the one it had.
@@ -331,6 +347,26 @@ impl PeerError {
         }
     }
 
+    /// The error for this instance's own API as the other instance gave it (its status, code and message), for a call
+    /// made on the user's behalf (Files, Changes) whose errors mean the same on both ends: a file changed on disk, a
+    /// path outside the checkout. A code this instance doesn't know, or an unreachable instance, is [`into_api`].
+    ///
+    /// [`into_api`]: PeerError::into_api
+    pub(crate) fn passed_on(self, who: &str) -> ApiError {
+        if let PeerError::Refused { status, code, message, data } = &self
+            && let Some(code) = PASSED_ON.iter().copied().find(|c| *c == code)
+            && let Ok(status) = StatusCode::from_u16(*status)
+            && status.is_client_error()
+        {
+            let e = ApiError::new(status, code, message.clone());
+            return match data {
+                Some(d) => e.with_data(d.clone()),
+                None => e,
+            };
+        }
+        self.into_api(who)
+    }
+
     pub(crate) fn text(&self) -> String {
         match self {
             PeerError::Unreachable(e) => format!("unreachable: {e}"),
@@ -338,6 +374,21 @@ impl PeerError {
         }
     }
 }
+
+/// The codes [`PeerError::passed_on`] passes on: what the Files and Changes views act on.
+const PASSED_ON: &[&str] = &[
+    codes::BAD_PATTERN,
+    codes::FILE_CHANGED,
+    codes::FILE_EXISTS,
+    codes::INVALID_INPUT,
+    codes::NOT_EDITABLE,
+    codes::NOT_FOUND,
+    codes::PATH_OUTSIDE,
+    codes::PERMISSION_DENIED,
+    codes::TOO_LARGE,
+    codes::WORKTREE_MISSING,
+    codes::WORKTREE_PATH_UNSAFE,
+];
 
 /// POSTs `body` to `base_url` + `path`, signed for `link_id` when `key` is given, and reads the JSON answer
 /// (`Value::Null` for an empty one).
@@ -360,8 +411,35 @@ pub(crate) async fn post_within<T: DeserializeOwned>(
     signed: Option<(&SigningKey, &str, &str)>,
     body: &impl Serialize,
 ) -> Result<T, PeerError> {
+    let res = send(st, timeout, base_url, path, signed, body).await?;
+    let status = res.status();
+    let text = res.text().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
+    let text = if text.trim().is_empty() { "null" } else { &text };
+    serde_json::from_str(text).map_err(|e| PeerError::Refused {
+        status: status.as_u16(),
+        code: String::new(),
+        message: format!("an answer this instance can't read: {e}"),
+        data: None,
+    })
+}
+
+/// POSTs `body` signed (as [`post_within`]) and hands back the other end's successful response as it is, unread: a
+/// download streams through without being held here.
+pub(crate) async fn send(
+    st: &AppState,
+    timeout: Duration,
+    base_url: &str,
+    path: &str,
+    signed: Option<(&SigningKey, &str, &str)>,
+    body: &impl Serialize,
+) -> Result<reqwest::Response, PeerError> {
     if st.link.offline.load(Ordering::SeqCst) {
         return Err(PeerError::Unreachable("the link is down".into()));
+    }
+    *st.link.calls.lock().unwrap_or_else(|e| e.into_inner()).entry(path.to_string()).or_default() += 1;
+    let latency = st.link.latency_ms.load(Ordering::SeqCst);
+    if latency > 0 {
+        tokio::time::sleep(Duration::from_millis(latency)).await;
     }
     let bytes = serde_json::to_vec(body).expect("a link body serializes");
     let mut req = st
@@ -378,22 +456,16 @@ pub(crate) async fn post_within<T: DeserializeOwned>(
     }
     let res = req.send().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
-    if !status.is_success() {
-        let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        return Err(PeerError::Refused {
-            status: status.as_u16(),
-            code: v["code"].as_str().unwrap_or_default().to_string(),
-            message: v["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(200).collect()),
-            data: v.get("data").cloned(),
-        });
+    if status.is_success() {
+        return Ok(res);
     }
-    let text = if text.trim().is_empty() { "null" } else { &text };
-    serde_json::from_str(text).map_err(|e| PeerError::Refused {
+    let text = res.text().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
+    let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    Err(PeerError::Refused {
         status: status.as_u16(),
-        code: String::new(),
-        message: format!("an answer this instance can't read: {e}"),
-        data: None,
+        code: v["code"].as_str().unwrap_or_default().to_string(),
+        message: v["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(200).collect()),
+        data: v.get("data").cloned(),
     })
 }
 

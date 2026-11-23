@@ -566,6 +566,10 @@ impl Forge for GitlabApi {
         let diffs = self.get_pages(&format!("{}/diffs?per_page=100", Self::mr_path(repo, number)))?;
         Ok(diffs.iter().filter_map(parse_diff).collect())
     }
+    fn change_request_files_whole(&self, repo: &str, number: u32) -> Result<Option<Vec<ChangeFile>>, ForgeError> {
+        let diffs = self.get_whole_pages(&format!("{}/diffs?per_page=100", Self::mr_path(repo, number)))?;
+        Ok(diffs.map(|d| d.iter().filter_map(parse_diff).collect()))
+    }
     /// An approval, with the body as a comment; GitLab's API can't request changes, so that review (and a plain one)
     /// is a comment.
     fn review_change_request(

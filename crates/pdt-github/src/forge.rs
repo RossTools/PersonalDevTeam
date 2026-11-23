@@ -155,6 +155,9 @@ impl Forge for GithubApi {
     fn change_request_files(&self, repo: &str, number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
         Ok(parse_files(&self.get_pages(&format!("repos/{repo}/pulls/{number}/files?per_page=100"))?))
     }
+    fn change_request_files_whole(&self, repo: &str, number: u32) -> Result<Option<Vec<ChangeFile>>, ForgeError> {
+        Ok(self.get_whole_pages(&format!("repos/{repo}/pulls/{number}/files?per_page=100"))?.map(|f| parse_files(&f)))
+    }
     fn review_change_request(
         &self,
         repo: &str,

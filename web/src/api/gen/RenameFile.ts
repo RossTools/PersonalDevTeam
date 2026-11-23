@@ -3,4 +3,8 @@
 /**
  * `POST /projects/{id}/files/rename`: moves a file or folder to a path that is free.
  */
-export type RenameFile = { worktreeId?: string, from: string, to: string, };
+export type RenameFile = { worktreeId?: string, 
+/**
+ * The remote project's checkout on this joined instance.
+ */
+instanceId?: string, from: string, to: string, };

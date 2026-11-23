@@ -1314,3 +1314,28 @@ async fn an_approval_is_not_recorded_for_a_head_pushed_since() {
     let again = reviewer(&env, &mut seen).await;
     assert!(first_prompt(&env, &again).await.contains("sha-45b"), "the pushed head is reviewed, not merged");
 }
+
+/// A pull request whose file list the forge cuts off (more files than it lists) keeps no approval: the approved diff
+/// can't be read whole, so a later push with the same listed files is reviewed and asked about again, never merged.
+#[tokio::test]
+async fn an_approval_of_a_file_list_cut_off_is_not_kept() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    the_files(&env, 46, "new");
+    env.gh.cut_files.lock().unwrap().push(46);
+    let pr = outside(46, "al", "Vendor the world", "patch-46", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_ci");
+
+    // A push past the files listed: the same listed files, a new head. It is reviewed again, not merged.
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-46b".into(), updated_at: at(4), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-46b"));
+    let r = run(&env, &newest_run(&env).await).await;
+    let approval = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approval").cloned().unwrap();
+    assert_eq!(approval["port"], "changed", "{approval}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")));
+}
