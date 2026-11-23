@@ -381,6 +381,8 @@ jobs:
     environment: release-signing
     permissions:
       contents: write
+      # Starts pages.yml after a stable release.
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -436,6 +438,13 @@ jobs:
               --notes-file "$RUNNER_TEMP/notes.md" $pre
           fi
           echo "Published $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
+      # The website publishes the newest stable release's user docs (site/README.md), so a new one redeploys it. A
+      # workflow_dispatch is the one event the workflow's own token may start.
+      - name: Redeploy the website
+        if: needs.tag.result == 'success' && env.TAG_PREFIX == 'v'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}"
       # The newest 14 nightlies stay (by version; the one just published among them): older ones lose their release
       # and tag. Stable releases, their tags, the experimental builds before nightlies and other prefixes' tags are
       # never touched.

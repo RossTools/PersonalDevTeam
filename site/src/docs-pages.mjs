@@ -82,3 +82,15 @@ export function isPublished(path) {
     (/^user\/[^/]+\/[^/]+\.md$/.test(path) && !path.endsWith('/README.md'))
   );
 }
+
+/**
+ * USER_SECTIONS with only the pages `exists(path under docs/)` finds, and without sections left with none of their own. The site
+ * publishes the newest stable release's user docs (site/README.md), which may not have a page main lists yet.
+ */
+export function presentSections(exists) {
+  return USER_SECTIONS.map((s) => ({
+    ...s,
+    pages: s.pages.filter((p) => exists(`user/${s.dir}/${p}.md`)),
+    more: s.more?.filter((p) => exists(p)),
+  })).filter((s) => s.pages.length > 0);
+}
