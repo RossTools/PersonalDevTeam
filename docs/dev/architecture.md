@@ -468,7 +468,9 @@ their steps; node kinds live in `workflow/nodes/` (one kind per file, the forge 
 `forge_call.rs`, whose errors name the forge) or in an integration's crate. While writes fail (a full disk), the
 engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
 works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
-runs, each once by its run key. Agent steps start a session with a
+runs, each once by its run key. A node's loop limit (`maxVisits`) counts its finished steps in the run since the run
+last passed a node marked `resetsVisits` (`WorkflowDoc::loop_visits`; the outside-PR template's recorded approval, so
+each Approve & merge gets the whole CI wait and merge watch again). Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins/`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills
@@ -666,7 +668,8 @@ for a cool-down after one, so a double-click or a click on what slid into place 
 actions show as off meanwhile; a conversation's cards go through `guardedAnswer`). `needsConfirm` in
 `web/src/inbox/model.ts` says which actions arm on a first press and act on a second: Always allow, and every choice
 the server marks `outward` (`InboxChoice::outward`: a gate's choice that leads to a node whose kind is
-`NodeKind::outward`, found by `StepCx::port_outward`, or Allow on a tool `ToolTable::outward` names), and on a gate
+`NodeKind::outward`, directly or through conditions, waits and `state.set`, found by `Catalog::leads_outward`, or
+Allow on a tool `ToolTable::outward` names), and on a gate
 with `recommend` (the outside-PR review's decision) every choice but the `recommended` one; `ApprovalCard` does the same for Always allow. An Inbox
 answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and only then sent, so nothing it causes
 (a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. On `pagehide`

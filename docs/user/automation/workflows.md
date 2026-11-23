@@ -174,8 +174,9 @@ A workflow page edits one draft three ways:
 - **Text**: the whole workflow as JSON or TOML.
 
 Click a step to change its settings, its **Title**, and **When it fails**: **Retries**, **Time limit**, **Visits per
-run**, and **On error, go to** (a step that takes over instead of failing the run). Problems show on the step as you
-edit.
+run**, and **On error, go to** (a step that takes over instead of failing the run). **Start them over here** under
+**Loop limits** makes every step's visits count afresh after this one, so a path taken again after a go-ahead (an
+answer in your Inbox, say) gets its whole limit again. Problems show on the step as you edit.
 
 Changes collect in the **Unsaved changes** bar: **Save** (with an optional note) makes a new version, **Discard**
 drops them. **Versions** lists every saved version with who saved it and what changed; **Restore this version** brings

@@ -39,7 +39,7 @@ cloned, a branch, an agent working in a ticket's folder. So PDT runs a command o
 - **Starting a run or test** whose command PDT hasn't run before shows the command first. **Approve and run** starts
   it; PDT doesn't ask again for that command.
 - **An agent's run or test, CI and regeneration rules** wait instead, and the Inbox shows the command with
-  **Approve**. Once you approve it, the agent can start it again and CI starts on its own.
+  **Approve** (press it twice; Undo takes it back for a few seconds). Once you approve it, the agent can start it again and CI starts on its own.
 - **The project's Settings**, under **Runs on this host** › **Commands**, list every command with what uses it, and
   below them the commands waiting in the project's worktrees, under each one's ticket and branch: an agent's first
   `.pdt/project.toml`, or one it changed. Approve them there before anything runs them.

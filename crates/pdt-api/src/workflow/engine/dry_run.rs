@@ -176,6 +176,9 @@ pub(crate) async fn dry_run(st: &AppState, wf: &Workflow, doc: &WorkflowDoc, eve
             status = RunStatus::Failed;
             break;
         }
+        if node.resets_visits {
+            visits.clear();
+        }
         let reg = st.registry();
         let (Some(kind), Ok(config)) = (reg.catalog().get(&node.kind), reg.catalog().current_config(node)) else {
             ds.error = Some(reg.catalog().missing(&node.kind).1);

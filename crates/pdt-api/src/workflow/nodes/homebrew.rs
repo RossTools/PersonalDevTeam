@@ -105,6 +105,11 @@ impl NodeKind for HomebrewCask {
         )
     }
 
+    /// It pushes to the tap, or opens a pull request on it, as the user.
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: HomebrewCaskConfig = parse(config)?;
         if c.tap.trim().is_empty() {

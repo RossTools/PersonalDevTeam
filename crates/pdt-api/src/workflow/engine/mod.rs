@@ -790,12 +790,12 @@ async fn claim<'a>(
     };
     let reg = st.registry();
     let kind = reg.catalog().shared(&node.kind);
-    let visits = steps
+    let finished: Vec<(&str, i64)> = steps
         .iter()
-        .filter(|s| {
-            s.node_id == node.id && s.id != step.id && matches!(s.status, StepStatus::Succeeded | StepStatus::Failed)
-        })
-        .count();
+        .filter(|s| s.id != step.id && matches!(s.status, StepStatus::Succeeded | StepStatus::Failed))
+        .map(|s| (s.node_id.as_str(), s.seq))
+        .collect();
+    let visits = doc.loop_visits(&node.id, &finished);
     let config = reg.catalog().current_config(node);
     let (kind, config) = match (kind, config) {
         (Some(k), Ok(c)) if visits < usize::try_from(node.max_visits()).unwrap_or(usize::MAX) => (k, c),
