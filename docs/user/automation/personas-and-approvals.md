@@ -34,12 +34,14 @@ Open it in **Personas** and set:
 - **Model**: blank for the agent's default.
 - **Permission mode**: what its sessions may do without asking (**Ask**, **Accept edits**, **Plan**, **Bypass
   (dangerous)**), or **Project or host default** (see [Which permission mode wins](#which-permission-mode-wins)).
-- **Tools**: the PDT tools its sessions get (reading the ticket, handing in an outcome, asking you, commenting…). A
-  new persona starts with PDT's default set; a persona with none ticked gets no PDT tools.
+- **Tools**: the PDT tools its sessions get (reading the ticket, handing in an outcome, asking you, commenting…). The
+  row says how many are on; **Choose tools…** lists them by group, with a search and an **All** box per group. A new
+  persona starts with PDT's default set; a persona with none ticked gets no PDT tools.
 - **Instructions**: Markdown added to its sessions' instructions, on top of PDT's own and the project's.
 
-Click **Save a new version**, with an optional **Note**. **Versions** lists every save, newest first; tick two to
-compare them. A step that already started keeps the instructions it started with, but its PDT tools follow
+While anything has changed, a bar at the bottom of the page says so. **Save new version** saves the changes, with an
+optional **Note**; a changed name, role or description alone is just **Save** and makes no new version. **Discard**
+undoes them. **Versions** lists every save, newest first; tick two to compare them. A step that already started keeps the instructions it started with, but its PDT tools follow
 the newest version: an agent that supports it sees tools added or taken away without restarting.
 
 **New persona** (at the top of the list) makes your own: a **Name**, a **Role** (free text: refiner, coder,

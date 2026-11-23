@@ -34,6 +34,9 @@ export const defaultTools = (known: PersonaTool[]) => known.filter((t) => t.defa
  *  (PDT-110). */
 export const normalTools = (tools: string[]) => [...new Set(tools)];
 
+/** The same tools, in any order. */
+const sameTools = (a: string[], b: string[]) => [...normalTools(a)].sort().join(',') === [...normalTools(b)].sort().join(',');
+
 /** `tools` in the order of `known` (the server's list), names it doesn't list kept at the end. */
 export const orderTools = (tools: string[], known: PersonaTool[]) => [
   ...known.map((t) => t.name).filter((n) => tools.includes(n)),
@@ -68,7 +71,7 @@ export function sameSetup(a: PersonaSetup, b: PersonaSetup): boolean {
     (a.model ?? '') === (b.model ?? '') &&
     a.instructions === b.instructions &&
     a.permissionMode === b.permissionMode &&
-    [...normalTools(a.tools)].sort().join(',') === [...normalTools(b.tools)].sort().join(',')
+    sameTools(a.tools, b.tools)
   );
 }
 
@@ -78,3 +81,34 @@ export const cleanSetup = (s: PersonaSetup): PersonaSetup => ({
   model: s.model?.trim() ? s.model.trim() : null,
   tools: normalTools(s.tools),
 });
+
+/** The groups the Choose tools dialog lists, in order. */
+export const TOOL_GROUPS = [
+  'Tickets', 'Pull requests & CI', 'Documents', 'Secrets', 'Workflows', 'Sessions', 'Watches', 'Notes', 'Other tools',
+] as const;
+export type ToolGroup = (typeof TOOL_GROUPS)[number];
+
+/** The group a tool is listed under, from its name (the server's list has no groups); an integration's tools, and any
+ *  this page can't place, are Other tools. */
+export function toolGroup(name: string): ToolGroup {
+  if (/^(change_request_|ci_|issue_)/.test(name)) return 'Pull requests & CI';
+  if (/^(doc_|documents?_|sheet_|comments?_)/.test(name)) return 'Documents';
+  if (/secret/.test(name)) return 'Secrets';
+  if (/^(workflow_|catalog_)|^list_workflow_runs$/.test(name)) return 'Workflows';
+  if (/session/.test(name)) return 'Sessions';
+  if (/watch/.test(name)) return 'Watches';
+  if (/note|journal|todo/.test(name)) return 'Notes';
+  if (/ticket|issue|^(submit_outcome|ask_user|add_review_comment|get_overview|inbox_decide)$/.test(name)) return 'Tickets';
+  return 'Other tools';
+}
+
+/** "38 of 65 on · the default set": how many of the server's tools a persona has, and whether they are the default
+ *  set; tools the server doesn't list are counted apart. */
+export function toolSummary(tools: string[], known: PersonaTool[]): string {
+  const on = known.filter((t) => tools.includes(t.name)).length;
+  const unknown = tools.filter((n) => !known.some((t) => t.name === n)).length;
+  const parts = [`${on} of ${known.length} on`];
+  if (unknown === 0 && sameTools(tools, defaultTools(known))) parts.push('the default set');
+  if (unknown > 0) parts.push(`${unknown} this PDT doesn't have`);
+  return parts.join(' · ');
+}
