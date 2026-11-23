@@ -476,5 +476,77 @@ export const connectionKinds: ConnectionKind[] = [
     "urlOptional": false,
     "fields": [],
     "status": false
+  },
+  {
+    "id": "aws",
+    "label": "AWS account",
+    "plural": "AWS accounts",
+    "setup": "An access key that may start, stop and describe your EC2 instances, for cloud instances.",
+    "description": "EC2 instances PDT starts for work and stops when idle (cloud instances).",
+    "url": true,
+    "secretLabel": "Secret access key",
+    "secretHint": "An IAM user's access key, allowed only ec2:StartInstances, ec2:StopInstances and ec2:DescribeInstances (scope it to the instances' ARNs).",
+    "generate": false,
+    "auth": false,
+    "secretOptional": false,
+    "urlPlaceholder": "https://ec2.us-east-1.amazonaws.com",
+    "urlHint": "Leave it empty for the region's EC2 endpoint.",
+    "urlOptional": true,
+    "fields": [
+      {
+        "key": "accessKeyId",
+        "label": "Access key ID",
+        "placeholder": "AKIA…",
+        "optional": false,
+        "numeric": false
+      },
+      {
+        "key": "region",
+        "label": "Region",
+        "placeholder": "us-east-1",
+        "optional": false,
+        "numeric": false
+      }
+    ],
+    "summary": "{region}",
+    "status": false
+  },
+  {
+    "id": "azure",
+    "label": "Azure subscription",
+    "plural": "Azure subscriptions",
+    "setup": "A service principal that may start, deallocate and read your VMs, for cloud instances.",
+    "description": "Azure VMs PDT starts for work and deallocates when idle (cloud instances).",
+    "url": false,
+    "secretLabel": "Client secret",
+    "secretHint": "An app registration's client secret. Give the app a role on the VMs' resource group that allows only Microsoft.Compute/virtualMachines/start, deallocate and read (instanceView).",
+    "generate": false,
+    "auth": false,
+    "secretOptional": false,
+    "urlOptional": false,
+    "fields": [
+      {
+        "key": "tenantId",
+        "label": "Tenant (directory) ID",
+        "placeholder": "00000000-0000-0000-0000-000000000000",
+        "optional": false,
+        "numeric": false
+      },
+      {
+        "key": "clientId",
+        "label": "Client (application) ID",
+        "placeholder": "00000000-0000-0000-0000-000000000000",
+        "optional": false,
+        "numeric": false
+      },
+      {
+        "key": "subscriptionId",
+        "label": "Subscription ID",
+        "placeholder": "00000000-0000-0000-0000-000000000000",
+        "optional": false,
+        "numeric": false
+      }
+    ],
+    "status": false
   }
 ];

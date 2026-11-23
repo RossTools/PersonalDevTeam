@@ -275,6 +275,12 @@ pub trait Integration: Send + Sync {
         Box::pin(async {})
     }
 
+    /// The cloud provider it is (PDT-638: AWS EC2, Azure), if it is one: the owner starts and stops cloud instances
+    /// through it, with connections of its [`crate::cloud::CloudProvider::kind`], while it is enabled.
+    fn cloud_provider(&self) -> Option<Arc<dyn crate::cloud::CloudProvider>> {
+        None
+    }
+
     /// The document providers it provides (PDT-314: Google's Docs and Sheets), used while it is enabled.
     fn document_providers(&self, _st: &AppState) -> Vec<Arc<dyn crate::documents::DocumentProvider>> {
         Vec::new()

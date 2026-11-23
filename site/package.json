@@ -20,6 +20,7 @@
     "unist-util-visit": "^5.2.0"
   },
   "devDependencies": {
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "yaml": "^2.9.1"
   }
 }

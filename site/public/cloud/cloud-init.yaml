@@ -1,0 +1,19 @@
+#cloud-config
+# User data for a Linux cloud VM that becomes a remote instance of Personal Dev Team (PDT): fill in the values, then
+# give the file as the VM's user data (AWS: Advanced details > User data; Azure: Advanced > Custom data).
+# It runs https://pdt.dev/cloud/linux.sh once, at first boot; its output is in /var/log/pdt-bootstrap.log.
+# The auth key and pairing code work once: nothing here is a lasting credential, but delete the user data afterwards
+# where the provider keeps it.
+write_files:
+  - path: /etc/pdt-bootstrap.env
+    permissions: "0600"
+    content: |
+      TS_AUTHKEY=tskey-auth-...
+      PDT_OWNER_LOGIN=you@example.com
+      PDT_OWNER_ADDRESS=my-mac.your-tailnet.ts.net
+      PDT_PAIRING_CODE=ABCD-EFGH
+      PDT_INSTANCE_NAME=linux-cloud
+      PDT_AGENTS="claude codex"
+      GODOT_VERSION=
+runcmd:
+  - [sh, -c, "set -a; . /etc/pdt-bootstrap.env; set +a; curl -fsSL https://pdt.dev/cloud/linux.sh | sh > /var/log/pdt-bootstrap.log 2>&1; rm -f /etc/pdt-bootstrap.env"]

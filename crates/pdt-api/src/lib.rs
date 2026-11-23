@@ -9,6 +9,7 @@ mod bug_reports;
 pub mod builtin_settings;
 mod checks;
 mod ci;
+pub mod cloud;
 mod command_trust;
 mod connection_health;
 mod conversations;

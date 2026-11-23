@@ -1,4 +1,5 @@
 mod attachments;
+mod cloud;
 mod documents;
 mod error;
 mod event_log;
@@ -28,6 +29,7 @@ mod workspaces;
 mod worktrees;
 
 pub use attachments::AddAttachment;
+pub use cloud::CloudInstance;
 pub use documents::{AddDocument, DocumentLink, NewDocumentComment};
 pub use error::StoreError;
 pub use event_log::{EVENT_RETENTION_MS, EventFilter};

@@ -30,6 +30,8 @@ export const ALLOW = [
   { file: 'your-machine/github.md', contains: 'https://github.example.com/api/v3' },
   // A tailnet address (`*.ts.net`), which the reader sees in Settings and opens on their phone.
   { file: 'your-machine/remote-access.md', contains: '.your-tailnet.ts.net' },
+  // A cloud instance's tailnet address, which the reader opens to join it to a project.
+  { file: 'your-machine/cloud-instances.md', contains: 'https://win-cloud.your-tailnet.ts.net' },
 ];
 
 /** Every internal reference in `text` (the file at `file`, relative to docs/user/): `{ line, rule, text, why }`. */
