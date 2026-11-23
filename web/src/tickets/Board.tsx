@@ -15,7 +15,7 @@ import type { TicketStage } from '../api/gen/TicketStage';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import type { PipelineStage } from '../api/gen/PipelineStage';
 import { AgentDot, itemState, rollup, type AgentStateValue } from '../common/AgentState';
-import { PartsStepper } from '../common/PartsStepper';
+import { PartsStepper, partsCount, partsSummary } from '../common/PartsStepper';
 import { STAGE_LABEL } from '../common/StageStepper';
 import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
@@ -31,6 +31,7 @@ import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { LabelChips } from '../common/LabelChips';
 import { DAY_MS, DEFAULT_DONE_DAYS, doneWindowLabel, useDoneWindow } from './BoardViewMenu';
+import { boardFilterQuery, DEFAULT_FILTERS, type BoardFilters } from './model';
 
 export { agentLine };
 
@@ -87,13 +88,14 @@ export function inColumn(t: Pick<TicketSummary, 'pipelineStage'>, c: DisplayColu
 /** The Done column shows tickets closed in the last two weeks unless the project's board says otherwise. */
 export const DONE_WINDOW_MS = DEFAULT_DONE_DAYS * DAY_MS;
 const BOARD_PAGE = 50;
+const NO_FILTERS: BoardFilters = DEFAULT_FILTERS;
 
 /**
- * A column's `GET /api/tickets` query: its cards, never parents (they head lanes). Done: closed since `closedAfter`,
- * most recently updated first.
+ * A column's `GET /api/tickets` query: its cards, never parents (they head lanes), narrowed by the Board's filters.
+ * Done: closed since `closedAfter`, most recently updated first.
  */
-function columnQuery(projectId: string | null, stage: BoardStage, closedAfter: number): TicketQuery {
-  const q: TicketQuery = { stage, hasParts: false, limit: BOARD_PAGE };
+function columnQuery(projectId: string | null, stage: BoardStage, closedAfter: number, filter: Partial<TicketQuery>): TicketQuery {
+  const q: TicketQuery = { stage, hasParts: false, limit: BOARD_PAGE, ...filter };
   if (projectId) q.project = projectId;
   if (stage === 'done') {
     q.closedAfter = closedAfter;
@@ -223,8 +225,8 @@ export function BoardCard({ ticket: t, activity, onOpen, entries, draggable = fa
 type Columns = Record<BoardStage, TicketSummary[]>;
 
 /** One column's paged query, its loaded cards and its total. */
-function useColumn(projectId: string | null, stage: BoardStage, closedAfter: number) {
-  const query = useMemo(() => columnQuery(projectId, stage, closedAfter), [projectId, stage, closedAfter]);
+function useColumn(projectId: string | null, stage: BoardStage, closedAfter: number, filter: Partial<TicketQuery>) {
+  const query = useMemo(() => columnQuery(projectId, stage, closedAfter, filter), [projectId, stage, closedAfter, filter]);
   const pages = useTicketPages(query);
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   return { pages, items, total: pages.data?.pages[0]?.total };
@@ -390,14 +392,15 @@ function ColumnStatus({ col, title, stage, showEmpty, doneDays }: { col: ColumnD
  * A parent's lane header: its key (opens the peek), title, stage, the parts' stepper and count, Start next part, its
  * menu, and the collapse toggle. The title gives way first (it truncates, down to about 12rem for the toggle, key and
  * title); past that the stage, stepper, Start next part and menu wrap to a line of their own, on the right, so nothing
- * runs past the edge. No PR here: the parts run side by side, and each card shows its own.
+ * runs past the edge. No PR here: the parts run side by side, and each card shows its own. Phones keep it to one row:
+ * the toggle, key, title, the parts' count and the menu.
  */
 export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
   lane: Lane;
   collapsed: boolean;
   onToggle: () => void;
   onPeek: (id: string) => void;
-  /** Phones: a group heading inside the one column. */
+  /** Phones: a one-row group heading inside the one column. */
   compact: boolean;
 }) {
   const qc = useQueryClient();
@@ -409,12 +412,30 @@ export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
   const openStage = t ? t.stage !== 'done' && t.stage !== 'wont_do' : true;
   const entries = (): MenuEntry[] =>
     t ? ticketMenu({ qc, confirm, ticket: t, onOpen: () => open(t) }) : [{ label: 'Open', onSelect: () => open({ id: parent.id, projectId: '' }) }];
+  if (compact) {
+    return (
+      <div role="group" aria-label={`${parent.key} ${parent.title}`} data-peek className="flex min-w-0 items-center gap-2 px-1 pt-3 pb-1">
+        <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
+          {collapsed ? <ChevronRight aria-hidden /> : <ChevronDown aria-hidden />}
+        </IconButton>
+        <TicketKey ticketKey={parent.key} title={parent.title} onClick={() => onPeek(parent.id)} className="shrink-0" />
+        <h4 className="min-w-0 flex-1 truncate text-xs font-medium" title={parent.title}>{parent.title}</h4>
+        {t?.parts && (
+          <span className="shrink-0 text-meta text-muted-foreground tabular-nums" title={partsSummary(t.parts)}>
+            <span className="sr-only">{partsSummary(t.parts)}</span>
+            <span aria-hidden>{partsCount(t.parts)}</span>
+          </span>
+        )}
+        <MenuButton label={`Actions for ${parent.key}`} size="sm" entries={entries} />
+      </div>
+    );
+  }
   return (
     <div
       role="group"
       aria-label={`${parent.key} ${parent.title}`}
       data-peek
-      className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-3', compact ? 'pb-1' : 'pb-1.5')}
+      className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-3 pb-1.5"
     >
       <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
         <IconButton label={collapsed ? `Expand ${parent.key}` : `Collapse ${parent.key}`} size="sm" onClick={onToggle}>
@@ -425,8 +446,8 @@ export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
       </div>
       <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-x-2 gap-y-1">
         {t && <span className="shrink-0 text-meta text-muted-foreground">{STAGE_LABEL[t.stage]}</span>}
-        {t?.parts && <PartsStepper parts={t.parts} showCount className={cn('shrink-0', compact ? 'w-24' : 'w-40')} />}
-        {openStage && !compact && (
+        {t?.parts && <PartsStepper parts={t.parts} showCount className="shrink-0 w-40" />}
+        {openStage && (
           <Button variant="ghost" size="sm" className="shrink-0" onClick={() => void runAction(() => startNextPart(start, parent))}>
             Start next part
           </Button>
@@ -435,6 +456,11 @@ export function LaneHeader({ lane, collapsed, onToggle, onPeek, compact }: {
       </div>
     </div>
   );
+}
+
+/** The heading of the lane of tickets that are not parts, when parents have lanes below it. */
+function NoParentHeading() {
+  return <h4 className="px-1 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">No parent</h4>;
 }
 
 /** "No parts on the board yet" or the count, for a lane whose cards are all elsewhere. */
@@ -502,7 +528,13 @@ function ColumnChips({ ref, columns, counts, value, onChange }: {
  * column at a time, picked from chips with counts or by a swipe sideways, its parts under a heading per parent; cards
  * move from their menu (Move to), never by drag.
  */
-export function Board({ projectId, onPeek, phone }: { projectId: string | null; onPeek: (id: string) => void; phone: boolean }) {
+export function Board({ projectId, filters = NO_FILTERS, onPeek, phone }: {
+  projectId: string | null;
+  /** Narrow every column's cards; with a filter set, only the parents' lanes with matching parts show. */
+  filters?: BoardFilters;
+  onPeek: (id: string) => void;
+  phone: boolean;
+}) {
   // Fixed while the board is on screen and its window stays the same: a new value every render would be a new query
   // every render.
   const doneDays = useDoneWindow(projectId);
@@ -513,10 +545,14 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   const confirm = useConfirm();
   const open = useOpenTicket();
   const start = useStartTicket();
+  // By value: the same filters keep the same queries from render to render.
+  const filterKey = JSON.stringify(boardFilterQuery(filters));
+  const filter = useMemo<Partial<TicketQuery>>(() => JSON.parse(filterKey), [filterKey]);
+  const filtered = filterKey !== '{}';
   const cols: Record<BoardStage, ColumnData> = {
-    todo: useColumn(projectId, 'todo', closedAfter),
-    in_progress: useColumn(projectId, 'in_progress', closedAfter),
-    done: useColumn(projectId, 'done', closedAfter),
+    todo: useColumn(projectId, 'todo', closedAfter, filter),
+    in_progress: useColumn(projectId, 'in_progress', closedAfter, filter),
+    done: useColumn(projectId, 'done', closedAfter, filter),
   };
   const parents = useLaneParents(projectId, closedAfter);
   const [collapsed, toggle] = useCollapsed();
@@ -549,12 +585,21 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
   // Phones: one column; In progress's id falls back to Code when it splits (and back).
   const current = all.find((c) => c.id === shown) ?? all.find((c) => c.stage === shown || c.id === 'in_progress') ?? all[0];
   const columns = phone ? [current] : all;
-  const [first, ...parentLanes] = lanes;
+  const [first, ...allParentLanes] = lanes;
+  // With a filter set, a parent's lane shows only when some of its parts match.
+  const parentLanes = filtered ? allParentLanes.filter((l) => !laneEmpty(l)) : allParentLanes;
   const withLanes = parentLanes.length > 0;
   const firstIds = laneIds(first);
   const cards = (list: TicketSummary[], c: DisplayColumn) => (c.pipeline ? list.filter((t) => inColumn(t, c)) : list);
   // A pipeline column's status (loading, Show more) is In progress's, shown once under Code.
   const ownsStatus = (c: DisplayColumn) => !c.pipeline || c.pipeline === 'code';
+  // Above the parents' lanes the tickets that are not parts sit under "No parent", left out when that lane has nothing
+  // to show: no cards, nothing loading or failed, no Show more.
+  const settled = (s: BoardStage) => {
+    const p = cols[s].pages;
+    return !p.isPending && !(p.isError && !p.data) && !p.hasNextPage;
+  };
+  const showFirst = columns.some((c) => cards(first.items[c.stage], c).length > 0 || !settled(c.stage));
 
   const columnCount = (c: DisplayColumn) => (c.pipeline ? cards(cols.in_progress.items, c).length : cols[c.stage].total);
   const columnHead = (c: DisplayColumn) => {
@@ -625,9 +670,14 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
         <div className="min-h-0 flex-1 overflow-auto pb-20">
           {columns.map((c) => (
             <div key={c.id} className="flex flex-col">
-              <Cell label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
-                <div className="px-2">{status(c, false)}</div>
-              </Cell>
+              {showFirst && (
+                <>
+                  <NoParentHeading />
+                  <Cell label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
+                    <div className="px-2">{status(c, false)}</div>
+                  </Cell>
+                </>
+              )}
               {parentLanes.map((lane) => {
                 const shut = collapsed.has(lane.id!);
                 return (
@@ -649,13 +699,18 @@ export function Board({ projectId, onPeek, phone }: { projectId: string | null; 
           <div className="flex gap-3">
             {columns.map((c) => <div key={c.id} className="min-w-0 flex-1">{columnHead(c)}</div>)}
           </div>
-          <div className="flex gap-3">
-            {columns.map((c) => (
-              <Cell key={c.id} label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
-                <div className="px-2">{status(c, false)}</div>
-              </Cell>
-            ))}
-          </div>
+          {showFirst && (
+            <>
+              <NoParentHeading />
+              <div className="flex gap-3">
+                {columns.map((c) => (
+                  <Cell key={c.id} label={c.title} stage={c.stage} items={cards(first.items[c.stage], c)} lane={firstIds} env={env} height="capped">
+                    <div className="px-2">{status(c, false)}</div>
+                  </Cell>
+                ))}
+              </div>
+            </>
+          )}
           {parentLanes.map((lane) => {
             const shut = collapsed.has(lane.id!);
             const ids = laneIds(lane);

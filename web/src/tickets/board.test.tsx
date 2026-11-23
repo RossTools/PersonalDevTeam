@@ -108,6 +108,15 @@ describe('board', () => {
     expect(calls.filter((c) => c.path.startsWith('/api/watches')).map((c) => c.path)).toEqual(['/api/watches']);
   });
 
+  it("offers every project's labels in the Label filter with All projects, without visiting the Backlog first", async () => {
+    stub({ [`GET /api/projects/${project.id}/labels`]: ['ui', 'auth'] });
+    renderWithQuery(<Harness />);
+    await within(column('To do')).findByText('Ticket 1');
+    await userEvent.click(screen.getByRole('button', { name: 'Label filter' }));
+    expect(await screen.findByRole('checkbox', { name: 'auth' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'ui' })).toBeInTheDocument();
+  });
+
   it('follows the project chosen for the backlog', async () => {
     localStorage.setItem('pdt.tickets.view', JSON.stringify({ projectId: project.id, mode: 'board', filters: {} }));
     const calls = stub();
@@ -508,15 +517,69 @@ describe('board lanes', () => {
     for (const h of [header, await lane('ALP-10')]) expect(within(h).queryByText(/#77/)).not.toBeInTheDocument();
   });
 
+  it('heads the tickets that are not parts "No parent", and leaves that lane out when it is empty', async () => {
+    laneStub();
+    const { unmount } = renderWithQuery(<Harness />);
+    await lane('ALP-10');
+    const heading = screen.getByRole('heading', { name: 'No parent' });
+    expect(heading.compareDocumentPosition(column('To do')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    unmount();
+    // Every card is a part: no "No parent" lane, no empty cells above the parents' lanes.
+    stubApi({
+      'GET /api/tickets': (c: Call) => {
+        const q = params(c.path);
+        if (q.hasParts === 'true') return page(q.stage === 'todo,in_progress' ? [p10] : []);
+        return page(q.stage === 'todo' ? [asPart(12, 'todo')] : q.stage === 'in_progress' ? [asPart(11, 'in_progress')] : []);
+      },
+      'GET /api/projects': [project],
+      [`GET /api/projects/${project.id}/sessions`]: [],
+    });
+    renderWithQuery(<Harness />);
+    expect(await within(await lane('ALP-10')).findByText('1/3')).toBeInTheDocument();
+    await within(column('ALP-10 · To do')).findByText('Part 12');
+    expect(screen.queryByRole('heading', { name: 'No parent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'To do' })).not.toBeInTheDocument();
+  });
+
+  it('filters the cards with the backlog’s filters, without Stage, and shows only the lanes with matches', async () => {
+    const calls = laneStub();
+    renderWithQuery(<Harness />);
+    await lane('ALP-20');
+    expect(screen.queryByRole('button', { name: 'Stage filter' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Priority filter' })).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search tickets' }), 'part');
+    await waitFor(() => {
+      const cards = calls.filter((c) => c.path.startsWith('/api/tickets?')).map((c) => params(c.path)).filter((q) => q.hasParts === 'false');
+      expect(cards.filter((q) => q.q === 'part').map((q) => q.stage).sort()).toEqual(['done', 'in_progress', 'todo']);
+    });
+    // ALP-20 has no matching parts on the board: its lane goes while the filter is set.
+    await waitFor(() => expect(screen.queryByRole('group', { name: /^ALP-20 / })).not.toBeInTheDocument());
+    expect(await lane('ALP-10')).toBeInTheDocument();
+    // The filters stay across Backlog ↔ Board.
+    await userEvent.click(screen.getByRole('radio', { name: 'Backlog' }));
+    expect(screen.getByRole('searchbox', { name: 'Search tickets' })).toHaveValue('part');
+  });
+
   it('shows parents as group headings in the one column on a phone', async () => {
     vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('max-width'), media: q, addEventListener: () => {}, removeEventListener: () => {} }));
     laneStub();
     renderWithQuery(<Harness />);
     const five = await lane('ALP-10');
+    // One row: the count, no stage and no stepper.
     expect(within(five).getByText('1/3')).toBeInTheDocument();
+    expect(within(five).queryByRole('img', { name: /parts done/ })).not.toBeInTheDocument();
+    expect(within(five).queryByText('In progress')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'No parent' })).toBeInTheDocument();
     expect(within(column('ALP-10 · To do')).getByText('Part 12')).toBeInTheDocument();
     expect(screen.queryByText('Part 11')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^In progress/ }));
     expect(await within(column('ALP-10 · In progress')).findByText('Part 11')).toBeInTheDocument();
+    // The Board's filters: search, and the sheet without Stage, grouping or sorting.
+    expect(screen.getByRole('button', { name: 'Search tickets' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Filters' });
+    expect(within(sheet).getByText('Priority')).toBeInTheDocument();
+    expect(within(sheet).queryByText('Stage')).not.toBeInTheDocument();
+    expect(within(sheet).queryByRole('button', { name: /Sort by/ })).not.toBeInTheDocument();
   });
 });
