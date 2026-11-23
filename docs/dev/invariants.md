@@ -220,12 +220,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Workflows
 
-- **What a loop runs every few seconds searches an index.** History tables (`events`, `ticket_events`,
-  `workflow_runs`, `workflow_steps`, `agent_steps`) grow for 30 days, so a full scan in a loop costs seconds per pass
-  on a long-used database. A partial index is only used when the query repeats its `WHERE` (`status != 'done'`), not
+- **What a loop or the UI's poll runs every few seconds searches an index.** History tables (`events`,
+  `ticket_events`, `workflow_runs`, `workflow_steps`, `agent_steps`) grow for 30 days and `sessions` is never
+  pruned, so a full scan in a loop costs seconds per pass on a long-used database. A condition on an expression
+  (`COALESCE(a.ticket_id, s.ticket_id) = ?`) can't use an index; write it as indexed alternatives joined by `OR`. A partial index is only used when the query repeats its `WHERE` (`status != 'done'`), not
   for a narrower one (`status = 'waiting'` against `status IN (…)`); a column a deleted row's foreign key points from
   needs an index too, or each delete scans that table. pdt-store's `query_plans.rs` checks the loops' queries with
-  `EXPLAIN QUERY PLAN`; add a query a loop starts running there.
+  `EXPLAIN QUERY PLAN`; add a query a loop or poll starts running there.
 - **Everything runs at least once, maybe more.** Events are deduplicated by their key, runs by their run key. A new
   node kind with side effects either records its progress or sets `rerun_safe = false` (pdt-api
   `workflow/catalog.rs`), so a step cut short by a crash isn't repeated blindly.

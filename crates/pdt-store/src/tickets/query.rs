@@ -194,11 +194,16 @@ impl Store {
         .iter()
         .map(to_attempt)
         .collect::<Result<Vec<_>, _>>()?;
+        // A session with an attempt belongs to the attempt's ticket, one without to its own (PDT-105); written as
+        // two indexed lookups rather than `COALESCE(a.ticket_id, s.ticket_id) = ?`, which scans every session.
         let sessions = sqlx::query(
             "SELECT s.id, s.title, s.status, s.agent, s.attempt_id, s.mode, pe.name AS persona FROM sessions s \
-             LEFT JOIN attempts a ON a.id = s.attempt_id LEFT JOIN personas pe ON pe.id = s.persona_id WHERE COALESCE(a.ticket_id, s.ticket_id) = ? \
+             LEFT JOIN personas pe ON pe.id = s.persona_id \
+             WHERE s.attempt_id IN (SELECT id FROM attempts WHERE ticket_id = ?) \
+             OR (s.ticket_id = ? AND s.attempt_id IS NULL) \
              ORDER BY s.created_at DESC, s.id DESC",
         )
+        .bind(id)
         .bind(id)
         .fetch_all(&mut *conn)
         .await?
@@ -211,7 +216,9 @@ impl Store {
                 id: r.try_get("id")?,
                 title: r.try_get("title")?,
                 status: SessionStatus::parse(&status).ok_or_else(|| corrupt("session status", &status))?,
-                agent: agent.map(|a| AgentKind::parse_stored(&a).ok_or_else(|| corrupt("session agent", &a))).transpose()?,
+                agent: agent
+                    .map(|a| AgentKind::parse_stored(&a).ok_or_else(|| corrupt("session agent", &a)))
+                    .transpose()?,
                 attempt_id: r.try_get("attempt_id")?,
                 persona: r.try_get("persona")?,
                 mode: SessionMode::parse(&mode).ok_or_else(|| corrupt("session mode", &mode))?,

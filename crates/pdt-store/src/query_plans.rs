@@ -59,3 +59,76 @@ async fn the_engines_periodic_queries_search_indexes() {
         assert_eq!(scans(&plan), *allowed, "{sql}\n{plan:#?}");
     }
 }
+
+#[tokio::test]
+async fn the_polled_queries_search_indexes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
+    // PDT-652: `get_ticket`'s sessions, `list_attempt_sessions`, `list_sessions_by_status`, `workspace_tickets`,
+    // `attempt_for_worktree`, `events_with_runs_since`, `list_workflow_runs` unfiltered, `unread_updates`,
+    // `prune_inbox_items`, `list_active_runs`, `read_notifications` for a session, and deleting an attempt (its
+    // sessions' `attempt_id` is set to NULL).
+    let session_joins = "FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
+                         LEFT JOIN tickets t ON t.id = COALESCE(a.ticket_id, s.ticket_id) \
+                         LEFT JOIN projects p ON p.id = t.project_id LEFT JOIN personas pe ON pe.id = s.persona_id";
+    let attempt_joins = "FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+                         JOIN projects p ON p.id = t.project_id LEFT JOIN worktrees w ON w.id = a.worktree_id";
+    let cases: Vec<(String, &[&str])> = vec![
+        (
+            "SELECT s.id, pe.name FROM sessions s LEFT JOIN personas pe ON pe.id = s.persona_id \
+             WHERE s.attempt_id IN (SELECT id FROM attempts WHERE ticket_id = ?) \
+             OR (s.ticket_id = ? AND s.attempt_id IS NULL) ORDER BY s.created_at DESC, s.id DESC"
+                .into(),
+            &[],
+        ),
+        (format!("SELECT s.id {session_joins} WHERE s.attempt_id = ? ORDER BY s.created_at, s.id"), &[]),
+        (format!("SELECT s.id {session_joins} WHERE s.status = ? ORDER BY s.created_at, s.id"), &[]),
+        ("UPDATE sessions SET attempt_id = NULL WHERE attempt_id = ?".into(), &[]),
+        (
+            "SELECT a.workspace_id, t.id FROM attempts a JOIN tickets t ON t.id = a.ticket_id \
+             JOIN projects p ON p.id = t.project_id WHERE a.workspace_id IS NOT NULL ORDER BY a.created_at, a.id"
+                .into(),
+            &[],
+        ),
+        (
+            format!(
+                "SELECT a.id {attempt_joins} WHERE a.worktree_id = ? \
+                 ORDER BY a.state = 'active' DESC, a.created_at DESC LIMIT 1"
+            ),
+            &[],
+        ),
+        (
+            "SELECT COUNT(DISTINCT trigger_event_id) FROM workflow_runs WHERE started_at >= ? \
+             AND trigger_event_id IS NOT NULL AND trigger_event_id != ? \
+             AND json_extract(trigger, '$.type') = ? AND json_extract(trigger, '$.' || ?) = ?"
+                .into(),
+            &[],
+        ),
+        (
+            "SELECT r.id FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id WHERE 1 = 1 \
+             ORDER BY r.started_at DESC, r.id DESC LIMIT ?"
+                .into(),
+            &["SCAN r USING INDEX workflow_runs_by_started"],
+        ),
+        (
+            "SELECT COUNT(*) FROM notifications WHERE needs_you = 0 AND read_at IS NULL AND cleared_at IS NULL \
+             AND dismissed_at IS NULL AND (? IS NULL OR project_id = ? OR project_id IS NULL)"
+                .into(),
+            &[],
+        ),
+        ("DELETE FROM inbox_items WHERE status != 'open' AND resolved_at < ?".into(), &[]),
+        (
+            "SELECT id FROM runs WHERE state IN ('setting_up', 'starting', 'ready', 'running') ORDER BY created_at, id"
+                .into(),
+            &["SCAN runs USING INDEX runs_active"],
+        ),
+        ("UPDATE notifications SET read_at = ? WHERE read_at IS NULL AND session_id = ?".into(), &[]),
+    ];
+    for (sql, allowed) in &cases {
+        let plan = plan(&store, sql).await;
+        assert_eq!(scans(&plan), *allowed, "{sql}\n{plan:#?}");
+    }
+    // Searching `notifications_feed` on `needs_you = 0` would read most of the table.
+    let unread = plan(&store, &cases[8].0).await;
+    assert_eq!(unread, ["SEARCH notifications USING INDEX notifications_unread (needs_you=?)"], "{unread:#?}");
+}
