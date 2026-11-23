@@ -39,11 +39,12 @@ Each remote instance shows:
 - its **state**: **connected**, **paused** (paused on that instance), **offline** (not heard from for a minute and a
   half), or **needs an update**;
 - its version, operating system, CPUs and free disk space;
-- the agents it has, and whether each is logged in, and tools such as git, Godot and MSVC;
+- the agents it has, and whether each is logged in (checked again every few minutes; "checking agents" just after it
+  starts), and tools such as git, Godot and MSVC;
 - when it was last seen;
 - **At most … tickets in flight on it at once**: its cap for this project (below).
 
-**Check now** asks each one again. **Remove…** stops it working on the project and revokes the link at both ends;
+**Check now** asks each one again, and has it check its agents again first. **Remove…** stops it working on the project and revokes the link at both ends;
 pairing again needs a new code.
 
 **Needs an update** means the two instances speak different versions of the link. The message says which one to

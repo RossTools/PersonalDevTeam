@@ -35,7 +35,11 @@ impl Placer {
             }
         };
         // This instance's facts count for the repository's needs only, which apply once instances have joined.
-        let own = if repo.is_empty() || instances.is_empty() { None } else { Some(crate::link::facts(st).await) };
+        let own = if repo.is_empty() || instances.is_empty() {
+            None
+        } else {
+            Some(crate::link::facts(st, crate::link::Agents::Cached).await)
+        };
         Ok(Placer { instances, rules, repo, own, now: now_ms() })
     }
 

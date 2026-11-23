@@ -200,6 +200,7 @@ mod tests {
             cpus: 4,
             disk_free_bytes: None,
             agents: vec![],
+            agents_checked_at: None,
             tools: tools.iter().map(|t| ToolFact { name: (*t).into(), path: format!("/bin/{t}") }).collect(),
         }
     }
