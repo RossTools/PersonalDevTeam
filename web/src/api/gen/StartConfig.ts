@@ -24,6 +24,6 @@ sessionMode?: string,
  */
 handTo: HandTo, 
 /**
- * How many tickets of one project it starts at most (default 1).
+ * How many tickets of one project it starts at most (default 1), on this instance and on each remote one.
  */
 perProject?: number, };

@@ -53,6 +53,7 @@ mod mcp_oauth;
 mod mcp_servers;
 pub mod notification_rules;
 mod notifications;
+mod offline_instances;
 mod overlap;
 mod parts;
 mod personas;

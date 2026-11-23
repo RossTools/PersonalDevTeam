@@ -9,7 +9,8 @@ import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
 import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 import { projectKeys, useRemoteProjects } from './queries';
-import { LINK_STATE, ago } from './RemoteInstances';
+import { AutoSaveText } from '../common/AutoSave';
+import { LINK_STATE, ago, capOf } from './RemoteInstances';
 
 /** Where this instance keeps the project's checkout and worktrees; empty goes back to the default folder. */
 function CheckoutFolder({ r }: { r: RemoteProjectView }) {
@@ -35,6 +36,29 @@ function CheckoutFolder({ r }: { r: RemoteProjectView }) {
       {path !== null && path !== r.checkoutPath && (
         <Button size="sm" pending={saving} onClick={() => void save()}>Save</Button>
       )}
+    </div>
+  );
+}
+
+/** The most of the project's tickets this instance takes at once; blank leaves it to the owner. */
+function Cap({ r }: { r: RemoteProjectView }) {
+  const qc = useQueryClient();
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+      At most
+      <AutoSaveText
+        aria-label={`Cap for ${r.project.name}`}
+        inputMode="numeric"
+        size="sm"
+        className="w-14"
+        placeholder="—"
+        value={r.link.cap == null ? '' : String(r.link.cap)}
+        onSave={async (t) => {
+          await api.patchRemoteProject(r.project.id, { cap: capOf(t) });
+          await qc.invalidateQueries({ queryKey: projectKeys.remote });
+        }}
+      />
+      of its tickets here at once (blank: as many as {r.link.ownerName} sends).
     </div>
   );
 }
@@ -92,6 +116,7 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         </ul>
       )}
       <CheckoutFolder r={r} />
+      <Cap r={r} />
     </li>
   );
 }
