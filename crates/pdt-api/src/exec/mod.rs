@@ -29,9 +29,9 @@ pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
 pub(crate) use runs::RemoteConfig;
 pub(crate) use runs::{
-    config_file as remote_run_config, config_of as remote_run_config_of, mirror_logs as remote_run_logs,
-    relaunch as relaunch_remote_run, resume as resume_remote_run, run_ports as remote_run_ports,
-    stop as stop_remote_run,
+    claim as claim_remote_run, config_file as remote_run_config, config_of as remote_run_config_of,
+    launch as launch_remote_run, mirror_logs as remote_run_logs, relaunch as relaunch_remote_run,
+    resume as resume_remote_run, run_ports as remote_run_ports, stop as stop_remote_run,
 };
 
 use pdt_agents::adapter::{AdapterOutput, AgentInfo};

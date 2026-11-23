@@ -128,6 +128,7 @@ pub(crate) enum RunOut {
 struct Driven {
     link_id: String,
     proc: String,
+    kind: RunKind,
     port: Option<u16>,
     /// The tasks reporting its terminals' output.
     forwarders: Vec<tokio::task::JoinHandle<()>>,
@@ -196,55 +197,75 @@ async fn worktree_branch(st: &AppState, run: &Run) -> Result<Option<String>, Api
     }
 }
 
-/// Starts a remote run (new, or stopped) on its instance with `def`: a new `proc`, its first state, its terminals
-/// following fresh logs, then the start there. The caller has checked it isn't active. A start the instance refuses
-/// fails the run, with why.
-pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result<Run, ApiError> {
-    let i = instance_of(st, &run).await?;
-    let branch = worktree_branch(st, &run).await?;
+/// Starts a remote run (new, or stopped) on its instance with `def`: [`claim`], then [`launch`]. The caller has
+/// checked it isn't active.
+pub(crate) async fn relaunch(st: &AppState, run: Run, def: RunDef) -> Result<Run, ApiError> {
+    let run = claim(st, run, &def).await?;
+    launch(st, run, def).await
+}
+
+/// Marks a stopped remote run as starting, with a new `proc` (its reports carry it): from here on it is active, so
+/// another start finds it so. Quick (only the store): callers that hold `run_start_lock` call this under it and
+/// [`launch`] after letting it go, since that waits on the remote instance.
+pub(crate) async fn claim(st: &AppState, mut run: Run, def: &RunDef) -> Result<Run, ApiError> {
     let proc = uuid::Uuid::now_v7().to_string();
     st.store.set_run_process(&run.id, false, Some(&proc)).await?;
     let first = if def.setup.is_some() { RunState::SettingUp } else { RunState::Starting };
     st.store.set_run_state(&run.id, first, now_ms()).await?;
     st.store.set_run_port(&run.id, None, None).await?;
+    st.exec.runs.started().insert(run.id.clone(), i64::MAX);
+    run.state = first;
+    run.exit_code = None;
+    run.error = None;
+    run.detached = false;
+    run.process = Some(proc);
+    run.port = None;
+    run.url = None;
+    Ok(run)
+}
+
+/// Starts a [`claim`]ed run on its instance: its terminals follow fresh logs, then the start there. A start that
+/// fails (the instance refuses it, or can't be reached) fails the run, with why.
+pub(crate) async fn launch(st: &AppState, mut run: Run, def: RunDef) -> Result<Run, ApiError> {
     for step in STEPS {
         st.remove_pty(&pty_id(&run.id, step)).await;
         let _ = tokio::fs::remove_file(mirror_log(st, &run.id, step)).await;
     }
     follow(st, &run.id, def.setup.is_some());
-    st.exec.runs.started().insert(run.id.clone(), i64::MAX);
-    ensure_poller(st, &i.link_id);
-    let req = StartReq {
-        run_id: run.id.clone(),
-        proc: proc.clone(),
-        kind: run.kind,
-        branch,
-        run_branch: run.branch.clone(),
-        def,
+    let started = async {
+        let i = instance_of(st, &run).await?;
+        let branch = worktree_branch(st, &run).await?;
+        ensure_poller(st, &i.link_id);
+        let req = StartReq {
+            run_id: run.id.clone(),
+            proc: run.process.clone().unwrap_or_default(),
+            kind: run.kind,
+            branch,
+            run_branch: run.branch.clone(),
+            def,
+        };
+        call::<Started>(st, &i, START_PATH, &req, CALL_TIMEOUT).await.map_err(|e| e.into_api(&i.name))
     };
-    match call::<Started>(st, &i, START_PATH, &req, CALL_TIMEOUT).await {
+    match started.await {
         Ok(s) => {
             st.exec.runs.started().insert(run.id.clone(), now_ms());
             if s.url.is_some() {
                 st.store.set_run_port(&run.id, None, s.url.as_deref()).await?;
             }
-            run.state = first;
-            run.exit_code = None;
-            run.error = None;
-            run.detached = false;
-            run.process = Some(proc);
-            run.port = None;
             run.url = s.url;
             Ok(run)
         }
-        Err(e) => {
+        Err(err) => {
             st.exec.runs.started().remove(&run.id);
-            let err = e.into_api(&i.name);
-            st.store
-                .finish_run(&run.id, RunState::Failed, None, Some(err.message()), now_ms())
-                .await
-                .log_warn("record the run ending");
-            end_logs(st, &run.id, None);
+            // Only this start's: a stop or another start meanwhile has the run now.
+            let current = st.store.get_run(&run.id).await.ok().flatten().is_some_and(|r| r.process == run.process);
+            if current {
+                st.store
+                    .finish_run(&run.id, RunState::Failed, None, Some(err.message()), now_ms())
+                    .await
+                    .log_warn("record the run ending");
+                end_logs(st, &run.id, None);
+            }
             Err(err)
         }
     }
@@ -543,6 +564,18 @@ pub(crate) async fn start_route(
     let mut def = req.def;
     def.detach = false;
     let _start = st.run_start_lock.lock().await;
+    // This instance's maximum of runs (not tests) counts the owners' runs it drives with its own.
+    if req.kind == RunKind::Run {
+        let max = st.store.get_host_settings().await?.max_concurrent_runs as usize;
+        let own = st.store.list_active_runs().await?.into_iter().filter(|r| r.kind == RunKind::Run).count();
+        let driven = st.exec.runs.driven().values().filter(|d| d.kind == RunKind::Run).count();
+        if own + driven >= max {
+            return Err(ApiError::conflict(
+                codes::TOO_MANY_RUNS,
+                format!("{me} already runs {} runs, its maximum: stop one there first", own + driven),
+            ));
+        }
+    }
     let port = if def.web {
         let p =
             crate::run_manager::allocate_port(&st, None, None).await.ok_or_else(crate::run_manager::no_free_port)?;
@@ -576,7 +609,7 @@ pub(crate) async fn start_route(
     };
     st.exec.runs.driven().insert(
         run.id.clone(),
-        Driven { link_id: link.link_id.clone(), proc: req.proc.clone(), port, forwarders: vec![] },
+        Driven { link_id: link.link_id.clone(), proc: req.proc.clone(), kind: req.kind, port, forwarders: vec![] },
     );
     let p = Arc::new(ToOwner { st: st.clone(), link_id: link.link_id.clone(), run_id: run.id.clone(), proc: req.proc });
     let started = Started { cwd: run.cwd.clone(), url: run.url.clone() };

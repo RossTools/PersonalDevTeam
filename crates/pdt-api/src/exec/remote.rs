@@ -28,6 +28,11 @@ use ts_rs::TS;
 const OUTBOX_CAP: usize = 200_000;
 /// The most events one read returns.
 const BATCH: usize = 1_000;
+/// The most run output (base64 bytes) kept for owners that haven't read it; past it the oldest output goes first, so
+/// a noisy test never pushes out the sessions' events.
+const OUTPUT_CAP: usize = 32 * 1024 * 1024;
+/// The most run output one read returns (it returns at least one event).
+const BATCH_OUTPUT: usize = 4 * 1024 * 1024;
 /// The longest an owner's read waits for events.
 const MAX_WAIT_MS: u64 = 25_000;
 /// How long an agent's pdt-mcp call waits for the owner while the link is down, before it fails.
@@ -45,6 +50,59 @@ struct Outbox {
     next: i64,
     /// By link: the events, oldest first.
     items: VecDeque<(String, Item)>,
+    /// The run output in `items`, in bytes.
+    output: usize,
+}
+
+impl Outbox {
+    fn push(&mut self, link_id: &str, item: Item) {
+        self.output += item.output_bytes();
+        self.items.push_back((link_id.to_string(), item));
+        if self.output > OUTPUT_CAP {
+            tracing::warn!(link = link_id, "an owner hasn't read its runs' output: the oldest is dropped");
+            while self.output > OUTPUT_CAP && self.drop_oldest_output() {}
+        }
+        if self.items.len() > OUTBOX_CAP && !self.drop_oldest_output() {
+            self.items.pop_front();
+            tracing::warn!(link = link_id, "an owner hasn't read its sessions' events: the oldest are dropped");
+        }
+    }
+
+    /// Drops the oldest run output; false when there is none.
+    fn drop_oldest_output(&mut self) -> bool {
+        let Some(at) = self.items.iter().position(|(_, e)| e.output_bytes() > 0) else { return false };
+        if let Some((_, e)) = self.items.remove(at) {
+            self.output -= e.output_bytes();
+        }
+        true
+    }
+
+    /// Forgets the owner on `link_id`'s events up to `after` (it has them).
+    fn forget(&mut self, link_id: &str, after: i64) {
+        let mut freed = 0;
+        self.items.retain(|(l, e)| {
+            let keep = !(l == link_id && e.seq() <= after);
+            if !keep {
+                freed += e.output_bytes();
+            }
+            keep
+        });
+        self.output -= freed;
+    }
+
+    /// The owner on `link_id`'s events after `after`: up to [`BATCH`] of them, and [`BATCH_OUTPUT`] of run output.
+    fn read(&self, link_id: &str, after: i64) -> Vec<Item> {
+        let mut out = vec![];
+        let mut output = 0;
+        for (_, e) in self.items.iter().filter(|(l, e)| l == link_id && e.seq() > after) {
+            output += e.output_bytes();
+            if out.len() == BATCH || (!out.is_empty() && output > BATCH_OUTPUT) {
+                break;
+            }
+            out.push(e.clone());
+        }
+        out
+    }
 }
 
 /// One numbered report for an owner: a session's output, or a run's (`super::runs`).
@@ -63,6 +121,14 @@ impl Item {
             Item::Run(e) => e.seq,
         }
     }
+
+    /// The bytes of run output it carries.
+    fn output_bytes(&self) -> usize {
+        match self {
+            Item::Run(super::runs::WireRunEvent { out: super::runs::RunOut::Output { data, .. }, .. }) => data.len(),
+            _ => 0,
+        }
+    }
 }
 
 pub(super) struct RemoteSide {
@@ -79,7 +145,7 @@ impl Default for RemoteSide {
     fn default() -> Self {
         Self {
             running: Default::default(),
-            outbox: Mutex::new(Outbox { next: 0, items: VecDeque::new() }),
+            outbox: Mutex::new(Outbox { next: 0, items: VecDeque::new(), output: 0 }),
             added: Default::default(),
             boot: uuid::Uuid::new_v4().to_string(),
             opening: Default::default(),
@@ -108,11 +174,7 @@ impl RemoteSide {
             let mut o = self.outbox.lock().unwrap_or_else(|e| e.into_inner());
             o.next += 1;
             let seq = o.next;
-            o.items.push_back((link_id.to_string(), item(seq)));
-            if o.items.len() > OUTBOX_CAP {
-                o.items.pop_front();
-                tracing::warn!(link = link_id, "an owner hasn't read its sessions' events: the oldest are dropped");
-            }
+            o.push(link_id, item(seq));
         }
         self.added.notify_waiters();
     }
@@ -427,22 +489,14 @@ pub(crate) async fn events_route(
     let after = if same_boot { req.after } else { 0 };
     if same_boot {
         let mut o = side.outbox.lock().unwrap_or_else(|e| e.into_inner());
-        o.items.retain(|(l, e)| !(l == &link.link_id && e.seq() <= after));
+        o.forget(&link.link_id, after);
     }
     let deadline = tokio::time::Instant::now() + Duration::from_millis(req.wait_ms.min(MAX_WAIT_MS));
     let items = loop {
         let added = side.added.notified();
         tokio::pin!(added);
         added.as_mut().enable();
-        let items: Vec<Item> = {
-            let o = side.outbox.lock().unwrap_or_else(|e| e.into_inner());
-            o.items
-                .iter()
-                .filter(|(l, e)| l == &link.link_id && e.seq() > after)
-                .take(BATCH)
-                .map(|(_, e)| e.clone())
-                .collect()
-        };
+        let items: Vec<Item> = { side.outbox.lock().unwrap_or_else(|e| e.into_inner()).read(&link.link_id, after) };
         if !items.is_empty() || tokio::time::Instant::now() >= deadline {
             break items;
         }
@@ -682,4 +736,55 @@ pub(crate) async fn running_view(st: &AppState, link_id: &str) -> Vec<RunningVie
             started_at: e.created_at,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::runs::{RunOut, WireRunEvent};
+    use super::*;
+
+    fn output(seq: i64, bytes: usize) -> Item {
+        let out = RunOut::Output { step: "command".into(), data: "x".repeat(bytes) };
+        Item::Run(WireRunEvent { seq, run_id: "r".into(), proc: "p".into(), out })
+    }
+
+    fn session(seq: i64) -> Item {
+        let out = WireOut::ExternalId { id: "t".into() };
+        Item::Session(WireEvent { seq, session_id: "s".into(), proc: "p".into(), out })
+    }
+
+    /// Run output is kept by size, oldest dropped first, and never pushes out the sessions' events; a read takes a
+    /// bounded share of it.
+    #[test]
+    fn run_output_is_bounded_by_size_and_never_drops_session_events() {
+        let mut o = Outbox { next: 0, items: VecDeque::new(), output: 0 };
+        let chunk = 1024 * 1024;
+        o.push("l", session(1));
+        for seq in 2..(2 + 40) {
+            o.push("l", output(seq, chunk));
+        }
+        o.push("l", session(42));
+        assert!(o.output <= OUTPUT_CAP, "{}", o.output);
+        let seqs: Vec<i64> = o.items.iter().map(|(_, e)| e.seq()).collect();
+        assert_eq!((seqs[0], *seqs.last().unwrap()), (1, 42), "the sessions' events stay");
+        assert_eq!(seqs[1], 2 + 40 - (OUTPUT_CAP / chunk) as i64, "the oldest output went: {seqs:?}");
+
+        let read = o.read("l", 0);
+        let read_bytes: usize = read.iter().map(Item::output_bytes).sum();
+        assert!(
+            read_bytes <= BATCH_OUTPUT && read.len() == 1 + BATCH_OUTPUT / chunk,
+            "{} events, {read_bytes} bytes",
+            read.len()
+        );
+        assert!(o.read("other", 0).is_empty());
+
+        let last = read.last().unwrap().seq();
+        o.forget("l", last);
+        assert_eq!(o.output, o.items.iter().map(|(_, e)| e.output_bytes()).sum::<usize>());
+        assert_eq!(o.items.front().map(|(_, e)| e.seq()), Some(last + 1));
+        // One event bigger than a read's share still goes out alone.
+        let mut big = Outbox { next: 0, items: VecDeque::new(), output: 0 };
+        big.push("l", output(1, BATCH_OUTPUT + 1));
+        assert_eq!(big.read("l", 0).len(), 1);
+    }
 }

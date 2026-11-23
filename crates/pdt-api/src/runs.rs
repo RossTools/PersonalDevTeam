@@ -431,7 +431,8 @@ async fn create_remote(
                 if st.store.tab_for(&item).await?.is_none() {
                     crate::workspaces::open_for_new(st, &run.project_id, item, tab.as_ref()).await;
                 }
-                (run, true)
+                // Active before the lock goes, so a start meanwhile doesn't start it too.
+                (crate::exec::claim_remote_run(st, run, &def).await?, true)
             }
             None => {
                 let now = now_ms();
@@ -458,11 +459,12 @@ async fn create_remote(
                 st.store.insert_run(&run).await?;
                 let item = pdt_core::workspace::TabItem::Run(run.id.clone());
                 crate::workspaces::open_for_new(st, &run.project_id, item, tab.as_ref()).await;
-                (run, false)
+                (crate::exec::claim_remote_run(st, run, &def).await?, false)
             }
         }
     };
-    let run = crate::exec::relaunch_remote_run(st, run, def).await?;
+    // The remote instance may be slow to answer: not under the lock, which every start takes.
+    let run = crate::exec::launch_remote_run(st, run, def).await?;
     Ok((if again { StatusCode::OK } else { StatusCode::CREATED }, Json(run)))
 }
 
@@ -496,10 +498,16 @@ pub(crate) async fn restart(
     if was_active && def.web {
         run_manager::await_port_release(run.port).await;
     }
-    let _start = st.run_start_lock.lock().await;
+    let start = st.run_start_lock.lock().await;
     let run = load(&st, &id).await?;
     if run.state.is_active() {
         return Err(ApiError::conflict(codes::RUN_ACTIVE, "the run was started again meanwhile"));
+    }
+    // A remote run is marked starting under the lock, then started there after it (the remote may be slow to answer).
+    if run.instance.is_some() {
+        let run = crate::exec::claim_remote_run(&st, run, &def).await?;
+        drop(start);
+        return Ok(Json(crate::exec::launch_remote_run(&st, run, def).await?));
     }
     // A restarted run counts toward the limit like a new one (on this machine).
     if run.kind == RunKind::Run && run.instance.is_none() {

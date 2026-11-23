@@ -144,9 +144,12 @@ are `runs` rows on the owner with `instance_id`: the owner reads the worktree's 
 (`/link/exec/run/config`, also its OS for `os`), merges its overrides, checks approval, and starts and stops it with
 `/link/exec/run/start` and `/run/stop` (`run_manager::relaunch` and `stop` route a remote run there). The remote
 instance drives it with `run_manager::start_for_owner`, whose `Progress` reports state, output (its PTYs' bytes) and
-the end into the same outbox as the sessions' events; the owner's poller applies them (state to the row, output to
+the end into the same outbox as the sessions' events (its output bounded by size there, the oldest dropped first and
+never a session's event, and a read carries at most a few MB of it); the owner's poller applies them (state to the row, output to
 `runs/logs/<run>.<step>.log`, which the run's terminals follow read-only). A web run's port, link and `tailscale serve`
-mapping are the remote's; the owner's row has its `url` and no `port`. Terminals, Files and Changes of a remote
+mapping are the remote's; the owner's row has its `url` and no `port`. A start marks the row active (`exec::claim`)
+under `run_start_lock` and calls the remote (`exec::launch`) after letting it go. Runs count toward the remote's
+maximum of runs, not the owner's. Terminals, Files and Changes of a remote
 attempt, and the local forge's CI for one, are not remote yet.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
