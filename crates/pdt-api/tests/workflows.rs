@@ -313,6 +313,11 @@ async fn retry_resumes_a_failed_run_from_its_failed_step() {
     assert!(run(&env, &id).await["resumeFrom"].is_null());
     let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/resume"), None).await;
     assert_eq!((s, r["code"].as_str()), (StatusCode::CONFLICT, Some("cannot_resume")), "{r}");
+    // A step the run doesn't have is not found (PDT-656), not a conflict.
+    let (s, r) =
+        call(&env.app, "POST", &format!("/api/workflow-runs/{id}/steps/nope/answer"), Some(json!({"choice": "x"})))
+            .await;
+    assert_eq!((s, r["code"].as_str()), (StatusCode::NOT_FOUND, Some("not_found")), "{r}");
     let (s, r) = call(&env.app, "POST", &format!("/api/workflow-runs/{id}/retry"), None).await;
     assert_eq!((s, r["status"].as_str()), (StatusCode::OK, Some("running")), "{r}");
     pdt_api::run_workflows(&env.state).await;
