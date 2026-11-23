@@ -173,6 +173,20 @@ async fn label(st: &AppState, target: WatchTarget, id: &str) -> Option<String> {
     }
 }
 
+/// The message about a watched ticket for a PM conversation. An external ticket's title is what an outsider wrote
+/// (PDT-645): the label is its key alone, and its title follows in a fenced block.
+async fn ticket_message(st: &AppState, w: &Watch, label: &str, ending: bool) -> Result<String, ApiError> {
+    match st.store.get_ticket(&w.target_id).await? {
+        Some(t) if t.summary.source == pdt_core::ticket::TicketSource::External => {
+            let outside = crate::untrusted::Outside::new();
+            let text = watch::message(&t.summary.key, &w.pending, ending);
+            let title = outside.wrap(&format!("Its title: {}", t.summary.title));
+            Ok(format!("{text}\n\n{}\n\n{title}", outside.note().unwrap_or_default()))
+        }
+        _ => Ok(watch::message(label, &w.pending, ending)),
+    }
+}
+
 /// Watches as the API shows them.
 pub(crate) async fn infos(st: &AppState, watches: Vec<Watch>) -> Result<Vec<WatchInfo>, ApiError> {
     let mut out = vec![];
@@ -546,7 +560,8 @@ async fn tell(st: &AppState, w: &Watch, how: Told<'_>) -> Result<(), ApiError> {
                         &fence,
                     )
                 }
-                _ => watch::message(&label, &w.pending, how.ending),
+                WatchTarget::Ticket => ticket_message(st, w, &label, how.ending).await?,
+                WatchTarget::Run => watch::message(&label, &w.pending, how.ending),
             };
             let ticket_id = (w.target == WatchTarget::Ticket).then(|| w.target_id.clone());
             let m = pdt_store::SessionMessage {
