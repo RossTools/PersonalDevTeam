@@ -103,6 +103,8 @@ pub mod codes {
     pub const LINK_INCOMPATIBLE: &str = "link_incompatible";
     /// 403: a project-link request that isn't signed by the link's other end for that project.
     pub const LINK_REFUSED: &str = "link_refused";
+    /// 403: a project-link request on a link this instance no longer has (its end removed it, or never had it).
+    pub const LINK_REVOKED: &str = "link_revoked";
     /// 502: the other instance of a project link could not be reached, or answered with an error.
     pub const LINK_UNREACHABLE: &str = "link_unreachable";
     pub const MERGE_BLOCKED: &str = "merge_blocked";

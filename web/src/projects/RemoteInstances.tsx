@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, SettingsRow, Skeleton, useConfirm, type BadgeTone } from '@ui';
+import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
 import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
@@ -18,6 +18,7 @@ export const LINK_STATE: Record<LinkState, { label: string; tone: BadgeTone }> =
   paused: { label: 'paused', tone: 'waiting' },
   offline: { label: 'offline', tone: 'neutral' },
   incompatible: { label: 'needs an update', tone: 'failed' },
+  removed: { label: 'removed by its owner', tone: 'failed' },
 };
 
 const OS: Record<string, string> = { macos: 'macOS', windows: 'Windows', linux: 'Linux' };
@@ -49,12 +50,13 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
   const [remove, removing] = useAction(async () => {
     const { ok } = await confirm({
       title: `Remove ${i.name}?`,
-      body: `${i.name} stops working on ${project.name}, and the keys that link them are revoked at both ends. Pairing again needs a new code.`,
+      body: `${i.name} stops working on ${project.name}, and the keys that link them are revoked. Pairing again needs a new code.`,
       action: 'Remove',
       danger: true,
     });
     if (!ok) return;
-    await api.removeRemoteInstance(project.id, i.linkId);
+    const { told } = await api.removeRemoteInstance(project.id, i.linkId);
+    if (!told) toast.info(`${i.name} couldn't be told; leave ${project.name} there too.`, { description: `It shows the project as removed once it can reach this instance.` });
     await qc.invalidateQueries({ queryKey: projectKeys.remoteInstances(project.id) });
   });
   return (

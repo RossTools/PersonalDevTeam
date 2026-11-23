@@ -162,6 +162,7 @@ async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
         own_update_channel: false,
         cap: None,
         last_contact_at: None,
+        removed_at: None,
         created_at: 1,
     };
     env.state.store.insert_remote_project(&remote, &link).await.unwrap();
@@ -224,6 +225,7 @@ async fn a_remote_projects_checkout_repository_and_worktrees_are_redacted() {
         own_update_channel: false,
         cap: None,
         last_contact_at: None,
+        removed_at: None,
         created_at: 1,
     };
     env.state.store.insert_remote_project(&remote, &link).await.unwrap();

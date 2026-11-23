@@ -39,6 +39,16 @@ pub struct RemoteInstancePatch {
     pub cap: Option<u32>,
 }
 
+/// A link ended from this end: Remove on the owner, Leave on a remote instance.
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LinkEnded {
+    /// The other end was told. False: it couldn't be reached, and still lists the project until it finds out (or is
+    /// removed there too).
+    pub told: bool,
+}
+
 /// A pairing code on show.
 #[derive(Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -145,30 +155,20 @@ async fn patch(
 }
 
 /// Removes a joined instance: it is told (so it drops the remote project and its key), and the owner's key and row
-/// go. An instance that can't be reached is removed all the same: its key no longer signs anything this one takes.
+/// go. An instance that can't be reached is removed all the same (its key no longer signs anything this one takes),
+/// and the reply says it wasn't told: it finds out when it next asks.
 async fn remove(
     State(st): State<AppState>,
     ApiPath((id, link_id)): ApiPath<(String, String)>,
-) -> Result<StatusCode, ApiError> {
+) -> Result<Json<LinkEnded>, ApiError> {
     let p = own_project(&st, &id).await?;
     let Some(i) = st.store.get_remote_instance(&link_id).await?.filter(|i| i.project_id == p.id) else {
         return Err(ApiError::not_found("remote instance"));
     };
-    match link::load_key_for_revoke(&st, &i.link_id).await {
-        Some(key) => {
-            let told: Result<serde_json::Value, _> =
-                link::post(&st, &i.url, link::REVOKE_PATH, Some((&key, &i.link_id, &p.id)), &serde_json::json!({}))
-                    .await;
-            if let Err(e) = told {
-                tracing::warn!(instance = %i.name, error = %e.text(), "could not tell a removed remote instance");
-            }
-        }
-        None => tracing::warn!(instance = %i.name, "no key to tell a removed remote instance with"),
-    }
+    let told = link::revoke(&st, &i, &p.id).await;
     st.store.delete_remote_instance(&i.link_id).await?;
-    link::delete_key(&st, &i.link_id).await;
-    tracing::info!(project = %p.key, instance = %i.name, "removed a remote instance");
-    Ok(StatusCode::NO_CONTENT)
+    tracing::info!(project = %p.key, instance = %i.name, told, "removed a remote instance");
+    Ok(Json(LinkEnded { told }))
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.
