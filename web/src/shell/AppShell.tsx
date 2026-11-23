@@ -231,7 +231,8 @@ export function AppShell() {
   const inboxItems = inbox.data?.items ?? NONE;
   // The Inbox picks an item by itself when none is shown (or the one shown has gone): that replaces the path. On a
   // phone `/inbox` is the list, where a tap opens an item (a new entry).
-  const inboxShown = !!inboxId && inboxItems.some((i) => i.id === inboxId);
+  const snoozedItems = inbox.data?.snoozed ?? NONE;
+  const inboxShown = !!inboxId && (inboxItems.some((i) => i.id === inboxId) || snoozedItems.some((i) => i.id === inboxId));
   const autoPick = phone ? inboxId !== null && !inboxShown : !inboxShown;
   const setInboxId = useCallback((itemId: string | null) => go({ view: 'inbox', itemId }, { replace: autoPick }), [autoPick]);
   // A phone's item screen moves between items in place, so Back returns to the list.
@@ -984,10 +985,10 @@ export function AppShell() {
                 )}
               </div>
             ) : view === 'inbox' && phone && inboxId ? (
-              <ScreenSuspense><PhoneInboxItem items={inboxItems} updates={updateItems}
+              <ScreenSuspense><PhoneInboxItem items={inboxItems} snoozed={snoozedItems} updates={updateItems}
                 itemId={inboxId} loading={inbox.isLoading} onMove={moveInbox} onList={() => goBack(routePath(viewRoute('inbox')))} onOpenTarget={openTarget} /></ScreenSuspense>
             ) : view === 'inbox' ? (
-              <ScreenSuspense><InboxView items={inboxItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} loading={inbox.isPending} failed={inboxFailed} /></ScreenSuspense>
+              <ScreenSuspense><InboxView items={inboxItems} snoozed={snoozedItems} updates={updateItems} selectedId={inboxId} onSelect={setInboxId} onOpenTarget={openTarget} loading={inbox.isPending} failed={inboxFailed} /></ScreenSuspense>
             ) : view === 'pm' ? (
               <ScreenSuspense><PmView selection={pmSelection} onSelect={setPmSelection} onNew={newPmSession} /></ScreenSuspense>
             ) : view === 'notes' ? (

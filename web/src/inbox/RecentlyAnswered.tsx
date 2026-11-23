@@ -10,6 +10,7 @@ import { useOpenTicket } from '../common/open';
 import { POLL } from '../common/poll';
 import { TicketKey } from '../common/TicketKey';
 import { undoAnswer, useHeldAnswers } from './held';
+import { ROW_ACTION } from './rows';
 import { inboxKey } from './useInbox';
 
 /** How many answers the list keeps, and shows before Show all. */
@@ -73,7 +74,7 @@ export function RecentlyAnswered() {
               className="py-1.5"
               secondary={`${h.label} · ${h.sending ? 'sending' : 'waiting to send'}`}
               trailing={!h.sending && (
-                <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" onClick={() => undoAnswer(h.itemId)}>Undo</Button>
+                <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={() => undoAnswer(h.itemId)}>Undo</Button>
               )}
             />
           )),

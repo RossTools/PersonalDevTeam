@@ -1,14 +1,16 @@
 // Snooze (PDT-641): any item can be put out of sight until tomorrow morning, for a week, or until a ticket is done.
-// It comes back by itself; Snoozed lists the ones away, with Unsnooze.
+// It comes back by itself; Snoozed lists the ones away, with Unsnooze. A snoozed item opens read-only (PDT-686).
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { AlarmClock } from 'lucide-react';
+import { AlarmClock, AlarmClockOff } from 'lucide-react';
 import { Button, List, ListHeading, ListRow, MenuButton, clockTime } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxSnooze } from '../api/gen/InboxSnooze';
 import type { SnoozeRequest } from '../api/gen/SnoozeRequest';
 import { TicketKey } from '../common/TicketKey';
+import { KindIcon } from './kinds';
+import { ROW_ACTION, RowTitle } from './rows';
 import { useInbox, useRefreshInbox } from './useInbox';
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -58,36 +60,61 @@ export function SnoozeMenu({ item }: { item: InboxItem }) {
   );
 }
 
+/** Brings a snoozed item back now. */
+function useUnsnooze() {
+  const refresh = useRefreshInbox();
+  return useMutation({ mutationFn: (id: string) => api.unsnoozeInbox(id), onSettled: () => void refresh() });
+}
+
+/** Unsnooze in a snoozed item's header, where Snooze sits on the others. */
+export function UnsnoozeButton({ item }: { item: InboxItem }) {
+  const unsnooze = useUnsnooze();
+  return (
+    <Button variant="ghost" size="sm" pending={unsnooze.isPending} onClick={() => unsnooze.mutate(item.id)}>
+      <AlarmClockOff aria-hidden />Unsnooze
+    </Button>
+  );
+}
+
+/** Until when a snoozed item is away, or "snoozed". */
+export function snoozedLine(i: InboxItem): string {
+  return i.snooze ? snoozeText(i.snooze) : 'snoozed';
+}
+
 /** Rows Snoozed shows before Show all. */
 const SHOWN = 3;
 
-/** The Inbox list's Snoozed section: what is away and until when, with Unsnooze. */
-export function Snoozed() {
+/**
+ * The Inbox list's Snoozed section: what is away and until when, with Unsnooze. A row opens its item (read-only) with
+ * `onSelect`.
+ */
+export function Snoozed({ selectedId = null, onSelect }: { selectedId?: string | null; onSelect?: (id: string) => void }) {
   const items = useInbox().data?.snoozed ?? [];
-  const refresh = useRefreshInbox();
-  const unsnooze = useMutation({ mutationFn: (id: string) => api.unsnoozeInbox(id), onSettled: () => void refresh() });
+  const unsnooze = useUnsnooze();
   const [all, setAll] = useState(false);
   if (items.length === 0) return null;
   const shown = all ? items : items.slice(0, SHOWN);
   return (
     <section aria-label="Snoozed">
       <ListHeading as="h3">Snoozed</ListHeading>
-      <List aria-label="Snoozed">
+      <List aria-label="Snoozed" onAction={onSelect}>
         {shown.map((i) => (
           <ListRow
             key={i.id}
             id={i.id}
-            title={i.title}
+            title={<RowTitle>{i.title}</RowTitle>}
             textValue={i.title}
-            className="py-1.5"
+            current={i.id === selectedId}
+            className="items-start py-1.5"
+            leading={<KindIcon item={i} className="mt-0.5" />}
             secondary={
               <span className="flex min-w-0 items-center gap-1.5">
                 {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                <span className="truncate">{i.snooze ? snoozeText(i.snooze) : 'snoozed'}</span>
+                <span className="truncate">{snoozedLine(i)}</span>
               </span>
             }
             trailing={
-              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" pending={unsnooze.isPending && unsnooze.variables === i.id}
+              <Button size="sm" variant="ghost" className={ROW_ACTION} pending={unsnooze.isPending && unsnooze.variables === i.id}
                 onClick={() => unsnooze.mutate(i.id)}>Unsnooze</Button>
             }
           />

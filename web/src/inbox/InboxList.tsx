@@ -4,19 +4,14 @@ import { Badge, Button, EmptyState, IconButton, List, ListHeading, ListRow, Rela
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
-import { grouped, KIND_LABEL, selectedUpdate, shownKind, updateSelection } from './model';
+import { grouped, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
 import { RecentlyAnswered } from './RecentlyAnswered';
+import { context, ROW_ACTION, RowTitle, useRowContext } from './rows';
 import { Snoozed } from './snooze';
 
 /** Rows a Needs-you section shows before its Show all. */
 const GROUP_ROWS = 50;
-
-/** What a row says under its title: who asks (or which workflow) and the ticket's title. */
-function context(i: InboxItem): string {
-  const who = i.personaName ?? (typeof i.body.workflow === 'string' ? i.body.workflow : null);
-  return [who, i.ticketTitle ?? (i.ticketKey ? null : KIND_LABEL[shownKind(i)])].filter(Boolean).join(' · ');
-}
 
 /** An empty list's line: what it says when empty, or that `what` can't be loaded. */
 function EmptyLine({ failed, what, children }: { failed?: boolean; what: string; children: string }) {
@@ -40,6 +35,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
   failed?: boolean;
 }) {
   const groups = grouped(items);
+  const rowContext = useRowContext();
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   // Show all goes away when pressed: focus moves to the first row it showed (PDT-547). The list renders its new rows a
   // pass after this one, so it looks for a few frames.
@@ -75,7 +71,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
                 <ListRow
                   key={i.id}
                   id={i.id}
-                  title={i.title}
+                  title={<RowTitle>{i.title}</RowTitle>}
                   textValue={i.title}
                   current={i.id === selectedId}
                   className="items-start py-1.5"
@@ -84,7 +80,7 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
                   secondary={
                     <span className="flex min-w-0 items-center gap-1.5">
                       {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                      <span className="truncate">{context(i)}</span>
+                      <span className="truncate">{context(i, rowContext(i))}</span>
                     </span>
                   }
                 />
@@ -176,14 +172,14 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
     <nav aria-label="Inbox items" className="flex flex-col gap-0.5 py-1">
       <ListHeading>Needs you</ListHeading>
       <NeedsYouGroups items={items} selectedId={selectedId} onSelect={onSelect} loading={loading} failed={failed} />
-      <Snoozed />
+      <Snoozed selectedId={selectedId} onSelect={onSelect} />
       <RecentlyAnswered />
       <section aria-label="Updates">
         <div className="flex items-center gap-1 pt-1 pr-2">
           <ListHeading className="flex-1">Updates</ListHeading>
-          {onReadAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={!unread} onClick={onReadAll}>Mark all read</Button>}
-          {onClearAll && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" disabled={updates.length === 0} onClick={onClearAll}>Clear all</Button>}
-          {onSettings && <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" onClick={onSettings}>Settings</Button>}
+          {onReadAll && unread && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onReadAll}>Mark all read</Button>}
+          {onClearAll && updates.length > 0 && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onClearAll}>Clear all</Button>}
+          {onSettings && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onSettings}>Settings</Button>}
         </div>
         <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} onClear={onClear} loading={loading} failed={updatesFailed} />
       </section>
