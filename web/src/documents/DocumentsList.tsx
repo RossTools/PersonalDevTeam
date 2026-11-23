@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileDown, Search, SquarePen, X } from 'lucide-react';
+import { FileDown, Search, X } from 'lucide-react';
 import { Button, Dialog, EmptyState, IconButton, Input, List, ListRow, RelativeTime, Select, Skeleton } from '@ui';
 import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
@@ -12,6 +12,7 @@ import { providerLabel, useDocumentProviders, useDocuments } from './queries';
 import { useProjects } from '../projects/queries';
 import { usePageLimit } from '../common/usePageLimit';
 import { LoadError } from '../common/QueryStatus';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 
 const ANY = '';
 /** Documents loaded at a time; Show more loads the next ones. */
@@ -100,15 +101,17 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
   const [pickingTicket, setPickingTicket] = useState(false);
   return (
     <div className="flex flex-col pb-2">
-      <div className="flex items-center gap-1 pt-2.5 pr-1.5 pb-2 pl-3">
-        <h2 className="flex-1 text-sm font-semibold tracking-tight">Documents</h2>
-        <IconButton label="Import a document" onClick={onImport} disabled={none}>
-          <FileDown aria-hidden />
-        </IconButton>
-        <IconButton label="New document" onClick={onNew} disabled={none}>
-          <SquarePen aria-hidden />
-        </IconButton>
-      </div>
+      <ListColumnHeader
+        title="Documents"
+        newLabel="New document"
+        onNew={onNew}
+        newDisabled={none}
+        extra={(
+          <IconButton label="Import a document" size="sm" onClick={onImport} disabled={none}>
+            <FileDown aria-hidden />
+          </IconButton>
+        )}
+      />
       <div className="relative mx-2">
         <Search aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
