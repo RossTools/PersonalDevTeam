@@ -184,7 +184,7 @@ export function ConversationPane({ session, conv, banner, readOnly, empty, place
       ) : conv.status === 'reconnecting' && (
         <p className="px-4 pb-1 text-center text-meta text-muted-foreground" role="status">Reconnecting…</p>
       )}
-      <PinnedApprovalBar rows={conv.rows} />
+      <PinnedApprovalBar rows={conv.rows} agentName={agentName} />
       {readOnly ?? <ConversationComposer
         key={session.id}
         draftKey={session.id}
