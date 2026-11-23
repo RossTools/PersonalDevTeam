@@ -117,7 +117,7 @@ describe('RunView', () => {
 
   it('marks a run on another instance, whose output it only shows', async () => {
     stubApi({});
-    renderWithQuery(<RunView run={run({ instance: { id: 'i1', name: 'win-box' } })} onRemoved={() => {}} />);
+    renderWithQuery(<RunView run={run({ instance: { id: 'i1', name: 'win-box', lastSeenAt: Date.now() } })} onRemoved={() => {}} />);
     expect(screen.getByText('on win-box')).toBeInTheDocument();
     expect(screen.getByText('Runs on win-box · output only')).toBeInTheDocument();
   });
