@@ -192,7 +192,7 @@ export function RemoteInstances({ project }: { project: Project }) {
           label="Pairing code"
           description={
             <>
-              On the other instance, choose Add project → Remote project, and enter this instance&apos;s address and the
+              On the other instance, choose Add project → Join a remote, and enter this instance&apos;s address and the
               code. It works once, until {new Date(v.pairing.expiresAt).toLocaleTimeString()}.
             </>
           }
