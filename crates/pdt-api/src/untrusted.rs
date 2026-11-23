@@ -358,7 +358,9 @@ const HOUR_MS: i64 = 60 * 60 * 1000;
 
 /// The triage cap a new issue, outside pull request (or webhook) is over (PDT-202): its author already started
 /// `triage_per_author_hour` triage runs in the last hour, or its repository (webhook) `triage_per_repo_hour`. None when
-/// it may be triaged. Counted in issues: one that started runs of several workflows is one.
+/// it may be triaged. Counted in issues: one that started runs of several workflows is one. A bot's pull requests
+/// (Dependabot opening a batch of updates, PDT-640) count only toward the repository's cap: a bot can only open them
+/// on a repository that installed it.
 pub(crate) async fn triage_cap(st: &AppState, e: &LogEvent, trigger: &Value) -> Option<(TriageCap, u32)> {
     let h = st.store.get_host_settings().await.unwrap_or_default();
     let since = crate::routes::now_ms() - HOUR_MS;
@@ -369,7 +371,11 @@ pub(crate) async fn triage_cap(st: &AppState, e: &LogEvent, trigger: &Value) -> 
         (TriageCap::Author, "author", s("author"), h.triage_per_author_hour),
         (TriageCap::Repo, repo_field, s(repo_field), h.triage_per_repo_hour),
     ];
+    let bot = s("kind") == Some(pdt_core::outside_pr::AuthorKind::Bot.as_str());
     for (cap, field, value, limit) in checks {
+        if bot && cap == TriageCap::Author {
+            continue;
+        }
         let Some(value) = value.filter(|_| limit > 0) else { continue };
         match st.store.events_with_runs_since(&e.kind, field, value, since, &e.id).await {
             Ok(n) if n >= limit => return Some((cap, limit)),
@@ -408,7 +414,7 @@ pub(crate) async fn skip_triage(
         cap,
         limit,
     };
-    tracing::info!(workflow = %wf.name, repo = %repo, author = ?skipped.author, ?cap, limit, "triage skipped: over the hourly cap");
+    tracing::warn!(workflow = %wf.name, repo = %repo, author = ?skipped.author, ?cap, limit, "triage skipped: over the hourly cap");
     let log = NewLogEvent::new(ev::TRIAGE_SKIPPED, format!("{}:{}", e.id, wf.id), "engine", &skipped);
     match st.store.emit_event(&log, now).await {
         Ok(Some(_)) => {}

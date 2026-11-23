@@ -543,7 +543,8 @@ for a cool-down after one, so a double-click or a click on what slid into place 
 actions show as off meanwhile; a conversation's cards go through `guardedAnswer`). `needsConfirm` in
 `web/src/inbox/model.ts` says which actions arm on a first press and act on a second: Always allow, and every choice
 the server marks `outward` (`InboxChoice::outward`: a gate's choice that leads to a node whose kind is
-`NodeKind::outward`, found by `StepCx::port_outward`, or Allow on a tool `ToolTable::outward` names); `ApprovalCard` does the same for Always allow. An Inbox
+`NodeKind::outward`, found by `StepCx::port_outward`, or Allow on a tool `ToolTable::outward` names), and on a gate
+with `recommend` (the outside-PR review's decision) every choice but the `recommended` one; `ApprovalCard` does the same for Always allow. An Inbox
 answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and only then sent, so nothing it causes
 (a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. The client says
 how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,

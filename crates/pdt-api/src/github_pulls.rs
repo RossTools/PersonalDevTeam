@@ -226,7 +226,7 @@ fn payload(project: &str, repo: &str, pr: &RepoChangeRequest, stats: ChangeStats
         changed_files: stats.changed_files,
         additions: stats.additions,
         deletions: stats.deletions,
-        update_type: dependabot_update(&pr.author, &pr.title),
+        update_type: dependabot_update(&pr.author, &pr.title, &pr.body),
         created_at: pr.created_at.clone(),
         previous_head: None,
         merged: pr.state == PrState::Merged,

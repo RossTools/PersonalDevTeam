@@ -12,7 +12,7 @@ import { renderWithQuery, stubApi, type Call } from '../test-utils';
 import { holdAnswer, holdTiming, useHeldIds } from './held';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
-import { needsConfirm } from './model';
+import { needsConfirm, recommendationTone } from './model';
 import { useInbox } from './useInbox';
 
 const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
@@ -169,6 +169,43 @@ describe('answers that act outside PDT ask for a second press', () => {
     await new Promise((r) => setTimeout(r, 350));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm: always allow in this session' }));
     expect(onAnswer).toHaveBeenCalledWith({ type: 'approve', always: true });
+  });
+});
+
+/** The same gate after a review that recommends closing it (PDT-640): Close is the one Enter takes. */
+const recommendsClose = item('rec', {
+  title: '#634: deps: Bump react-i18next from 17.1.9 to 18.0.3', createdAt: 0,
+  body: { question: 'The review', recommendation: { choice: 'close', title: 'Close', by: 'Reviewer' } },
+  choices: [
+    { id: 'approve_merge', title: 'Approve merge', primary: false },
+    { id: 'request_changes', title: 'Request changes', primary: false, outward: true },
+    { id: 'close', title: 'Close', primary: true, outward: true, recommended: true },
+  ],
+});
+
+describe('a gate’s recommendation', () => {
+  it('asks again for any choice but the recommended one', () => {
+    expect(needsConfirm(recommendsClose, 'approve_merge')).toBe(true);
+    expect(needsConfirm(recommendsClose, 'request_changes')).toBe(true);
+    // Close still posts outside PDT, so it asks again for that.
+    expect(needsConfirm(recommendsClose, 'close')).toBe(true);
+    const merge = { ...recommendsClose, body: { recommendation: { choice: 'approve_merge', title: 'Approve merge', by: 'Reviewer' } } };
+    expect(needsConfirm(merge, 'approve_merge')).toBe(false);
+    // One that names no choice is no recommendation.
+    expect(needsConfirm({ ...review, body: { recommendation: { choice: 'ship_it' } } }, 'approve_merge')).toBe(false);
+    expect([recommendationTone('close'), recommendationTone('request_changes'), recommendationTone('approve_merge')]).toEqual(['error', 'warning', 'success']);
+  });
+
+  it('leads the item, and approving against it takes a second press that says what was recommended', async () => {
+    answerTiming.cooldownMs = 0;
+    const calls = stubApi({ 'POST /api/inbox/rec/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<Inbox items={[recommendsClose]} />);
+    expect(within(screen.getByRole('region', { name: 'Recommendation' })).getByText('Reviewer recommends: Close')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Approve merge' }));
+    expect(answers(calls)).toEqual([]);
+    expect(screen.getByText('Press again to confirm: Reviewer recommends Close.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approve merge' }));
+    await waitFor(() => expect(answers(calls).map((c) => c.body)).toEqual([{ choice: 'approve_merge' }]));
   });
 });
 

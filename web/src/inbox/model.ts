@@ -310,7 +310,30 @@ export function merges(item: InboxItem, choice: string): boolean {
  */
 export function needsConfirm(item: InboxItem, action: string): boolean {
   if (action === 'always' || action === 'allow_always') return true;
+  if (againstRecommendation(item, action)) return true;
   return item.choices.some((c) => c.id === action && c.outward === true);
+}
+
+/** What a gate's earlier step recommends (PDT-640: the PR Reviewer's decision): its choice, the choice's title, and who. */
+export function recommendationOf(item: InboxItem): { choice: string; title: string; by: string } | null {
+  const r = item.body.recommendation as { choice?: unknown; title?: unknown; by?: unknown } | null | undefined;
+  if (item.kind !== 'gate' || !r || typeof r.choice !== 'string') return null;
+  const c = item.choices.find((x) => x.id === r.choice);
+  if (!c) return null;
+  return { choice: c.id, title: typeof r.title === 'string' && r.title ? r.title : c.title, by: typeof r.by === 'string' && r.by ? r.by : 'PDT' };
+}
+
+/** Whether `action` is one of a gate's choices other than the recommended one: the Inbox asks again before it acts. */
+export function againstRecommendation(item: InboxItem, action: string): boolean {
+  const r = recommendationOf(item);
+  return r !== null && r.choice !== action && item.choices.some((c) => c.id === action);
+}
+
+/** A recommendation's colour: closing or rejecting is a warning sign, asking for changes a caution, the rest a go. */
+export function recommendationTone(choice: string): 'error' | 'warning' | 'success' {
+  if (/close|reject|stop|wont|cancel|deny/i.test(choice)) return 'error';
+  if (/change|retry|again/i.test(choice)) return 'warning';
+  return 'success';
 }
 
 /** What an answer says in its Undo toast and Recently answered: the choice's title, else what kind of answer it is. */

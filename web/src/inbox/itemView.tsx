@@ -21,7 +21,7 @@ import { STORAGE_PATH, useCleanFinished } from '../projects/worktreeStorage';
 import type { ItemLink } from './ItemLinks';
 import {
   CHECKS_PATH, commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
-  holdsTicket, inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, questionsOf, resends, ticketProposalOf, triageOf,
+  againstRecommendation, holdsTicket, inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, recommendationOf, recommendationTone, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
 import { answerTiming, useAnswersHeld } from '../common/answerGuard';
 import { answerApproval } from './approval';
@@ -579,6 +579,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
       }
       case 'gate': {
         const question = gateQuestion(item);
+        const recommendation = recommendationOf(item);
         const text = nonBlank(item.body.text);
         const from = workflow ?? 'Workflow';
         // A ticket stalled with nothing going on (PDT-510: its CI cancelled, or idle): it closes once something does.
@@ -592,6 +593,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
               : `${workflow ? `Workflow ${workflow}` : 'A workflow'} waits for your choice.`,
           content: (
             <>
+              {/* What the step before recommends leads (PDT-640: the reviewer said Close; another choice asks again). */}
+              {recommendation && (
+                <Callout tone={recommendationTone(recommendation.choice)} aria-label="Recommendation" title={`${recommendation.by} recommends: ${recommendation.title}`}>
+                  Any other choice asks you to confirm it.
+                </Callout>
+              )}
               {/* The whole question, when the title is only its step's name or first line (PDT-306: a pull request's review). */}
               {question && <AgentMessage aria-label="Question" name={from} label={from}><Markdown>{question}</Markdown></AgentMessage>}
               {/* What the gate is about, when its step says more than its question (PDT-288: a missing nightly). */}
@@ -630,7 +637,12 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
     };
     return { ...a, title: `Confirm ${a.title.charAt(0).toLowerCase()}${a.title.slice(1)}`, short: 'Confirm', danger: true, confirming: true, disabled, run: confirm };
   });
-  const hint = armed ? 'Press again to confirm: this acts outside PDT or can’t be taken back.' : spec.hint;
+  const rec = recommendationOf(item);
+  const hint = !armed
+    ? spec.hint
+    : rec && againstRecommendation(item, armed.id)
+      ? `Press again to confirm: ${rec.by} recommends ${rec.title}.`
+      : 'Press again to confirm: this acts outside PDT or can’t be taken back.';
   // Its key asks twice too (`y` on an Allow that posts outside PDT).
   const onKey = (key: string) => {
     const a = actions.find((x) => x.kbd === key && needsConfirm(item, x.id));

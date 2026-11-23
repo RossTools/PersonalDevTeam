@@ -63,10 +63,13 @@ dependencies, network or file access), whether it has tests and a changelog entr
 your suggested decision with why. `data`: `{\"feedback\": \"…\"}`, what you would ask its author to change, written \
 to them (it is posted on the pull request only if the user picks Request changes).";
 
+/// The Inbox item after a review: the pull request's number and title.
+const DECIDE_TITLE: &str = "#{{trigger.number}}: {{trigger.title}}";
+
 /// The Inbox question after a review.
-const DECIDE: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})** by {{trigger.author}} \
-({{trigger.kind}}), {{trigger.changedFiles}} files, +{{trigger.additions}} -{{trigger.deletions}}: \
-{{trigger.title}}\n\nCI on its head: {{steps.ci_now.ci}} {{steps.ci_now.ciUrl}}\n\n{{steps.review.summary}}\n\n\
+const DECIDE: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})**: {{trigger.title}}\n\nBy \
+{{trigger.author}} ({{trigger.kind}}), {{trigger.changedFiles}} files, +{{trigger.additions}} -{{trigger.deletions}}. \
+CI on its head: {{steps.ci_now.ci}} {{steps.ci_now.ciUrl}}\n\n{{steps.review.summary}}\n\n\
 Approve & merge sets it to merge once CI passes. Request changes posts your note (or the review's feedback) on it \
 as a review; it is reviewed again when its author pushes. Close closes it, with your note as a comment.";
 
@@ -376,7 +379,14 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             n["retry"] = json!({"max": 5, "backoffMs": 60_000});
             n
         },
-        gate("decide", 1840, 240, "Ask me", DECIDE),
+        // The reviewer's decision leads, Enter takes it, and any other choice asks again (PDT-640).
+        {
+            let mut n = gate("decide", 1840, 240, "Ask me", DECIDE);
+            n["config"]["title"] = json!(DECIDE_TITLE);
+            n["config"]["recommend"] = json!({"choice": "{{steps.review.outcome}}", "by": "Reviewer",
+                "as": {"merge": "approve_merge", "changes": "request_changes"}});
+            n
+        },
         request(
             "decide_request",
             2100,

@@ -115,6 +115,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   (a gate's or a manual step's choice whose port leads to a node whose kind says `NodeKind::outward`; Allow on a tool
   `ToolTable::outward` names: public, or open-world and not read-only). A node kind that posts or closes something
   outside PDT as the user overrides `outward`; `needsConfirm` (`inbox/model.ts`) reads the flag, and keeps no list.
+  A gate with `recommend` marks one choice `recommended` (and primary, so Enter takes it) and puts
+  `body.recommendation` on the item; every other choice of that item asks twice.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt
   only while the session isn't in Bypass (`Session::asks_nothing`); otherwise, as for Codex and Devin, unless it is a
   PM session and the project lets the PM act (`pm::acts_without_asking`, which `pm::request_opened` uses too), a conversation gets an approval card of PDT's own (`conversations::held`: a `Request` event
