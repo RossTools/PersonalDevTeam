@@ -25,6 +25,10 @@ checkoutPath: string | null,
  */
 paused: boolean, 
 /**
+ * An update the owner asks for uses this instance's own update channel, not the owner's (PDT-637).
+ */
+ownUpdateChannel: boolean, 
+/**
  * The most of the project's tickets this instance takes at once (reported to the owner); None: no cap of its own.
  */
 cap: number | null, 

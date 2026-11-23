@@ -1,5 +1,6 @@
 import { enc, request } from './core';
 import type { NewSecret } from './gen/NewSecret';
+import type { RemoteSecretSet } from './gen/RemoteSecretSet';
 import type { Secret } from './gen/Secret';
 import type { SecretPatch } from './gen/SecretPatch';
 import type { SecretStoreInfo } from './gen/SecretStoreInfo';
@@ -14,4 +15,6 @@ export const secretsApi = {
     request<Secret>(`/api/secrets/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
   deleteSecret: (id: string) => request<void>(`/api/secrets/${enc(id)}`, { method: 'DELETE' }),
   secretUses: (id: string) => request<SecretUse[]>(`/api/secrets/${enc(id)}/uses`),
+  /** On a project's owner: the secrets its remote instances keep for it, by name. */
+  remoteSecrets: () => request<RemoteSecretSet[]>('/api/secrets/remote'),
 };

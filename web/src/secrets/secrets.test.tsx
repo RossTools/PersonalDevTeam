@@ -23,7 +23,7 @@ describe('secrets', () => {
       'GET /api/personas': [],
       'GET /api/secrets/store': { backend: 'keychain', path: null, problem: null },
       'GET /api/secrets/s-NPM_TOKEN/uses': [
-        { id: 1, secretId: 's-NPM_TOKEN', at: Date.now() - 60_000, by: 'Coder · PDT-9', how: 'run_with_secrets', sessionId: 'x', runId: null },
+        { id: 1, secretId: 's-NPM_TOKEN', at: Date.now() - 60_000, by: 'Coder · PDT-9', how: 'run_with_secrets', sessionId: 'x', runId: null, instance: null },
       ],
     });
     renderWithQuery(<SecretsPage />);
@@ -36,6 +36,31 @@ describe('secrets', () => {
     await userEvent.click(screen.getAllByRole('button', { name: 'Uses' })[0]);
     const uses = await screen.findByRole('list', { name: 'Uses' });
     expect(within(uses).getByText('run_with_secrets')).toBeInTheDocument();
+  });
+
+  it('lists, by name, the secrets remote instances keep for its projects, and where a forwarded one went', async () => {
+    stubApi({
+      'GET /api/secrets': [secret('NPM_TOKEN')],
+      'GET /api/projects': [],
+      'GET /api/personas': [],
+      'GET /api/secrets/store': { backend: 'keychain', path: null, problem: null },
+      'GET /api/secrets/remote': [{
+        instanceId: 'i1', instanceName: 'win-box', projectId: 'p1', projectKey: 'VAL', projectName: 'Valley',
+        secrets: [{ name: 'CERT', lastUsedAt: Date.now() - 60_000, lastUsedBy: 'Coder · VAL-4' }, { name: 'SIGN', lastUsedAt: null, lastUsedBy: null }],
+      }],
+      'GET /api/secrets/s-NPM_TOKEN/uses': [
+        { id: 1, secretId: 's-NPM_TOKEN', at: Date.now() - 60_000, by: 'Coder · VAL-4', how: 'run_with_secrets', sessionId: 'x', runId: null, instance: 'win-box' },
+      ],
+    });
+    renderWithQuery(<SecretsPage />);
+    const section = await screen.findByRole('region', { name: 'On remote instances' });
+    expect(section).toHaveTextContent('on win-box (VAL)');
+    const list = within(section).getByRole('list', { name: 'Secrets on win-box for Valley' });
+    expect(list).toHaveTextContent('CERT');
+    expect(list).toHaveTextContent('Used 1m ago by Coder · VAL-4');
+    expect(list).toHaveTextContent('SIGNNot used yet');
+    await userEvent.click(screen.getByRole('button', { name: 'Uses' }));
+    expect(await screen.findByRole('list', { name: 'Uses' })).toHaveTextContent('on win-box');
   });
 
   it('says when values are kept in a file in the data folder', async () => {

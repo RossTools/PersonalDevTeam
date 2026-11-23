@@ -480,9 +480,15 @@ async fn newest_with_fallback(
 /// `token`, and the result says what the check found. Runs in its own task, so a dropped request cannot leave
 /// `checking` behind.
 pub(crate) async fn check(st: &AppState) -> (UpdateStatus, CheckResult) {
+    check_on(st, None).await
+}
+
+/// [`check`] on `channel` rather than the host's (None: the host's): a project's owner asking this instance to
+/// update on its channel (PDT-637).
+pub(crate) async fn check_on(st: &AppState, channel: Option<UpdateChannel>) -> (UpdateStatus, CheckResult) {
     let task = tokio::spawn({
         let st = st.clone();
-        async move { check_now(&st).await }
+        async move { check_now(&st, channel).await }
     });
     task.await.unwrap_or_else(|e| {
         let s = st.update.snapshot();
@@ -490,9 +496,12 @@ pub(crate) async fn check(st: &AppState) -> (UpdateStatus, CheckResult) {
     })
 }
 
-async fn check_now(st: &AppState) -> (UpdateStatus, CheckResult) {
+async fn check_now(st: &AppState, channel: Option<UpdateChannel>) -> (UpdateStatus, CheckResult) {
     let svc = &st.update;
     refresh_settings(st).await;
+    if let Some(c) = channel {
+        svc.edit(|s| s.channel = c);
+    }
     if !svc.enabled {
         let s = svc.snapshot();
         let why = s.disabled_reason.clone().unwrap_or_else(|| "updates are off on this host".into());
@@ -902,7 +911,7 @@ fn this_host() -> HostOs {
     HostOs::current_linux(appimage)
 }
 
-fn host_busy(busy: &[String]) -> ApiError {
+pub(crate) fn host_busy(busy: &[String]) -> ApiError {
     ApiError::conflict(
         codes::HOST_BUSY,
         format!("Busy: {}. Update anyway? Sessions resume afterwards.", busy.join("; ")),

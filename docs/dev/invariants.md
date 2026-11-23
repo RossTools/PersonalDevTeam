@@ -371,6 +371,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **The secret tools are no way round the agent's sandbox.** `run_with_secrets` and `write_secret_file` run in pdtd, so
   they ask (unless the session asks before nothing), must name a secret, and stay in the session's folder, out of
   `.git` and off symlinks (pdt-api `vault.rs` `session_path`). Don't mark them non-asking or let the PM act for them.
+- **A forwarded secret lives only in its call on the remote instance.** For a remote session the owner asks first and
+  sends its values in `/link/exec/secrets` (pdt-api `exec/secrets.rs`); the remote instance redacts with a `Redactor`
+  of the call's own and must never give them to its store's redactor (it would keep them), store them, log the
+  request or put them in an error. Its own secrets serve only remote projects their `projects` name, win a name clash,
+  and only their names cross the link (the heartbeat, the reply's `local`).
 - **Tokens are never returned by the API or logged**, and follow a redirect only to the same host. The forges'
   `get_pages` follows a `Link: next` page only on the API's own host, since `call` sends the token to any whole URL.
 - **An MCP server's sign-in addresses are https (or loopback http) before PDT uses them**: its authorization
