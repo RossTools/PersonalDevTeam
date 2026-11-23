@@ -33,6 +33,40 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// killed process can hold its listening socket for a moment after its terminal has exited (PDT-217).
 const PORT_RELEASE_WAIT: Duration = Duration::from_secs(10);
 
+/// Where a driven run's progress goes: its row in this instance's store ([`Stored`]), or, for a run a remote instance
+/// drives for its owner, the owner (`exec::runs`).
+#[async_trait::async_trait]
+pub(crate) trait Progress: Send + Sync {
+    async fn state(&self, state: RunState);
+    async fn process(&self, detached: bool, process: Option<&str>);
+    async fn finish(&self, state: RunState, code: Option<i32>, error: Option<&str>);
+    /// A step's terminal has started.
+    fn step_started(&self, _step: RunStep) {}
+}
+
+/// A run of this instance's: its progress is its row.
+struct Stored {
+    st: AppState,
+    id: String,
+}
+
+#[async_trait::async_trait]
+impl Progress for Stored {
+    async fn state(&self, state: RunState) {
+        self.st.store.set_run_state(&self.id, state, now_ms()).await.log_warn("record the run state");
+    }
+
+    async fn process(&self, detached: bool, process: Option<&str>) {
+        self.st.store.set_run_process(&self.id, detached, process).await.log_warn("record the run process");
+    }
+
+    async fn finish(&self, state: RunState, code: Option<i32>, error: Option<&str>) {
+        if let Err(e) = self.st.store.finish_run(&self.id, state, code, error, now_ms()).await {
+            tracing::warn!(run = %self.id, error = %e, "could not record the run's outcome");
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct RunControl {
     stop: AtomicBool,
@@ -196,6 +230,9 @@ async fn approved(st: &AppState, run: &Run, def: RunDef) -> Result<RunDef, Strin
 /// Starts a stopped run again: a port (its old one when free) and link for a web run, the first state, then the
 /// driver. The caller holds `run_start_lock` and has checked the run is not active.
 pub(crate) async fn relaunch(st: &AppState, mut run: Run, def: RunDef) -> Result<Run, ApiError> {
+    if run.instance.is_some() {
+        return crate::exec::relaunch_remote_run(st, run, def).await;
+    }
     let id = run.id.clone();
     // The link and the driver are settled under the lock applying remote access holds (it relinks and restarts the
     // driven runs), so a remote toggle meanwhile cannot leave this run with the other setting's link.
@@ -236,7 +273,7 @@ fn vars(st: &AppState, run: &Run) -> RunVars {
 /// `run_start_lock` (or run before anything can start, at resume) so two runs cannot pick the same port.
 pub(crate) async fn allocate_port(st: &AppState, prefer: Option<u16>, except_run: Option<&str>) -> Option<u16> {
     let range = st.store.get_host_settings().await.ok()?.run_ports;
-    let taken: BTreeSet<u16> = st
+    let mut taken: BTreeSet<u16> = st
         .store
         .list_active_runs()
         .await
@@ -245,6 +282,8 @@ pub(crate) async fn allocate_port(st: &AppState, prefer: Option<u16>, except_run
         .filter(|r| Some(r.id.as_str()) != except_run)
         .filter_map(|r| r.port)
         .collect();
+    // The web runs this instance drives for owners of remote projects.
+    taken.extend(crate::exec::remote_run_ports(st));
     tokio::task::spawn_blocking(move || pick_port(range, &taken, prefer, port_is_free)).await.ok()?
 }
 
@@ -379,8 +418,8 @@ type Outcome = (RunState, Option<i32>, Option<String>);
 /// Resolves with the command's exit code once it has ended (`None`: unknown, for a detached command).
 type ExitFuture = Pin<Box<dyn Future<Output = Option<i32>> + Send>>;
 
-async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) -> Outcome {
-    st.store.set_run_process(&run.id, def.detach, None).await.log_warn("record the run process");
+async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef, p: &dyn Progress) -> Outcome {
+    p.process(def.detach, None).await;
     let v = vars(st, run);
     let pairs = v.pairs();
     let shell = if st.platform.windows { CommandShell::Cmd } else { CommandShell::Sh };
@@ -395,7 +434,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
         return (RunState::Failed, None, Some(format!("could not create the data folder {dir}: {e}")));
     }
     if let Some(setup) = &def.setup {
-        st.store.set_run_state(&run.id, RunState::SettingUp, now_ms()).await.log_warn("record the run state");
+        p.state(RunState::SettingUp).await;
         let setup = match expand_command(setup, &pairs, shell) {
             Ok(s) => s,
             Err(e) => return (RunState::Failed, None, Some(format!("setup did not start: {e}"))),
@@ -404,6 +443,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
             Ok(rx) => rx,
             Err(e) => return (RunState::Failed, None, Some(format!("setup could not start: {e}"))),
         };
+        p.step_started(RunStep::Setup);
         let code = rx.await.unwrap_or(-1);
         if ctl.stopping() {
             return (RunState::Stopped, None, stop_reason(ctl));
@@ -416,7 +456,7 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
         return (RunState::Stopped, None, stop_reason(ctl));
     }
     let first = if run.kind == RunKind::Test { RunState::Running } else { RunState::Starting };
-    st.store.set_run_state(&run.id, first, now_ms()).await.log_warn("record the run state");
+    p.state(first).await;
     let command = match expand_command(&def.command, &pairs, shell) {
         Ok(c) => c,
         Err(e) => return (RunState::Failed, None, Some(format!("the command did not start: {e}"))),
@@ -430,12 +470,15 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
             Ok(d) => d,
             Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
         };
-        st.store.set_run_process(&run.id, true, Some(&d.process)).await.log_warn("record the run process");
+        p.process(true, Some(&d.process)).await;
         let rx = detached::watch(d.process, Some(d.main));
         Box::pin(async move { rx.await.ok().flatten() })
     } else {
         match start_step(st, ctl, run, RunStep::Command, command, &env).await {
-            Ok(rx) => Box::pin(async move { Some(rx.await.unwrap_or(-1)) }),
+            Ok(rx) => {
+                p.step_started(RunStep::Command);
+                Box::pin(async move { Some(rx.await.unwrap_or(-1)) })
+            }
             Err(e) => return (RunState::Failed, None, Some(format!("the command could not start: {e}"))),
         }
     };
@@ -445,10 +488,10 @@ async fn drive(st: &AppState, ctl: &Arc<RunControl>, run: &Run, def: &RunDef) ->
     }
     let mut ready = run.kind == RunKind::Test;
     if run.kind == RunKind::Run && !def.web {
-        st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await.log_warn("record the run state");
+        p.state(RunState::Ready).await;
         ready = true;
     }
-    watch_command(st, ctl, run, def.detach, ready, exit).await
+    watch_command(st, ctl, run, def.detach, ready, exit, p).await
 }
 
 /// Follows a started command until it ends: readiness for a web run, then the outcome.
@@ -459,16 +502,17 @@ async fn watch_command(
     detach: bool,
     mut ready: bool,
     mut exit: ExitFuture,
+    p: &dyn Progress,
 ) -> Outcome {
     let code = loop {
         tokio::select! {
             c = &mut exit => break c,
             _ = tokio::time::sleep(PROBE_EVERY), if !ready => {
-                if let Some(p) = run.port
-                    && answers(p).await
+                if let Some(port) = run.port
+                    && answers(port).await
                 {
                     ready = true;
-                    st.store.set_run_state(&run.id, RunState::Ready, now_ms()).await.log_warn("record the run state");
+                    p.state(RunState::Ready).await;
                 }
             }
         }
@@ -502,13 +546,21 @@ fn stop_reason(ctl: &RunControl) -> Option<String> {
 
 /// Starts driving `run` in the background. The row must already be stored.
 pub(crate) fn start(st: &AppState, run: Run, def: RunDef) {
-    let ctl = Arc::new(RunControl {
-        web_port: run.port.filter(|_| def.web),
-        uses_host: run.kind == RunKind::Run && uses_run_host(&def),
-        ..Default::default()
-    });
-    let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
-    supervise(st, run, ctl, async move { drive(&st2, &ctl2, &run2, &def).await });
+    let p = Arc::new(Stored { st: st.clone(), id: run.id.clone() });
+    let uses_host = run.kind == RunKind::Run && uses_run_host(&def);
+    start_with(st, run, def, p, uses_host);
+}
+
+/// Starts driving a run an owner asked this instance to run for it (`exec::runs`): it has no row here, and its
+/// progress goes to the owner. It isn't restarted when remote access changes the host.
+pub(crate) fn start_for_owner(st: &AppState, run: Run, def: RunDef, p: Arc<dyn Progress>) {
+    start_with(st, run, def, p, false);
+}
+
+fn start_with(st: &AppState, run: Run, def: RunDef, p: Arc<dyn Progress>, uses_host: bool) {
+    let ctl = Arc::new(RunControl { web_port: run.port.filter(|_| def.web), uses_host, ..Default::default() });
+    let (st2, ctl2, run2, p2) = (st.clone(), ctl.clone(), run.clone(), p.clone());
+    supervise(st, run, ctl, p, async move { drive(&st2, &ctl2, &run2, &def, p2.as_ref()).await });
 }
 
 /// Watches a detached run a previous pdtd started, whose processes are still alive: its log in the Output
@@ -529,19 +581,28 @@ async fn reattach(st: &AppState, run: Run, process: String, def: Option<RunDef>)
         tracing::warn!(run = %run.id, error = %e, "could not follow a detached run's log");
     }
     let (st2, ctl2, run2) = (st.clone(), ctl.clone(), run.clone());
-    supervise(st, run, ctl, async move {
+    let p: Arc<dyn Progress> = Arc::new(Stored { st: st.clone(), id: run.id.clone() });
+    let p2 = p.clone();
+    supervise(st, run, ctl, p, async move {
         let rx = detached::watch(process, None);
         if let Some(p) = ctl2.web_port {
             crate::remote::map_run_port(&st2, p).await;
         }
         let ready = run2.state == RunState::Ready || run2.port.is_none();
-        watch_command(&st2, &ctl2, &run2, true, ready, Box::pin(async move { rx.await.ok().flatten() })).await
+        let exit = Box::pin(async move { rx.await.ok().flatten() });
+        watch_command(&st2, &ctl2, &run2, true, ready, exit, p2.as_ref()).await
     });
 }
 
 /// Registers `ctl` as the run's driver and runs `driver` in the background, recording its outcome. The driver runs
 /// in a task of its own: one that panics fails the run (logged), so its row and control never stay behind.
-fn supervise(st: &AppState, run: Run, ctl: Arc<RunControl>, driver: impl Future<Output = Outcome> + Send + 'static) {
+fn supervise(
+    st: &AppState,
+    run: Run,
+    ctl: Arc<RunControl>,
+    p: Arc<dyn Progress>,
+    driver: impl Future<Output = Outcome> + Send + 'static,
+) {
     st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).insert(run.id.clone(), ctl.clone());
     let st = st.clone();
     tokio::spawn(async move {
@@ -553,10 +614,8 @@ fn supervise(st: &AppState, run: Run, ctl: Arc<RunControl>, driver: impl Future<
             }
         };
         // During shutdown the row stays active, so the next pdtd resumes it.
-        if !st.shutting_down.load(Ordering::SeqCst)
-            && let Err(e) = st.store.finish_run(&run.id, state, code, error.as_deref(), now_ms()).await
-        {
-            tracing::warn!(run = %run.id, error = %e, "could not record the run's outcome");
+        if !st.shutting_down.load(Ordering::SeqCst) {
+            p.finish(state, code, error.as_deref()).await;
         }
         ctl.finished.store(true, Ordering::SeqCst);
         ctl.done.notify_waiters();
@@ -616,6 +675,12 @@ async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bo
         None => {
             if let Ok(Some(r)) = st.store.get_run(id).await
                 && r.state.is_active()
+                && r.instance.is_some()
+            {
+                return crate::exec::stop_remote_run(st, &r, reason).await;
+            }
+            if let Ok(Some(r)) = st.store.get_run(id).await
+                && r.state.is_active()
             {
                 // A detached command a previous pdtd started, not reattached yet.
                 if let Some(p) = r.process {
@@ -646,6 +711,11 @@ pub async fn resume_runs(st: &AppState) -> usize {
     for mut run in active {
         if st.shutting_down.load(Ordering::SeqCst) {
             break;
+        }
+        // Its instance drives it: its terminals follow its output again, and its instance's poller resumes.
+        if run.instance.is_some() {
+            crate::exec::resume_remote_run(st, &run);
+            continue;
         }
         if let Some(process) = run.process.clone() {
             let p = process.clone();
@@ -732,7 +802,8 @@ pub async fn sweep_gone_runs(st: &AppState) {
             return;
         }
     };
-    for run in active {
+    // A remote run's checkout is on its instance.
+    for run in active.into_iter().filter(|r| r.instance.is_none()) {
         let project = match st.store.get_project(&run.project_id).await {
             Ok(Some(p)) => p,
             // Deleting a project deletes its runs; a row without one is not this sweep's business.

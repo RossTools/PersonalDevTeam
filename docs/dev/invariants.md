@@ -443,6 +443,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
   checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
   is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **A remote run's process isn't the owner's.** Its row on the owner has `instance_id`, no `port` (the port is the
+  remote's: the owner's unique active-port index must never see it) and, in `process`, the id of its current start:
+  reports carrying another start's id are dropped, and a run the remote no longer lists ends as stopped. Everything
+  that treats a run as local (`resume_runs`, `sweep_gone_runs`, the run limit, ports, reset data) skips one with an
+  instance; `run_manager::relaunch` and `stop` hand it to `exec`. The remote instance keeps no `runs` row for it.
 - **The owner never names a path on a remote instance's disk.** Files and Changes requests name a branch (or none, for
   the remote project's checkout) and paths inside it; the remote instance finds the folder itself
   (`exec::files::place`: a valid branch name, `pdt_git::check_worktree_path`, inside its checkout) and cleans and

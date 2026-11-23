@@ -35,7 +35,7 @@ const project: Project = { id: 'p', name: 'PDT', repoPath: '/r', baseBranch: 'ma
 const run = (over: Partial<Run>): Run => ({
   id: 'r1', projectId: 'p', worktreeId: null, branch: 'main', name: 'web', kind: 'run', state: 'ready',
   port: 8401, url: 'https://box.t.ts.net:8401/', dataDir: '/d', cwd: '/r', exitCode: null, error: null, detached: false,
-  createdAt: 1, updatedAt: 1, ...over,
+  instance: null, createdAt: 1, updatedAt: 1, ...over,
 });
 const config = {
   filePath: '/r/.pdt/project.toml', file: '', overrides: null, error: null,
@@ -113,6 +113,13 @@ describe('RunView', () => {
     expect(screen.getByText(/Detached: keeps running when PDT restarts/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Setup' }));
     expect(screen.queryByText(/Detached: keeps running/)).not.toBeInTheDocument();
+  });
+
+  it('marks a run on another instance, whose output it only shows', async () => {
+    stubApi({});
+    renderWithQuery(<RunView run={run({ instance: { id: 'i1', name: 'win-box', lastSeenAt: Date.now() } })} onRemoved={() => {}} />);
+    expect(screen.getByText('on win-box')).toBeInTheDocument();
+    expect(screen.getByText('Runs on win-box · output only')).toBeInTheDocument();
   });
 
   it('copies the URL from its menu', async () => {
