@@ -86,7 +86,16 @@ function Get-RandomPassword {
     return @{ Text = $text; Secure = $secure }
 }
 
-function Install-SystemPart {
+# $given: the script's parameters, passed in (a function reading them from the script's scope hides their use).
+function Install-SystemPart([hashtable]$given) {
+    $TailscaleKey = $given.TailscaleKey
+    $OwnerLogin = $given.OwnerLogin
+    $OwnerAddress = $given.OwnerAddress
+    $PairingCode = $given.PairingCode
+    $InstanceName = $given.InstanceName
+    $Agents = $given.Agents
+    $GodotVersion = $given.GodotVersion
+    $MsvcBuildTools = $given.MsvcBuildTools
     if (-not $TailscaleKey) { throw 'Set TS_AUTHKEY (or -TailscaleKey) to a Tailscale auth key.' }
     if (-not $OwnerLogin) { throw 'Set PDT_OWNER_LOGIN (or -OwnerLogin) to your Tailscale login.' }
     $agentList = $Agents
@@ -244,7 +253,14 @@ function Install-UserPart {
 
 $null = New-Item -ItemType Directory -Path $stateDir -Force
 try {
-    if ($Phase -eq 'user') { Install-UserPart } else { Install-SystemPart }
+    if ($Phase -eq 'user') {
+        Install-UserPart
+    } else {
+        Install-SystemPart @{
+            TailscaleKey = $TailscaleKey; OwnerLogin = $OwnerLogin; OwnerAddress = $OwnerAddress; PairingCode = $PairingCode
+            InstanceName = $InstanceName; Agents = $Agents; GodotVersion = $GodotVersion; MsvcBuildTools = [bool]$MsvcBuildTools
+        }
+    }
 } catch {
     Write-Step "Failed: $($_.Exception.Message)"
     throw
