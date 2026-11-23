@@ -7,7 +7,7 @@ import type { PersonaVersion } from '../api/gen/PersonaVersion';
 import { renderWithQuery, Reply, stubApi, type Call } from '../test-utils';
 import { PersonaPage } from './PersonaPage';
 import { PersonasList } from './PersonasList';
-import { normalTools } from './model';
+import { normalTools, toolGroup } from './model';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -39,6 +39,21 @@ describe('normalTools', () => {
   it('saves the list as picked, without repeats, and never drops a name it does not know', () => {
     expect(normalTools([])).toEqual([]);
     expect(normalTools(['get_ticket', 'brand_new_tool', 'get_ticket'])).toEqual(['get_ticket', 'brand_new_tool']);
+  });
+});
+
+describe('toolGroup', () => {
+  it("groups PDT's tools by what they work on, and anything else as Other tools", () => {
+    const groups = Object.fromEntries(['get_ticket', 'link_issue', 'add_review_comment', 'ci_retry', 'issue_create', 'change_request_open',
+      'doc_edit', 'comments_list', 'document_open_beside', 'run_with_secrets', 'catalog_get', 'list_workflow_runs', 'send_to_session',
+      'list_watches', 'write_journal', 'list_todos', 'report_bug', 'discord_get'].map((n) => [n, toolGroup(n)]));
+    expect(groups).toEqual({
+      get_ticket: 'Tickets', link_issue: 'Tickets', add_review_comment: 'Tickets',
+      ci_retry: 'Pull requests & CI', issue_create: 'Pull requests & CI', change_request_open: 'Pull requests & CI',
+      doc_edit: 'Documents', comments_list: 'Documents', document_open_beside: 'Documents',
+      run_with_secrets: 'Secrets', catalog_get: 'Workflows', list_workflow_runs: 'Workflows', send_to_session: 'Sessions',
+      list_watches: 'Watches', write_journal: 'Notes', list_todos: 'Notes', report_bug: 'Other tools', discord_get: 'Other tools',
+    });
   });
 });
 
@@ -80,7 +95,11 @@ describe('PersonaPage', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Name' }), 'Writer');
     await userEvent.type(screen.getByRole('textbox', { name: 'Role' }), 'docs');
     await userEvent.type(screen.getByRole('textbox', { name: 'Model' }), 'opus');
-    await userEvent.click(screen.getByRole('checkbox', { name: /workflow_get/ }));
+    expect(await screen.findByRole('status', { name: 'Tools on' })).toHaveTextContent('5 of 12 on · the default set');
+    await userEvent.click(screen.getByRole('button', { name: 'Choose tools…' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Choose tools' })).getByRole('checkbox', { name: /workflow_get/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(screen.getByRole('status', { name: 'Tools on' })).toHaveTextContent('6 of 12 on');
     await userEvent.type(screen.getByRole('textbox', { name: 'Instructions' }), 'Write docs.');
     await userEvent.click(screen.getByRole('button', { name: 'Create persona' }));
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('n'));
@@ -90,7 +109,7 @@ describe('PersonaPage', () => {
     });
   });
 
-  it('says Saved after a rename, once the renamed persona comes back', async () => {
+  it('says Saved after a rename, and the bar goes once the renamed persona comes back', async () => {
     let current = persona('a', { version: 2 });
     stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': () => [current],
@@ -100,14 +119,19 @@ describe('PersonaPage', () => {
     });
     renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
     const name = within(await screen.findByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' });
+    expect(screen.queryByRole('group', { name: 'Unsaved changes' })).toBeNull();
     await userEvent.clear(name);
     await userEvent.type(name, 'Builder');
-    await userEvent.click(within(screen.getByRole('region', { name: 'Persona' })).getByRole('button', { name: 'Save persona' }));
-    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' })).toHaveValue('Builder'));
-    expect(await within(screen.getByRole('region', { name: 'Persona' })).findByText('Saved')).toBeInTheDocument();
+    const bar = screen.getByRole('group', { name: 'Unsaved changes' });
+    expect(bar).toHaveTextContent('Unsaved changes to Persona');
+    expect(within(bar).queryByRole('textbox', { name: 'Version note' })).toBeNull();
+    await userEvent.click(within(bar).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Unsaved changes' })).toBeNull());
+    expect(within(screen.getByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' })).toHaveValue('Builder');
   });
 
-  it('renames with PATCH and saves the setup as a new version with a note', async () => {
+  it('saves a rename and a changed setup together, the setup as a new version with a note', async () => {
     const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { version: 2 })],
       'GET /api/personas/a/versions': [version(2), version(1)],
@@ -120,22 +144,35 @@ describe('PersonaPage', () => {
     const name = within(identity).getByRole('textbox', { name: 'Name' });
     await userEvent.clear(name);
     await userEvent.type(name, 'Builder');
-    await userEvent.click(within(identity).getByRole('button', { name: 'Save persona' }));
-    await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/personas/a', body: { name: 'Builder' } }));
 
     const setup = screen.getByRole('region', { name: 'Setup · version 2' });
-    const save = within(setup).getByRole('button', { name: 'Save a new version' });
-    expect(save).toBeDisabled();
     await userEvent.click(within(setup).getByRole('button', { name: /Permission mode/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'Plan' }));
-    await userEvent.type(within(setup).getByRole('textbox', { name: 'Version note' }), 'read only');
-    await userEvent.click(save);
+    const bar = screen.getByRole('group', { name: 'Unsaved changes' });
+    expect(bar).toHaveTextContent('Unsaved changes to Persona and Setup');
+    await userEvent.type(within(bar).getByRole('textbox', { name: 'Version note' }), 'read only');
+    await userEvent.click(within(bar).getByRole('button', { name: 'Save new version' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
       note: 'read only', agent: 'claude', model: null, instructions: 'Build it.', permissionMode: 'plan', tools: [],
     }));
+    expect(calls).toContainEqual({ method: 'PATCH', path: '/api/personas/a', body: { name: 'Builder' } });
+    expect(await screen.findByText('Saved as version 3')).toBeInTheDocument();
   });
 
-  it("lists the server's tools, marks those that ask first, and keeps every tool on an instructions-only save", async () => {
+  it('discards the changes to both', async () => {
+    const calls = stubApi({ ...TOOLS_ROUTE, 'GET /api/personas': [persona('a')], 'GET /api/personas/a/versions': [version(1)] });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    const name = within(await screen.findByRole('region', { name: 'Persona' })).getByRole('textbox', { name: 'Name' });
+    await userEvent.type(name, ' 2');
+    await userEvent.type(screen.getByRole('textbox', { name: 'Model' }), 'opus');
+    await userEvent.click(within(screen.getByRole('group', { name: 'Unsaved changes' })).getByRole('button', { name: 'Discard' }));
+    expect(name).toHaveValue('Persona a');
+    expect(screen.getByRole('textbox', { name: 'Model' })).toHaveValue('');
+    expect(screen.queryByRole('group', { name: 'Unsaved changes' })).toBeNull();
+    expect(calls.filter((c) => c.method !== 'GET')).toEqual([]);
+  });
+
+  it("lists the server's tools by group, marks those that ask first, and keeps every tool on an instructions-only save", async () => {
     const tools = ['get_ticket', 'link_tickets', 'unlink_tickets', 'discord_get', 'discord_change', 'discord_webhook', 'old_tool'];
     const calls = stubApi({ ...TOOLS_ROUTE,
       'GET /api/personas': [persona('a', { builtin: 'pm', tools })],
@@ -145,15 +182,43 @@ describe('PersonaPage', () => {
     });
     renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
     const setup = await screen.findByRole('region', { name: 'Setup · version 1' });
+    expect(await within(setup).findByRole('status', { name: 'Tools on' })).toHaveTextContent("6 of 12 on · 1 this PDT doesn't have");
+    await userEvent.click(within(setup).getByRole('button', { name: 'Choose tools…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Choose tools' });
     for (const name of ['link_tickets', 'unlink_tickets', 'discord_get', 'discord_change', 'discord_webhook', 'old_tool']) {
-      expect(await within(setup).findByRole('checkbox', { name: new RegExp(`^${name}\\b`) })).toBeChecked();
+      expect(within(dialog).getByRole('checkbox', { name: new RegExp(`\\b${name}$`) })).toBeChecked();
     }
-    expect(within(setup).getByRole('checkbox', { name: /workflow_get/ })).not.toBeChecked();
-    expect(within(setup).getByRole('checkbox', { name: /^link_tickets\b.*Does link_tickets \(asks you first\)$/ })).toBeInTheDocument();
-    expect(within(setup).getByRole('checkbox', { name: /^discord_get\b.*Does discord_get$/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: /workflow_get$/ })).not.toBeChecked();
+    const tickets = within(dialog).getByRole('region', { name: 'Tickets' });
+    expect(tickets).toHaveTextContent('3 of 8 on');
+    expect(within(tickets).getByRole('checkbox', { name: /^Does link_tickets \(asks you first\) link_tickets$/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole('region', { name: 'Other tools' })).toHaveTextContent('3 of 3 on');
+    expect(within(dialog).getByRole('region', { name: 'Not in this PDT' })).toHaveTextContent('old_tool');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
     await userEvent.type(within(setup).getByRole('textbox', { name: 'Instructions' }), ' Carefully.');
-    await userEvent.click(within(setup).getByRole('button', { name: 'Save a new version' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Unsaved changes' })).getByRole('button', { name: 'Save new version' }));
     await waitFor(() => expect((calls.find((c) => c.method === 'PUT')?.body as { tools: string[] }).tools).toEqual(tools));
+  });
+
+  it("searches the tools and turns a group's shown tools on with All", async () => {
+    const calls = stubApi({ ...TOOLS_ROUTE,
+      'GET /api/personas': [persona('a')],
+      'GET /api/personas/a/versions': [version(1)],
+      'PUT /api/personas/a': persona('a', { version: 2 }),
+    });
+    renderWithQuery(<PersonaPage personaId="a" onSelect={() => {}} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Choose tools…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Choose tools' });
+    await userEvent.type(within(dialog).getByRole('searchbox', { name: 'Search tools' }), 'link');
+    const tickets = within(dialog).getByRole('region', { name: 'Tickets' });
+    expect(within(tickets).getAllByRole('checkbox', { name: /_tickets$/ })).toHaveLength(2);
+    expect(within(dialog).queryByRole('region', { name: 'Other tools' })).toBeNull();
+    await userEvent.click(within(tickets).getByRole('checkbox', { name: 'All Tickets' }));
+    await userEvent.type(within(dialog).getByRole('searchbox', { name: 'Search tools' }), 'nothing like it');
+    expect(within(dialog).getByText('No tools match.')).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Unsaved changes' })).getByRole('button', { name: 'Save new version' }));
+    await waitFor(() => expect((calls.find((c) => c.method === 'PUT')?.body as { tools: string[] }).tools).toEqual(['link_tickets', 'unlink_tickets']));
   });
 
   it('previews the instructions as Markdown', async () => {
@@ -206,8 +271,7 @@ describe('PersonaPage', () => {
     await userEvent.click(within(note).getByRole('button', { name: 'Show the changes' }));
     expect(within(note).getByText('New PM text.')).toBeInTheDocument();
     await userEvent.click(within(note).getByRole('button', { name: "Load PDT's template" }));
-    const setup = screen.getByRole('region', { name: 'Setup · version 2' });
-    await userEvent.click(within(setup).getByRole('button', { name: 'Save a new version' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Unsaved changes' })).getByRole('button', { name: 'Save new version' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
       note: '', agent: 'claude', model: null, instructions: 'New PM text.', permissionMode: 'ask', tools: [],
     }));
