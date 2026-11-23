@@ -78,9 +78,50 @@ pub fn github_repo_on(url: &str, host: &str) -> Option<String> {
     if is_host { r.owner_repo() } else { None }
 }
 
+/// `url` without credentials, to hand to another machine: an `http(s)://` URL loses its user info (`user:TOKEN@`, or a
+/// token given as the user), any other scheme its password (`ssh://git:pw@host` keeps `git@`). scp-style
+/// (`git@host:path`) and local paths can't carry one and come back as they are.
+pub fn without_credentials(url: &str) -> String {
+    let u = url.trim();
+    let Some((scheme, rest)) = u.split_once("://") else {
+        return u.to_string();
+    };
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let Some((user, host)) = authority.rsplit_once('@') else {
+        return u.to_string();
+    };
+    let http = scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https");
+    match user.split_once(':') {
+        _ if http => format!("{scheme}://{host}{tail}"),
+        Some((name, _)) if !name.is_empty() => format!("{scheme}://{name}@{host}{tail}"),
+        Some(_) => format!("{scheme}://{host}{tail}"),
+        None => u.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credentials_are_taken_out_of_urls() {
+        for (url, want) in [
+            ("https://user:TOKEN@github.com/o/r.git", "https://github.com/o/r.git"),
+            ("https://TOKEN@github.com/o/r", "https://github.com/o/r"),
+            ("HTTP://a:b@localhost:3000/o/r", "HTTP://localhost:3000/o/r"),
+            ("https://github.com/o/r.git", "https://github.com/o/r.git"),
+            ("https://github.com/o/r@v1", "https://github.com/o/r@v1"),
+            ("ssh://git@host.example:2222/o/r.git", "ssh://git@host.example:2222/o/r.git"),
+            ("ssh://git:pw@host.example/o/r.git", "ssh://git@host.example/o/r.git"),
+            ("ssh://:pw@host.example/o/r.git", "ssh://host.example/o/r.git"),
+            ("git@github.com:o/r.git", "git@github.com:o/r.git"),
+            ("/srv/git/thing.git", "/srv/git/thing.git"),
+            (" https://t@h.example/o/r ", "https://h.example/o/r"),
+        ] {
+            assert_eq!(without_credentials(url), want, "{url}");
+        }
+    }
 
     #[test]
     fn repo_names_from_urls() {

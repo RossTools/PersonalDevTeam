@@ -87,6 +87,9 @@ impl Default for LinkRuntime {
             .timeout(CALL_TIMEOUT)
             .connect_timeout(CALL_TIMEOUT)
             .user_agent(pdt_core::brand::user_agent(""))
+            // Signed calls go to the peer's URL only: a redirect would replay the body and `x-pdt-link-*` headers
+            // wherever it points, past `instance_url`'s checks (PDT-649).
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
         Self {
@@ -675,8 +678,11 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
         return Err(e.into());
     }
     let repo = std::path::PathBuf::from(&project.repo_path);
-    let repo_url =
-        tokio::task::spawn_blocking(move || pdt_git::remote_url(&repo, "origin")).await.map_err(ApiError::internal)?;
+    // Without credentials: an `https://user:TOKEN@…` origin's token stays on this machine (PDT-649).
+    let repo_url = tokio::task::spawn_blocking(move || pdt_git::remote_url(&repo, "origin"))
+        .await
+        .map_err(ApiError::internal)?
+        .map(|u| pdt_core::git_url::without_credentials(&u));
     tracing::info!(project = %project.key, instance = %instance.name, link = %link_id, "a remote instance joined");
     // Heard from soon (once the remote instance has saved the link this answer gives it), so the list shows it
     // connected without waiting for the next heartbeat.
@@ -1127,5 +1133,37 @@ mod tests {
         assert!(pk.verify_strict(b"hello", &sig).is_ok());
         assert!(pk.verify_strict(b"other", &sig).is_err());
         assert!(parse_public_key("not base64").is_none());
+    }
+
+    #[tokio::test]
+    async fn calls_do_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // Where a redirect would lead: it counts the requests that reach it.
+        let target = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let target_url = format!("http://{}/api/link/heartbeat", target.local_addr().unwrap());
+        let reached = std::sync::Arc::new(AtomicU32::new(0));
+        let hits = reached.clone();
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = target.accept().await {
+                hits.fetch_add(1, Ordering::SeqCst);
+                let _ = c.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}").await;
+            }
+        });
+        let peer = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let peer_url = format!("http://{}{HEARTBEAT_PATH}", peer.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = peer.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = c.read(&mut buf).await;
+                let reply =
+                    format!("HTTP/1.1 307 Temporary Redirect\r\nlocation: {target_url}\r\ncontent-length: 0\r\n\r\n");
+                let _ = c.write_all(reply.as_bytes()).await;
+            }
+        });
+
+        let rt = LinkRuntime::default();
+        let res = rt.client.post(&peer_url).header("x-pdt-link-id", "l").body("{}").send().await.unwrap();
+        assert_eq!(res.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(reached.load(Ordering::SeqCst), 0, "the redirect wasn't followed");
     }
 }

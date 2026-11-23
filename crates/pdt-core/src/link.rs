@@ -151,12 +151,15 @@ pub fn instance_url(input: &str) -> Result<String, AddressError> {
 }
 
 /// Whether two remote URLs name the same repository: the same host and path (whatever the scheme or user), or the
-/// same text without a trailing `/` or `.git`.
+/// same text without credentials, a trailing `/` or `.git` (the owner sends its origin without credentials, PDT-649).
 pub fn same_repo(a: &str, b: &str) -> bool {
     match (crate::git_url::parse_remote(a), crate::git_url::parse_remote(b)) {
         (Some(x), Some(y)) => x == y,
         _ => {
-            let plain = |s: &str| s.trim().trim_end_matches('/').trim_end_matches(".git").to_string();
+            let plain = |s: &str| {
+                let s = crate::git_url::without_credentials(s);
+                s.trim_end_matches('/').trim_end_matches(".git").to_string()
+            };
             plain(a) == plain(b)
         }
     }
@@ -627,6 +630,7 @@ mod tests {
         assert!(!same_repo("git@github.com:o/val.git", "git@github.com:o/other.git"));
         assert!(!same_repo("git@github.com:o/val.git", "git@gitlab.com:o/val.git"));
         assert!(same_repo("/srv/git/val.git", "/srv/git/val"));
+        assert!(same_repo("https://u:TOKEN@git.example/val.git", "https://git.example/val"));
     }
 
     #[test]
