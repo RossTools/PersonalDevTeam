@@ -17,6 +17,7 @@ describe('tool labels', () => {
     expect(toolVerb('Task')).toBe('Agent:');
     expect(toolVerb('mcp__github__create_issue')).toBe('github: create_issue');
     expect(toolVerb('Mystery')).toBe('Mystery');
+    expect(toolVerb('AskUserQuestion')).toBe('Question');
     expect(approvalTitle('Bash')).toBe('Run this command?');
     expect(approvalTitle('Edit')).toBe('Edit this file?');
     expect(approvalTitle('Write')).toBe('Write this file?');

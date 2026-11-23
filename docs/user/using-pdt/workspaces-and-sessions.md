@@ -111,7 +111,8 @@ Conversation is the default; change it in **Settings › This host › Agents**,
 **Show as** in a session's header switches an existing one. Claude and Devin carry the conversation over (PDT asks
 before interrupting a turn); Codex opens its terminal alongside on the same thread, and **Close terminal** goes back.
 
-You can type while the agent works; the message goes in when it's ready. When it's waiting on you, a bar over the
+You can type while the agent works; the message goes in when it's ready. When it's waiting on you, the conversation
+says **Waiting for you** instead of what it's running. If you've scrolled away from its request, a bar over the
 message box says what it wants, and **Review** jumps to it.
 
 In a conversation, ticket keys show as pills: hover one (or tab to it) for its title, stage, priority, labels, who

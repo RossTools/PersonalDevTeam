@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, Pause } from 'lucide-react';
 import {
   Alert, ApprovalCard, Button, clockTime, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, formatDuration, ImageThumb, MessageBubble, parseDiff, RelativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer,
 } from '@ui';
@@ -92,8 +92,10 @@ interface ListContext {
   /** The rows each request with rows asked (`inbox_decide`), by its arguments (`inputKey`): its call's card shows them. */
   askedRows: Map<string, DecideRow[]>;
   fullOutput?: (itemId: string) => Promise<string | null>;
+  /** The tool calls waiting on an open request (call id → request id): their rows show no spinner. */
+  waitingCalls: Map<string, string>;
 }
-const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude', askedRows: new Map() });
+const ListCtx = createContext<ListContext>({ turnDiffs: new Map(), continueTurn: null, agent: 'claude', askedRows: new Map(), waitingCalls: new Map() });
 
 /** PDT's attachment ids are UUIDs; anything else is the agent's own note ("image/png") with nothing to show. */
 const isAttachment = (s: string) => /^[0-9a-f-]{36}$/i.test(s);
@@ -135,8 +137,25 @@ function useTicker(on: boolean): number {
   return now;
 }
 
+/** The newest open request's row: while there is one, the agent waits for the user, not on a command. */
+function openRequest(rows: ConversationEvent[]): ConversationEvent | undefined {
+  return findLast(rows, (r) => r.event.kind === 'request' && r.event.state === 'open');
+}
+
 function WorkingRow({ rows }: { rows: ConversationEvent[] }) {
   const now = useTicker(true);
+  // Not "Running `rm -rf build`" under a card asking whether to run it (PDT-685).
+  const waiting = openRequest(rows);
+  if (waiting) {
+    return (
+      <div className="flex items-center gap-2 px-1 text-xs text-waiting" data-testid="working">
+        <Pause aria-hidden className="size-3.5 shrink-0" />
+        <span>Waiting for you</span>
+        <span aria-hidden>·</span>
+        <span className="shrink-0 tabular-nums">{clock(now - waiting.ts)}</span>
+      </div>
+    );
+  }
   const tool = currentTool(rows);
   const since = tool?.ts ?? turnStartedAt(rows);
   const ev = tool?.event.kind === 'tool_call' ? tool.event : null;
@@ -188,7 +207,7 @@ function MoreOutput({ itemId, bytes, onOutput }: { itemId: string; bytes: number
 
 function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
   const ev = node.row.event as Ev<'tool_call'>;
-  const { askedRows } = useContext(ListCtx);
+  const { askedRows, waitingCalls } = useContext(ListCtx);
   // The whole output, once read: the row came with a preview of it.
   const [whole, setWhole] = useState<{ seq: number; output: string } | null>(null);
   // PDT's own actions show as cards (PDT-382); in a sub-agent, as rows like the rest.
@@ -215,7 +234,8 @@ function ToolCallNode({ node, streams }: { node: RowNode; streams: Streams }) {
       subject={read ? undefined : ev.title || undefined}
       tags={read ? <TicketPills keys={read} /> : undefined}
       label={read ? `Read ${read.join(', ')}` : undefined}
-      status={ev.status}
+      // Waiting on its approval card, it isn't running yet: no spinner.
+      status={ev.status === 'running' && waitingCalls.has(ev.id) ? undefined : ev.status}
       meta={meta}
       details={
         input || shownOutput || diff ? (
@@ -578,7 +598,7 @@ export function MessageList({
   const continueLatest = useLatest(onContinue);
   // y / n go to the newest open request only.
   const keyboardFor = useMemo(() => {
-    const open = findLast(rows, (r) => r.event.kind === 'request' && r.event.state === 'open');
+    const open = openRequest(rows);
     return open?.event.kind === 'request' ? open.event.id : null;
   }, [rows]);
   const diffs = useRef(new Map<string, string>());
@@ -601,9 +621,18 @@ export function MessageList({
     asked.current = sameMap(asked.current, m);
     return asked.current;
   }, [rows]);
+  const waiting = useRef(new Map<string, string>());
+  const waitingCalls = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows) {
+      if (r.event.kind === 'request' && r.event.state === 'open' && r.event.toolCallId) m.set(r.event.toolCallId, r.event.id);
+    }
+    waiting.current = sameMap(waiting.current, m);
+    return waiting.current;
+  }, [rows]);
   const ctx = useMemo<ListContext>(
-    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl, askedRows, fullOutput }),
-    [turnDiffs, continueTurn, continueLatest, agent, imageUrl, askedRows, fullOutput],
+    () => ({ turnDiffs, continueTurn, onContinue: continueLatest, agent, imageUrl, askedRows, fullOutput, waitingCalls }),
+    [turnDiffs, continueTurn, continueLatest, agent, imageUrl, askedRows, fullOutput, waitingCalls],
   );
   // Earlier blocks than any held: read from the server (PDT-630). They show in full once in.
   const earlier = first === 0 && hasEarlier && !!onLoadEarlier;

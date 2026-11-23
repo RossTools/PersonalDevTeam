@@ -168,6 +168,22 @@ describe('MessageList', () => {
     expect(screen.getByText('also do X')).toBeInTheDocument();
   });
 
+  it('while a request is open, says it waits for you: no "Running" and no spinner on the call it holds', () => {
+    list(
+      [
+        ev(1, { kind: 'turn', phase: 'started' }),
+        ev(2, { kind: 'tool_call', id: 'tu1', tool: 'Bash', title: 'rm -rf build', input: {}, status: 'running' }),
+        ev(3, { kind: 'request', id: 'r1', requestKind: 'approval', tool: 'Bash', title: 'rm -rf build', input: {}, toolCallId: 'tu1', canAlways: false, state: 'open' }),
+      ],
+      { turnRunning: true },
+    );
+    const working = screen.getByTestId('working');
+    expect(working).toHaveTextContent('Waiting for you');
+    expect(working).not.toHaveTextContent('Running');
+    expect(screen.queryByRole('status', { name: 'Running' })).toBeNull();
+    expect(screen.queryByLabelText('Running')).toBeNull();
+  });
+
   it('says where a turn or an answer came from when it was the terminal', () => {
     list([
       ev(1, { kind: 'user_message', text: 'typed in the TUI', images: [], source: 'terminal' }),
