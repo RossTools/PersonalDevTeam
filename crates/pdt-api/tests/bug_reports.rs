@@ -154,6 +154,7 @@ async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
         owner_version: "1.0.0".into(),
         owner_public_key: "pk".into(),
         repo_url: None,
+        checkout_path: None,
         paused: false,
         last_contact_at: None,
         created_at: 1,
