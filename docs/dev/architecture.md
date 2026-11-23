@@ -679,7 +679,8 @@ answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and 
 (a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. The window
 pauses while the pointer or focus is inside the toaster (`[data-sonner-toaster]`), and its Undo toast has no timeout
 of its own: `held.ts` dismisses it when the answer goes out or is undone, so Undo is never offered too late. A new
-item's `ItemHeader` takes focus on its title when focus was lost with the last item (on `<body>` or in a toast). On `pagehide`
+item's `ItemHeader` takes focus on its title when focus was lost with the last item (on `<body>` or in a toast), and
+again when the item is snoozed or unsnoozed in place (its Snooze button, focused, gives way to Unsnooze). On `pagehide`
 the held answers go out at once, with `keepalive` (`setLeaving` in `web/src/api/core.ts`), and `useReloadOnNewBuild`
 doesn't reload for a new build while any answer is held. The client says
 how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,

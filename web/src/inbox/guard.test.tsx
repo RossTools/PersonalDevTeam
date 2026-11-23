@@ -394,6 +394,19 @@ describe('focus (PDT-667)', () => {
     expect(answers(calls)).toEqual([]);
   });
 
+  it('moves to the title when the item is snoozed or unsnoozed in place, its button swapped under the focus', () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    const a = item('a', { title: 'First' });
+    const { rerender } = renderWithQuery(<InboxView items={[a]} selectedId="a" onSelect={() => {}} />);
+    act(() => screen.getByRole('button', { name: 'Snooze' }).focus());
+    const away = { ...a, snooze: { itemId: 'a', until: 1e15, ticketId: null, ticketKey: null, createdAt: 1 } };
+    rerender(<InboxView items={[]} snoozed={[away]} selectedId="a" onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: 'First' })).toHaveFocus();
+    act(() => screen.getByRole('button', { name: 'Unsnooze' }).focus());
+    rerender(<InboxView items={[a]} selectedId="a" onSelect={() => {}} />);
+    expect(screen.getByRole('heading', { name: 'First' })).toHaveFocus();
+  });
+
   it('stays on what the user works in, like a list row, when the item changes', () => {
     stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
     const outside = document.createElement('button');

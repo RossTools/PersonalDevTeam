@@ -23,13 +23,15 @@ function focusLost(): boolean {
 
 /**
  * The kind, the ticket's key and title, the persona and the age; then the title and the links row. A new item takes
- * the focus on its title when the last one had it (PDT-667: after an answer, Snooze or Undo), so Tab goes on from here.
+ * the focus on its title when the last one had it (PDT-667: after an answer, Snooze or Undo), so Tab goes on from here;
+ * so does one snoozed or unsnoozed in place, whose Snooze button gives way to Unsnooze (or back) with the focus on it.
  */
 export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: ItemSpec; className?: string }) {
   const title = useRef<HTMLHeadingElement>(null);
+  const snoozed = !!item.snooze;
   useEffect(() => {
     if (focusLost()) title.current?.focus({ preventScroll: true });
-  }, []);
+  }, [snoozed]);
   const parts: ReactNode[] = [
     item.ticketKey ? (
       <span key="t" className="flex min-w-0 items-center gap-1.5">
