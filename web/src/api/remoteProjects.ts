@@ -1,4 +1,5 @@
 import { enc, request } from './core';
+import type { CloudSetup } from './gen/CloudSetup';
 import type { JoinRemoteProject } from './gen/JoinRemoteProject';
 import type { LinkEnded } from './gen/LinkEnded';
 import type { PlacementSettings } from './gen/PlacementSettings';
@@ -8,8 +9,9 @@ import type { RemoteProjectPatch } from './gen/RemoteProjectPatch';
 import type { RemoteProjectView } from './gen/RemoteProjectView';
 
 /**
- * Remote projects: on the owner, a project's remote instances (pairing codes, heartbeats on demand, Remove); on a
- * remote instance, the projects it joined (join, Pause, Remove). On the owner, a project's placement rules too.
+ * Remote projects: on the owner, a project's remote instances (pairing codes, heartbeats on demand, Remove, cloud VMs
+ * started and stopped through a provider); on a remote instance, the projects it joined (join, Pause, Remove). On the
+ * owner, a project's placement rules too.
  */
 export const remoteProjectsApi = {
   remoteInstances: (projectId: string) => request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances`),
@@ -24,6 +26,15 @@ export const remoteProjectsApi = {
       method: 'PATCH',
       body: JSON.stringify(p),
     }),
+  putCloudInstance: (projectId: string, linkId: string, setup: CloudSetup) =>
+    request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}/cloud`, {
+      method: 'PUT',
+      body: JSON.stringify(setup),
+    }),
+  deleteCloudInstance: (projectId: string, linkId: string) =>
+    request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}/cloud`, { method: 'DELETE' }),
+  cloudPower: (projectId: string, linkId: string, action: 'start' | 'stop') =>
+    request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}/cloud/${action}`, { method: 'POST' }),
   removeRemoteInstance: (projectId: string, linkId: string) =>
     request<LinkEnded>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}`, { method: 'DELETE' }),
   placement: (projectId: string) => request<PlacementSettings>(`/api/projects/${enc(projectId)}/placement`),

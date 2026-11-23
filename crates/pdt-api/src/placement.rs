@@ -15,6 +15,9 @@ use pdt_core::project::Project;
 /// and this instance's own facts (only read when the repository has needs).
 pub(crate) struct Placer {
     pub instances: Vec<RemoteInstance>,
+    /// The joined instances (link ids) that are cloud VMs the owner starts for work placed on them (PDT-638), but
+    /// not those whose last start or check failed, nor those running already (their PDT is down: nothing to start).
+    clouds: Vec<String>,
     rules: Vec<pdt_core::placement::LabelRule>,
     repo: Vec<pdt_core::placement::RepoRule>,
     own: Option<InstanceFacts>,
@@ -24,6 +27,14 @@ pub(crate) struct Placer {
 impl Placer {
     pub(crate) async fn load(st: &AppState, project: &Project) -> Result<Self, ApiError> {
         let instances = st.store.list_remote_instances(Some(&project.id)).await?;
+        let clouds = st
+            .store
+            .list_cloud_instances(Some(&project.id))
+            .await?
+            .into_iter()
+            .filter(|c| c.state.last_error.is_none() && c.state.power != Some(pdt_core::cloud::Power::Running))
+            .map(|c| c.link_id)
+            .collect();
         let rules = st.store.get_project_placement(&project.id).await?.rules;
         let repo = match crate::runconfig::load_effective(st, &project.id, std::path::Path::new(&project.repo_path))
             .await
@@ -40,7 +51,7 @@ impl Placer {
         } else {
             Some(crate::link::facts(st, crate::link::Agents::Cached).await)
         };
-        Ok(Placer { instances, rules, repo, own, now: now_ms() })
+        Ok(Placer { instances, clouds, rules, repo, own, now: now_ms() })
     }
 
     /// Where a ticket with `labels` goes, from the Start dialog's `runs_on`, the project's label rules and the
@@ -74,7 +85,10 @@ impl Placer {
         match self.place(labels, None) {
             Ok(Placed::Owner) => Place::Owner,
             Ok(Placed::Remote { id, .. }) => Place::Instance { name: name(&id).unwrap_or_else(|| id.clone()), id },
-            Err(PlacementError::Unavailable { id, name, paused }) => Place::Waiting { id, name, paused },
+            Err(PlacementError::Unavailable { id, name, paused }) => {
+                let cloud = self.instances.iter().any(|i| i.instance_id == id && self.clouds.contains(&i.link_id));
+                Place::Waiting { id, name, paused, starting: cloud && !paused }
+            }
             Err(e) => Place::NoInstance { why: e.to_string() },
         }
     }
@@ -142,7 +156,7 @@ mod tests {
     fn without_remote_instances_everything_runs_here_whatever_the_repository_needs() {
         let repo = vec![RepoRule { labels: vec!["windows".into()], os: Some("windows".into()), tools: vec![] }];
         let mac = InstanceFacts { os: "macos".into(), ..Default::default() };
-        let placer = Placer { instances: vec![], rules: vec![], repo, own: Some(mac), now: 0 };
+        let placer = Placer { instances: vec![], clouds: vec![], rules: vec![], repo, own: Some(mac), now: 0 };
         let labels = vec!["windows".to_string()];
         assert_eq!(placer.place(&labels, None), Ok(Placed::Owner));
         assert_eq!(placer.place(&labels, Some("owner")), Ok(Placed::Owner));

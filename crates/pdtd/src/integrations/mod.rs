@@ -26,7 +26,20 @@ pub fn built() -> Vec<Arc<dyn Integration>> {
     out.push(Arc::new(pdt_int_scryer::Scryer));
     #[cfg(feature = "plex")]
     out.push(Arc::new(pdt_int_plex::Plex));
+    #[cfg(feature = "aws")]
+    out.push(Arc::new(pdt_int_aws::Aws::new(network())));
+    #[cfg(feature = "azure")]
+    out.push(Arc::new(pdt_int_azure::Azure::new(network())));
     out
+}
+
+/// How the cloud plugins reach their providers: the network on pdtd's runtime (none outside one, as in a unit test).
+#[cfg(any(feature = "aws", feature = "azure"))]
+fn network() -> Arc<dyn Transport> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => Arc::new(pdt_forge::transport::ReqwestTransport::on(h)),
+        Err(_) => Arc::new(pdt_forge::transport::Offline),
+    }
 }
 
 /// How the Google plugin reaches Google: the network on pdtd's runtime (none outside one, as in a unit test).
@@ -57,7 +70,9 @@ pub fn forges(transport: Arc<dyn Transport>) -> Vec<Arc<dyn ForgePlugin>> {
     feature = "google",
     feature = "arr",
     feature = "scryer",
-    feature = "plex"
+    feature = "plex",
+    feature = "aws",
+    feature = "azure"
 ))]
 mod tests;
 

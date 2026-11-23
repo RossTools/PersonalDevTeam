@@ -3905,6 +3905,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdt-int-aws"
+version = "0.6.4"
+dependencies = [
+ "hex",
+ "hmac",
+ "jiff 1.0.2",
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
+name = "pdt-int-azure"
+version = "0.6.4"
+dependencies = [
+ "pdt-api",
+ "pdt-core",
+ "pdt-forge",
+ "serde_json",
+]
+
+[[package]]
 name = "pdt-int-buildkite"
 version = "0.6.4"
 dependencies = [
@@ -4137,6 +4161,8 @@ dependencies = [
  "pdt-github",
  "pdt-host",
  "pdt-int-arr",
+ "pdt-int-aws",
+ "pdt-int-azure",
  "pdt-int-buildkite",
  "pdt-int-discord",
  "pdt-int-gitlab",

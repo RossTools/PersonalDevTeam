@@ -8,6 +8,7 @@ import { toast } from '@ui';
 import { renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
 import { ago, minutesLeft, RemoteInstances } from './RemoteInstances';
+import { usageText } from './CloudInstance';
 import { RemoteProjectsPage } from './RemoteProjectsPage';
 
 afterEach(() => {
@@ -20,7 +21,7 @@ const project: Project = { id: 'p', name: 'Valley', repoPath: '/r', baseBranch: 
 const winBox: RemoteInstanceView = {
   linkId: 'l1', projectId: 'p', instanceId: 'i1', name: 'win-box', url: 'https://win-box.example.ts.net', publicKey: 'k',
   version: '0.7.0', protocol: 1, paused: false, lastSeenAt: Date.now() - 1000, lastError: null, secrets: [], createdAt: 1, state: 'connected', problem: null,
-  cap: null, remoteCap: null, poolCap: 1,
+  cap: null, remoteCap: null, poolCap: 1, needsLogin: [], cloud: null,
   facts: {
     os: 'windows', arch: 'x86_64', cpus: 8, diskFreeBytes: 50 * 1024 ** 3,
     agents: [{ agent: 'claude', installed: true, loggedIn: true }, { agent: 'codex', installed: true, loggedIn: false }, { agent: 'devin', installed: false, loggedIn: false }],
@@ -29,8 +30,8 @@ const winBox: RemoteInstanceView = {
   },
 };
 
-const view = (o: Partial<{ instances: RemoteInstanceView[]; pairing: { code: string; expiresAt: number } | null; address: string | null }> = {}) => ({
-  name: 'studio', address: 'https://studio.example.ts.net', instances: [], pairing: null, ...o,
+const view = (o: Partial<{ instances: RemoteInstanceView[]; pairing: { code: string; expiresAt: number } | null; address: string | null; cloudProviders: { kind: string; machineHint: string }[] }> = {}) => ({
+  name: 'studio', address: 'https://studio.example.ts.net', instances: [], pairing: null, cloudProviders: [], ...o,
 });
 
 describe('Remote instances (the owner)', () => {
@@ -72,6 +73,45 @@ describe('Remote instances (the owner)', () => {
     await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(info).toHaveBeenCalledWith("win-box couldn't be told; leave Valley there too.", expect.anything()));
+  });
+
+  it('shows a cloud VM\'s state and cost, starts it, and sets one up from a provider connection', async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    const cloud = {
+      setup: { connection: 'aws', machine: 'i-0abc12345', idleMinutes: 30, hourlyRate: 0.376 },
+      state: { power: 'stopped' as const, checkedAt: 1, lastBusyAt: 1, startRequestedAt: null, stopRequestedAt: null, lastError: null },
+      starting: false,
+      usage: [{ month, hours: 12.5, cost: 4.7 }],
+    };
+    const providers = [{ kind: 'aws', machineHint: 'i-0123456789abcdef0' }];
+    const linBox = { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'lin-box' };
+    const calls = stubApi({
+      'GET /api/projects/p/remote-instances': view({ instances: [{ ...winBox, cloud, needsLogin: ['codex'] }, linBox], cloudProviders: providers }),
+      'GET /api/projects/p/placement': { rules: [] },
+      'GET /api/connections': [{ id: 'c', name: 'aws', kind: 'aws', url: '', config: {}, hasSecret: true, createdAt: 1, updatedAt: 1, lastError: null, lastErrorAt: null }],
+      'POST /api/projects/p/remote-instances/l1/cloud/start': view({ instances: [{ ...winBox, cloud: { ...cloud, starting: true } }, linBox], cloudProviders: providers }),
+      'PUT /api/projects/p/remote-instances/l2/cloud': view({ cloudProviders: providers }),
+    });
+    renderWithQuery(<RemoteInstances project={project} />);
+    const section = await screen.findByRole('region', { name: 'Remote instances' });
+    const row = (await within(section).findByText('VM stopped')).closest('li')!;
+    expect(row).toHaveTextContent('12.5 h · $4.70 this month');
+    expect(row).toHaveTextContent('stops after 30 idle min');
+    expect(row).toHaveTextContent('codex needs a login on win-box');
+    await userEvent.click(within(row).getByRole('button', { name: /Start/ }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'POST', path: '/api/projects/p/remote-instances/l1/cloud/start', body: undefined }));
+    expect(await within(section).findByText('VM starting')).toBeInTheDocument();
+
+    const other = within(section).getAllByText('lin-box').map((e) => e.closest('li')).find(Boolean)!;
+    await userEvent.click(within(other).getByRole('button', { name: /Cloud VM/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'lin-box as a cloud VM' });
+    await userEvent.type(within(dialog).getByPlaceholderText('i-0123456789abcdef0'), 'i-0def67890');
+    await userEvent.type(within(dialog).getByPlaceholderText('0.376'), '0.5');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls).toContainEqual({
+      method: 'PUT', path: '/api/projects/p/remote-instances/l2/cloud',
+      body: { connection: 'aws', machine: 'i-0def67890', idleMinutes: 30, hourlyRate: 0.5 },
+    }));
   });
 
   it('maps a label to an instance in Placement', async () => {
@@ -289,5 +329,14 @@ describe('Remote projects (the remote instance)', () => {
     expect(ago(now - 5_000, now)).toBe('just now');
     expect(ago(now - 3 * 60_000, now)).toBe('3 min ago');
     expect(ago(now - 5 * 3_600_000, now)).toBe('5 h ago');
+  });
+});
+
+describe('usageText', () => {
+  it('says this month\'s hours and cost, or none', () => {
+    const now = new Date(Date.UTC(2026, 10, 23));
+    expect(usageText([{ month: '2026-11', hours: 12.54, cost: 4.716 }], now)).toBe('12.5 h · $4.72 this month');
+    expect(usageText([{ month: '2026-11', hours: 2.26, cost: 0.846 }], now)).toBe('2.3 h · $0.85 this month');
+    expect(usageText([{ month: '2026-10', hours: 50, cost: 20 }], now)).toBe('0.0 h · $0.00 this month');
   });
 });

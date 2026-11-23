@@ -62,6 +62,14 @@ pub fn start_background(state: &AppState) {
             crate::link::check_owners(&st).await;
         },
     ));
+    // Cloud instances (PDT-638): started for work placed on them, stopped once idle, metered.
+    tokio::spawn(run_every(
+        state.clone(),
+        "cloud instances",
+        Duration::from_millis(pdt_core::link::HEARTBEAT_EVERY_MS as u64),
+        Start::Now,
+        |st| async move { crate::cloud::check_all(&st).await },
+    ));
     // Worktrees' sizes, and the cleanup of finished tickets' build output (PDT-324).
     tokio::spawn(crate::run_storage(state.clone()));
     // Warn at startup when an agent CLI is missing or not logged in for the user this daemon runs as.

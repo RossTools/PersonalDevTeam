@@ -478,6 +478,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `Unavailable` for an offline or paused instance (even when the repository's needs pick it), and pickup turns that
   into a `waiting` hold, never the owner or another instance. Pickup counts each pool by the worktree's
   `instance_id`, so an attempt's worktree keeps the instance it was made on.
+- **The owner stops a cloud instance only when nothing is on it.** `cloud::step` stops a VM only while no session or
+  run is live there (`Store::instance_busy`; an error reading it counts as busy), pickup holds nothing for it and
+  `last_busy_at` is `idle_minutes` old; 0 never stops it. Providers' `stop` must leave compute unbilled (Azure
+  deallocates). A cloud provider's errors are shown to the user: never put its credentials in them.
 - **An owner's terminal runs on a remote instance only in that project's folders.** The owner names a branch, never a
   folder: `exec/remote_pty.rs` (`folder`) runs it in that branch's worktree of the remote project's checkout (a valid
   branch name whose worktree is there) or in the checkout itself, whatever the session row says. Its WebSocket opens
@@ -528,8 +532,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `*_ticket_permissions_keep_bypass.sql`, which counts an install with a project or stored settings as existing).
 - **`.pdt/project.toml` must stay readable by the stable release.** Unknown top-level sections are skipped, but unknown
   keys inside `[[run]]`, `[[test]]` and `[[area]]` are refused, so a new section waits until stable supports it.
-- **Names live only in `crates/pdt-core/src/brand.rs`** (plus the Tauri configs, the Windows installer hooks and the
-  release scripts): product name, slug, daemon, ports, release repository, keychain service, also in UI text.
+- **Names live only in `crates/pdt-core/src/brand.rs`** (plus the Tauri configs, the Windows installer hooks, the
+  release scripts and the site's install and cloud bootstrap scripts): product name, slug, daemon, ports, release repository, keychain service, also in UI text.
 - **PDT never special-cases its own repository or development process; PDT's own automation lives in the
   maintainer's workflows.** Outside tests, only updates, bug reports and the release repository setting name the
   release repository (`brand::RELEASE_REPO`; a test in pdt-core `brand.rs` lists where). Nothing is installed or

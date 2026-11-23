@@ -164,8 +164,15 @@ pub enum Place {
     Owner,
     /// A remote instance (`id`), under its own cap.
     Instance { id: String, name: String },
-    /// A remote instance that is offline (or paused there): the ticket waits for it.
-    Waiting { id: String, name: String, paused: bool },
+    /// A remote instance that is offline (or paused there): the ticket waits for it. `starting`: a cloud instance
+    /// the owner starts for it (PDT-638).
+    Waiting {
+        id: String,
+        name: String,
+        paused: bool,
+        #[serde(default)]
+        starting: bool,
+    },
     /// No instance can run it (`why`: what it needs that none has).
     NoInstance { why: String },
 }
@@ -415,9 +422,14 @@ pub enum PassedReason {
     /// It runs on remote instance `instance`, which has `active` of the project's tickets in flight, at its cap.
     #[serde(rename = "instance_at_cap")]
     InstanceAtCap { instance: String, cap: u32, active: u32 },
-    /// It runs on remote instance `instance`, which is offline (or paused there).
+    /// It runs on remote instance `instance`, which is offline (or paused there), or a cloud instance being started.
     #[serde(rename = "waiting")]
-    Waiting { instance: String, paused: bool },
+    Waiting {
+        instance: String,
+        paused: bool,
+        #[serde(default)]
+        starting: bool,
+    },
     /// No instance can run it.
     #[serde(rename = "no_instance")]
     NoInstance { why: String },
@@ -445,7 +457,8 @@ impl PassedReason {
             PassedReason::InstanceAtCap { instance, cap, active } => {
                 format!("{instance} is at its cap ({active} of {cap} in flight)")
             }
-            PassedReason::Waiting { instance, paused } => {
+            PassedReason::Waiting { instance, starting: true, .. } => format!("starting {instance}…"),
+            PassedReason::Waiting { instance, paused, .. } => {
                 format!("waiting for {instance} ({})", if *paused { "paused" } else { "offline" })
             }
             PassedReason::NoInstance { why } => why.clone(),
@@ -576,8 +589,8 @@ pub fn choose(
                     let active = count(p.active.iter().filter(|a| a.instance.as_deref() == Some(id)).count());
                     Ok((Some((id.clone(), name.clone())), cap, active))
                 }
-                Place::Waiting { name, paused, .. } => {
-                    Err(PassedReason::Waiting { instance: name.clone(), paused: *paused })
+                Place::Waiting { name, paused, starting, .. } => {
+                    Err(PassedReason::Waiting { instance: name.clone(), paused: *paused, starting: *starting })
                 }
                 Place::NoInstance { why } => Err(PassedReason::NoInstance { why: why.clone() }),
             };
@@ -1062,7 +1075,7 @@ mod tests {
         let policy = ProjectPolicy { auto_start: AutoStart::Todo, start_delay_seconds: 0, ..ProjectPolicy::default() };
         let list = vec![tagged("win", &[]), tagged("godot", &[]), tagged("home", &[])];
         let mut p = project(&policy, 0, &list);
-        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: false };
+        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: false, starting: false };
         p.tickets[0].place = Place::NoInstance { why: "no instance can run this (needs os=windows, godot)".into() };
         let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
         assert_eq!(
@@ -1078,9 +1091,14 @@ mod tests {
         assert!(c.passed.iter().all(|x| x.reason.shows_on_board()));
         assert_eq!(p.tickets[2].place.waits_for(), Some("w"));
         // Paused there says so; back online, it starts on it.
-        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: true };
+        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: true, starting: false };
         let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
         assert_eq!(c.passed[1].why, "waiting for win-box (paused)");
+        // A cloud instance the owner is starting for it (PDT-638).
+        p.tickets[2].place = Place::Waiting { id: "w".into(), name: "win-box".into(), paused: false, starting: true };
+        let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
+        assert_eq!(c.passed[1].why, "starting win-box…");
+        assert!(c.passed[1].reason.shows_on_board());
         p.tickets[2].place = Place::Instance { id: "w".into(), name: "win-box".into() };
         let c = choose(std::slice::from_ref(&p), &ChooseRules::auto_start(), &HashMap::new(), LATER);
         assert_eq!(chosen_and_passed(&c).0, ["home", "win"]);

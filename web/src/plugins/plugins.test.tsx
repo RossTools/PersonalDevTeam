@@ -29,6 +29,8 @@ const mixed = () => catalog({
   google: off,
   scryer: { status: 'error', error: 'scryer: connection refused', errorConnection: 'c-scryer', checkable: true },
   plex: { enabled: false, built: false, status: 'not_built' },
+  aws: off,
+  azure: off,
 });
 
 const labels = (ps: Plugin[]) => ps.map((p) => p.id);
@@ -44,7 +46,7 @@ describe('plugins: the catalog’s filters', () => {
 
   it('counts each category after the search and tab, and groups in the catalog’s order', () => {
     const ps = mixed();
-    expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 12, dev: 4, documents: 1, chat: 1, media: 3, general: 3 });
+    expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 14, dev: 6, documents: 1, chat: 1, media: 3, general: 3 });
     expect(categoryCounts(ps, { ...NO_FILTER, tab: 'attention' })).toEqual({ all: 2, dev: 0, documents: 0, chat: 0, media: 2, general: 0 });
     expect(labels(filterPlugins(ps, { ...NO_FILTER, category: 'media' }))).toEqual(['arr', 'scryer', 'plex']);
     expect(groupPlugins(filterPlugins(ps, { ...NO_FILTER, q: 'workflows' })).map(([c]) => c)).toEqual(['dev', 'chat', 'media', 'general']);
@@ -98,10 +100,10 @@ describe('plugins: Settings → Plugins', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'All' }));
     const chips = screen.getByRole('group', { name: 'Categories' });
     expect(within(chips).getByRole('button', { name: 'Chat 1' })).toBeInTheDocument();
-    await userEvent.click(within(chips).getByRole('button', { name: 'Dev 4' }));
+    await userEvent.click(within(chips).getByRole('button', { name: 'Dev 6' }));
     expect(screen.getByRole('group', { name: 'Jira' })).toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Discord' })).toBeNull();
-    await userEvent.click(within(chips).getByRole('button', { name: 'All 12' }));
+    await userEvent.click(within(chips).getByRole('button', { name: 'All 14' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Search plugins' }), 'nothing like this');
     expect(screen.getByText('No plugins match.')).toBeInTheDocument();
   });

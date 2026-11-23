@@ -589,6 +589,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::pty_ws::router())
         .merge(crate::remote::router())
         .merge(crate::remote_instances::router())
+        .merge(crate::cloud::router())
         .merge(crate::remote_projects::router())
         .merge(crate::review::router())
         .merge(crate::runconfig::router())

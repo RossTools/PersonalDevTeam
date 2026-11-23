@@ -24,6 +24,12 @@ pub mod templates {
     pub use crate::workflow::templates::{builtin, doc, params};
 }
 
+/// Cloud providers (PDT-638, [`crate::Integration::cloud_provider`]).
+pub mod cloud {
+    pub use crate::cloud::{CloudProvider, CloudTarget};
+    pub use pdt_core::cloud::Power;
+}
+
 /// Outbound HTTP: one client, capped bodies, errors without secrets.
 pub mod http {
     pub use crate::workflow::nodes::http::{

@@ -5,6 +5,7 @@ import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, S
 import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
+import type { CloudProviderView } from '../api/gen/CloudProviderView';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
 import { AutoSaveText } from '../common/AutoSave';
 import { copyToClipboard } from '../common/clipboard';
@@ -12,6 +13,7 @@ import { LoadError } from '../common/QueryStatus';
 import { formatBytes } from '../common/text';
 import { useAction } from '../common/useAction';
 import type { PlacementSettings } from '../api/gen/PlacementSettings';
+import { CloudInstance } from './CloudInstance';
 import { projectKeys, usePlacement, useRemoteInstances } from './queries';
 import { RemoteAccessOff } from './RemoteAccessOff';
 
@@ -48,7 +50,7 @@ export function ago(at: number, now = Date.now()): string {
   return `${Math.round(h / 24)} days ago`;
 }
 
-function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }) {
+function InstanceRow({ project, i, providers }: { project: Project; i: RemoteInstanceView; providers: CloudProviderView[] }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const state = LINK_STATE[i.state];
@@ -105,6 +107,7 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
         />
         tickets in flight on it at once{i.remoteCap != null && ` (${i.name}'s own cap: ${i.remoteCap})`}. Now {i.poolCap}.
       </span>
+      <CloudInstance project={project} i={i} providers={providers} />
     </li>
   );
 }
@@ -220,7 +223,7 @@ export function RemoteInstances({ project }: { project: Project }) {
       {v && v.instances.length === 0 && !pairing && <EmptyState>No remote instances yet.</EmptyState>}
       {v && v.instances.length > 0 && (
         <ul data-flush className="flex flex-col divide-y divide-border">
-          {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} />)}
+          {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} providers={v.cloudProviders} />)}
         </ul>
       )}
       {v && v.instances.length > 0 && <PlacementRules project={project} instances={v.instances} />}

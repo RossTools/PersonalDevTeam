@@ -38,6 +38,7 @@ pub mod codes {
     pub const BRANCH_NOT_DELETED: &str = "branch_not_deleted";
     pub const BUG_REPORTS_OFF: &str = "bug_reports_off";
     pub const BUILTIN_PERSONA: &str = "builtin_persona";
+    pub const CLOUD_PROVIDER: &str = "cloud_provider";
     pub const BUILTIN_TEMPLATE: &str = "builtin_template";
     pub const BUILTIN_WORKFLOW: &str = "builtin_workflow";
     pub const CANNOT_ANSWER: &str = "cannot_answer";
