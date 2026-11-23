@@ -48,7 +48,8 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 ## Files
 
 **Files** shows a checkout's files as git sees them (ignored files are left out): pick the project or worktree at the
-top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves.
+top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves. A Markdown file has
+**Preview**, **Edit** and **Source** (its text, read-only) in one control.
 
 ### Download files
 

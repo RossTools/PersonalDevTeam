@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Alert, Checkbox, Dialog, DialogActions, EmptyState, Field, Input, SegmentedControl, Select, Textarea, toast, useConfirm } from '@ui';
+import { Alert, Checkbox, Dialog, DialogActions, EmptyState, Field, Input, Select, Textarea, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
 import type { Project } from '../api/gen/Project';
 import type { Ticket } from '../api/gen/Ticket';
 import type { TicketStage } from '../api/gen/TicketStage';
+import { PreviewEdit } from '../common/PreviewEdit';
 import { Markdown } from '../common/Markdown';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
@@ -42,7 +43,7 @@ export function NewTicketDialog({
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState(initialDescription);
   const [follow, setFollow] = useState(false);
-  const [mode, setMode] = useState<'write' | 'preview'>('write');
+  const [mode, setMode] = useState<'edit' | 'preview'>('edit');
   const [stage, setStage] = useState<TicketStage>(initialStage);
   const [priority, setPriority] = useState<Priority>('none');
   const [labels, setLabels] = useState<string[]>([]);
@@ -128,15 +129,9 @@ export function NewTicketDialog({
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
             <span id="new-ticket-desc" className="flex-1 text-xs font-medium">Description</span>
-            <SegmentedControl
-              aria-label="Description editor"
-              size="sm"
-              options={[{ value: 'write', label: 'Write' }, { value: 'preview', label: 'Preview' }]}
-              value={mode}
-              onChange={setMode}
-            />
+            <PreviewEdit aria-label="Description editor" value={mode} onChange={setMode} />
           </div>
-          {mode === 'write' ? (
+          {mode === 'edit' ? (
             <Textarea
               aria-labelledby="new-ticket-desc"
               rows={6}
