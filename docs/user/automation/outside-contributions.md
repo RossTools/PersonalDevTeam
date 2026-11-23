@@ -31,7 +31,8 @@ didn't open (from outside contributors and bots):
 1. The **PR Reviewer** reads its changes through GitHub (it never checks them out or runs them) and writes a review:
    what it changes, risks such as changes to CI, build scripts or dependencies, and whether it has tests. It suggests
    merging, asking for changes, or closing.
-2. The pull request waits in the Inbox, with the review and its CI, for your choice:
+2. The pull request waits in the Inbox, under its number and title, with the review and its CI, for your choice. The
+   reviewer's suggestion leads (**Reviewer recommends: Close**), and choosing anything else asks you to confirm:
    - **Approve & merge** merges it once CI passes;
    - **Request changes** posts your note (or the reviewer's suggested feedback) on the pull request as a review;
    - **Close** closes it, with your note as a comment.
@@ -60,8 +61,10 @@ Pull requests from your own collaborators are left alone unless you change the t
 ### Dependabot updates
 
 With **Merge Dependabot updates on green CI** on (the default), Dependabot updates of the kinds in **Which Dependabot
-updates merge** (`patch` and `minor` by default) merge once CI passes, with no review. A grouped update, or one whose
-title doesn't give the versions, is reviewed like any other, and a failure comes to your Inbox.
+updates merge** (`patch` and `minor` by default) merge once CI passes, with no review. A grouped update counts as
+its largest bump: a group of only patch and minor updates merges the same way, and one with a major update is
+reviewed. An update whose versions PDT can't read (from its title, or for a group from the list in its description)
+is reviewed like any other, and a failure comes to your Inbox.
 
 ## How agents are kept safe
 
@@ -76,7 +79,9 @@ title doesn't give the versions, is reviewed like any other, and a failure comes
   on: everything the called workflow's agents get from its input is fenced, and they are locked down the same way.
 - **Capped.** Triage runs are limited per author and per repository each hour (**Triage per author** and **Triage per
   repository** in **Settings › This host › Agents**), so a flood of issues can't keep agents busy. This counts any
-  workflow whose agents could read the issue, including through a workflow it runs.
+  workflow whose agents could read the issue, including through a workflow it runs. A bot's pull requests (such as a
+  batch of Dependabot updates) count only toward the repository's cap. What goes over a cap isn't started: your
+  Inbox sums up what was skipped each hour.
 - **Recorded.** Each session that read outside text is noted in its ticket's activity, when it has one.
 
 To use your own persona for either workflow, give it the **triage** role: PDT locks it down the same way.

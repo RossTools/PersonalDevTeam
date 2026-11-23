@@ -51,7 +51,8 @@ pub struct GithubPullRequest {
     pub changed_files: u64,
     pub additions: u64,
     pub deletions: u64,
-    /// For a Dependabot update, what it bumps (`major`, `minor`, `patch`), when its title says.
+    /// For a Dependabot update, what it bumps (`major`, `minor`, `patch`), when its title says (a grouped update: the
+    /// largest bump its body lists).
     pub update_type: Option<crate::outside_pr::UpdateType>,
     pub created_at: String,
     /// `pushed`: the head before the push.

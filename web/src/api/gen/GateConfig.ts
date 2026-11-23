@@ -4,6 +4,7 @@ import type { Ask } from "./Ask";
 import type { EventWait } from "./EventWait";
 import type { GateInbox } from "./GateInbox";
 import type { PipelineStage } from "./PipelineStage";
+import type { Recommend } from "./Recommend";
 
 export type GateConfig = { question: string, 
 /**
@@ -36,4 +37,12 @@ ticket?: string,
  * An event that makes the question moot (e.g. the attempt merging): it takes `event` and closes the Inbox item.
  * Its conditions use `{{event.…}}` like a wait's.
  */
-event?: EventWait, };
+event?: EventWait, 
+/**
+ * The Inbox item's title (`#12: Bump serde`); default: the step's title, or the question's first line.
+ */
+title?: string, 
+/**
+ * The choice an earlier step recommends.
+ */
+recommend?: Recommend, };

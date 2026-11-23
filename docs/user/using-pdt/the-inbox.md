@@ -36,6 +36,10 @@ PDT), **Always allow**, and **Allow** on a call that changes something outside P
 issue, a Jira comment, a chat message). The first press turns the button red and reads
 **Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
 
+When a workflow's earlier step recommends one of the choices (a pull request's reviewer suggesting **Close**, say),
+the item leads with it, as **Reviewer recommends: Close**, and Enter takes it. Any other choice asks for a second
+press, saying what was recommended.
+
 Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up. Undo puts the item back
 as it was, and nothing it would have done happens: no review is posted, no pull request closed, no ticket made. If
 you close PDT within those seconds, the answer isn't sent and the item still waits for you.

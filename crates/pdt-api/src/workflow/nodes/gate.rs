@@ -47,6 +47,35 @@ pub enum GateInbox {
     Accept,
 }
 
+/// The choice an earlier step recommends (PDT-640: the PR Reviewer's `close`): the Inbox leads with it, Enter takes it,
+/// and any other choice asks again.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[ts(export)]
+pub struct Recommend {
+    /// The choice, or a value `as` maps to one (`{{steps.review.outcome}}`). Empty or not a choice: none.
+    #[serde(default)]
+    #[ts(optional)]
+    pub choice: Option<String>,
+    /// Values of `choice` that name a choice by another word (`{"merge": "approve_merge"}`).
+    #[serde(default, rename = "as")]
+    #[ts(rename = "as")]
+    pub alias: std::collections::BTreeMap<String, String>,
+    /// Who recommends it, as the Inbox says it ("Reviewer recommends: Close"). Default: "PDT".
+    #[serde(default)]
+    #[ts(optional)]
+    pub by: Option<String>,
+}
+
+impl Recommend {
+    /// The choice of `choices` it names, if any.
+    fn of<'a>(&self, choices: &'a [String]) -> Option<&'a String> {
+        let v = self.choice.as_deref()?.trim();
+        let v = self.alias.get(v).map(String::as_str).unwrap_or(v);
+        choices.iter().find(|c| c.as_str() == v)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[ts(export)]
@@ -85,6 +114,14 @@ pub struct GateConfig {
     #[serde(default)]
     #[ts(optional)]
     pub event: Option<crate::workflow::nodes::wait::EventWait>,
+    /// The Inbox item's title (`#12: Bump serde`); default: the step's title, or the question's first line.
+    #[serde(default)]
+    #[ts(optional)]
+    pub title: Option<String>,
+    /// The choice an earlier step recommends.
+    #[serde(default)]
+    #[ts(optional)]
+    pub recommend: Option<Recommend>,
 }
 
 pub struct Gate;
@@ -139,6 +176,10 @@ impl NodeKind for Gate {
         if let Some(a) = c.approve.as_ref().filter(|a| !c.choices.contains(a)) {
             return Err(format!("approve names {a}, which is not a choice"));
         }
+        let aliases = c.recommend.iter().flat_map(|r| r.alias.values());
+        if let Some(a) = aliases.into_iter().find(|a| !c.choices.contains(a)) {
+            return Err(format!("recommend.as names {a}, which is not a choice"));
+        }
         Ok(())
     }
 
@@ -162,8 +203,20 @@ impl NodeKind for Gate {
                 GateInbox::Gate => InboxGroup::Gate,
                 GateInbox::Accept => InboxGroup::Accept,
             };
-            let title = pdt_core::inbox::gate_title(&cx.node.title, &c.question);
-            let body = json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()});
+            // Plain text on one line (`#12: …` is no heading).
+            let given = c.title.as_deref().map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "));
+            let title = match given.filter(|t| !t.is_empty()) {
+                Some(t) => pdt_core::inbox::cut(&t, pdt_core::inbox::TITLE_CHARS),
+                None => pdt_core::inbox::gate_title(&cx.node.title, &c.question),
+            };
+            let recommended = c.recommend.as_ref().and_then(|r| r.of(&c.choices));
+            let mut body = json!({"question": c.question, "workflow": cx.workflow.name, "node": cx.node_title()});
+            if let (Some(choice), Some(r)) = (recommended, &c.recommend) {
+                let by = r.by.as_deref().map(str::trim).filter(|b| !b.is_empty()).unwrap_or("PDT");
+                body["recommendation"] = json!({"choice": choice, "title": choice_title(choice), "by": by});
+            }
+            // Enter takes the recommended choice, else the first.
+            let primary = recommended.or(c.choices.first());
             let item = cx
                 .inbox_item(InboxKind::Gate, group, title, body)
                 .ticket(ticket.clone())
@@ -171,8 +224,11 @@ impl NodeKind for Gate {
                 .choices(
                     c.choices
                         .iter()
-                        .enumerate()
-                        .map(|(i, x)| InboxChoice::new(x, choice_title(x), i == 0).outward(cx.port_outward(x)))
+                        .map(|x| {
+                            InboxChoice::new(x, choice_title(x), Some(x) == primary)
+                                .outward(cx.port_outward(x))
+                                .recommended(Some(x) == recommended)
+                        })
                         .collect(),
                 );
             cx.st.store.open_inbox_item(&item).await.map_err(crate::workflow::err)?;
@@ -200,6 +256,25 @@ mod tests {
         assert_eq!(choice_title("merge_again"), "Merge again");
         assert_eq!(choice_title("stop"), "Stop");
         assert_eq!(choice_title(""), "");
+    }
+
+    #[test]
+    fn a_recommendation_names_a_choice_directly_or_by_another_word() {
+        let choices: Vec<String> = ["approve_merge", "request_changes", "close"].map(String::from).into();
+        let r = |v: Option<&str>| Recommend {
+            choice: v.map(String::from),
+            alias: [("merge", "approve_merge"), ("changes", "request_changes")]
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .into(),
+            by: None,
+        };
+        assert_eq!(r(Some("close")).of(&choices).map(String::as_str), Some("close"));
+        assert_eq!(r(Some(" merge ")).of(&choices).map(String::as_str), Some("approve_merge"));
+        assert_eq!(r(Some("")).of(&choices), None);
+        assert_eq!(r(Some("ship_it")).of(&choices), None);
+        assert_eq!(r(None).of(&choices), None);
+        let bad = json!({"question": "q", "choices": ["go"], "recommend": {"choice": "x", "as": {"x": "nope"}}});
+        assert!(Gate.check(&bad).unwrap_err().contains("nope"));
     }
 
     #[test]

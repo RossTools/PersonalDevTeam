@@ -31,7 +31,8 @@ fork: boolean,
  */
 base: string, labels: Array<string>, draft: boolean, changedFiles: bigint, additions: bigint, deletions: bigint, 
 /**
- * For a Dependabot update, what it bumps (`major`, `minor`, `patch`), when its title says.
+ * For a Dependabot update, what it bumps (`major`, `minor`, `patch`), when its title says (a grouped update: the
+ * largest bump its body lists).
  */
 updateType: UpdateType | null, createdAt: string, 
 /**

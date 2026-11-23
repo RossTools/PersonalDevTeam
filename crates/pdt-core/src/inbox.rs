@@ -344,16 +344,26 @@ pub struct InboxChoice {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(as = "Option<bool>", optional)]
     pub outward: bool,
+    /// What the step before recommends (a gate's `recommend`, PDT-640: the PR Reviewer's decision). When one choice
+    /// is, the Inbox asks again before it takes any other.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub recommended: bool,
 }
 
 impl InboxChoice {
     pub fn new(id: impl Into<String>, title: impl Into<String>, primary: bool) -> Self {
-        Self { id: id.into(), title: title.into(), primary, outward: false }
+        Self { id: id.into(), title: title.into(), primary, outward: false, recommended: false }
     }
 
     /// The choice, marked as acting outside PDT when `outward`.
     pub fn outward(self, outward: bool) -> Self {
         Self { outward, ..self }
+    }
+
+    /// The choice, marked as the one recommended when `recommended`.
+    pub fn recommended(self, recommended: bool) -> Self {
+        Self { recommended, ..self }
     }
 }
 
@@ -662,7 +672,7 @@ pub fn plain_line(text: &str) -> String {
 }
 
 /// `text` cut to `max` characters at a word, with "…".
-fn cut(text: &str, max: usize) -> String {
+pub fn cut(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
     }

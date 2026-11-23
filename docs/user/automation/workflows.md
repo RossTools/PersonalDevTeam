@@ -356,7 +356,9 @@ with that message.
 box for a note, which goes on the ticket as your comment. Each choice is an exit. A gate can give up
 after a time, or close by itself when something else happens first (the ticket merged, say). A choice whose exit
 leads straight to a step that acts outside PDT as you (posting a pull request review or a comment, closing a pull
-request or an issue, posting to Discord) asks for a second press in the Inbox.
+request or an issue, posting to Discord) asks for a second press in the Inbox. A gate can also name the choice an
+earlier step recommends (**Recommend**, such as a reviewer's outcome): the Inbox leads with it, Enter takes it, and
+any other choice asks for a second press.
 
 ### Agent steps and outcomes
 

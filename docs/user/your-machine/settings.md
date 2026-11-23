@@ -36,7 +36,7 @@ How PDT updates itself. See [Updates](updates.md#updates) for what each choice d
 - **Agents running at once**: the most agents working at the same time before PDT's own work (workflow steps,
   auto-start) waits for a slot. What you send yourself never waits.
 - **Triage per author** and **Triage per repository**: the most new issues triaged an hour, from one author or one
-  repository. See [Outside contributions](../automation/outside-contributions.md).
+  repository (a bot's pull requests count only toward the repository's). See [Outside contributions](../automation/outside-contributions.md).
 - **Credentials**: **Subscription (remove API keys)** starts agents without `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`,
   so they use your subscription login; **Pass through** keeps them (for API keys, Bedrock, Vertex or a proxy). A
   project can choose differently.

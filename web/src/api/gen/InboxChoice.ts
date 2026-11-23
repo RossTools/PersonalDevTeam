@@ -12,4 +12,9 @@ primary: boolean,
  * It acts outside PDT, as the user (posts a review, closes a pull request, calls a tool that posts on a forge or
  * a tracker): the Inbox asks again before it acts (PDT-625).
  */
-outward?: boolean, };
+outward?: boolean, 
+/**
+ * What the step before recommends (a gate's `recommend`, PDT-640: the PR Reviewer's decision). When one choice
+ * is, the Inbox asks again before it takes any other.
+ */
+recommended?: boolean, };

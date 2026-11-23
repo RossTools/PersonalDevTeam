@@ -948,3 +948,129 @@ async fn a_workflow_from_before_the_option_keeps_its_tickets() {
     let recorded = state.store.workflow_state(&env.wf).await.unwrap();
     assert_eq!(recorded["_pdt.template"]["params"]["tickets"], true, "{recorded:?}");
 }
+
+/// The real bodies of Dependabot's grouped updates (their release notes cut), from pdt-core's fixtures.
+const ACTIONS_GROUP: &str = include_str!("../../pdt-core/tests/fixtures/dependabot/actions-group.md");
+const PNPM_GROUP: &str = include_str!("../../pdt-core/tests/fixtures/dependabot/pnpm-group.md");
+const CARGO_GROUP: &str = include_str!("../../pdt-core/tests/fixtures/dependabot/cargo-group.md");
+
+/// The eight Dependabot pull requests of PDT-640, opened within a minute: three minor and patch groups, five majors.
+fn dependabot_batch() -> Vec<RepoChangeRequest> {
+    let group = |n, title: &str, body: &str, branch: &str| RepoChangeRequest {
+        body: body.into(),
+        ..outside(n, "dependabot[bot]", title, branch, 1)
+    };
+    let major = |n, title: &str, branch: &str| outside(n, "dependabot[bot]", title, branch, 1);
+    vec![
+        group(
+            632,
+            "deps: Bump the actions-minor-patch group across 2 directories with 1 update",
+            ACTIONS_GROUP,
+            "dependabot/github_actions/actions-minor-patch",
+        ),
+        group(
+            633,
+            "deps: Bump the pnpm-minor-patch group with 8 updates",
+            PNPM_GROUP,
+            "dependabot/npm/pnpm-minor-patch",
+        ),
+        major(634, "deps: Bump react-i18next from 17.1.9 to 18.0.3", "dependabot/npm/react-i18next"),
+        major(635, "deps: Bump @testing-library/jest-dom from 7.0.1 to 8.0.0", "dependabot/npm/jest-dom"),
+        group(
+            636,
+            "deps: Bump the cargo-minor-patch group with 7 updates",
+            CARGO_GROUP,
+            "dependabot/cargo/cargo-minor-patch",
+        ),
+        major(637, "deps: Bump @xyflow/react from 12.12.1 to 13.0.2", "dependabot/npm/xyflow"),
+        major(638, "deps: Bump jiff from 0.2.46 to 1.0.1", "dependabot/cargo/jiff"),
+        major(639, "deps: Bump i18next from 26.5.12 to 27.2.2", "dependabot/npm/i18next"),
+    ]
+}
+
+/// PDT-640: eight Dependabot pull requests at once, with the triage caps at their defaults, start eight runs (a bot's
+/// pull requests count only toward the repository's cap), and the minor and patch groups merge on green CI.
+#[tokio::test]
+async fn a_batch_of_dependabot_prs_gets_a_run_each_and_groups_merge_on_green() {
+    let env = setup_with(Some(None)).await;
+    let defaults = pdt_core::host::HostSettings::default();
+    let caps = json!({"triagePerAuthorHour": defaults.triage_per_author_hour,
+                      "triagePerRepoHour": defaults.triage_per_repo_hour});
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(caps)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    look(&env, dependabot_batch()).await;
+    let all = runs(&env).await;
+    let mut numbers: Vec<u64> = all.iter().map(|r| r["trigger"]["number"].as_u64().unwrap()).collect();
+    numbers.sort_unstable();
+    assert_eq!(numbers, (632..=639).collect::<Vec<_>>(), "a run each: {all:#?}");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    assert!(!inbox["items"].as_array().unwrap().iter().any(|i| i["kind"] == "notice"), "nothing skipped: {inbox}");
+    for r in &all {
+        let n = r["trigger"]["number"].as_u64().unwrap();
+        let ty = r["trigger"]["updateType"].as_str();
+        match n {
+            632 => assert_eq!(ty, Some("patch")),
+            633 | 636 => assert_eq!(ty, Some("minor"), "#{n}"),
+            _ => assert_eq!(ty, Some("major"), "#{n}"),
+        }
+        if ty != Some("major") {
+            assert_eq!(waiting(&env, r["id"].as_str().unwrap()).await.0, "wait_ci", "#{n} merges on green");
+        }
+    }
+    wait_until("the majors to be reviewed", async || {
+        pdt_api::run_workflows(&env.state).await;
+        let n = reviewer_sessions(&env).await;
+        if n == 5 { Ok(()) } else { Err(n) }
+    })
+    .await;
+}
+
+/// PDT-640: a pull request over the repository's triage cap starts no run, but never silently: it is logged and the
+/// Inbox sums it up.
+#[tokio::test]
+async fn a_dependabot_pr_over_the_repository_cap_is_in_the_inbox() {
+    let env = setup_with(Some(None)).await;
+    let (s, v) =
+        call(&env.app, "PUT", "/api/host/settings", Some(json!({"triagePerAuthorHour": 1, "triagePerRepoHour": 6})))
+            .await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    look(&env, dependabot_batch()).await;
+    assert_eq!(runs(&env).await.len(), 6, "the author cap is not a bot's; the repository's is");
+    let (_, inbox) = call(&env.app, "GET", "/api/inbox", None).await;
+    let notice = inbox["items"].as_array().unwrap().iter().find(|i| i["kind"] == "notice").cloned().expect("summed up");
+    assert!(notice["title"].as_str().unwrap().starts_with("Triage skipped 2 runs"), "{notice}");
+    let text = notice["body"]["text"].as_str().unwrap();
+    assert!(text.contains("#638") && text.contains("#639"), "{text}");
+}
+
+/// PDT-640: the question after a review leads with the pull request and the reviewer's decision, which Enter takes;
+/// any other choice is the one the Inbox asks again about.
+#[tokio::test]
+async fn the_question_after_a_review_shows_the_reviewers_recommendation() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    let pr = outside(634, "dependabot[bot]", "deps: Bump react-i18next from 17.1.9 to 18.0.3", "dependabot/npm/r", 1);
+    look(&env, vec![pr]).await;
+    let session = reviewer(&env, &mut seen).await;
+    review(&env, &session, "close", "").await;
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "#634: deps: Bump react-i18next from 17.1.9 to 18.0.3", "{gate}");
+    assert_eq!(gate["body"]["recommendation"], json!({"choice": "close", "title": "Close", "by": "Reviewer"}));
+    let choices = gate["choices"].as_array().unwrap();
+    let close = choices.iter().find(|c| c["id"] == "close").unwrap();
+    assert_eq!((close["primary"].as_bool(), close["recommended"].as_bool()), (Some(true), Some(true)), "{gate}");
+    let approve = choices.iter().find(|c| c["id"] == "approve_merge").unwrap();
+    assert_eq!((approve["primary"].as_bool(), approve.get("recommended")), (Some(false), None), "{gate}");
+    let q = gate["body"]["question"].as_str().unwrap();
+    assert!(q.starts_with(&format!("**[{RELEASE_REPO}#634]")), "{q}");
+
+    // A review that recommends merging makes Approve & merge the one Enter takes.
+    let pr = outside(640, "dependabot[bot]", "deps: Bump jiff from 0.2.46 to 1.0.1", "dependabot/cargo/jiff", 2);
+    look(&env, vec![pr]).await;
+    let session = reviewer(&env, &mut seen).await;
+    review(&env, &session, "merge", "").await;
+    let gate = gates(&env).await.into_iter().find(|g| g["title"].as_str().unwrap().starts_with("#640")).expect("asked");
+    assert_eq!(gate["body"]["recommendation"]["choice"], "approve_merge", "{gate}");
+    let approve = gate["choices"].as_array().unwrap().iter().find(|c| c["id"] == "approve_merge").cloned().unwrap();
+    assert_eq!(approve["primary"], true, "{gate}");
+}
