@@ -587,10 +587,12 @@ export function MessageList({
   const [atBottom, setAtBottom] = useState(saved === undefined);
   const blocks = useBlocks(rows, turnRunning);
   // The blocks before `first` are not shown yet: the latest WINDOW at first, more as the reader scrolls up. Fixed once
-  // there are blocks, so new ones at the end don't push the earliest shown out.
+  // there are blocks, so new ones at the end don't push the earliest shown out. Fewer blocks than that (a tail frame
+  // dropped the earlier rows on a reconnect): the latest WINDOW again, never past the end (PDT-666).
   const [start, setStart] = useState<number | null>(null);
-  if (start === null && blocks.length > 0) setStart(Math.max(0, blocks.length - WINDOW));
-  const first = Math.min(start ?? Math.max(0, blocks.length - WINDOW), blocks.length);
+  const latest = Math.max(0, blocks.length - WINDOW);
+  if (blocks.length > 0 && (start === null || start > latest)) setStart(latest);
+  const first = Math.min(start ?? latest, latest);
   const shown = first > 0 ? blocks.slice(first) : blocks;
   // The block that stays in place while earlier ones come in above it, and where it was.
   const anchor = useRef<{ key: string; top: number } | null>(null);
