@@ -2,7 +2,7 @@
 //! (productName, identifier), desktop/src-tauri/tauri.bundle.conf.json (sidecars),
 //! desktop/src-tauri/windows/hooks.nsh (pdt-host.exe), scripts/release-stable.* (product name, slug, port) and the
 //! one-line install scripts site/public/install.{sh,ps1} (product name, slug, port, release repository, HOST_LABEL,
-//! HOST_SYSTEMD_UNIT, HOST_AUTOSTART_NAME; a test checks),
+//! HOST_SYSTEMD_UNIT, HOST_AUTOSTART_NAME, MACOS_TEAM_ID, APP_BUNDLE_ID; a test checks),
 //! site/src/links.mjs (port; a test checks) only, and HOST_* / TRAY_* below. The release repository is RELEASE_REPO below.
 
 pub const PRODUCT_NAME: &str = "Personal Dev Team";
@@ -38,8 +38,8 @@ pub const RELEASE_REPO_ID: u64 = 1420061987;
 /// `SHA256SUMS.sig` doesn't verify; None trusts SHA256SUMS alone (until the release key exists). The install scripts
 /// pin the same value (a test checks).
 pub const RELEASE_SIGNING_KEY: Option<&str> = None;
-/// The Apple Developer Team ID that signs the macOS app. pdt-host installs an update's `.app` only when
-/// `codesign` verifies it as signed by this team.
+/// The Apple Developer Team ID that signs the macOS app. pdt-host installs an update's `.app`, and install.sh a fresh
+/// one, only when `codesign` verifies it as signed by this team (install.sh pins the same value; a test checks).
 pub const MACOS_TEAM_ID: &str = "DX69RXFP5X";
 /// Service name under which secrets (the update token) are stored in the OS keychain / credential manager.
 pub const KEYCHAIN_SERVICE: &str = "dev.personaldevteam";
@@ -176,6 +176,8 @@ mod tests {
             format!("host_label=\"{HOST_LABEL}\""),
             format!("host_unit=\"{HOST_SYSTEMD_UNIT}\""),
             format!("signing_key=\"{}\"", RELEASE_SIGNING_KEY.unwrap_or_default()),
+            format!("team_id=\"{MACOS_TEAM_ID}\""),
+            format!("bundle_id=\"{APP_BUNDLE_ID}\""),
         ] {
             assert!(sh.contains(&line), "install.sh lacks {line}");
         }

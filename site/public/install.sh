@@ -32,6 +32,9 @@ pdt_install() {
 	port=7420
 	host_label="dev.personaldevteam.host"
 	host_unit="pdt-host.service"
+	# The macOS app must be Developer ID signed by this Apple team, with this bundle id (as pdt-host checks updates).
+	team_id="DX69RXFP5X"
+	bundle_id="dev.personaldevteam.desktop"
 	site="https://pdt.dev"
 	# The release signing key (base64 of its public key's DER; the same as RELEASE_SIGNING_KEY in PDT's source). Empty
 	# until releases are signed: then SHA256SUMS alone is checked.
@@ -255,7 +258,10 @@ pdt_install() {
 install_mac() {
 	[ -d "$tmp/unpack/$app_name" ] || die "$asset does not hold $app_name."
 	# curl sets no quarantine flag, so Gatekeeper never looks at this app: check its signature here instead.
-	if ! codesign --verify --deep --strict "$tmp/unpack/$app_name" 2>"$tmp/codesign.err"; then
+	# -R pins who signed it: without it an ad-hoc or another developer's signature would pass.
+	if ! codesign --verify --deep --strict \
+		-R="anchor apple generic and identifier \"$bundle_id\" and certificate leaf[subject.OU] = \"$team_id\"" \
+		"$tmp/unpack/$app_name" 2>"$tmp/codesign.err"; then
 		cat "$tmp/codesign.err" >&2
 		die "the signature of $app_name in $tag does not verify. Nothing was installed."
 	fi

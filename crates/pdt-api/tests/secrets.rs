@@ -594,3 +594,43 @@ async fn the_store_says_where_values_are_kept() {
     let (_, v) = call(&env.app, "GET", "/api/secrets/store", None).await;
     assert_eq!(v, json!({"backend": "file", "path": file, "problem": "The Secret Service did not answer."}));
 }
+
+/// PDT-644: a user's secret named like a key PDT keeps for itself (the update token, an MCP sign-in) keeps its own
+/// value, and both values stay redacted.
+#[tokio::test]
+async fn a_secret_named_like_pdts_own_keeps_its_value() {
+    let env = setup().await;
+    let pdt_own = "ghp_pdt-own-update-token-value";
+    let mcp_own = "mcp-own-access-token-value";
+    for name in ["update-token", "mcp-linear-access"] {
+        let (st, v) = call(
+            &env.app,
+            "POST",
+            "/api/secrets",
+            Some(json!({"name": name, "value": format!("{VALUE}-{name}"), "projects": [env.project]})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED, "{v}");
+    }
+    // PDT reads its own token and an MCP sign-in after the user's secrets are known.
+    env.state.secrets.set("update-token", pdt_own).unwrap();
+    env.state.store.redactor().set("mcp-linear-access", mcp_own);
+
+    let s = session_in(&env, "bypass").await;
+    wait_said(&env, &s, 1).await;
+    let said = say(
+        &env,
+        &s,
+        r#"mcp: write_secret_file {"path": "t.txt", "template": "{{secret.update-token}} {{secret.mcp-linear-access}}"}"#,
+    )
+    .await;
+    assert!(said.contains("\"bytes\""), "{said}");
+    let (_, sess) = call(&env.app, "GET", &format!("/api/sessions/{s}"), None).await;
+    let written = std::fs::read_to_string(std::path::Path::new(sess["cwd"].as_str().unwrap()).join("t.txt")).unwrap();
+    assert_eq!(written, format!("{VALUE}-update-token {VALUE}-mcp-linear-access"), "the user's values, not PDT's");
+
+    let r = env.state.store.redactor();
+    for v in [pdt_own, mcp_own, &format!("{VALUE}-update-token"), &format!("{VALUE}-mcp-linear-access")] {
+        assert!(!r.string(&format!("x {v} y")).contains(v), "{v} is still redacted");
+    }
+}

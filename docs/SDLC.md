@@ -425,7 +425,8 @@ Each release's `SHA256SUMS` is signed: the `publish` job runs `scripts/release-s
 the `publish` job uses, so a leaked `PDT_RELEASE_TOKEN` can't sign. Its public key is pinned as `RELEASE_SIGNING_KEY` in
 `crates/pdt-core/src/brand.rs` and as `signing_key` / `$signingKey` in `site/public/install.sh` and `install.ps1`.
 Once it is pinned, updates and the install scripts refuse a release without a valid signature. On macOS, pdt-host
-also checks that an update's `.app` is signed by `MACOS_TEAM_ID` before swapping it in.
+also checks that an update's `.app` is signed by `MACOS_TEAM_ID` before swapping it in, and `install.sh` checks a fresh
+install's the same way.
 
 - **No key yet** (`RELEASE_SIGNING_KEY` is `None`): releases go out unsigned, and the `Sign` step warns.
 - **Setting it up**: `scripts/release-signing-key.sh <backup file>` on your machine. It makes the key, stores it as

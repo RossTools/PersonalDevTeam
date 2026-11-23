@@ -110,3 +110,21 @@ async fn a_worktree_that_cannot_be_recorded_is_removed_again() {
     let list = std::process::Command::new("git").current_dir(&repo).args(["worktree", "list"]).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&list.stdout).lines().count(), 1, "git forgot the worktree");
 }
+
+// PDT-643: a repository that commits `.worktrees` as a symlink out of itself gets no worktree there.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_committed_worktrees_symlink_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (app, pid, repo) = setup(tmp.path()).await;
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::os::unix::fs::symlink("../outside", repo.join(".worktrees")).unwrap();
+    git(&repo, &["add", ".worktrees"]);
+    git(&repo, &["commit", "-m", "link", "-q"]);
+    let (s, v) = call(&app, "POST", &format!("/api/projects/{pid}/worktrees"), Some(json!({"branch": "git"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("worktree_path_unsafe")), "{v}");
+    assert!(!outside.join("git").exists());
+    let (_, list) = call(&app, "GET", &format!("/api/projects/{pid}/worktrees"), None).await;
+    assert_eq!(list.as_array().map(Vec::len), Some(0), "{list}");
+}
