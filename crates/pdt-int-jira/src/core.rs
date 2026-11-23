@@ -148,10 +148,7 @@ pub enum IssueNews {
 
 /// Jira's timestamps (`2026-10-22T10:00:00.000+0000`, also RFC 3339) as ms since the epoch.
 pub fn parse_time(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%z")
-        .or_else(|_| chrono::DateTime::parse_from_rfc3339(s))
-        .ok()
-        .map(|t| t.timestamp_millis())
+    jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.f%z", s).or_else(|_| s.parse()).ok().map(|t| t.as_millisecond())
 }
 
 /// An issue key (`ABC-123`, any case, trimmed) in Jira's form, or None.

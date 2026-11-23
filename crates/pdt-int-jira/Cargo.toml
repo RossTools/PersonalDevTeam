@@ -22,7 +22,7 @@ pdt-store.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-chrono = "0.4.45"
+jiff.workspace = true
 
 [dev-dependencies]
 pdt-forge.workspace = true

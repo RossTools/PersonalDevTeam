@@ -180,7 +180,7 @@ async fn an_inbox_item_left_unanswered_is_escalated() {
 
 /// The minute past local midnight `d` minutes from now, as `HH:MM`.
 fn clock(d: i32) -> String {
-    let t = jiff::Zoned::now();
+    let t = jiff::ZonedDateTime::now();
     let m = (i32::from(t.hour()) * 60 + i32::from(t.minute()) + d).rem_euclid(24 * 60);
     format!("{:02}:{:02}", m / 60, m % 60)
 }

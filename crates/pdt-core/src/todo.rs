@@ -4,7 +4,9 @@
 //! checking it off makes the next one, due on the next day its [`Recurrence`] gives. Pure; pdt-store keeps the rows,
 //! pdt-api serves them. A todo may carry a Markdown body (PDT-227), its notes, written in its open view.
 
-use chrono::{Datelike, Duration, Months, NaiveDate, NaiveTime, TimeZone, Weekday};
+use jiff::ToSpan;
+use jiff::civil::{Date, Time, Weekday};
+use jiff::tz::TimeZone;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -189,8 +191,7 @@ pub fn done_at(was: Option<i64>, done: bool, now: i64) -> Option<i64> {
     if done { Some(was.unwrap_or(now)) } else { None }
 }
 
-/// The years a due day can be in: four digits, and far from chrono's last day, which a recurrence's next day would
-/// pass.
+/// The years a due day can be in: four digits (jiff's last day is 9999-12-31, so a series there has no next one).
 const YEARS: std::ops::RangeInclusive<i32> = 1..=9999;
 
 /// A due day the client sent (`YYYY-MM-DD`; `""` for none), or why not.
@@ -199,8 +200,8 @@ pub fn valid_due_on(s: &str) -> Result<Option<String>, String> {
     if s.is_empty() {
         return Ok(None);
     }
-    match NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        Ok(d) if s.len() == 10 && YEARS.contains(&d.year()) => Ok(Some(d.format("%Y-%m-%d").to_string())),
+    match Date::strptime("%Y-%m-%d", s) {
+        Ok(d) if s.len() == 10 && YEARS.contains(&i32::from(d.year())) => Ok(Some(d.strftime("%Y-%m-%d").to_string())),
         _ => Err(format!("{s:?} is not a date (YYYY-MM-DD)")),
     }
 }
@@ -211,8 +212,8 @@ pub fn valid_due_time(s: &str) -> Result<Option<String>, String> {
     if s.is_empty() {
         return Ok(None);
     }
-    match NaiveTime::parse_from_str(s, "%H:%M") {
-        Ok(t) if s.len() == 5 => Ok(Some(t.format("%H:%M").to_string())),
+    match Time::strptime("%H:%M", s) {
+        Ok(t) if s.len() == 5 => Ok(Some(t.strftime("%H:%M").to_string())),
         _ => Err(format!("{s:?} is not a time (HH:MM)")),
     }
 }
@@ -254,90 +255,91 @@ pub fn valid_recurrence(r: Option<Recurrence>, due_on: Option<&str>) -> Result<O
     Ok(Some(r))
 }
 
-/// `day` of `y`-`m`, or the month's last day when it is shorter.
-fn day_in_month(y: i32, m: u32, day: u8) -> NaiveDate {
-    let first = NaiveDate::from_ymd_opt(y, m, 1).expect("a month");
-    let last = (first + Months::new(1)).pred_opt().expect("a day").day();
-    first.with_day(u32::from(day).min(last)).expect("a day in the month")
+/// `day` of the month `first` starts, or the month's last day when it is shorter.
+fn day_in_month(first: Date, day: u8) -> Option<Date> {
+    let day = i8::try_from(day).ok()?.min(first.days_in_month());
+    first.with().day(day).build().ok()
 }
 
-/// The rule's first day after `after`. `anchor` is where the series counts from (every N days or weeks).
-fn following(rule: &RepeatRule, anchor: NaiveDate, after: NaiveDate) -> NaiveDate {
+/// Whole days from `a` to `b`.
+fn days_between(a: Date, b: Date) -> Option<i64> {
+    Some(i64::from(a.until(b).ok()?.get_days()))
+}
+
+/// The rule's first day after `after`, or None past jiff's last day. `anchor` is where the series counts from (every N
+/// days or weeks).
+fn following(rule: &RepeatRule, anchor: Date, after: Date) -> Option<Date> {
     match rule {
         RepeatRule::Day { interval } => {
             let n = i64::from((*interval).max(1));
-            let k = (after - anchor).num_days().div_euclid(n) + 1;
-            anchor + Duration::days(k * n)
+            let k = days_between(anchor, after)?.div_euclid(n) + 1;
+            anchor.checked_add((k * n).days()).ok()
         }
         RepeatRule::Weekday => {
-            let mut d = after.succ_opt().expect("a day");
-            while matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
-                d = d.succ_opt().expect("a day");
+            let mut d = after.tomorrow().ok()?;
+            while matches!(d.weekday(), Weekday::Saturday | Weekday::Sunday) {
+                d = d.tomorrow().ok()?;
             }
-            d
+            Some(d)
         }
         RepeatRule::Week { interval, days } => {
             let n = i64::from((*interval).max(1));
-            let monday = |d: NaiveDate| d - Duration::days(i64::from(d.weekday().num_days_from_monday()));
-            let start = monday(anchor);
-            let mut d = after.succ_opt().expect("a day");
+            let monday = |d: Date| d.checked_sub(i64::from(d.weekday().to_monday_zero_offset()).days()).ok();
+            let start = monday(anchor)?;
+            let mut d = after.tomorrow().ok()?;
             // At most n weeks (plus one) to look through before a chosen day in a week of the series comes up.
             for _ in 0..(7 * (n + 1)) {
-                let week = (monday(d) - start).num_days() / 7;
-                if week.rem_euclid(n) == 0 && days.contains(&(d.weekday().number_from_monday() as u8)) {
-                    return d;
+                let week = days_between(start, monday(d)?)? / 7;
+                if week.rem_euclid(n) == 0 && days.contains(&(d.weekday().to_monday_one_offset() as u8)) {
+                    return Some(d);
                 }
-                d = d.succ_opt().expect("a day");
+                d = d.tomorrow().ok()?;
             }
-            d
+            Some(d)
         }
         RepeatRule::Month { day } => {
-            let this = day_in_month(after.year(), after.month(), *day);
+            let this = day_in_month(after.first_of_month(), *day)?;
             if this > after {
-                return this;
+                return Some(this);
             }
-            let next = after.with_day(1).expect("a day") + Months::new(1);
-            day_in_month(next.year(), next.month(), *day)
+            day_in_month(after.first_of_month().checked_add(1.month()).ok()?, *day)
         }
     }
 }
 
 /// The next todo's due day (`YYYY-MM-DD`) when one due on `due_on` is checked off on `today` (the user's local day).
 /// From the due date the series keeps its schedule, but skips days that have already passed: the next one is never
-/// due today or earlier. From when it's done, it counts from `today`. None when `due_on` isn't a date in [`YEARS`].
-pub fn next_due_on(r: &Recurrence, due_on: &str, today: NaiveDate) -> Option<String> {
-    let due = NaiveDate::parse_from_str(due_on, "%Y-%m-%d").ok().filter(|d| YEARS.contains(&d.year()))?;
+/// due today or earlier. From when it's done, it counts from `today`. None when `due_on` isn't a date in [`YEARS`], or
+/// the next day would be past the year 9999.
+pub fn next_due_on(r: &Recurrence, due_on: &str, today: Date) -> Option<String> {
+    let due = Date::strptime("%Y-%m-%d", due_on).ok().filter(|d| YEARS.contains(&i32::from(d.year())))?;
     let next = match r.from {
         RepeatFrom::Due => following(&r.rule, due, due.max(today)),
         RepeatFrom::Done => following(&r.rule, today, today),
-    };
-    Some(next.format("%Y-%m-%d").to_string())
+    }?;
+    Some(next.strftime("%Y-%m-%d").to_string())
 }
 
 /// [`next_due_on`] with today in the host's own time zone.
 pub fn next_due_on_local(r: &Recurrence, due_on: &str) -> Option<String> {
-    next_due_on(r, due_on, chrono::Local::now().date_naive())
+    next_due_on(r, due_on, jiff::ZonedDateTime::now().date())
 }
 
 /// The moment (ms) a todo comes due in `zone`: its time on its day, or the day's start (local midnight). None when it
-/// has no (valid) due day. A local time skipped by a clock change falls an hour later.
-pub fn due_at<Z: TimeZone>(due_on: Option<&str>, due_time: Option<&str>, zone: &Z) -> Option<i64> {
-    let day = NaiveDate::parse_from_str(due_on?, "%Y-%m-%d").ok()?;
+/// has no (valid) due day. A local time skipped by a clock change falls as much later as the clock jumped.
+pub fn due_at(due_on: Option<&str>, due_time: Option<&str>, zone: &TimeZone) -> Option<i64> {
+    let day = Date::strptime("%Y-%m-%d", due_on?).ok()?;
     let time = match due_time {
-        Some(t) => NaiveTime::parse_from_str(t, "%H:%M").ok()?,
-        None => NaiveTime::MIN,
+        Some(t) => Time::strptime("%H:%M", t).ok()?,
+        None => Time::midnight(),
     };
-    let local = day.and_time(time);
-    let at = zone
-        .from_local_datetime(&local)
-        .earliest()
-        .or_else(|| zone.from_local_datetime(&(local + Duration::hours(1))).earliest())?;
-    Some(at.timestamp_millis())
+    let at = day.to_datetime(time).to_zoned_datetime(zone.clone()).ok()?;
+    Some(at.timestamp().as_millisecond())
 }
 
 /// [`due_at`] in the host's own time zone (PDT is personal: the user's).
 pub fn due_at_local(due_on: Option<&str>, due_time: Option<&str>) -> Option<i64> {
-    due_at(due_on, due_time, &chrono::Local)
+    due_at(due_on, due_time, &TimeZone::system())
 }
 
 #[cfg(test)]
@@ -398,23 +400,33 @@ mod tests {
 
     #[test]
     fn a_todo_is_due_at_local_midnight_or_its_time() {
-        let zone: chrono_tz::Tz = "America/New_York".parse().unwrap();
-        let midnight = zone.with_ymd_and_hms(2026, 10, 23, 0, 0, 0).unwrap().timestamp_millis();
+        let zone = TimeZone::get("America/New_York").unwrap();
+        let midnight = local_ms(&zone, 2026, 10, 23, 0, 0);
         assert_eq!(due_at(Some("2026-10-23"), None, &zone), Some(midnight));
         assert_eq!(due_at(Some("2026-10-23"), Some("14:30"), &zone), Some(midnight + (14 * 60 + 30) * 60_000));
         assert_eq!(due_at(None, Some("14:30"), &zone), None);
         assert_eq!(due_at(Some("nope"), None, &zone), None);
         // 02:30 doesn't exist on 2026-03-08 in New York: it falls at 03:30.
-        let skipped = zone.with_ymd_and_hms(2026, 3, 8, 3, 30, 0).unwrap().timestamp_millis();
+        let skipped = local_ms(&zone, 2026, 3, 8, 3, 30);
         assert_eq!(due_at(Some("2026-03-08"), Some("02:30"), &zone), Some(skipped));
+    }
+
+    /// A local time in `zone`, in ms.
+    fn local_ms(zone: &TimeZone, y: i16, mo: i8, d: i8, h: i8, mi: i8) -> i64 {
+        jiff::civil::date(y, mo, d)
+            .at(h, mi, 0, 0)
+            .to_zoned_datetime(zone.clone())
+            .unwrap()
+            .timestamp()
+            .as_millisecond()
     }
 
     fn rec(rule: RepeatRule, from: RepeatFrom) -> Recurrence {
         Recurrence { rule, from }
     }
 
-    fn day(s: &str) -> NaiveDate {
-        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    fn day(s: &str) -> Date {
+        s.parse().unwrap()
     }
 
     /// The next due day from `due`, checked off on `today`.
@@ -517,24 +529,26 @@ mod tests {
     }
 
     #[test]
-    fn a_due_day_outside_four_digit_years_has_no_next_one() {
-        let last = NaiveDate::MAX.format("%Y-%m-%d").to_string();
-        for rule in [RepeatRule::Weekday, RepeatRule::Day { interval: 1 }, RepeatRule::Month { day: 1 }] {
-            assert_eq!(next_due_on(&rec(rule.clone(), RepeatFrom::Due), &last, day("2026-10-28")), None, "{last}");
-            assert!(next(rule, "9999-12-31", "2026-10-28").starts_with("+10000-01-0"), "into year 10000, no panic");
+    fn a_due_day_at_the_end_of_9999_has_no_next_one() {
+        let week = RepeatRule::Week { interval: 1, days: vec![1] };
+        for rule in [RepeatRule::Weekday, RepeatRule::Day { interval: 1 }, RepeatRule::Month { day: 1 }, week] {
+            let r = rec(rule, RepeatFrom::Due);
+            assert_eq!(next_due_on(&r, "9999-12-31", day("2026-10-28")), None, "{r:?}");
+            assert_eq!(next_due_on(&r, "10000-01-01", day("2026-10-28")), None, "{r:?}");
         }
     }
 
     #[test]
     fn the_next_one_keeps_its_local_time_across_a_clock_change() {
-        let zone: chrono_tz::Tz = "Europe/London".parse().unwrap();
+        let zone = TimeZone::get("Europe/London").unwrap();
         // British Summer Time ends on 2026-10-25: a daily 09:00 is still 09:00 local, 25 hours later.
         let next_day = next(RepeatRule::Day { interval: 1 }, "2026-10-24", "2026-10-24");
         assert_eq!(next_day, "2026-10-25");
         let before = due_at(Some("2026-10-24"), Some("09:00"), &zone).unwrap();
         let after = due_at(Some(&next_day), Some("09:00"), &zone).unwrap();
         assert_eq!(after - before, 25 * 3_600_000);
-        assert_eq!(zone.timestamp_millis_opt(after).unwrap().format("%H:%M").to_string(), "09:00");
+        let local = jiff::Timestamp::from_millisecond(after).unwrap().to_zoned_datetime(zone.clone());
+        assert_eq!(local.strftime("%H:%M").to_string(), "09:00");
         // And into summer time (2027-03-28): 23 hours.
         let spring = next(RepeatRule::Day { interval: 1 }, "2027-03-27", "2027-03-27");
         let gap = due_at(Some(&spring), Some("09:00"), &zone).unwrap()

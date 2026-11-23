@@ -150,7 +150,7 @@ impl Rules {
 
 /// Minutes since local midnight.
 pub(crate) fn minute_now() -> u16 {
-    let t = jiff::Zoned::now();
+    let t = jiff::ZonedDateTime::now();
     u16::try_from(i32::from(t.hour()) * 60 + i32::from(t.minute())).unwrap_or(0)
 }
 
@@ -449,7 +449,7 @@ async fn sync_inner(st: &AppState) -> Result<(), ApiError> {
             let mut n =
                 NewNotification::new(K::TodoDue, &key, t.title.clone(), NotificationTarget::Todo { id: t.id.clone() });
             // Late (pdtd was down): say since when.
-            let today = jiff::Zoned::now().date().to_string();
+            let today = jiff::ZonedDateTime::now().date().to_string();
             let when = match t.due_time.as_deref() {
                 _ if due_on < today.as_str() => format!("Overdue since {due_on}"),
                 Some(time) => format!("Due at {time}"),
