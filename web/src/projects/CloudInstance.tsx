@@ -18,6 +18,7 @@ const POWER: Record<Power, { label: string; tone: BadgeTone }> = {
   starting: { label: 'VM starting', tone: 'waiting' },
   stopping: { label: 'VM stopping', tone: 'waiting' },
   stopped: { label: 'VM stopped', tone: 'neutral' },
+  halted: { label: 'VM shut down, still billed', tone: 'waiting' },
   unknown: { label: 'VM state unknown', tone: 'neutral' },
 };
 
@@ -107,7 +108,7 @@ function CloudLine({ project, i, cloud }: { project: Project; i: RemoteInstanceV
   const [act, acting] = useAction(async (action: 'start' | 'stop') => {
     qc.setQueryData(projectKeys.remoteInstances(project.id), await api.cloudPower(project.id, i.linkId, action));
   });
-  const stopped = !cloud.starting && (cloud.state.power === 'stopped' || cloud.state.power === null);
+  const stopped = !cloud.starting && (cloud.state.power === 'stopped' || cloud.state.power === 'halted' || cloud.state.power === null);
   return (
     <>
       <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
@@ -116,7 +117,7 @@ function CloudLine({ project, i, cloud }: { project: Project; i: RemoteInstanceV
         <span>{cloud.setup.idleMinutes > 0 ? `stops after ${cloud.setup.idleMinutes} idle min` : 'never stopped by PDT'}</span>
         {stopped
           ? <Button size="sm" variant="ghost" pending={acting} onClick={() => void act('start')}><Play aria-hidden /> Start</Button>
-          : <Button size="sm" variant="ghost" pending={acting} onClick={() => void act('stop')}><Square aria-hidden /> Stop</Button>}
+          : <Button size="sm" variant="ghost" pending={acting} title="Tickets placed on it start it again" onClick={() => void act('stop')}><Square aria-hidden /> Stop</Button>}
       </span>
       {cloud.state.lastError && <Alert tone="error">{cloud.state.lastError}</Alert>}
     </>

@@ -3,4 +3,4 @@
 /**
  * A VM's power state, as its provider reports it (simplified).
  */
-export type Power = "running" | "starting" | "stopping" | "stopped" | "unknown";
+export type Power = "running" | "starting" | "stopping" | "stopped" | "halted" | "unknown";

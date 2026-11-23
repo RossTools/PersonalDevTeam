@@ -178,7 +178,7 @@ impl Arm {
 }
 
 /// The power state in a VM's instance view (`PowerState/deallocated`). A VM stopped but not deallocated (shut down
-/// from inside) counts as stopped: Start brings it back, but it is billed until it is deallocated.
+/// from inside its OS) is still billed for compute: it is [`Power::Halted`], which the owner deallocates.
 fn power_of(body: &str) -> Result<Power, String> {
     let v: Value = serde_json::from_str(body).map_err(|_| "Azure's instance view isn't JSON".to_string())?;
     let code = v["statuses"]
@@ -191,7 +191,8 @@ fn power_of(body: &str) -> Result<Power, String> {
         Some("running") => Ok(Power::Running),
         Some("starting") => Ok(Power::Starting),
         Some("stopping" | "deallocating") => Ok(Power::Stopping),
-        Some("stopped" | "deallocated") => Ok(Power::Stopped),
+        Some("deallocated") => Ok(Power::Stopped),
+        Some("stopped") => Ok(Power::Halted),
         _ => Ok(Power::Unknown),
     }
 }
@@ -311,7 +312,8 @@ mod tests {
         assert_eq!(power_of(&view("running")), Ok(Power::Running));
         assert_eq!(power_of(&view("starting")), Ok(Power::Starting));
         assert_eq!(power_of(&view("deallocating")), Ok(Power::Stopping));
-        assert_eq!(power_of(&view("stopped")), Ok(Power::Stopped));
+        assert_eq!(power_of(&view("deallocated")), Ok(Power::Stopped));
+        assert_eq!(power_of(&view("stopped")), Ok(Power::Halted), "shut down inside: still billed");
         assert_eq!(power_of(r#"{"statuses":[]}"#), Ok(Power::Unknown));
         assert!(parse_machine("pdt/win-cloud").is_ok());
         assert!(parse_machine("win-cloud").is_err());

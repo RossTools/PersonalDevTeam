@@ -229,7 +229,8 @@ connection of its kind (`CloudProvider::kind`) through a `pdt_forge::transport::
 it in `spawn_blocking`. The `cloud instances` loop (every 30 s, `cloud::check_all`) reads each VM's power and runs
 pdt-core `cloud::step` on it: a stopped VM that pickup holds tickets for (`offline_instances::waiting_for`) is started;
 a running one with no live sessions or runs on it (`Store::instance_busy`) and nothing waiting is stopped once
-`last_busy_at` is `idle_minutes` old; billed time between checks is metered. A start or stop isn't asked again for
+`last_busy_at` is `idle_minutes` old; a `halted` one (shut down from inside but still allocated and billed, Azure's
+`stopped`) is deallocated at once unless work waits for it; billed time between checks is metered. A start or stop isn't asked again for
 `cloud::RETRY_AFTER_MS`, and a start whose PDT hasn't answered a heartbeat within `START_TIMEOUT_MS` is an error.
 Dispatch is pickup's own: the heartbeats see the instance come back, `slot.freed` (`instance`) fires and pickup starts
 the held ticket. While a cloud instance's last check went well, `Placer::pickup_place` marks its `waiting` place

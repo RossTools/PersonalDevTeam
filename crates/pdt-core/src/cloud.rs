@@ -30,6 +30,9 @@ pub enum Power {
     Stopping,
     /// Stopped and not billed for compute (Azure: deallocated).
     Stopped,
+    /// Shut down from inside its OS but still allocated, so still billed for compute (Azure's `stopped`). The owner
+    /// deallocates it unless work waits for it, which starts it instead.
+    Halted,
     /// Not read yet, or the provider said something PDT doesn't know.
     Unknown,
 }
@@ -41,6 +44,7 @@ impl Power {
             Power::Starting => "starting",
             Power::Stopping => "stopping",
             Power::Stopped => "stopped",
+            Power::Halted => "halted",
             Power::Unknown => "unknown",
         }
     }
@@ -51,13 +55,14 @@ impl Power {
             "starting" => Power::Starting,
             "stopping" => Power::Stopping,
             "stopped" => Power::Stopped,
+            "halted" => Power::Halted,
             _ => Power::Unknown,
         }
     }
 
     /// Whether the provider bills compute for it in this state.
     pub fn billed(self) -> bool {
-        matches!(self, Power::Running | Power::Starting | Power::Stopping)
+        matches!(self, Power::Running | Power::Starting | Power::Stopping | Power::Halted)
     }
 }
 
@@ -187,7 +192,9 @@ pub fn step(setup: &CloudSetup, prev: &CloudState, o: &Observed) -> Step {
             Some(format!("it was started {} minutes ago and its PDT hasn't answered yet", (now - at) / 60_000));
     }
     let action = match o.power {
-        Power::Stopped if o.wanted && !recent(s.start_requested_at, now) => Some(CloudAction::Start),
+        Power::Stopped | Power::Halted if o.wanted && !recent(s.start_requested_at, now) => Some(CloudAction::Start),
+        // Shut down from inside but billed: nothing runs on it, so deallocate it whatever its idle minutes.
+        Power::Halted if !o.wanted && !recent(s.stop_requested_at, now) => Some(CloudAction::Stop),
         Power::Running if !o.busy && !o.wanted && setup.idle_minutes > 0 && !recent(s.stop_requested_at, now) => {
             let idle = now - s.last_busy_at.unwrap_or(now);
             (idle >= i64::from(setup.idle_minutes) * 60_000).then_some(CloudAction::Stop)
@@ -310,6 +317,19 @@ mod tests {
         let s = step(&setup(30), &prev, &o);
         assert!(s.state.last_error.as_deref().unwrap().contains("10 minutes ago"), "{:?}", s.state.last_error);
         assert!(starting(&s.state));
+    }
+
+    #[test]
+    fn a_vm_shut_down_from_inside_is_metered_and_deallocated_unless_work_waits() {
+        let prev = CloudState { power: Some(Power::Running), checked_at: Some(0), ..Default::default() };
+        let halted = step(&setup(0), &prev, &seen(Power::Halted, MIN));
+        assert_eq!((halted.action, halted.metered_ms), (Some(CloudAction::Stop), MIN), "billed, so deallocated");
+        assert_eq!(halted.state.stop_requested_at, Some(MIN));
+        let again = step(&setup(0), &halted.state, &seen(Power::Halted, 2 * MIN));
+        assert_eq!((again.action, again.metered_ms), (None, MIN), "asked once, still billed");
+        let wanted = Observed { wanted: true, ..seen(Power::Halted, 3 * MIN) };
+        assert_eq!(step(&setup(30), &CloudState::default(), &wanted).action, Some(CloudAction::Start));
+        assert_eq!(Power::parse(Power::Halted.as_str()), Power::Halted);
     }
 
     #[test]

@@ -90,6 +90,10 @@ list prices in late 2026; check your provider's current prices before you choose
 5. **Log in to the agents.** Connect to `win-cloud` over Remote Desktop through Tailscale as `pdt`. Its password is in
    `C:\ProgramData\PdtBootstrap\pdt-password.txt`, which only administrators can read. Run `claude` and `codex` once
    each to sign in. See [Agent logins](#agent-logins).
+
+   For `pdt` to sign in at boot, Windows keeps its password in the registry in plain text, where anyone signed in to
+   the machine can read it, and so does any image or snapshot you make of it. The machine is reachable only over your
+   tailnet, but don't share images of it, and make a new password for `pdt` if you do.
 6. **Let the owner start and stop it.** On the owner, in **Settings › Plugins**, turn on **AWS** and add a connection
    with the access key: its ID, the region and the secret access key. Then in **Remote instances**, click
    **Cloud VM…** on `win-cloud`, pick the connection, enter the instance id, and set:
@@ -153,7 +157,11 @@ at Hetzner, which bills stopped machines anyway: don't set it up as a cloud inst
 
 Each cloud instance's row shows its machine's state (**VM running**, **VM starting**, **VM stopped**), the hours it
 ran this month and what they cost, and when it stops. **Start** and **Stop** start or stop it now; one you start
-stops again once it has been idle for its minutes. **Cloud VM…** changes its settings; **Not a cloud VM** there makes
+stops again once it has been idle for its minutes, and one you stop starts again if tickets are waiting for it.
+
+Shutting an Azure machine down from inside Windows or Linux leaves it allocated, and Azure keeps billing it: its row
+says **VM shut down, still billed**, the meter keeps counting, and PDT deallocates it within a minute unless work is
+waiting for it, which starts it instead. **Cloud VM…** changes its settings; **Not a cloud VM** there makes
 it a plain remote instance again and leaves the machine as it is.
 
 If the provider refuses (the credentials are wrong or lack a right, the machine was deleted), or a machine started 10

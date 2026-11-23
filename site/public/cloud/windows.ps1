@@ -144,7 +144,8 @@ function Install-SystemPart {
         Set-Content -Path $passwordFile -Value $password.Text
         # Administrators and SYSTEM only.
         $null = icacls $passwordFile /inheritance:r /grant:r 'Administrators:F' 'SYSTEM:F'
-        # It signs in at boot, so PDT (which starts at its sign-in) runs with nobody at the desktop.
+        # It signs in at boot, so PDT (which starts at its sign-in) runs with nobody at the desktop. Winlogon keeps the
+        # password in plain text (local users and images of the VM can read it); the guide says so.
         $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
         Set-ItemProperty -Path $winlogon -Name 'AutoAdminLogon' -Value '1'
         Set-ItemProperty -Path $winlogon -Name 'DefaultUserName' -Value $account
