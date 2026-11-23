@@ -4,4 +4,8 @@
  * `PUT /projects/{id}/files/content`: writes `text` to `path`. `baseHash` is the hash of the file as it was opened;
  * leave it out to create a file that must not exist yet.
  */
-export type SaveFile = { worktreeId?: string, path: string, text: string, baseHash?: string, };
+export type SaveFile = { worktreeId?: string, 
+/**
+ * The remote project's checkout on this joined instance.
+ */
+instanceId?: string, path: string, text: string, baseHash?: string, };

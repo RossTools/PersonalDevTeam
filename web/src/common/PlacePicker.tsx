@@ -58,7 +58,10 @@ export function PlacePicker({ projects, place, onPick, className }: {
 }) {
   const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId });
   const project = projects.find((p) => p.id === place.projectId);
-  const where = place.worktreeId ? (worktrees.data?.find((w) => w.id === place.worktreeId)?.branch ?? '…') : REPOSITORY;
+  const worktree = place.worktreeId ? worktrees.data?.find((w) => w.id === place.worktreeId) : undefined;
+  const where = place.worktreeId
+    ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
+    : REPOSITORY;
   const projectName = project?.name ?? 'No project';
   return (
     <Popover

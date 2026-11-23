@@ -18,7 +18,7 @@ afterEach(() => vi.unstubAllGlobals());
 function setup(place = { projectId: 'p1', worktreeId: null as string | null }) {
   const calls = stubApi({
     'GET /api/projects/p1/worktrees': [wt('w1', 'p1', 'phase-3c'), wt('w2', 'p1', 'gone', true)],
-    'GET /api/projects/p2/worktrees': [wt('w3', 'p2', 'feature')],
+    'GET /api/projects/p2/worktrees': [wt('w3', 'p2', 'feature'), { ...wt('w4', 'p2', 'win'), instance: { id: 'i1', name: 'win-box' } }],
   });
   const onPick = vi.fn();
   renderWithQuery(<PlacePicker projects={projects} place={place} onPick={onPick} />);
@@ -38,11 +38,16 @@ describe('PlacePicker', () => {
     await user.click(screen.getByRole('button', { name: /^Place: PersonalDevTeam › Repository/ }));
     const list = screen.getByRole('menu', { name: 'Places' });
     expect(await within(list).findByRole('menuitem', { name: 'feature' })).toBeInTheDocument();
-    expect(within(list).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Repository', 'phase-3c', 'Repository', 'feature']);
+    expect(within(list).getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Repository', 'phase-3c', 'Repository', 'feature', 'win on win-box']);
     expect(within(list).queryByText('gone')).not.toBeInTheDocument();
     await user.click(within(list).getByRole('menuitem', { name: 'feature' }));
     expect(onPick).toHaveBeenCalledWith({ projectId: 'p2', worktreeId: 'w3' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('marks a worktree on another instance', async () => {
+    setup({ projectId: 'p2', worktreeId: 'w4' });
+    expect(await screen.findByRole('button', { name: 'Place: Demo › win · on win-box' })).toBeInTheDocument();
   });
 
   it('filters by project name or key and picks with the keyboard', async () => {
@@ -51,7 +56,7 @@ describe('PlacePicker', () => {
     await user.click(screen.getByRole('button', { name: /^Place/ }));
     await screen.findByRole('menuitem', { name: 'feature' });
     await user.keyboard('demo');
-    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Repository', 'feature']);
+    expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Repository', 'feature', 'win on win-box']);
     await user.keyboard('{Enter}');
     expect(onPick).toHaveBeenCalledWith({ projectId: 'p2', worktreeId: null });
   });
