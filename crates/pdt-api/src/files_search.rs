@@ -4,7 +4,7 @@
 
 use crate::error::ApiError;
 use crate::extract::ApiQuery;
-use crate::files::{FilesQuery, resolve};
+use crate::files::{Checkout, FilesQuery, blocking, resolve};
 use crate::routes::AppState;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -22,11 +22,13 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// Longer lines are cut around the match.
 const MAX_LINE_CHARS: usize = 300;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SearchQuery {
     #[serde(default)]
     worktree_id: Option<String>,
+    #[serde(default)]
+    instance_id: Option<String>,
     #[serde(default)]
     q: String,
     #[serde(default)]
@@ -39,7 +41,7 @@ pub(crate) struct SearchQuery {
     glob: String,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SearchLine {
@@ -55,7 +57,7 @@ pub struct SearchLine {
     pub ranges: Vec<[u32; 2]>,
 }
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SearchFile {
@@ -68,7 +70,7 @@ pub struct SearchFile {
 }
 
 /// `GET /projects/{id}/files/search`: the files whose contents match, in path order.
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct SearchResult {
@@ -123,12 +125,20 @@ pub(crate) async fn search(
     Path(id): Path<String>,
     ApiQuery(q): ApiQuery<SearchQuery>,
 ) -> Result<Json<SearchResult>, ApiError> {
-    let fq = FilesQuery { worktree_id: q.worktree_id.clone(), path: String::new() };
-    let (checkout, _, plain) = resolve(&st, &id, &fq).await?;
-    let r = tokio::task::spawn_blocking(move || search_in(&checkout, q, plain, TIMEOUT))
-        .await
-        .map_err(ApiError::internal)??;
+    let fq = FilesQuery { worktree_id: q.worktree_id.clone(), instance_id: q.instance_id.clone(), path: String::new() };
+    let r = match resolve(&st, &id, &fq).await? {
+        (Checkout::Here { path, plain }, _) => blocking(move || search_in(&path, q, plain, TIMEOUT)).await?,
+        (Checkout::Remote { instance, branch }, _) => {
+            let q = SearchQuery { worktree_id: None, instance_id: None, ..q };
+            crate::exec::files(&st, &instance, branch, crate::exec::FilesOp::Search { q }).await?
+        }
+    };
     Ok(Json(r))
+}
+
+/// [`search_in`] with the usual deadline. Blocking.
+pub(crate) fn search_here(checkout: &FsPath, q: SearchQuery) -> Result<SearchResult, ApiError> {
+    search_in(checkout, q, false, TIMEOUT)
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

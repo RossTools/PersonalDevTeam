@@ -90,12 +90,22 @@ For a ticket placed there:
   through its remote access, so **Open** works from the owner (and only for you). They count toward the remote
   instance's maximum of runs (its **Settings › This host › Runs**), not the owner's. If the remote instance
   restarts, its runs stop.
+- **Files.** In **Files**, pick the ticket's branch (marked **on win-box**) to browse, read, edit, search and download
+  its files on the remote instance, as you would locally.
+- **Changes.** The ticket's **Changes** show its diff on the remote instance, with review comments, **Send feedback**
+  and **Approve** as usual. Merge checks (commits to merge, conflicts with the base) are done there; a remote ticket
+  merges through its pull request.
+- **Overlaps.** The files a remote ticket changes count in overlap checks with the project's other tickets, wherever
+  those run.
 - **Terminals.** An agent started in its terminal, and any shell you open in the ticket's workspace, runs there too.
   You type, resize and scroll back on the owner as in a local terminal; the remote instance keeps the output while
   nobody watches, so reconnecting shows it.
 
-The local forge's CI, and the Files and Changes views of a remote ticket, aren't available yet. A remote session keeps
-the view it started in: it can't switch between conversation and terminal.
+Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
+wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
+
+The local forge's CI isn't available for a remote ticket yet. A remote session keeps the view it started in: it can't switch
+between conversation and terminal.
 
 ## Shells on a remote instance
 
@@ -107,7 +117,8 @@ A shell from the owner opens only in the remote project's checkout or its ticket
 anywhere else on it. Shells you open in the remote instance's own window stay its own and never show on the owner.
 
 If the link between the instances drops, the agents keep working, and so do terminals: the terminal on the owner
-reconnects once the link is back. Their PDT tool calls wait and go through once it is
+reconnects once the link is back. Files and Changes of their tickets say the remote instance can't be reached until it
+is back. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
 until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
 left off.

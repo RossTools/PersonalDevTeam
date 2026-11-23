@@ -139,7 +139,17 @@ running. An agent's pdt-mcp call to the remote instance (`mcp::post`, `exec::rel
 `/link/exec/mcp` with its token, retried while the owner can't be reached; the owner answers it as its own. Git for a
 remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (`/link/exec/git`, the base merged
 in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
-worktree until Clean up, since the owner can't see what it holds. Runs and tests in a remote worktree (`exec/runs.rs`)
+worktree until Clean up, since the owner can't see what it holds. Files, Changes and overlaps of a remote attempt
+are read there (`exec/files.rs`, `exec/review.rs`): `files::resolve` says where a checkout is (`Checkout::Here` or
+`Checkout::Remote`, a remote worktree or `instanceId` for the remote project's checkout), and each Files request is
+one `/link/exec/files` call (downloads stream through `/link/exec/download`) that the remote instance runs with the
+same `files*::*_in` functions in a folder it picks (`exec::files::place`). Changes are one `/link/exec/git` call
+(`GitOp::Changes`) returning the diff and both sides of its files (up to 8 MB), kept on the owner by worktree and
+stamped with a hash of the diff; the next call sends the stamp and gets "unchanged". The merge preview's conflict check
+(`GitOp::MergeCheck`, against the fresher of `base` and `origin/<base>`), Approve's branch head, and
+`refresh_overlaps`' changed files (`GitOp::ChangedFiles`) go there too. Errors the views act on (`file_changed`,
+`path_outside`…) pass through as the remote instance gave them (`PeerError::passed_on`).
+Runs and tests in a remote worktree (`exec/runs.rs`)
 are `runs` rows on the owner with `instance_id`: the owner reads the worktree's `.pdt/project.toml` there
 (`/link/exec/run/config`, also its OS for `os`), merges its overrides, checks approval, and starts and stops it with
 `/link/exec/run/start` and `/run/stop` (`run_manager::relaunch` and `stop` route a remote run there). The remote
@@ -149,8 +159,7 @@ never a session's event, and a read carries at most a few MB of it); the owner's
 `runs/logs/<run>.<step>.log`, which the run's terminals follow read-only). A web run's port, link and `tailscale serve`
 mapping are the remote's; the owner's row has its `url` and no `port`. A start marks the row active (`exec::claim`)
 under `run_start_lock` and calls the remote (`exec::launch`) after letting it go. Runs count toward the remote's
-maximum of runs, not the owner's. Files and Changes of a remote attempt, and the local forge's CI for one, are not
-remote yet.
+maximum of runs, not the owner's. The local forge's CI for a remote attempt is not remote yet.
 
 **Remote terminals** (pdt-api `exec/terminals.rs` on the owner, `exec/remote_pty.rs` on the remote). A terminal
 session (an agent's TUI or a shell) in a remote worktree, or made with `NewSession.instanceId` ("Shell on win-box" in
