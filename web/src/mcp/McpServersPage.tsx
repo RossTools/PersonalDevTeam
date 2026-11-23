@@ -356,6 +356,7 @@ export function McpServersPage() {
   const error = remove.error ?? onlyPdt.error;
   return (
     <Page
+      crumb="Settings"
       title="MCP servers"
       description="Add an MCP server once and every agent gets it: Claude Code, Codex and the other agents, in conversations and terminals. Remote servers that sign in with OAuth sign in here, once."
     >

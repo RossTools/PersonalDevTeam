@@ -192,7 +192,7 @@ function SettingsSample() {
   const [remote, setRemote] = useState(true);
   return (
     <div className="flex h-[36rem] flex-col rounded-md border border-border bg-background">
-      <Page title="This host" description="Settings for the machine running pdtd.">
+      <Page crumb="Settings" title="This host" description="Settings for the machine running pdtd.">
         <Section
           label="Updates"
           description="New releases, from GitHub."
@@ -229,7 +229,7 @@ function SettingsScreenSample() {
   return (
     <div className="flex h-72 flex-col rounded-md border border-border bg-background">
       <SettingsScreen crumb="This host" lead="Storage">
-        <Section label="Storage" description="What PDT keeps on this machine, and what cleaning frees.">
+        <Section label="Storage" description="What PDT keeps on this machine, and what cleaning frees. On a phone the action moves under this." actions={<Button size="sm">Measure again</Button>}>
           <SettingsRow label="Clean up automatically" description="Ended sessions' logs older than 30 days.">
             <Switch aria-label="Clean up automatically" checked onChange={() => {}} />
           </SettingsRow>

@@ -184,6 +184,7 @@ export function SecretsPage() {
   ]);
   return (
     <Page
+      crumb="Settings"
       title="Secrets"
       description="API keys, tokens and passwords agents and workflows use by name, never pasted into the chat. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
     >

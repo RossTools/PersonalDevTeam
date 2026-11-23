@@ -217,7 +217,7 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
 export function RemoteProjectsPage() {
   const q = useRemoteProjects();
   return (
-    <Page title="Remote projects" description="Projects another instance owns, which this one works on for it. Their board, tickets and PM are on the owner.">
+    <Page crumb="Settings" title="Remote projects" description="Projects another instance owns, which this one works on for it. Their board, tickets and PM are on the owner.">
       <Section label="Joined">
         {q.isPending && <Skeleton lines={2} label="Loading remote projects" />}
         <LoadError what="Remote projects" error={q.error} />

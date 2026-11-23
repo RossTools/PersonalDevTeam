@@ -22,7 +22,7 @@ type Entry<P> = {
 
 // Each Settings page of its own: a new one is its screen, its kind in route.ts (and SettingsNav), and one entry here.
 const PAGES: { [K in OwnSettingsPage['kind']]: Entry<Extract<OwnSettingsPage, { kind: K }>> } = {
-  connections: { title: () => 'All connections', screen: (_, ctx) => <AllConnectionsPage onOpen={ctx.openPlugin} /> },
+  connections: { title: () => 'All connections', screen: (_, ctx) => <AllConnectionsPage onOpen={ctx.openPlugin} onPlugins={() => navigate(routePath({ view: 'settings', page: { kind: 'plugins', id: null } }))} /> },
   'mcp-servers': { title: () => 'MCP servers', screen: () => <McpServersPage /> },
   notifications: { title: () => 'Notifications', screen: () => <NotificationSettingsPage /> },
   plugins: {

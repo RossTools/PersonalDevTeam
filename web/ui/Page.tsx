@@ -2,6 +2,8 @@ import { createContext, useContext, useId, type ReactNode } from 'react';
 import { cn } from './lib/utils';
 
 export interface PageProps {
+  /** Above the title on a desktop: where the page is ("Settings"). A phone's top bar already says. */
+  crumb?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
   /** Top-right of the page (rare: most actions live in their section). */
@@ -11,18 +13,20 @@ export interface PageProps {
 }
 
 /**
- * A settings page: scrolls, max width 3xl, a title and optional description, then `Section` cards. The settings
- * design language (web/ui/README.md "Settings pages") says what goes where.
+ * A settings page: scrolls, max width 3xl, a breadcrumb, a title and optional description, then `Section` cards. Its
+ * header looks the same as a `SettingsScreen`'s. The settings design language (web/ui/README.md "Settings pages") says
+ * what goes where.
  */
-export function Page({ title, description, actions, children, className }: PageProps) {
+export function Page({ crumb, title, description, actions, children, className }: PageProps) {
   const id = useId();
   return (
     <div className="min-h-0 flex-1 overflow-auto">
-      <article aria-labelledby={id} className={cn('flex max-w-3xl flex-col gap-8 p-gutter text-sm', className)}>
-        <header className="flex flex-wrap items-start gap-x-4 gap-y-2">
-          <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <article aria-labelledby={id} className={cn('flex max-w-3xl flex-col gap-6 p-gutter text-sm', className)}>
+        {crumb != null && <nav aria-label="Breadcrumb" className={cn(crumbClass, 'max-md:hidden')}>{crumb}</nav>}
+        <header className={headerClass}>
+          <div className={cn(headerText, 'gap-1')}>
             <h2 id={id} className="text-heading font-semibold">{title}</h2>
-            {description != null && <p className="text-xs text-muted-foreground">{description}</p>}
+            {description != null && <p className="text-sm text-muted-foreground">{description}</p>}
           </div>
           {actions != null && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
         </header>
@@ -31,6 +35,14 @@ export function Page({ title, description, actions, children, className }: PageP
     </div>
   );
 }
+
+/**
+ * A page's or section's header: the text, then its actions beside it, or under it when the text would get narrower
+ * than 16rem (a phone), so a description never squeezes into a narrow column.
+ */
+const headerClass = 'flex flex-wrap items-end gap-x-4 gap-y-2 px-0.5';
+const headerText = 'flex min-w-0 grow basis-64 flex-col';
+const crumbClass = '-mb-5 text-xs text-muted-foreground';
 
 /** The label of the section a `SettingsScreen` is about: that `Section`'s heading is the screen's title. */
 const ScreenLead = createContext<string | null>(null);
@@ -55,7 +67,7 @@ export function SettingsScreen({ crumb, lead, notice, children, className }: Set
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       <article aria-label={lead} className={cn('flex max-w-3xl flex-col gap-6 p-gutter text-sm', className)}>
-        {crumb != null && <nav aria-label="Breadcrumb" className="-mb-5 text-xs text-muted-foreground">{crumb}</nav>}
+        {crumb != null && <nav aria-label="Breadcrumb" className={crumbClass}>{crumb}</nav>}
         {notice}
         <ScreenLead.Provider value={lead}>{children}</ScreenLead.Provider>
       </article>
@@ -100,8 +112,8 @@ export function Section({ label, description, actions, notice, footer, dirty, da
   const Heading = lead ? 'h2' : 'h3';
   return (
     <section aria-labelledby={id} className={cn('flex flex-col', lead ? 'gap-4' : 'gap-2', className)}>
-      <div className="flex flex-wrap items-end gap-x-4 gap-y-2 px-0.5">
-        <div className={cn('flex min-w-0 flex-1 flex-col', lead ? 'gap-1' : 'gap-0.5')}>
+      <div className={headerClass}>
+        <div className={cn(headerText, lead ? 'gap-1' : 'gap-0.5')}>
           <Heading id={id} className={cn(lead ? 'text-heading font-semibold' : 'text-sm font-semibold', danger ? 'text-destructive' : 'text-foreground')}>
             {label}
           </Heading>
