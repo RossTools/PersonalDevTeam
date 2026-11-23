@@ -347,6 +347,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Every keychain value PDT reads or writes reaches the redactor.** `AppState::secrets` is wrapped in
   `secrets::Redacting` (pdtd's `main.rs`, `AppState::new`); a value kept outside the keychain (Google's access tokens,
   MCP sign-ins' refreshed tokens) is given to the redactor where it is made.
+- **The redactor's keys are namespaced, never a user secret's name.** The vault keys a secret by its keychain account
+  (`secret:<id>`) with its name as the label, and reads values back only under that key; PDT's own values use their
+  account (`update-token`, `mcp-oauth:<id>/…`, `google-access:<id>`), which `Redacting` never writes under `secret:`.
+  Keyed by name, a secret called `update-token` would be handed PDT's own token by `run_with_secrets`.
 - **Redact before cutting.** Output cut to a size is redacted first and then loses any end that could start a value
   (`Redactor::string_cut`), so a cut never leaves part of one.
 - **A bug report bound for GitHub goes through `bug_report::redact` with the user's own names.** pdt-api
