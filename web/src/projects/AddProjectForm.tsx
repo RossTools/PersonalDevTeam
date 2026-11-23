@@ -1,11 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { FolderOpen, Link2, NotebookPen, Network } from 'lucide-react';
-import { Alert, Button, ChoiceCardGroup, Field, Input } from '@ui';
+import { Alert, Button, ChoiceCardGroup, Field, Input, Spinner } from '@ui';
 import { api } from '../api/client';
+import { ApiError } from '../api/core';
 import { FolderField } from '../common/FolderField';
+import type { CloneJob } from '../api/gen/CloneJob';
 import type { Project } from '../api/gen/Project';
-import { invalidateProjects } from './queries';
+import { invalidateProjects, projectKeys, useClones } from './queries';
 import { useHostSettings } from '../host/queries';
 import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 
@@ -50,10 +52,23 @@ export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMo
   const add = useMutation({ meta: { errorShown: true }, mutationFn: api.createProject, onSuccess: done });
   const clone = useMutation({ meta: { errorShown: true }, mutationFn: api.cloneProject, onSuccess: done });
   const m = mode === 'clone' ? clone : add;
+  // The clones under way go on after a reload, so they're shown whoever started them.
+  const clones = useClones({ enabled: mode === 'clone' });
+  const cancel = useMutation({ mutationFn: api.cancelClone, onSettled: () => qc.invalidateQueries({ queryKey: projectKeys.clones }) });
+  // A clone that left the list has finished (or failed): one started before a reload adds its project unseen.
+  const seen = useRef<string[]>([]);
+  useEffect(() => {
+    if (!clones.data) return;
+    const now = clones.data.map((c) => c.id);
+    if (seen.current.some((id) => !now.includes(id))) void invalidateProjects(qc);
+    seen.current = now;
+  }, [clones.data, qc]);
+  // A clone the user cancelled needs no error.
+  const failed = m.isError && !(m.error instanceof ApiError && m.error.code === 'clone_cancelled');
   // A submit error moves focus to its Alert.
   useEffect(() => {
-    if (m.isError) document.getElementById(errorId)?.focus();
-  }, [m.isError, m.error, errorId]);
+    if (failed) document.getElementById(errorId)?.focus();
+  }, [failed, m.error, errorId]);
   const opt = (v: string) => (v.trim() ? v.trim() : undefined);
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -120,10 +135,25 @@ export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMo
       <Field label="Key" hint="The prefix of its ticket numbers, like REPO in REPO-1: 2–10 letters and digits.">
         <Input mono className="uppercase placeholder:normal-case placeholder:font-sans" maxLength={10} placeholder="suggested from the name" value={key} onChange={(e) => setKey(e.target.value)} />
       </Field>
-      {m.isError && <Alert id={errorId} tabIndex={-1} tone="error">{m.error.message}</Alert>}
+      {mode === 'clone' && clones.data?.map((c) => <CloneProgress key={c.id} job={c} onCancel={() => cancel.mutate(c.id)} />)}
+      {failed && <Alert id={errorId} tabIndex={-1} tone="error">{m.error?.message}</Alert>}
       <Button variant="primary" type="submit" pending={m.isPending}>
         {mode !== 'clone' ? 'Add project' : clone.isPending ? 'Cloning…' : 'Clone and add'}
       </Button>
     </form>
+  );
+}
+
+/** A clone under way: where it goes, git's latest progress, and Cancel (which removes what it cloned so far). */
+function CloneProgress({ job, onCancel }: { job: CloneJob; onCancel: () => void }) {
+  return (
+    <div role="group" aria-label={`Cloning ${job.name}`} className="flex items-center gap-2 rounded-md border p-2 text-sm">
+      <Spinner decorative className="size-4 shrink-0 text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate">Cloning into <span className="font-mono">{job.dest}</span></span>
+        <span className="truncate font-mono text-xs text-muted-foreground" aria-live="polite">{job.progress || 'Starting…'}</span>
+      </div>
+      <Button size="sm" variant="ghost" onClick={onCancel}>Cancel</Button>
+    </div>
   );
 }

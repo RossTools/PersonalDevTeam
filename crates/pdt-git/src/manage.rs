@@ -10,28 +10,6 @@ fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
     }
 }
 
-/// Clones `url` into `dest`, which must not exist yet. Git never prompts (a credential or host-key question fails
-/// the clone instead of hanging); the host's own credential helper and SSH agent still work. A failed clone leaves
-/// no folder behind.
-pub fn clone(url: &str, dest: &Path) -> Result<(), GitError> {
-    if dest.exists() {
-        return Err(GitError::Command(format!("{} already exists", dest.display())));
-    }
-    let parent = dest.parent().ok_or_else(|| GitError::Command(format!("no parent folder for {}", dest.display())))?;
-    std::fs::create_dir_all(parent).map_err(|e| GitError::Command(format!("creating {}: {e}", parent.display())))?;
-    let ssh = std::env::var("GIT_SSH_COMMAND")
-        .unwrap_or_else(|_| "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new".to_string());
-    let dest_str = dest.to_string_lossy();
-    let env = [("GIT_TERMINAL_PROMPT", "0"), ("GIT_SSH_COMMAND", ssh.as_str())];
-    match git_with_env(parent, &["clone", "--quiet", "--", url, &dest_str], &env)? {
-        Ok(_) => Ok(()),
-        Err(f) => {
-            let _ = std::fs::remove_dir_all(dest);
-            Err(command_failed(f.stderr))
-        }
-    }
-}
-
 /// The URL of remote `name`, if it has one.
 pub fn remote_url(repo: &Path, name: &str) -> Option<String> {
     match git_with_env(repo, &["remote", "get-url", name], &[]) {
@@ -320,24 +298,6 @@ mod tests {
 
     fn same(a: &Path, b: &Path) -> bool {
         std::fs::canonicalize(a).unwrap() == std::fs::canonicalize(b).unwrap()
-    }
-
-    #[test]
-    fn clones_a_local_repository_and_cleans_up_after_a_failure() {
-        let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src repo");
-        repo(&src);
-        let dest = tmp.path().join("out").join("copy");
-        clone(&src.to_string_lossy(), &dest).unwrap();
-        assert!(dest.join("README.md").is_file());
-        assert!(remote_url(&dest, "origin").is_some());
-        assert_eq!(remote_url(&dest, "nope"), None);
-        assert!(clone(&src.to_string_lossy(), &dest).is_err(), "an existing folder is refused");
-
-        let bad = tmp.path().join("out").join("bad");
-        let missing = tmp.path().join("no such repo");
-        assert!(clone(&missing.to_string_lossy(), &bad).is_err());
-        assert!(!bad.exists(), "a failed clone leaves no folder");
     }
 
     #[test]
