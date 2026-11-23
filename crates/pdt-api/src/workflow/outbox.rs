@@ -44,7 +44,7 @@ pub(crate) async fn deliver(st: &AppState) {
     // The newest running agent session of each attempt (the list is oldest first): a terminal with its PTY, or a
     // conversation.
     let live = |s: &&Session| {
-        s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id))
+        s.kind == SessionKind::AgentTui && (s.mode == SessionMode::Conversation || st.terminal_running(&s.id))
     };
     let mut by_attempt: HashMap<&str, &Session> = HashMap::new();
     for s in running.iter().filter(live) {

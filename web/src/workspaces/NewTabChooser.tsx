@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, GitBranch, Play, TestTube, Ticket } from 'lucide-react';
+import { ArrowLeft, GitBranch, Play, Server, TestTube, Ticket } from 'lucide-react';
 import { Alert, Button, CommandList, Dialog, Popover, Sheet, Switch, type CommandItem } from '@ui';
 import { api } from '../api/client';
 import type { PermissionMode } from '../api/gen/PermissionMode';
@@ -14,6 +14,7 @@ import { useAgentAvailability } from '../common/useAgentAvailability';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { useMediaQuery } from '../common/useMediaQuery';
 import { PermissionModeSelect } from '../conversation/ConversationComposer';
+import { useRemoteInstances } from '../projects/queries';
 import { RunBranchForm } from '../runs/RunBranchForm';
 import { choiceLabel, parseChoice, useRunChoices } from '../runs/RunMenu';
 import { useStartRun } from '../runs/useStartRun';
@@ -105,7 +106,14 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
   };
   const create = useMutation({
     meta: { errorShown: true },
-    mutationFn: (choice: Choice) => api.createSession({ ...newSession(place!.projectId, place!.worktreeId, choice, { bypass, permissionMode }), ...(placement ? { tab: placement } : {}) }),
+    // A choice here, or a shell on one of the project's remote instances (in its checkout of the project).
+    mutationFn: (what: Choice | { instanceId: string }) =>
+      api.createSession({
+        ...(typeof what === 'string'
+          ? newSession(place!.projectId, place!.worktreeId, what, { bypass, permissionMode })
+          : { ...newSession(place!.projectId, null, 'Shell'), instanceId: what.instanceId }),
+        ...(placement ? { tab: placement } : {}),
+      }),
     onSuccess: async (s) => {
       void invalidateSessions(qc, s.projectId);
       await done({ kind: 'session', id: s.id }, s.projectId);
@@ -118,6 +126,10 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     return where?.id === workspace?.id ? [] : [{ info: i, workspaceName: where?.name ?? null }];
   });
   const project = ws.projects.find((p) => p.id === place?.projectId) ?? null;
+  // In the project's checkout: its remote instances, each offering a shell there (a remote worktree's shells go there
+  // by themselves).
+  const remotes = useRemoteInstances(place?.projectId ?? '', { enabled: !!place && !place.worktreeId && project?.kind === 'repo' });
+  const remoteShells = place && !place.worktreeId ? (remotes.data?.instances ?? []) : [];
   const error = create.error ?? start.error;
 
   const items: CommandItem[] = [
@@ -129,6 +141,14 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
           return { id: `new:${c}`, label: choiceText(c, acp), ...(hint ? { detail: hint } : {}), group: 'Start here', ...(shortcut ? { shortcut } : {}), icon: <Icon aria-hidden />, disabled: create.isPending };
         })
       : []),
+    ...remoteShells.map((i) => ({
+      id: `remote:${i.instanceId}`,
+      label: `Shell on ${i.name}`,
+      ...(i.state === 'connected' ? {} : { detail: i.state }),
+      group: 'Start here',
+      icon: <Server aria-hidden />,
+      disabled: create.isPending || i.state !== 'connected',
+    })),
     ...(place && workspace ? [{ id: 'ticket', label: 'Ticket…', group: 'Start here', icon: <Ticket aria-hidden /> }] : []),
     ...(place
       ? choices.map((c) => ({
@@ -156,6 +176,7 @@ export function NewTabChooser({ ws, onClose, anchor }: { ws: WorkspacesApi; onCl
     const [what, ...rest] = id.split(':');
     const value = rest.join(':');
     if (what === 'new' && place && !create.isPending) create.mutate(value as Choice);
+    else if (what === 'remote' && place && !create.isPending) create.mutate({ instanceId: value });
     else if (what === 'choice' && place) {
       start.mutate({ ...(place.worktreeId ? { worktreeId: place.worktreeId } : {}), ...parseChoice(value), ...(placement ? { tab: placement } : {}) });
     } else if (what === 'branch') setView('branch');

@@ -34,6 +34,7 @@ pub(crate) async fn open_terminal(
     let Json(size) = payload?;
     let size = pdt_core::session::TerminalSize { cols: size.cols, rows: size.rows }.validate()?;
     let session = conversation_session(&st, &id).await?;
+    remote_refused(&session)?;
     if session.agent != Some(AgentKind::Codex) {
         return Err(ApiError::conflict(
             codes::TERMINAL_UNSUPPORTED,
@@ -128,6 +129,17 @@ pub(crate) async fn close_terminal(State(st): State<AppState>, Path(id): Path<St
 /// How long the TUI gets to leave after `/exit` before it is killed.
 const TUI_EXIT_GRACE: Duration = Duration::from_secs(5);
 
+/// A session on a remote instance keeps the view it started in: its transcript and terminal are there (PDT-633).
+fn remote_refused(session: &Session) -> Result<(), ApiError> {
+    match &session.instance {
+        Some(i) => Err(ApiError::conflict(
+            codes::SWITCH_UNSUPPORTED,
+            format!("this session runs on {}, where it keeps the view it started in", i.name),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// `POST /api/sessions/{id}/mode`.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +164,7 @@ pub(crate) async fn switch_mode(
     let Json(body) = payload?;
     let _guard = st.lock_session(&id).await;
     let session = st.session(&id).await?;
+    remote_refused(&session)?;
     if session.kind != SessionKind::AgentTui || !matches!(session.agent, Some(AgentKind::Claude | AgentKind::Devin)) {
         return Err(ApiError::conflict(
             codes::SWITCH_UNSUPPORTED,
@@ -337,8 +350,11 @@ pub(crate) async fn terminal_conversation_moved(
     trigger: &str,
 ) -> Result<(), ApiError> {
     let id = session.id.as_str();
-    let after = import_anchor(st, id).await?;
-    let mut events = terminal_turns(st, session, after).await;
+    // A remote terminal's transcript is on its instance (PDT-633): only the divider is logged.
+    let mut events = match session.instance {
+        Some(_) => vec![],
+        None => terminal_turns(st, session, import_anchor(st, id).await?).await,
+    };
     events.push((None, None, AgentEvent::ConversationReset { trigger: trigger.to_string() }));
     for (item_id, turn_id, event) in &events {
         let ne = NewEvent { ts: now_ms(), item_id: item_id.as_deref(), turn_id: turn_id.as_deref(), event, raw: None };

@@ -32,7 +32,14 @@ function Places({ projects, place, onPick }: { projects: Project[]; place: Place
         .filter((w) => !w.missing)
         .map((w) => {
           const id = idOf({ projectId: p.id, worktreeId: w.id });
-          return { id, label: w.branch, group: p.name, keywords: [p.name, p.key], icon: icon(id, <GitBranch aria-hidden />) };
+          return {
+            id,
+            label: w.branch,
+            ...(w.instance ? { detail: `on ${w.instance.name}` } : {}),
+            group: p.name,
+            keywords: [p.name, p.key],
+            icon: icon(id, <GitBranch aria-hidden />),
+          };
         }),
     ];
   });
