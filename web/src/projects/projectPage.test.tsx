@@ -185,7 +185,7 @@ describe('AddProjectForm', () => {
       'POST /api/projects': { ...project, id: 'n', kind: 'personal' },
     });
     renderWithQuery(<AddProjectForm />);
-    await userEvent.click(screen.getByRole('radio', { name: 'Personal (no repo)' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Personal' }));
     expect(screen.queryByText('Repository path')).toBeNull();
     await userEvent.type(screen.getByLabelText('Name'), 'Errands');
     await userEvent.type(screen.getByLabelText('Key'), 'err');
@@ -200,7 +200,7 @@ describe('AddProjectForm', () => {
       'POST /api/projects/clone': { ...project, id: 'n' },
     });
     renderWithQuery(<AddProjectForm onAdded={onAdded} />);
-    await userEvent.click(screen.getByRole('radio', { name: 'Clone URL' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Clone a URL' }));
     expect(await screen.findByPlaceholderText('/home/me/work')).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText('Repository URL'), 'https://github.com/o/r');
     await userEvent.type(screen.getByLabelText('Key'), 'rr');

@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState, type FormEvent } from 'react';
-import { Alert, Button, Field, Input, SegmentedControl } from '@ui';
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react';
+import { FolderOpen, Link2, NotebookPen, Network } from 'lucide-react';
+import { Alert, Button, ChoiceCardGroup, Field, Input } from '@ui';
 import { api } from '../api/client';
 import { FolderField } from '../common/FolderField';
 import type { Project } from '../api/gen/Project';
@@ -10,11 +11,18 @@ import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 
 export type AddProjectMode = 'path' | 'clone' | 'personal' | 'remote';
 type Mode = AddProjectMode;
+/** A mode's card: an icon before its title, and the title as the radio's name. */
+const card = (value: Mode, icon: ReactNode, title: string, description: string) => ({
+  value,
+  'aria-label': title,
+  title: <span className="flex items-center gap-1.5 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-muted-foreground">{icon}{title}</span>,
+  description,
+});
 const modes = [
-  { value: 'path' as const, label: 'Folder' },
-  { value: 'clone' as const, label: 'Clone URL' },
-  { value: 'personal' as const, label: 'Personal (no repo)' },
-  { value: 'remote' as const, label: 'Remote project' },
+  card('path', <FolderOpen aria-hidden />, 'Folder', 'A repo on this host'),
+  card('clone', <Link2 aria-hidden />, 'Clone a URL', 'Clone into Projects'),
+  card('personal', <NotebookPen aria-hidden />, 'Personal', 'No repository'),
+  card('remote', <Network aria-hidden />, 'Join a remote', 'Another PDT owns it'),
 ];
 
 /**
@@ -53,12 +61,12 @@ export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMo
     else if (mode === 'personal') add.mutate({ name, repoPath: '', kind: 'personal', ...(opt(key) ? { key: opt(key) } : {}) });
     else clone.mutate({ url, ...(opt(name) ? { name: opt(name) } : {}), ...(opt(key) ? { key: opt(key) } : {}), ...(opt(parentDir) ? { parentDir: opt(parentDir) } : {}) });
   };
-  const choose = <SegmentedControl aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="w-full [&>*]:flex-1" />;
+  // Two columns on phones too: four cards one under another push the form off the screen.
+  const choose = <ChoiceCardGroup aria-label="Add a project" size="sm" options={modes} value={mode} onChange={setMode} className="grid-cols-2 sm:grid-cols-2" />;
   if (mode === 'remote') {
     return (
       <div className="flex flex-col gap-3 p-2">
         {choose}
-        <p className="text-xs text-muted-foreground">A project another instance of PDT owns: this one works on it for the owner, whose board, tickets and PM it stays on.</p>
         <JoinRemoteProjectForm autoFocus={autoFocus} onJoined={() => onJoined?.()} />
       </div>
     );

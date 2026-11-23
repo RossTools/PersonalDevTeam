@@ -7,7 +7,7 @@ import { useHostSettings } from '../host/queries';
 import { projectKeys } from './queries';
 
 /**
- * Add project → Remote project: joins a project another instance owns, with the owner's address and the pairing code
+ * Add project → Join a remote: joins a project another instance owns, with the owner's address and the pairing code
  * it shows (its Project Settings → Remote instances → Add). The owner reaches this instance through remote access.
  */
 export function JoinRemoteProjectForm({ onJoined, autoFocus = false }: { onJoined?: (v: RemoteProjectView) => void; autoFocus?: boolean }) {
