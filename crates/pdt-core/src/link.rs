@@ -197,7 +197,32 @@ pub struct InstanceFacts {
     #[ts(type = "number | null")]
     pub disk_free_bytes: Option<u64>,
     pub agents: Vec<AgentFact>,
+    /// When its agents were last checked; none while it hasn't checked them yet (just after it started), when
+    /// `agents` is empty because it doesn't know.
+    #[ts(type = "number | null")]
+    pub agents_checked_at: Option<i64>,
     pub tools: Vec<ToolFact>,
+}
+
+/// How old an instance's agent checks may be before it checks them again: a login since shows within this long.
+pub const AGENT_FACTS_TTL_MS: i64 = 5 * 60 * 1000;
+
+/// Whether an instance's agent checks, made at `checked_at` (none yet), are due to run again.
+pub fn agent_facts_stale(checked_at: Option<i64>, now: i64) -> bool {
+    checked_at.is_none_or(|at| now - at >= AGENT_FACTS_TTL_MS)
+}
+
+/// The facts to keep from a heartbeat: what came, except that an instance that hasn't checked its agents yet (it
+/// just restarted) keeps the agents it reported before.
+pub fn merge_facts(mut new: InstanceFacts, old: Option<&InstanceFacts>) -> InstanceFacts {
+    if new.agents_checked_at.is_none()
+        && new.agents.is_empty()
+        && let Some(old) = old
+    {
+        new.agents = old.agents.clone();
+        new.agents_checked_at = old.agents_checked_at;
+    }
+    new
 }
 
 /// The tools a remote instance looks for, each with the programs that count as it.
@@ -419,6 +444,27 @@ impl RemoteInstance {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_facts_go_stale_after_the_ttl() {
+        assert!(agent_facts_stale(None, 0), "never checked");
+        assert!(!agent_facts_stale(Some(1_000), 1_000 + AGENT_FACTS_TTL_MS - 1));
+        assert!(agent_facts_stale(Some(1_000), 1_000 + AGENT_FACTS_TTL_MS));
+    }
+
+    #[test]
+    fn an_instance_that_has_not_checked_its_agents_keeps_the_ones_it_reported() {
+        let claude = AgentFact { agent: "claude".into(), installed: true, logged_in: true };
+        let old = InstanceFacts { agents: vec![claude.clone()], agents_checked_at: Some(5), ..Default::default() };
+        let restarted = InstanceFacts { cpus: 8, ..Default::default() };
+        let kept = merge_facts(restarted, Some(&old));
+        assert_eq!((kept.cpus, kept.agents.clone(), kept.agents_checked_at), (8, vec![claude.clone()], Some(5)));
+        assert_eq!(merge_facts(InstanceFacts::default(), None).agents, vec![], "nothing known before");
+        let logged_out = AgentFact { logged_in: false, ..claude };
+        let checked =
+            InstanceFacts { agents: vec![logged_out.clone()], agents_checked_at: Some(9), ..Default::default() };
+        assert_eq!(merge_facts(checked, Some(&old)).agents, vec![logged_out], "a new check wins");
+    }
 
     #[test]
     fn codes_are_two_groups_from_the_unambiguous_alphabet() {

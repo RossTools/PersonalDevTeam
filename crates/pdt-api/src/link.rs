@@ -35,6 +35,10 @@ const INSTANCE_ID_KEY: &str = "instance.id";
 /// How long one link call may take.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How long a heartbeat that asks for fresh facts waits for the agent checks before it answers with the last ones,
+/// well inside [`CALL_TIMEOUT`].
+const REFRESH_WAIT: Duration = Duration::from_secs(6);
+
 /// How long after pairing the owner sends its first heartbeat.
 const FIRST_HEARTBEAT_AFTER: Duration = Duration::from_secs(2);
 
@@ -629,7 +633,7 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     let joined = instance.clone();
     tokio::spawn(async move {
         tokio::time::sleep(FIRST_HEARTBEAT_AFTER).await;
-        heartbeat(&bg, &joined).await
+        heartbeat(&bg, &joined, false).await
     });
     Ok(Json(PairReply {
         link_id,
@@ -645,11 +649,13 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     }))
 }
 
-/// What the owner sends with a heartbeat: itself.
+/// What the owner sends with a heartbeat: itself, and whether it wants the agents checked again now (Check now).
 #[derive(Debug, Default, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HeartbeatBody {
     owner: Option<InstanceHello>,
+    #[serde(default)]
+    refresh: bool,
 }
 
 /// A remote project's request from its owner, checked: the link it names is one of this instance's remote
@@ -729,7 +735,7 @@ async fn heartbeat_route(
     let secrets = crate::exec::own_secret_names(&st, &link.project_id).await?;
     Ok(Json(HeartbeatReply {
         instance: hello(&st).await?,
-        facts: facts(&st).await,
+        facts: facts(&st, if sent.refresh { Agents::Fresh(REFRESH_WAIT) } else { Agents::Cached }).await,
         paused: link.paused,
         secrets,
         cap: link.cap,
@@ -767,14 +773,56 @@ async fn leave_route(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// What this instance reports about itself: its OS, CPUs and free disk, its agents (from the last host checks) and
-/// the tools on its PATH.
-pub(crate) async fn facts(st: &AppState) -> InstanceFacts {
-    let cached = st.checks.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let checks = match cached {
-        Some(c) => c,
-        None => crate::checks::run_host_checks(st).await,
+/// Which agent checks [`facts`] reports.
+pub(crate) enum Agents {
+    /// The last ones, never waiting: none before the first checks finish, and checks older than
+    /// [`link::AGENT_FACTS_TTL_MS`] run again in the background.
+    Cached,
+    /// Checks run now, waiting for them up to this long (else the last ones).
+    Fresh(Duration),
+}
+
+/// What this instance reports about itself: its OS, CPUs and free disk, its agents (from the host checks) and the
+/// tools on its PATH. It never runs the agent checks inline (they can take far longer than a link call may).
+pub(crate) async fn facts(st: &AppState, which: Agents) -> InstanceFacts {
+    let checks = match which {
+        Agents::Fresh(wait) => crate::checks::refreshed(st, wait).await,
+        Agents::Cached => {
+            let c = crate::checks::cached(st);
+            if link::agent_facts_stale(c.as_ref().map(|c| c.checked_at), now_ms()) {
+                crate::checks::refresh_in_background(st);
+            }
+            c
+        }
     };
+    let agents = checks.as_ref().map(agent_facts).unwrap_or_default();
+    let search = st.platform.login_path.clone();
+    let tools = tokio::task::spawn_blocking(move || {
+        link::TOOLS
+            .iter()
+            .filter_map(|(name, programs)| {
+                programs
+                    .iter()
+                    .find_map(|p| crate::host::found(p, search.as_deref()))
+                    .map(|path| pdt_core::link::ToolFact { name: (*name).to_string(), path })
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    InstanceFacts {
+        os: std::env::consts::OS.into(),
+        arch: std::env::consts::ARCH.into(),
+        cpus: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(0),
+        disk_free_bytes: (st.disk_space)(&st.data_dir).map(|d| d.free),
+        agents,
+        agents_checked_at: checks.map(|c| c.checked_at),
+        tools,
+    }
+}
+
+/// The agents the host checks found, and whether each is logged in.
+fn agent_facts(checks: &crate::checks::HostChecks) -> Vec<pdt_core::link::AgentFact> {
     let mut agents = vec![
         pdt_core::link::AgentFact {
             agent: "claude".into(),
@@ -797,35 +845,16 @@ pub(crate) async fn facts(st: &AppState) -> InstanceFacts {
         installed: c.found,
         logged_in: c.usable(),
     }));
-    let search = st.platform.login_path.clone();
-    let tools = tokio::task::spawn_blocking(move || {
-        link::TOOLS
-            .iter()
-            .filter_map(|(name, programs)| {
-                programs
-                    .iter()
-                    .find_map(|p| crate::host::found(p, search.as_deref()))
-                    .map(|path| pdt_core::link::ToolFact { name: (*name).to_string(), path })
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .unwrap_or_default();
-    InstanceFacts {
-        os: std::env::consts::OS.into(),
-        arch: std::env::consts::ARCH.into(),
-        cpus: std::thread::available_parallelism().map(|n| n.get() as u32).unwrap_or(0),
-        disk_free_bytes: (st.disk_space)(&st.data_dir).map(|d| d.free),
-        agents,
-        tools,
-    }
+    agents
 }
 
-/// The owner's heartbeat to one joined instance: it records what came back (or why nothing did).
-pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance) {
-    let outcome = heartbeat_once(st, i).await;
+/// The owner's heartbeat to one joined instance: it records what came back (or why nothing did). With `refresh`
+/// (Check now) the instance checks its agents again before it answers.
+pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance, refresh: bool) {
+    let outcome = heartbeat_once(st, i, refresh).await;
     let write = match &outcome {
         Ok(reply) => {
+            let facts = link::merge_facts(reply.facts.clone(), i.facts.as_ref());
             st.store
                 .record_heartbeat(
                     &i.link_id,
@@ -833,7 +862,7 @@ pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance)
                         name: &reply.instance.name,
                         version: &reply.instance.version,
                         protocol: reply.instance.protocol,
-                        facts: &reply.facts,
+                        facts: &facts,
                         paused: reply.paused,
                         secrets: &reply.secrets,
                         cap: reply.cap,
@@ -854,12 +883,16 @@ pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance)
 
 type Failure = (String, Option<(u32, String)>);
 
-async fn heartbeat_once(st: &AppState, i: &pdt_core::link::RemoteInstance) -> Result<HeartbeatReply, Failure> {
+async fn heartbeat_once(
+    st: &AppState,
+    i: &pdt_core::link::RemoteInstance,
+    refresh: bool,
+) -> Result<HeartbeatReply, Failure> {
     let key = load_key(st, &i.link_id).await.map_err(|e| (e.message().to_string(), None))?;
     let project =
         st.store.get_project(&i.project_id).await.ok().flatten().ok_or(("no such project".to_string(), None))?;
     let me = hello(st).await.map_err(|e| (e.message().to_string(), None))?;
-    let body = HeartbeatBody { owner: Some(me.clone()) };
+    let body = HeartbeatBody { owner: Some(me.clone()), refresh };
     let us = Side { name: &me.name, protocol: me.protocol, version: &me.version };
     let reply: HeartbeatReply =
         match post(st, &i.url, HEARTBEAT_PATH, Some((&key, &i.link_id, &project.id)), &body).await {
@@ -893,7 +926,7 @@ pub async fn heartbeat_all(st: &AppState) {
             return;
         }
     };
-    futures_util::future::join_all(instances.iter().map(|i| heartbeat(st, i))).await;
+    futures_util::future::join_all(instances.iter().map(|i| heartbeat(st, i, false))).await;
     match st.store.list_remote_instances(None).await {
         Ok(heard) => crate::offline_instances::check(st, &heard).await,
         Err(e) => tracing::warn!(error = %e, "could not list the remote instances"),
