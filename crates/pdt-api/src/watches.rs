@@ -84,17 +84,6 @@ async fn target_of(
     }
 }
 
-/// A document's content to diff its first change against: the sensor's last read, else a read now (None when its
-/// provider is gone or can't read it; then the sensor's first read is taken on a later tick).
-async fn document_snapshot(st: &AppState, id: &str) -> Option<pdt_core::document::DocumentContent> {
-    if let Some(c) = crate::documents::watch::last_read(st, id).await {
-        return Some(c);
-    }
-    let d = st.store.get_document(id).await.ok().flatten()?;
-    let p = crate::documents::provider(st, &d.provider)?;
-    crate::documents::watch::read_content(&p, &d.provider_ref).await
-}
-
 /// Starts watching (or changes what an existing watch of the same watcher hears about). `session` is the PM
 /// conversation told; None: the user. What already happened is no news: the watch starts from now.
 pub(crate) async fn watch(st: &AppState, input: &NewWatch, session: Option<&str>) -> Result<Watch, ApiError> {
@@ -123,7 +112,9 @@ pub(crate) async fn watch(st: &AppState, input: &NewWatch, session: Option<&str>
         }
     }
     let snapshot = match target {
-        WatchTarget::Document if events.contains(&WatchEvent::Changed) => document_snapshot(st, &target_id).await,
+        WatchTarget::Document if events.contains(&WatchEvent::Changed) => {
+            crate::documents::watch::first_snapshot(st, &target_id).await
+        }
         _ => None,
     };
     let w = Watch {
@@ -137,11 +128,11 @@ pub(crate) async fn watch(st: &AppState, input: &NewWatch, session: Option<&str>
         inbox_since: now,
         run_status,
         pending: vec![],
-        snapshot,
+        has_snapshot: snapshot.is_some(),
         created_at: now,
         ended_at: None,
     };
-    Ok(st.store.put_watch(&w).await?)
+    Ok(st.store.put_watch(&w, snapshot.as_ref()).await?)
 }
 
 /// The newest event's `seq` (0 with none).
@@ -170,6 +161,20 @@ async fn label(st: &AppState, target: WatchTarget, id: &str) -> Option<String> {
             st.store.get_workflow_run(id).await.ok().flatten().map(|r| format!("the run of “{}”", r.workflow_name))
         }
         WatchTarget::Document => st.store.get_document(id).await.ok().flatten().map(|d| format!("“{}”", d.title)),
+    }
+}
+
+/// The message about a watched ticket for a PM conversation. An external ticket's title is what an outsider wrote
+/// (PDT-645): the label is its key alone, and its title follows in a fenced block.
+async fn ticket_message(st: &AppState, w: &Watch, label: &str, ending: bool) -> Result<String, ApiError> {
+    match st.store.get_ticket(&w.target_id).await? {
+        Some(t) if t.summary.source == pdt_core::ticket::TicketSource::External => {
+            let outside = crate::untrusted::Outside::new();
+            let text = watch::message(&t.summary.key, &w.pending, ending);
+            let title = outside.wrap(&format!("Its title: {}", t.summary.title));
+            Ok(format!("{text}\n\n{}\n\n{title}", outside.note().unwrap_or_default()))
+        }
+        _ => Ok(watch::message(label, &w.pending, ending)),
     }
 }
 
@@ -292,8 +297,10 @@ pub async fn tick_at(st: &AppState, now: i64) {
 }
 
 async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxItem], now: i64) -> Result<(), ApiError> {
-    let before = (w.cursor, w.inbox_since, w.run_status.clone(), w.pending.len(), w.snapshot.is_some());
-    let progress = |w: &Watch| (w.cursor, w.inbox_since, w.run_status.clone(), w.pending.len(), w.snapshot.is_some());
+    let before = (w.cursor, w.inbox_since, w.run_status.clone(), w.pending.len(), w.has_snapshot);
+    let progress = |w: &Watch| (w.cursor, w.inbox_since, w.run_status.clone(), w.pending.len(), w.has_snapshot);
+    // A document's new snapshot, to store with the progress (the one it has is read only to tell a change).
+    let mut snapshot: Option<pdt_core::document::DocumentContent> = None;
     let mut finished = false;
     // Why a document's watch ends (it is gone), said in its message.
     let mut gone: Option<&'static str> = None;
@@ -386,11 +393,12 @@ async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxIt
             }
             // The first look's read, for a watch that started before the sensor had one (or its provider could
             // read it): what its first change is diffed against.
-            if w.snapshot.is_none()
+            if !w.has_snapshot
                 && w.events.contains(&WatchEvent::Changed)
                 && !notes.iter().chain(&w.pending).any(|n| n.event == WatchEvent::Changed)
             {
-                w.snapshot = crate::documents::watch::last_read(st, &w.target_id).await;
+                snapshot = crate::documents::watch::last_read(st, &w.target_id).await;
+                w.has_snapshot = snapshot.is_some();
             }
         }
     }
@@ -425,7 +433,7 @@ async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxIt
             // Mid-reset: the news waits for the fresh conversation.
             Watcher::Resetting => {
                 if before != progress(&w) {
-                    st.store.set_watch_progress(&w).await?;
+                    st.store.set_watch_progress(&w, snapshot.as_ref()).await?;
                 }
                 return Ok(());
             }
@@ -444,21 +452,25 @@ async fn tick_one(st: &AppState, mut w: Watch, inbox: &[pdt_core::inbox::InboxIt
             }
             _ => None,
         };
-        let diff = match (&w.snapshot, &latest) {
-            (Some(a), Some(b)) => pdt_core::document_diff::diff(a, b, pdt_core::document_diff::BUDGET),
+        let diff = match &latest {
+            Some(b) if w.has_snapshot => match st.store.watch_snapshot(&w.id).await? {
+                Some(a) => crate::documents::watch::diff(a, b.clone()).await,
+                None => None,
+            },
             _ => None,
         };
         tell(st, &w, Told { closed, ending, gone, diff: diff.as_deref() }).await?;
         w.pending.clear();
         if latest.is_some() {
-            w.snapshot = latest;
+            snapshot = latest;
+            w.has_snapshot = true;
         }
     }
     if closed || ending {
         st.store.end_watch(&w.id, now).await?;
     } else if before != progress(&w) {
         // (Telling a change replaces the snapshot, and always moves the cursor or empties `pending` too.)
-        st.store.set_watch_progress(&w).await?;
+        st.store.set_watch_progress(&w, snapshot.as_ref()).await?;
     }
     Ok(())
 }
@@ -546,7 +558,8 @@ async fn tell(st: &AppState, w: &Watch, how: Told<'_>) -> Result<(), ApiError> {
                         &fence,
                     )
                 }
-                _ => watch::message(&label, &w.pending, how.ending),
+                WatchTarget::Ticket => ticket_message(st, w, &label, how.ending).await?,
+                WatchTarget::Run => watch::message(&label, &w.pending, how.ending),
             };
             let ticket_id = (w.target == WatchTarget::Ticket).then(|| w.target_id.clone());
             let m = pdt_store::SessionMessage {

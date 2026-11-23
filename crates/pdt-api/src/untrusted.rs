@@ -494,6 +494,68 @@ pub(crate) fn outsider_refusal(ctx: &Value, origin: Option<&Value>) -> Option<St
     })
 }
 
+/// The outside text in one tool answer or message for an agent (PDT-645): a fence of its own, and whether anything
+/// went in it, so the answer carries the fence's note only when it has blocks.
+pub(crate) struct Outside {
+    fence: pdt_core::fence::Fence,
+    used: std::sync::atomic::AtomicBool,
+}
+
+impl Outside {
+    pub(crate) fn new() -> Self {
+        Self {
+            fence: pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string()),
+            used: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// `text` in a block.
+    pub(crate) fn wrap(&self, text: &str) -> String {
+        self.used.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.fence.wrap(text)
+    }
+
+    /// A ticket's title: in a block when the ticket is external (an imported issue's, which an outsider wrote).
+    pub(crate) fn title(&self, title: &str, source: TicketSource) -> String {
+        if source == TicketSource::External { self.wrap(title) } else { title.to_string() }
+    }
+
+    /// The fence's note, when anything went in a block.
+    pub(crate) fn note(&self) -> Option<String> {
+        self.used.load(std::sync::atomic::Ordering::Relaxed).then(|| self.fence.note())
+    }
+
+    /// `text` with the fence's note before it, when anything went in a block.
+    pub(crate) fn with_note(&self, text: &str) -> String {
+        match self.note() {
+            Some(n) => format!("{n}\n\n{text}"),
+            None => text.to_string(),
+        }
+    }
+
+    /// `v` (a tool's JSON answer) with the fence's note as `outsideText`, when anything went in a block.
+    pub(crate) fn noted(&self, mut v: Value) -> Value {
+        if let Some(n) = self.note() {
+            v["outsideText"] = Value::String(n);
+        }
+        v
+    }
+}
+
+/// Whether the ticket `id` is external, remembered in `seen` (a list of items naming the same tickets).
+pub(crate) async fn external_ticket(
+    st: &AppState,
+    id: &str,
+    seen: &mut std::collections::HashMap<String, bool>,
+) -> Result<bool, ApiError> {
+    if let Some(&e) = seen.get(id) {
+        return Ok(e);
+    }
+    let e = st.store.get_ticket(id).await?.is_some_and(|t| t.summary.source == TicketSource::External);
+    seen.insert(id.to_string(), e);
+    Ok(e)
+}
+
 /// This module's API routes; `routes::router` merges them under `/api`.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::get;

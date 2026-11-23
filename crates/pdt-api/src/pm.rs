@@ -321,7 +321,8 @@ async fn reset_session(st: &AppState, old: &Session, row: &PmSessionRow, listed_
     let project = host_project(st).await?;
     let id = uuid::Uuid::now_v7().to_string();
     // Written before the session starts, so its first instructions carry it.
-    let text = pm::briefing(&briefing_data(st, &id, Some(&old.id)).await?);
+    let outside = crate::untrusted::Outside::new();
+    let text = outside.with_note(&pm::briefing(&briefing_data(st, &id, Some(&old.id), &outside).await?));
     let path = st.data_dir.join("sessions").join(&id).join(BRIEFING_FILE);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| ApiError::io("making the session's folder", e))?;
@@ -525,7 +526,10 @@ pub(crate) async fn send_updates(st: &AppState, after: i64, in_use: bool, dry_ru
         {
             continue;
         }
-        let message = pm::update_message(&update_data(st, &s.id, &row, now).await?);
+        // External tickets' titles are what outsiders wrote (PDT-645): fenced, with the note before the update.
+        let outside = crate::untrusted::Outside::new();
+        let message =
+            pm::update_message(&update_data(st, &s.id, &row, now, &outside).await?).map(|m| outside.with_note(&m));
         if !dry_run && !matches!(st.store.set_pm_caught_up(&s.id, row.caught_up_at, now).await, Ok(true)) {
             continue;
         }
@@ -652,14 +656,21 @@ async fn queue_checkpoint(st: &AppState, s: &Session, key: &str, text: String) {
 
 /// What a PM conversation's daily update says: events, the Inbox, and other conversations' journal entries since it
 /// was last brought up to date.
-async fn update_data(st: &AppState, id: &str, row: &PmSessionRow, now: i64) -> Result<pm::UpdateData, ApiError> {
+/// External tickets' titles go in `outside`'s blocks.
+async fn update_data(
+    st: &AppState,
+    id: &str,
+    row: &PmSessionRow,
+    now: i64,
+    outside: &crate::untrusted::Outside,
+) -> Result<pm::UpdateData, ApiError> {
     let since = row.caught_up_at;
     // Nothing from before the conversation began: its briefing covered that.
     let from = since.max(row.created_at);
     let filter =
         pdt_store::EventFilter { since: Some(from), newest_first: true, limit: BRIEF_EVENTS, ..Default::default() };
-    let events = brief_events(st, &filter).await?;
-    let inbox = brief_inbox(st).await?;
+    let events = brief_events(st, &filter, outside).await?;
+    let inbox = brief_inbox(st, outside).await?;
     let mut journal = vec![];
     let entries =
         st.store.search_notes(&NoteFilter { kind: Some(NoteKind::Journal), limit: 50, ..Default::default() }).await?;
@@ -821,7 +832,10 @@ pub(crate) async fn instructions(st: &AppState, s: &Session) -> Result<String, A
         Ok(t) => t,
         Err(_) => {
             let reset_from = st.store.get_pm_session(&s.id).await?.and_then(|r| r.reset_from);
-            let text = pm::briefing(&briefing_data(st, &s.id, reset_from.as_deref()).await?);
+            // External tickets' titles are what outsiders wrote (PDT-645): fenced, with the note before the briefing.
+            let outside = crate::untrusted::Outside::new();
+            let text =
+                outside.with_note(&pm::briefing(&briefing_data(st, &s.id, reset_from.as_deref(), &outside).await?));
             if let Some(dir) = path.parent() {
                 let _ = std::fs::create_dir_all(dir);
             }
@@ -917,7 +931,13 @@ async fn release_workflow(st: &AppState, workflows: &[Workflow], project_id: &st
 }
 
 /// A new PM session's briefing; `reset_from`: the conversation it carries on from (PDT-308), whose journal leads it.
-async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>) -> Result<BriefingData, ApiError> {
+/// External tickets' titles go in `outside`'s blocks.
+async fn briefing_data(
+    st: &AppState,
+    session_id: &str,
+    reset_from: Option<&str>,
+    outside: &crate::untrusted::Outside,
+) -> Result<BriefingData, ApiError> {
     let now = now_ms();
     let projects = st.store.list_projects().await?;
     let mut keys = std::collections::HashMap::new();
@@ -942,12 +962,12 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
         .iter()
         .map(|t| BriefTicket {
             key: t.key.clone(),
-            title: t.title.clone(),
+            title: outside.title(&t.title, t.source),
             stage: t.stage.label().into(),
             state: pm::ticket_state(t),
         })
         .collect();
-    let inbox = brief_inbox(st).await?;
+    let inbox = brief_inbox(st, outside).await?;
     let since =
         st.store.list_pm_sessions().await?.into_iter().find(|r| r.session_id != session_id).map(|r| r.created_at);
     let filter = pdt_store::EventFilter {
@@ -956,7 +976,7 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
         limit: BRIEF_EVENTS,
         ..Default::default()
     };
-    let events = brief_events(st, &filter).await?;
+    let events = brief_events(st, &filter, outside).await?;
     let journal = st
         .store
         .search_notes(&NoteFilter {
@@ -1009,29 +1029,43 @@ async fn briefing_data(st: &AppState, session_id: &str, reset_from: Option<&str>
     })
 }
 
-/// The Inbox, for a briefing or an update.
-async fn brief_inbox(st: &AppState) -> Result<Vec<BriefInbox>, ApiError> {
+/// The Inbox, for a briefing or an update; an external ticket's items (titled with its title) in `outside`'s blocks.
+async fn brief_inbox(st: &AppState, outside: &crate::untrusted::Outside) -> Result<Vec<BriefInbox>, ApiError> {
     let Json(inbox) = crate::inbox::list(State(st.clone()), ApiQuery(Default::default())).await?;
-    Ok(inbox
-        .items
-        .into_iter()
-        .map(|i| BriefInbox {
+    let mut external = std::collections::HashMap::new();
+    let mut out = vec![];
+    for i in inbox.items {
+        let title = match &i.ticket_id {
+            Some(t) if crate::untrusted::external_ticket(st, t, &mut external).await? => outside.wrap(&i.title),
+            _ => i.title,
+        };
+        out.push(BriefInbox {
             kind: serde_json::to_value(i.group).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(),
             ticket: i.ticket_key,
-            title: i.title,
-        })
-        .collect())
+            title,
+        });
+    }
+    Ok(out)
 }
 
-/// Events of the log, with their tickets' keys, for a briefing or an update.
-async fn brief_events(st: &AppState, filter: &pdt_store::EventFilter) -> Result<Vec<BriefEvent>, ApiError> {
+/// Events of the log, with their tickets' keys and titles (an external ticket's in `outside`'s blocks), for a briefing
+/// or an update.
+async fn brief_events(
+    st: &AppState,
+    filter: &pdt_store::EventFilter,
+    outside: &crate::untrusted::Outside,
+) -> Result<Vec<BriefEvent>, ApiError> {
     let mut tickets = std::collections::HashMap::new();
     let mut events = vec![];
     for e in st.store.list_log_events(filter).await? {
         let (ticket, title) = match &e.ticket_id {
             Some(t) => {
                 if !tickets.contains_key(t) {
-                    let found = st.store.get_ticket(t).await?.map(|t| (t.summary.key, t.summary.title));
+                    let found = st
+                        .store
+                        .get_ticket(t)
+                        .await?
+                        .map(|t| (t.summary.key, outside.title(&t.summary.title, t.summary.source)));
                     tickets.insert(t.clone(), found);
                 }
                 tickets.get(t).cloned().flatten().unzip()

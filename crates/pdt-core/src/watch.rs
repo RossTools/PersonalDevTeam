@@ -4,7 +4,6 @@
 //! the user as a `watch.event` notification. A document's message carries what changed (a text diff), fenced: whoever
 //! can edit the document wrote it. Pure types and rules; pdt-store keeps the watches, pdt-api's `watches` ticks them.
 
-use crate::document::DocumentContent;
 use crate::fence::Fence;
 use crate::workflow::events as ev;
 use schemars::JsonSchema;
@@ -134,8 +133,9 @@ pub struct Watch {
     pub run_status: Option<String>,
     /// Notes not told yet, oldest first.
     pub pending: Vec<WatchNote>,
-    /// A document's content when its watcher was last told (what the next change is diffed against).
-    pub snapshot: Option<DocumentContent>,
+    /// Whether it keeps a document's content as its watcher was last told (what the next change is diffed against;
+    /// the store reads it only to tell a change).
+    pub has_snapshot: bool,
     pub created_at: i64,
     pub ended_at: Option<i64>,
 }
