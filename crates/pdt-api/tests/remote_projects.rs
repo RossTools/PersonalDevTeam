@@ -547,3 +547,116 @@ async fn heartbeats_answer_from_the_last_agent_checks_and_check_now_runs_them_ag
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(claude_fact(&v), Some((true, true)), "{v}");
 }
+
+/// Another instance at the other end of a link that answers `path` with `answer(path)` and anything else with `{}`:
+/// a peer sending whatever it likes.
+async fn fake_peer(answer: impl Fn(&str) -> Option<String> + Clone + Send + Sync + 'static) -> String {
+    let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+        let answer = answer.clone();
+        async move {
+            let body = answer(uri.path()).unwrap_or_else(|| "{}".into());
+            ([("content-type", "application/json")], body)
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    url
+}
+
+fn public_key() -> String {
+    let key = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+    base64::engine::general_purpose::STANDARD.encode(key.verifying_key().to_bytes())
+}
+
+fn hello(name: &str, version: &str) -> Value {
+    json!({"instanceId": "peer", "name": name, "version": version, "protocol": pdt_core::link::PROTOCOL})
+}
+
+#[tokio::test]
+async fn joining_takes_from_the_owner_only_what_pairing_would_take() {
+    let remote = instance("win-box").await;
+    remote.state.link.set_no_join_heartbeat(true);
+    let join_owner = |owner: Value, key: &str, branch: &str| {
+        let reply = json!({
+            "linkId": uuid::Uuid::now_v7().to_string(),
+            "project": {"id": uuid::Uuid::now_v7().to_string(), "key": key, "name": "Valley app", "baseBranch": branch},
+            "owner": owner,
+            "publicKey": public_key(),
+        })
+        .to_string();
+        let remote_url = remote.url.clone();
+        let app = remote.app.clone();
+        async move {
+            let url = fake_peer(move |p| (p == pdt_api::link::PAIR_PATH).then(|| reply.clone())).await;
+            let body = json!({"ownerAddress": url, "code": "ABCD-EFGH", "address": remote_url});
+            call(&app, "POST", "/api/remote-projects", Some(body)).await
+        }
+    };
+
+    // A key in lower case is this instance's key upper-cased; one that isn't a key at all is suggested from the name.
+    let (s, v) = join_owner(hello("studio", "1.0.0"), "valley", "main").await;
+    assert_eq!((s, &v["project"]["key"]), (StatusCode::CREATED, &json!("VALLEY")), "{v}");
+    let (s, v) = join_owner(hello("studio", "1.0.0"), "a-b", "main").await;
+    assert_eq!((s, &v["project"]["key"]), (StatusCode::CREATED, &json!("VA")), "{v}");
+    let (s, v) = join_owner(hello("studio", "1.0.0"), "Valley", "main").await;
+    assert_eq!((s, &v["project"]["key"]), (StatusCode::CREATED, &json!("VA2")), "taken in another case: {v}");
+
+    // A name, version or branch pairing would refuse leaves no remote project behind.
+    let before = remote_projects(&remote).await.as_array().unwrap().len();
+    for (owner, branch) in [
+        (hello("evil name\u{1b}[2J", "1.0.0"), "main"),
+        (hello("studio", "1.0 <b>"), "main"),
+        (hello("studio", "1.0.0"), "-main"),
+    ] {
+        let (s, v) = join_owner(owner, "WEB", branch).await;
+        assert_eq!(s, StatusCode::BAD_GATEWAY, "{v}");
+    }
+    assert_eq!(remote_projects(&remote).await.as_array().unwrap().len(), before);
+}
+
+#[tokio::test]
+async fn heartbeats_from_a_peer_are_checked_and_capped() {
+    let owner = instance("studio").await;
+    owner.state.link.set_no_join_heartbeat(true);
+    let p = project(&owner, "valley", "Valley", ORIGIN).await;
+    let answer = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sent = answer.clone();
+    let url =
+        fake_peer(move |path| (path == pdt_api::link::HEARTBEAT_PATH).then(|| sent.lock().unwrap().clone())).await;
+    let pair = |version: &str| json!({"code": "", "instance": hello("win-box", version), "url": url, "publicKey": public_key()});
+
+    let mut req = pair("1.0 beta");
+    req["code"] = json!(code(&owner, &p).await);
+    let (s, v) = call(&owner.app, "POST", pdt_api::link::PAIR_PATH, Some(req)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "a version pairing can't read: {v}");
+    let mut req = pair("1.0.0");
+    req["code"] = json!(code(&owner, &p).await);
+    let (s, v) = call(&owner.app, "POST", pdt_api::link::PAIR_PATH, Some(req)).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    let reply =
+        |name: &str, version: &str| json!({"instance": hello(name, version), "facts": {}, "paused": false}).to_string();
+    *answer.lock().unwrap() = reply(" win-box ", "1.0.1");
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let i = &instances(&owner, &p).await["instances"][0];
+    assert_eq!(
+        (&i["name"], &i["version"], &i["state"]),
+        (&json!("win-box"), &json!("1.0.1"), &json!("connected")),
+        "{i}"
+    );
+
+    for (name, version, problem) in [("evil name\u{1b}[2J", "1.0.2", "name"), ("win-box", "1.0.2\n<b>", "version")] {
+        *answer.lock().unwrap() = reply(name, version);
+        pdt_api::link::heartbeat_all(&owner.state).await;
+        let i = &instances(&owner, &p).await["instances"][0];
+        assert_eq!((&i["name"], &i["version"]), (&json!("win-box"), &json!("1.0.1")), "nothing stored: {i}");
+        assert!(i["lastError"].as_str().unwrap().contains(problem), "{i}");
+    }
+
+    // An answer too large to be a heartbeat isn't read to its end.
+    *answer.lock().unwrap() = format!("\"{}\"", "x".repeat(2 * 1024 * 1024));
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let i = &instances(&owner, &p).await["instances"][0];
+    assert!(i["lastError"].as_str().unwrap().contains("larger than"), "{i}");
+}

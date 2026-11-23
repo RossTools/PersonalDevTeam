@@ -64,6 +64,10 @@ pub struct AppState {
     pub owner_from_env: Option<String>,
     /// Serializes read-modify-write of host settings and the side effects applied with them.
     pub(crate) settings_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Serializes the tailscale work of remote access (applying it, mapping and unmapping run ports), which can take
+    /// seconds; `settings_lock` is taken only to commit the outcome, so run starts and settings saves never wait on
+    /// the CLI.
+    pub(crate) remote_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// Serializes read-modify-write of Get started's state (`crate::setup`).
     pub(crate) setup_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The effective owner (`PDT_OWNER_LOGIN`, else the stored setting) the identity guard checks; see `refresh_owner`.
@@ -324,6 +328,7 @@ impl AppState {
             },
             owner_from_env: None,
             settings_lock: Default::default(),
+            remote_lock: Default::default(),
             setup_lock: Default::default(),
             owner_cache: Default::default(),
             listen_port: 0,

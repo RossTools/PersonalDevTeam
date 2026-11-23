@@ -101,7 +101,7 @@ pub fn signed_text(r: &SignedRequest<'_>) -> String {
 
 /// Whether a request signed at `at` is recent enough at `now`.
 pub fn fresh(at: i64, now: i64) -> bool {
-    (now - at).abs() <= MAX_SKEW_MS
+    now.abs_diff(at) <= MAX_SKEW_MS.unsigned_abs()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -272,6 +272,41 @@ pub struct LinkedProject {
     pub base_branch: String,
     /// `origin`'s URL on the owner, when it has one: where the remote instance clones from.
     pub repo_url: Option<String>,
+}
+
+/// The longest version another instance may report.
+pub const MAX_VERSION: usize = 64;
+
+/// Whether `v` is a version another instance may report (`0.41.2`, `0.1.0-local`, `1.2.3-rc.1+abc`): 1–[`MAX_VERSION`]
+/// ASCII letters, digits, `.`, `-` and `+`. Anything else is not stored or shown.
+pub fn valid_version(v: &str) -> bool {
+    (1..=MAX_VERSION).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_alphanumeric() || b".-+".contains(&b))
+}
+
+/// The project as this instance keeps it once joined: the owner's name and base branch, checked as this instance's
+/// own would be, and the owner's key when it is a valid key free here (else one suggested from the name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinedProject {
+    pub name: String,
+    pub base_branch: String,
+    pub key: String,
+}
+
+/// [`JoinedProject`] from what the owner sent, with `taken` this instance's project keys; an error names what the
+/// owner sent that can't be used.
+pub fn joined_project(p: &LinkedProject, taken: &[String]) -> Result<JoinedProject, String> {
+    let name = p.name.trim();
+    if name.is_empty() || name.chars().count() > crate::limits::TITLE || name.chars().any(char::is_control) {
+        return Err("the owner sent a project name this instance can't use".into());
+    }
+    if !crate::branch_name::valid_branch_name(&p.base_branch) {
+        return Err(format!("the owner sent a base branch this instance can't use: {:?}", p.base_branch));
+    }
+    let key = match crate::project::valid_key(&p.key) {
+        Ok(k) if !taken.iter().any(|t| t.eq_ignore_ascii_case(&k)) => k,
+        _ => crate::project::suggest_key(name, taken),
+    };
+    Ok(JoinedProject { name: name.to_string(), base_branch: p.base_branch.clone(), key })
 }
 
 /// The owner's answer to a pairing.
@@ -529,6 +564,43 @@ mod tests {
         assert!(fresh(1_000, 1_000 + MAX_SKEW_MS));
         assert!(fresh(1_000 + MAX_SKEW_MS, 1_000));
         assert!(!fresh(0, MAX_SKEW_MS + 1));
+        assert!(!fresh(i64::MIN, 1_000), "a far-off time is stale, not an overflow");
+        assert!(!fresh(i64::MAX, -1_000));
+        assert!(!fresh(i64::MIN, i64::MAX));
+    }
+
+    #[test]
+    fn versions_from_another_instance() {
+        for ok in ["0.41.2", "0.1.0-local", "1.2.3-rc.1+abc"] {
+            assert!(valid_version(ok), "{ok}");
+        }
+        for bad in ["", "1.0 beta", "1.0\n", "<b>1</b>", &"9".repeat(MAX_VERSION + 1)] {
+            assert!(!valid_version(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_joined_project_is_checked_and_keeps_a_usable_key() {
+        let p = |key: &str, name: &str, branch: &str| LinkedProject {
+            id: "o1".into(),
+            key: key.into(),
+            name: name.into(),
+            base_branch: branch.into(),
+            repo_url: None,
+        };
+        let taken = vec!["PDT".to_string()];
+        let j = joined_project(&p("WEB", " Web app ", "main"), &taken).unwrap();
+        assert_eq!(j, JoinedProject { name: "Web app".into(), base_branch: "main".into(), key: "WEB".into() });
+        assert_eq!(joined_project(&p("web", "Web app", "main"), &taken).unwrap().key, "WEB", "uppercased");
+        assert_eq!(joined_project(&p("pdt", "Web app", "main"), &taken).unwrap().key, "WA", "taken in another case");
+        for bad in ["", "a-b", "1AB", "TOOLONGKEY11"] {
+            assert_eq!(joined_project(&p(bad, "Web app", "main"), &taken).unwrap().key, "WA", "{bad:?}");
+        }
+        assert!(joined_project(&p("WEB", "  ", "main"), &taken).is_err());
+        assert!(joined_project(&p("WEB", "a\u{1b}[2J", "main"), &taken).is_err());
+        assert!(joined_project(&p("WEB", &"x".repeat(201), "main"), &taken).is_err());
+        assert!(joined_project(&p("WEB", "Web", "-main"), &taken).is_err());
+        assert!(joined_project(&p("WEB", "Web", "a..b"), &taken).is_err());
     }
 
     #[test]
