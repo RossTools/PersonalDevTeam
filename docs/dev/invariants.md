@@ -24,7 +24,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `SHA256SUMS` only once `SHA256SUMS.sig` verifies against `brand::RELEASE_SIGNING_KEY` (when one is pinned), over the
   release's tag and `SHA256SUMS`, and the asset only once it matches. On macOS pdt-host also runs `codesign --verify`
   against `brand::MACOS_TEAM_ID` on the extracted `.app` before it removes quarantine and swaps it in. The install
-  scripts pin the same key (a test checks) and check the same signature. Pinning a key or changing it:
+  scripts pin the same key (a test checks) and check the same signature, and install.sh checks a fresh `.app` against
+  the same Team ID and bundle id. Pinning a key or changing it:
   [SDLC.md](../SDLC.md) "Release signing". Downloads follow redirects only to https, and pdt-host extracts an update
   into a fresh owner-only folder (`install::staging_beside`), never one with a fixed name another user could prepare.
 - **CI and the release build run third-party actions only by commit SHA.** A tag can be moved to other code, which
