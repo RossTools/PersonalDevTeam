@@ -39,7 +39,8 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 - Drag tabs to reorder them, or move one to another workspace from its menu. A session or run has only one tab:
   opening it elsewhere (**Bring here**) moves it.
 - **Closing a tab stops what's in it and removes it.** A closed session can't be resumed (files it wrote stay). PDT
-  asks before closing a running one. Ticket and changes tabs just close.
+  asks before closing an agent session, running or stopped, since its history goes with it, and before closing a
+  running shell or run. Ticket and changes tabs just close.
 - **A tab is as you left it.** Go to another view and come back, and its ticket section, scroll, open file and
   toggles are where they were. The Backlog, documents, files, workflows and Settings do the same. This lasts while
   the browser tab is open; closing a tab forgets it.

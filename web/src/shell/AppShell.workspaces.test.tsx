@@ -239,11 +239,11 @@ describe('workspaces', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tb')).toBe(true));
   });
 
-  it('closes an ended session\'s tab without asking', async () => {
+  it('asks before closing a finished conversation\'s tab, which deletes its history', async () => {
     const calls = stubWorkspaces({
       [`GET /api/projects/${project.id}/sessions`]: [
         sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude' }),
-        sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', status: 'finished' }),
+        sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', mode: 'conversation', status: 'finished' }),
       ],
       'DELETE /api/tabs/tb': undefined,
     });
@@ -251,8 +251,16 @@ describe('workspaces', () => {
     await screen.findByRole('tab', { name: /Codex B/ });
     await waitFor(() => expect(within(screen.getByRole('tab', { name: /Codex B/ })).queryByRole('img', { name: 'Ended' })).toBeTruthy());
     await userEvent.click(screen.getByRole('button', { name: 'Close Codex B' }));
+    let dialog = await screen.findByRole('alertdialog', { name: 'Close Codex B?' });
+    expect(dialog).toHaveTextContent(/conversation history is deleted/);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close Codex B' }));
+    dialog = await screen.findByRole('alertdialog', { name: 'Close Codex B?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close and remove' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/tabs/tb')).toBe(true));
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
   });
 
   it('switches tabs and opens the key help with the prefix keys', async () => {
