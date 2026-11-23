@@ -1,7 +1,8 @@
 // Settings → Secrets (PDT-158): secrets agents and workflows use by name, never pasted into the chat. A value goes to this machine's
 // keychain and is never shown again; the list shows each secret's name, who may use it and its last use, and each
 // secret's uses on request. It also says where values are kept: the system keyring, or (Linux without a Secret
-// Service, PDT-197) a file in the data folder.
+// Service, PDT-197) a file in the data folder. On a project's owner it lists, by name only, the secrets its remote
+// instances keep for its projects (PDT-637); on a remote instance, a remote project's own show under its name.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, CheckboxPicks, Dialog, DialogActions, EmptyState, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea } from '@ui';
@@ -10,6 +11,7 @@ import type { Secret } from '../api/gen/Secret';
 import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
+import { useRemoteProjects } from '../projects/queries';
 import { secretKeys, useSecrets } from './queries';
 
 const NAME = /^[A-Za-z][A-Za-z0-9_-]*$/;
@@ -77,7 +79,7 @@ function Uses({ id }: { id: string }) {
   return (
     <ul aria-label="Uses" className="flex w-full flex-col gap-0.5 pl-2 text-xs text-muted-foreground">
       {list.map((u) => (
-        <li key={u.id}><RelativeTime time={u.at} /> · {u.by} · <code>{u.how}</code></li>
+        <li key={u.id}><RelativeTime time={u.at} /> · {u.by} · <code>{u.how}</code>{u.instance && ` · on ${u.instance}`}</li>
       ))}
     </ul>
   );
@@ -133,9 +135,38 @@ function StoreNote() {
   );
 }
 
+/** On a project's owner: what its remote instances keep for its projects, by name ("on win-box (VAL)"). */
+function RemoteSets() {
+  const sets = useQuery({ queryKey: secretKeys.remote, queryFn: api.remoteSecrets });
+  if (!sets.data?.length) return null;
+  return (
+    <Section
+      label="On remote instances"
+      description="Kept on the instance itself for one of your projects, and never sent here: only their names show. Its agents there use these rather than one of yours with the same name."
+    >
+      {sets.data.map((set) => (
+        <div key={`${set.instanceId}-${set.projectId}`} className="flex flex-col gap-0.5 py-1">
+          <span className="text-sm font-medium">on {set.instanceName} ({set.projectKey})</span>
+          <ul aria-label={`Secrets on ${set.instanceName} for ${set.projectName}`} className="flex flex-col gap-0.5 pl-2">
+            {set.secrets.map((n) => (
+              <li key={n.name} className="flex flex-wrap items-center gap-2">
+                <code className="text-sm">{n.name}</code>
+                <span className="text-xs text-muted-foreground">
+                  {n.lastUsedAt !== null ? <>Used <RelativeTime time={n.lastUsedAt} />{n.lastUsedBy && ` by ${n.lastUsedBy}`}</> : 'Not used yet'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </Section>
+  );
+}
+
 export function SecretsPage() {
   const list = useSecrets();
   const { projects, personas } = useScopeOptions();
+  const remote = useRemoteProjects();
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
   const remove = useConfirmDelete({
     remove: (s: Secret) => api.deleteSecret(s.id),
@@ -149,6 +180,7 @@ export function SecretsPage() {
   const names = new Map<string, string>([
     ...projects.map((p) => [p.id, p.kind === 'host' ? 'The PM' : p.name] as [string, string]),
     ...personas.map((p) => [p.id, p.name] as [string, string]),
+    ...(remote.data ?? []).map((r) => [r.project.id, `${r.project.name} (remote project of ${r.link.ownerName})`] as [string, string]),
   ]);
   return (
     <Page
@@ -167,6 +199,7 @@ export function SecretsPage() {
             : <EmptyState size="inline">None yet.</EmptyState>}
         </Section>
       )}</QueryStatus>
+      <RemoteSets />
       {remove.error && <Alert tone="error">{remove.error.message}</Alert>}
       {editing && <SecretDialog secret={editing.secret} onClose={() => setEditing(null)} />}
     </Page>

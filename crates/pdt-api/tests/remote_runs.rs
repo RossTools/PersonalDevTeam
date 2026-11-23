@@ -85,7 +85,7 @@ async fn shows(p: &Pair, run: &str, step: RunStep, text: &str) {
 #[tokio::test]
 async fn a_remote_attempts_runs_and_tests_run_on_the_remote_instance() {
     let fake = tailscale();
-    let p = paired_with(Some(fake.clone())).await;
+    let p = paired_with(Some(fake.clone()), None).await;
     let ports = port_blocks::claim(10000, 250, 40);
     let settings = json!({
         "runPorts": {"start": ports, "end": ports + 39},

@@ -59,7 +59,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   (`/link/heartbeat`, the `project links` loop every 30 s) and the remote instance answers with its name, version,
   protocol and facts (OS, CPUs, free disk, agents from the host checks, tools on the PATH). `/link/revoke` (owner →
   remote) and `/link/leave` (remote → owner) end a link at the other end. `link::PROTOCOL` is the link's version:
-  ends that differ refuse each other with a message naming the one to update.
+  ends that differ refuse each other with a message naming the one to update, except `/link/update`
+  (`link::from_owner_any_protocol`), so the owner can always fix a mismatch.
 
 **Instances.** Each instance has a name (host setting `instance_name`, Settings → This host → Name and Get started;
 until the user picks one, pdt-core `instance::suggest_name` of the machine's host name) and an id made once (host
@@ -181,6 +182,24 @@ the remote's `/api/sessions/{id}/activity`, which passes them on to the owner's 
 (`activity::report`); the owner tracks a remote agent terminal's activity from those hooks and the input it bridges
 (`activity::track_remote`), not from its output, which stays there. Switching a remote session between conversation
 and terminal, and a Codex conversation's live terminal, are refused.
+
+**Remote secrets** (pdt-api `exec/secrets.rs`; rules in pdt-core `secret.rs`: `for_remote_project`, `to_forward`,
+`remote_values`). A remote session's `run_with_secrets` and `write_secret_file` are answered by the owner (the
+asking, `vault::check_*` without the on-disk checks), then `exec::use_secrets` sends `/link/exec/secrets` with the
+owner's values for the names the instance doesn't keep (its heartbeat lists them: `HeartbeatReply.secrets`, kept in
+`remote_instances.secrets`) and the owner's reason for each it refused. The remote instance adds its own for the
+remote project (secrets whose `projects` name it: never one for every project), which win a clash, and runs the call
+with `vault::run_in` / `write_in` in the `exec_sessions` row's folder. Forwarded values live only in that call: a
+`Redactor` of its own redacts the output (with the store's), and the store's redactor, the store and the logs never
+see them. The owner records forwarded uses (`secret_uses.instance`) and the remote's own uses by name
+(`remote_secret_uses`, `GET /api/secrets/remote`); the remote records its own in its `secret_uses`.
+
+**Updating together** (pdt-api `update_instances.rs`; `link::update_needed` in pdt-core). `GET
+/api/host/update/instances` lists the joined instances (by instance, across projects) with what each needs (an older
+version, or another protocol); `POST /api/host/update/instances/{id}` sends `/link/update` with the owner's channel
+through the first link that answers. The remote instance checks on that channel (`update::check_on`; its own when
+`remote_projects.own_update_channel`), asks first when busy (`host_busy`, unless `force`), and installs in the
+background, as its own Install does.
 
 **Pickup per instance.** `tickets.candidates` places each candidate (`placement::Placer::pickup_place`,
 read once per project) as a pdt-core `pickup::Place`: the owner, a remote instance, `waiting` (offline or paused
@@ -679,7 +698,8 @@ node's config). pdt-core `secret::Redactor` replaces any value, as it is and in 
 base64 forms (`secret::forms`), with `[secret:<name>]` in everything the store writes, in pdt-mcp results, in
 conversation deltas and in the logs. It also knows PDT's own keychain values (connections, sign-ins, forge logins, the
 update token) through the `secrets::Redacting` store that wraps `AppState::secrets`, labelled by kind
-(`[secret:connection]`). `run_with_secrets` and `write_secret_file` run in pdtd,
+(`[secret:connection]`). `run_with_secrets` and `write_secret_file` run in pdtd (a remote session's on its instance:
+"Remote secrets" above),
 outside the agent's sandbox and permission mode, so they are asking tools (out of Claude's `--allowedTools`; the
 Inbox for other agents) unless `Session::asks_nothing`, and the PM's "act without asking" never covers them. Each must
 name a secret, and pdt-core `secret::checkout_path` plus the on-disk checks in `vault.rs` keep their folder and file
@@ -718,7 +738,11 @@ the document is linked to lets the PM act) or the project or ticket they name. T
 from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
 outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
-`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. A document's title, content and comments
+`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. Before an
+unasked `doc_edit` or `sheet_edit` of a local document, `access::backup` keeps its bytes (a sheet's from the live model,
+up to 10 MB) and its charts in the change's `backup` columns; the store clears all but the newest `KEPT_BACKUPS` per
+document, and `POST /api/documents/{id}/changes/{change}/restore` writes one back (`LocalProvider::restore`: open
+views reload, charts are replaced). Other providers keep no copy: their own history has the versions. A document's title, content and comments
 come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON
 in one block). The documents open beside a conversation are `documents_beside` rows (session, document, position, who opened
 it, when it was focused: the newest focused is the tab shown), served at `/api/sessions/{id}/documents`; the web's

@@ -593,6 +593,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::toolchains::router())
         .merge(crate::untrusted::router())
         .merge(crate::update::router())
+        .merge(crate::update_instances::router())
         .merge(crate::vault::router())
         .merge(crate::watches::router())
         .merge(crate::workflow::routes::router())

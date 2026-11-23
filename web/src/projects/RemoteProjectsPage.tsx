@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
-import { Badge, Button, EmptyState, Input, Page, Section, Skeleton, useConfirm } from '@ui';
+import { Badge, Button, EmptyState, Input, Page, Section, Skeleton, Switch, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
+import type { Secret } from '../api/gen/Secret';
 import { openExternal } from '../common/open';
 import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
+import { secretKeys, useSecrets } from '../secrets/queries';
 import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 import { projectKeys, useRemoteProjects } from './queries';
 import { AutoSaveText } from '../common/AutoSave';
@@ -40,6 +42,66 @@ function CheckoutFolder({ r }: { r: RemoteProjectView }) {
   );
 }
 
+/**
+ * The secrets this instance keeps for the project (a code-signing certificate, a token for a tool signed in here):
+ * its owner's agents running here use them, and they win over the owner's of the same name. They stay in this
+ * machine's keychain and never cross the link; the owner sees only their names.
+ */
+function ProjectSecrets({ r }: { r: RemoteProjectView }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const all = useSecrets();
+  const [name, setName] = useState('');
+  const [value, setValue] = useState('');
+  const mine = (all.data ?? []).filter((s) => s.projects.includes(r.project.id));
+  const refresh = () => qc.invalidateQueries({ queryKey: secretKeys.all });
+  const [add, adding] = useAction(async () => {
+    await api.createSecret({ name: name.trim(), description: `For ${r.project.name}`, projects: [r.project.id], value });
+    setName('');
+    setValue('');
+    await refresh();
+  });
+  const [remove, removing] = useAction(async (s: Secret) => {
+    const others = s.projects.filter((p) => p !== r.project.id);
+    const { ok } = await confirm({
+      title: `Remove ${s.name} from ${r.project.name}?`,
+      body: others.length
+        ? `${r.link.ownerName}'s agents here stop using it; other projects keep it.`
+        : `${r.link.ownerName}'s agents here use ${r.link.ownerName}'s own ${s.name}, if it has one. Its value is removed from this machine's keychain.`,
+      action: 'Remove',
+      danger: true,
+    });
+    if (!ok) return;
+    if (others.length) await api.patchSecret(s.id, { projects: others });
+    else await api.deleteSecret(s.id);
+    await refresh();
+  });
+  const ok = /^[A-Za-z][A-Za-z0-9_-]*$/.test(name.trim()) && value.length >= 6;
+  return (
+    <div className="flex flex-col gap-1 text-meta">
+      <span className="text-muted-foreground">
+        Secrets kept here for {r.project.name}: {r.link.ownerName}'s agents here use them over its own of the same name, and they never leave this machine.
+      </span>
+      {mine.length > 0 && (
+        <ul aria-label={`Secrets for ${r.project.name}`} className="flex flex-col gap-0.5">
+          {mine.map((s) => (
+            <li key={s.id} className="flex flex-wrap items-center gap-2">
+              <code>{s.name}</code>
+              <span className="text-muted-foreground">{s.lastUsedAt !== null ? `used ${ago(s.lastUsedAt)}` : 'not used yet'}</span>
+              <Button size="sm" variant="ghost" pending={removing} onClick={() => void remove(s)}>Remove…</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input mono size="sm" aria-label={`New secret's name for ${r.project.name}`} placeholder="NAME" className="w-48" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input size="sm" type="password" autoComplete="off" aria-label={`New secret's value for ${r.project.name}`} placeholder="Value" className="min-w-48 flex-1" value={value} onChange={(e) => setValue(e.target.value)} />
+        <Button size="sm" disabled={!ok} pending={adding} onClick={() => void add()}>Add secret</Button>
+      </div>
+    </div>
+  );
+}
+
 /** The most of the project's tickets this instance takes at once; blank leaves it to the owner. */
 function Cap({ r }: { r: RemoteProjectView }) {
   const qc = useQueryClient();
@@ -60,6 +122,25 @@ function Cap({ r }: { r: RemoteProjectView }) {
       />
       of its tickets here at once (blank: as many as {r.link.ownerName} sends).
     </div>
+  );
+}
+
+/** Whose update channel an update the owner asks for uses. */
+function OwnUpdateChannel({ r }: { r: RemoteProjectView }) {
+  const qc = useQueryClient();
+  const [save, saving] = useAction(async (own: boolean) => {
+    await api.patchRemoteProject(r.project.id, { ownUpdateChannel: own });
+    await qc.invalidateQueries({ queryKey: projectKeys.remote });
+  });
+  return (
+    <Switch
+      size="sm"
+      checked={r.link.ownUpdateChannel}
+      disabled={saving}
+      onChange={(own) => void save(own)}
+    >
+      When {r.link.ownerName} updates this instance, use this host's own update channel (else {r.link.ownerName}'s)
+    </Switch>
   );
 }
 
@@ -116,6 +197,8 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         </ul>
       )}
       <CheckoutFolder r={r} />
+      <ProjectSecrets r={r} />
+      <OwnUpdateChannel r={r} />
       <Cap r={r} />
     </li>
   );
@@ -124,7 +207,8 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
 /**
  * Settings → Remote projects: the projects other instances own that this one joined to work for them. Their board,
  * tickets and PM are on the owner; here they show their link's state, what runs here for the owner (read-only), the
- * checkout's folder, Pause and Leave.
+ * checkout's folder, the secrets kept here for the project, whose update channel the owner's updates use, Pause and
+ * Leave.
  */
 export function RemoteProjectsPage() {
   const q = useRemoteProjects();

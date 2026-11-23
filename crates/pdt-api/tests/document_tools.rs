@@ -559,3 +559,61 @@ async fn project_lets_an_agent_change_the_projects_documents_unasked() {
     assert_eq!(ticket_changes(&env).await.len(), 4);
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-709: before an agent's unasked change to a local sheet PDT keeps what it was, charts too, and Restore puts that
+/// back; a provider with its own history keeps no copy.
+#[tokio::test]
+async fn a_local_sheets_unasked_change_restores_as_it_was_before() {
+    let env = setup().await;
+    let id = start_ticket_agent(&env).await;
+    agent_documents(&env, "own_ticket").await;
+    let made = tool(&env, &id, "document_create", json!({"title": "Costs", "kind": "sheet"})).await;
+    let sheet = made["id"].as_str().unwrap_or_else(|| panic!("{made}")).to_string();
+    assert_eq!(made["provider"], "local", "{made}");
+    let first = json!({"document": sheet, "edits": [
+        {"op": "set_cells", "sheet": "Sheet1", "cell": "A1", "values": [["Rent"], ["12"]]},
+        {"op": "add_chart", "sheet": "Sheet1", "chart": {"kind": "bar", "data": "A1:B2"}},
+    ]});
+    let first = tool(&env, &id, "sheet_edit", first).await;
+    let chart = first["charts"][0].as_str().unwrap_or_else(|| panic!("{first}")).to_string();
+    let second = json!({"document": sheet, "edits": [
+        {"op": "set_cells", "sheet": "Sheet1", "cell": "A2", "values": [["99"]]},
+        {"op": "delete_chart", "id": chart},
+    ]});
+    tool(&env, &id, "sheet_edit", second).await;
+    never_asked(&env, &id).await;
+
+    let c = changes(&env, &sheet).await;
+    let restorable: Vec<bool> = c.iter().map(|c| c["restorable"].as_bool().unwrap()).collect();
+    assert_eq!(restorable, [true, true, false], "the edits keep a copy, the create has nothing before it: {c:?}");
+    let url = format!("/api/documents/{sheet}/changes/{}/restore", c[0]["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &url, None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (_, read) = call(&env.app, "GET", &format!("/api/documents/{sheet}/content"), None).await;
+    assert_eq!(read["content"]["version"], v["version"], "{read}");
+    let sheet1 = &read["content"]["sheets"][0];
+    assert_eq!(sheet1["rows"][1][0]["value"], "12", "{read}");
+    assert_eq!(sheet1["charts"][0]["id"], chart.as_str(), "its chart is back: {read}");
+
+    // A change that kept nothing has nothing to restore.
+    let url = format!("/api/documents/{sheet}/changes/{}/restore", c[2]["id"].as_str().unwrap());
+    let (s, v) = call(&env.app, "POST", &url, None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{v}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
+
+/// PDT-709: a provider with its own history (the fake here) keeps no copy, so its changes have no Restore.
+#[tokio::test]
+async fn another_providers_unasked_change_keeps_no_copy() {
+    let (env, _) = setup_docs().await;
+    let id = start_ticket_agent(&env).await;
+    agent_documents(&env, "own_ticket").await;
+    let made = tool(&env, &id, "document_create", json!({"title": "Notes", "kind": "doc", "markdown": "Old.\n"})).await;
+    let notes = made["id"].as_str().unwrap().to_string();
+    let edits = json!({"document": notes, "edits": [{"op": "replace_string", "find": "Old.", "replace": "New."}]});
+    tool(&env, &id, "doc_edit", edits).await;
+    let c = changes(&env, &notes).await;
+    assert_eq!(c[0]["tool"], "doc_edit");
+    assert_eq!(c[0]["restorable"], false, "{c:?}");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

@@ -109,6 +109,19 @@ version doesn't start properly, PDT puts back the version you had (on Windows, w
 and the database copy, and a banner says **Update to v… failed (…) and was rolled back** with the reason. Nothing is lost, and PDT doesn't retry that version on its
 own. See [An update rolled back](../troubleshooting/troubleshooting.md#an-update-rolled-back).
 
+### Updating remote instances
+
+When other instances work on your projects (see [Remote projects](remote-projects.md)), **Settings › This host ›
+Updates › Remote instances** lists them, each with its version, its projects and its state. One that runs an older
+version than this one, or that can't link with it until one of them updates, says so: "update win-box to v0.7.3".
+
+**Update win-box** asks it to check for an update and install it, as its own **Update** would: if its agents are busy,
+PDT says what's busy and asks first. It checks on this instance's update channel, unless its remote project there is
+set to use its own. The instance restarts on the new version, and its agents resume.
+
+Updating from here works even when the two instances can't link otherwise, so a version mismatch can always be fixed
+from the owner. An instance whose PDT is older than this feature says to update it on the instance itself.
+
 ### The GitHub token for updates
 
 PDT reads its releases from GitHub without a token: you don't need one to get updates.

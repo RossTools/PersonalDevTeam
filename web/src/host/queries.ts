@@ -9,6 +9,7 @@ export const hostKeys = {
   setup: ['host-setup'] as const,
   checks: ['host-checks'] as const,
   update: ['host-update'] as const,
+  instanceUpdates: ['host-update', 'instances'] as const,
   whoami: ['host-whoami'] as const,
   health: ['health'] as const,
   bugReportPreview: ['bug-report-preview'] as const,

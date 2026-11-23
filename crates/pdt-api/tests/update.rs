@@ -19,7 +19,7 @@ const TOKEN: &str = "ghp_test_token_value";
 const ASSET: &str = if cfg!(windows) { "P_0.1.7_x64-setup.exe" } else { "P.app.tar.gz" };
 
 #[derive(Clone)]
-struct Fake {
+pub(crate) struct Fake {
     /// Requests for the latest release.
     hits: Arc<AtomicUsize>,
     sums: Arc<std::sync::Mutex<String>>,
@@ -51,7 +51,7 @@ fn good_sums() -> String {
     format!("{}  P_0.1.7_x64-setup.exe\n{}  P.app.tar.gz\n", sha(WIN), sha(MAC))
 }
 
-async fn fake_github() -> (String, Fake) {
+pub(crate) async fn fake_github() -> (String, Fake) {
     use axum::extract::{Path, State};
     use axum::http::HeaderMap;
     use axum::response::IntoResponse;

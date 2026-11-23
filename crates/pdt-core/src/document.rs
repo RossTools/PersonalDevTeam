@@ -98,7 +98,8 @@ impl Document {
 }
 
 /// A change an agent made to a document without asking, as the project let it (PDT-618): the user reviews it on the
-/// document and on the agent's ticket, and rolls it back from the diff or the version.
+/// document and on the agent's ticket, and rolls it back: a local document from the copy PDT kept of it before the
+/// change ([`DocumentBackup`], PDT-709), another provider's from the diff or the version in its history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -119,6 +120,18 @@ pub struct DocumentChange {
     pub diff: Option<String>,
     /// The agent session that made it (its persona and ticket).
     pub agent: AgentBy,
+    /// PDT keeps what the document was before it ([`DocumentBackup`]), so the user can restore that.
+    #[serde(default)]
+    pub restorable: bool,
+}
+
+/// A local document as it was before an agent's unasked change (PDT-709): the file's bytes and, for a sheet, its
+/// charts (PDT keeps those, not the file). Kept with the change for the newest few changes of each document.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DocumentBackup {
+    pub bytes: Vec<u8>,
+    /// Each chart with the sheet it is on.
+    pub charts: Vec<(String, Chart)>,
 }
 
 /// A document open beside a conversation (PDT-317): one tab of its side panel.

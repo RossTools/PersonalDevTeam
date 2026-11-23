@@ -3,7 +3,8 @@ import type { AgentBy } from "./AgentBy";
 
 /**
  * A change an agent made to a document without asking, as the project let it (PDT-618): the user reviews it on the
- * document and on the agent's ticket, and rolls it back from the diff or the version.
+ * document and on the agent's ticket, and rolls it back: a local document from the copy PDT kept of it before the
+ * change ([`DocumentBackup`], PDT-709), another provider's from the diff or the version in its history.
  */
 export type DocumentChange = { id: string, documentId: string, at: number, 
 /**
@@ -25,4 +26,8 @@ diff: string | null,
 /**
  * The agent session that made it (its persona and ticket).
  */
-agent: AgentBy, };
+agent: AgentBy, 
+/**
+ * PDT keeps what the document was before it ([`DocumentBackup`]), so the user can restore that.
+ */
+restorable: boolean, };

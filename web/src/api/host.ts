@@ -10,6 +10,8 @@ import type { HostBusy } from './gen/HostBusy';
 import type { HostChecks } from './gen/HostChecks';
 import type { HostSettingsPatch } from './gen/HostSettingsPatch';
 import type { HostSettingsView } from './gen/HostSettingsView';
+import type { InstanceUpdateReply } from './gen/InstanceUpdateReply';
+import type { InstancesUpdateView } from './gen/InstancesUpdateView';
 import type { LogEvent } from './gen/LogEvent';
 import type { NetworkSettings } from './gen/NetworkSettings';
 import type { NewBugReport } from './gen/NewBugReport';
@@ -56,6 +58,10 @@ export const hostApi = {
   installUpdate: (force: boolean) =>
     request<UpdateStatus>('/api/host/update/install', { method: 'POST', body: JSON.stringify({ force }) }),
   dismissUpdateResult: () => request<void>('/api/host/update/dismiss', { method: 'POST' }),
+  /** The instances joined to this instance's projects, and which need updating. */
+  instanceUpdates: () => request<InstancesUpdateView>('/api/host/update/instances'),
+  updateInstance: (id: string, force: boolean) =>
+    request<InstanceUpdateReply>(`/api/host/update/instances/${enc(id)}`, { method: 'POST', body: JSON.stringify({ force }) }),
   saveToken: (token: string) => request<UpdateStatus>('/api/host/token', { method: 'PUT', body: JSON.stringify({ token }) }),
   deleteToken: () => request<void>('/api/host/token', { method: 'DELETE' }),
   hostChecks: () => request<HostChecks>('/api/host/checks'),

@@ -11,8 +11,8 @@
 use super::{CommentInput, DocumentProvider, NewFile, ProviderError, ProviderResult};
 use crate::workflow::catalog::BoxFut;
 use pdt_core::document::{
-    Chart, ChartSeriesView, ChartView, CommentReply, DocumentComment, DocumentContent, DocumentEdit, DocumentKind,
-    ProviderCapabilities, ProviderFile, cell_name, documents_folder, parse_range,
+    Chart, ChartSeriesView, ChartView, CommentReply, DocumentBackup, DocumentComment, DocumentContent, DocumentEdit,
+    DocumentKind, ProviderCapabilities, ProviderFile, cell_name, documents_folder, parse_range,
 };
 use pdt_core::document_ops::{EditError, apply_doc_edit};
 use pdt_core::ticket::Actor;
@@ -33,6 +33,9 @@ const IDLE: Duration = Duration::from_secs(600);
 
 /// The largest file PDT imports or a doc's image (bytes).
 pub const MAX_FILE: usize = 50 * 1024 * 1024;
+
+/// The largest document PDT keeps a copy of before an agent's unasked change (bytes, PDT-709).
+const MAX_BACKUP: usize = 10 * 1024 * 1024;
 
 /// What changed in a document, as its event stream sends it.
 #[derive(Debug, Clone, Serialize)]
@@ -365,6 +368,44 @@ impl Files {
         let bytes = l.wb.to_xlsx().map_err(failed)?;
         write_atomic(Path::new(reference), &bytes).map_err(failed)?;
         Ok(self.wrote(reference, &bytes))
+    }
+
+    /// What the file is now, to restore it from later; none when it is larger than [`MAX_BACKUP`]. A sheet's comes
+    /// from its live model, the one edits apply to.
+    fn backup(&self, reference: &str) -> ProviderResult<Option<Vec<u8>>> {
+        let (path, kind) = path_of(reference)?;
+        let bytes = match kind {
+            DocumentKind::Doc => {
+                let doc = self.doc_lock(reference);
+                let _held = lock(&doc);
+                std::fs::read(&path).map_err(io_failed)?
+            }
+            DocumentKind::Sheet => self.with_live(reference, |l| l.wb.to_xlsx().map_err(failed))??,
+        };
+        Ok((bytes.len() <= MAX_BACKUP).then_some(bytes))
+    }
+
+    /// Writes a backup over the file; open views load it again. The version written.
+    fn restore(&self, reference: &str, bytes: &[u8]) -> ProviderResult<String> {
+        let (path, kind) = path_of(reference)?;
+        match kind {
+            DocumentKind::Doc => {
+                let doc = self.doc_lock(reference);
+                let _held = lock(&doc);
+                write_atomic(&path, bytes).map_err(failed)?;
+                let v = self.wrote(reference, bytes);
+                self.send(reference, DocEvent::Changed { version: v.clone() });
+                Ok(v)
+            }
+            DocumentKind::Sheet => {
+                Workbook::from_xlsx(bytes, &sheet_name(&path)).map_err(ProviderError::Invalid)?;
+                self.with_live(reference, |l| {
+                    write_atomic(&path, bytes).map_err(failed)?;
+                    self.reread(reference, l);
+                    Ok(version_of(bytes))
+                })?
+            }
+        }
     }
 
     fn sheet_bytes(&self, reference: &str) -> ProviderResult<(Vec<u8>, u64)> {
@@ -823,6 +864,27 @@ impl LocalProvider {
                 Ok(())
             })
             .await;
+    }
+
+    /// What a document is now, with a sheet's charts, kept before an agent's unasked change so the user can restore
+    /// it (PDT-709); none when the file is too large to keep.
+    pub async fn backup(&self, document_id: &str, reference: &str) -> ProviderResult<Option<DocumentBackup>> {
+        let r = reference.to_string();
+        let Some(bytes) = self.blocking(move |f| f.backup(&r)).await? else { return Ok(None) };
+        let charts = self.store.document_charts(document_id).await.map_err(failed)?;
+        Ok(Some(DocumentBackup { bytes, charts }))
+    }
+
+    /// Puts a document back as a backup had it: its file and a sheet's charts. The version written.
+    pub async fn restore(&self, document_id: &str, reference: &str, backup: DocumentBackup) -> ProviderResult<String> {
+        let (_, kind) = path_of(reference)?;
+        let (r, bytes) = (reference.to_string(), backup.bytes);
+        let v = self.blocking(move |f| f.restore(&r, &bytes)).await?;
+        if kind == DocumentKind::Sheet {
+            self.store.set_document_charts(document_id, &backup.charts).await.map_err(failed)?;
+            self.files.send(reference, DocEvent::Charts);
+        }
+        Ok(v)
     }
 
     /// A sheet's charts with the numbers they draw, read from the live model.

@@ -11,4 +11,9 @@ by: string,
 /**
  * How: the tool or node kind (`run_with_secrets`, `http.request`).
  */
-how: string, sessionId: string | null, runId: string | null, };
+how: string, sessionId: string | null, runId: string | null, 
+/**
+ * The remote instance the value was forwarded to, for one call of a session running there (PDT-637); None:
+ * used on this instance.
+ */
+instance: string | null, };
