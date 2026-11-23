@@ -331,6 +331,38 @@ fn exports_the_plugins_for_the_website() {
     }
 }
 
+/// PDT-706: an action's node kind acts outside PDT exactly when its tool does (a Jira comment, a Discord DM), so a gate's
+/// choice that leads to one asks twice like Allow on the tool.
+#[test]
+fn every_actions_node_kind_is_outward_as_its_tool_is() {
+    let r = registry();
+    let mut outward = vec![];
+    for a in r.integrations().iter().flat_map(|i| i.actions()) {
+        let decl = a.decl();
+        let Some(kind) = a.node_kind() else { continue };
+        let id = kind.spec().id;
+        assert_eq!(kind.outward(&json!({})), decl.outward(), "{id} ({})", decl.name);
+        let open = decl.open_world && !decl.read_only;
+        assert!(!open || kind.outward(&json!({})), "{id} changes something outside PDT");
+        if decl.outward() {
+            outward.push(id);
+        }
+    }
+    for id in ["jira.comment", "jira.create", "jira.edit", "jira.transition", "scryer.add"] {
+        assert!(outward.iter().any(|x| x == id), "{id}: {outward:?}");
+    }
+    // The integrations' own kinds that act outside PDT, beside the actions'.
+    let c = r.catalog();
+    for id in
+        ["discord.post", "discord.channel.ensure", "buildkite.retry", "buildkite.trigger", "radarr.add", "sonarr.add"]
+    {
+        assert!(c.get(id).is_some_and(|k| k.outward(&json!({}))), "{id}");
+    }
+    for id in ["radarr.search", "plex.search", "jira.search", "jira.issue"] {
+        assert!(c.get(id).is_some_and(|k| !k.outward(&json!({}))), "{id}");
+    }
+}
+
 #[test]
 fn every_tool_is_listed_once_with_an_object_schema() {
     let infos = registry().tool_infos();

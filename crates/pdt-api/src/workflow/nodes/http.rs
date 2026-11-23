@@ -329,6 +329,12 @@ impl NodeKind for Http {
         )
     }
 
+    /// A request that may change something (any method but GET, HEAD and OPTIONS, or one given by a reference).
+    fn outward(&self, config: &Value) -> bool {
+        let method = config.get("method").and_then(Value::as_str).unwrap_or("GET");
+        !["GET", "HEAD", "OPTIONS"].contains(&method.trim().to_uppercase().as_str())
+    }
+
     /// GET, HEAD, PUT, DELETE and OPTIONS can be sent again; other methods (POST, PATCH) cut short aren't sent again on
     /// their own (PDT-131).
     fn rerun_safe(&self, input: &Value) -> bool {
