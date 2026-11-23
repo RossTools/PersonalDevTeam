@@ -12,7 +12,7 @@ use crate::workflow::nodes::schedule::RESERVED_STATE;
 use pdt_core::base_ci::{DiffFile, diff_id};
 use pdt_core::outside_pr::DEPENDABOT;
 use pdt_core::pr::PrState;
-use pdt_forge::ChangeFile;
+use pdt_forge::{ChangeFile, ChangeReview, ForgeError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -23,6 +23,36 @@ pub const DEPENDABOT_REBASE: &str = "@dependabot rebase";
 
 /// What "approval kept" says on the run.
 pub const APPROVAL_KEPT: &str = "Approval kept: only the base changed";
+
+/// How long an approval holds for a later head (30 days): one older is asked about again (PDT-697).
+pub const APPROVAL_MAX_AGE_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+
+/// The newest review id in `reviews`: what an approval was recorded after.
+fn newest_review(reviews: &[ChangeReview]) -> u64 {
+    reviews.iter().map(|r| r.id).max().unwrap_or(0)
+}
+
+/// Whether `login` requested changes in one of `reviews` newer than review `after` (PDT-697: on the forge itself, not
+/// through PDT, after the approval).
+fn changes_requested_since(reviews: &[ChangeReview], login: &str, after: u64) -> bool {
+    reviews.iter().any(|r| r.id > after && r.state == "changes_requested" && r.author.eq_ignore_ascii_case(login))
+}
+
+/// The user's login and the pull request's reviews, or none where the forge has no reviews or login.
+fn reviews_of(f: &dyn pdt_forge::Forge, repo: &str, n: u32) -> Result<Option<(String, Vec<ChangeReview>)>, ForgeError> {
+    let unsupported = |e: ForgeError| match e {
+        ForgeError::Unsupported(_) => Ok(None),
+        e => Err(e),
+    };
+    let login = match f.viewer_login() {
+        Ok(l) => l,
+        Err(e) => return unsupported(e),
+    };
+    match f.change_reviews(repo, n) {
+        Ok(r) => Ok(Some((login, r))),
+        Err(e) => unsupported(e),
+    }
+}
 
 fn number(v: &Value) -> Result<u32, String> {
     let text = match v {
@@ -187,8 +217,8 @@ pub struct PrApprovalConfig {
     pub number: Value,
     /// Its head (`{{trigger.headSha}}`): the one approved, or the one to check.
     pub head_sha: String,
-    /// `record` (the user approved this head), `forget` (they decided otherwise since) or `check` (does an approval
-    /// hold for it).
+    /// `record` (the user approved this head), `forget` (they decided otherwise since, or it was closed) or `check`
+    /// (does an approval hold for it: not after 30 days, nor after the user requested changes on the forge).
     pub action: String,
 }
 
@@ -211,7 +241,8 @@ impl NodeKind for PrApproval {
              otherwise since (Request changes, Close): the approval is gone. `check`: whether an approval holds for \
              `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base \
              changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when there is none. \
-             A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
+             An approval older than 30 days, or one the user has since requested changes on in a review on the forge \
+             itself, is forgotten: `none`. A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
             &[
                 ("out", "Recorded or forgotten"),
                 ("moved", "Pushed since"),
@@ -270,16 +301,25 @@ impl NodeKind for PrApproval {
             let state = store.workflow_state(&cx.workflow.id).await.map_err(crate::workflow::err)?;
             let approved = state.get(&state_key).cloned().filter(|a| !a.is_null());
             let record = action == "record";
-            if !record && approved.is_none() {
-                return Ok(Outcome::next("none", json!({"quiet": true})));
+            let Some(approved) = approved.filter(|_| !record) else {
+                if !record {
+                    return Ok(Outcome::next("none", json!({"quiet": true})));
+                }
+                return record_approval(&forge, &repo, n, &head, set).await;
+            };
+            // An approval too old to hold is asked about again (PDT-697).
+            let at = approved["at"].as_i64().unwrap_or(0);
+            if now_ms().saturating_sub(at) > APPROVAL_MAX_AGE_MS {
+                set(&Value::Null).await?;
+                return Ok(Outcome::next("none", json!({"expired": true, "approvedAt": at, "quiet": true})));
             }
-            if !record && approved.as_ref().and_then(|a| a["headSha"].as_str()) == Some(head.as_str()) {
-                return Ok(Outcome::next("kept", json!({"note": "Approved at this head", "headSha": head})));
-            }
+            let approved_head = approved["headSha"].as_str().unwrap_or_default().to_string();
             // The files are the head's at the time they are read: only while it is still the head approved (read
             // before and after them) are they the approved diff.
             let (r, h) = (repo.clone(), head.clone());
             let read = forge_call(&forge, move |f| {
+                // Changes requested on the forge itself since the approval take it back (PDT-697).
+                let reviews = reviews_of(f, &r, n)?;
                 let head_now = |f: &dyn pdt_forge::Forge| {
                     f.change_request_number(&r, n).map(|p| p.map(|p| p.head_sha).unwrap_or_default())
                 };
@@ -287,20 +327,21 @@ impl NodeKind for PrApproval {
                 // A list cut off (more files than the forge lists) is no diff: no approval is kept over it (PDT-696).
                 let files = f.change_request_files_whole(&r, n)?;
                 let after = head_now(f)?;
-                Ok((before == h && after == h).then(|| files.and_then(|f| own_diff(&f))).ok_or(after))
+                Ok((reviews, (before == h && after == h).then(|| files.and_then(|f| own_diff(&f)))))
             })
             .await?;
-            if record {
-                let diff = match read {
-                    Ok(diff) => diff,
-                    Err(now) => return Ok(Outcome::next("moved", json!({"headSha": now, "quiet": true}))),
-                };
-                set(&json!({"headSha": head, "diff": diff, "at": now_ms()})).await?;
-                return Ok(Outcome::next("out", json!({"headSha": head, "diff": diff, "quiet": true})));
+            let (reviews, diff) = read;
+            let mark = approved["reviewsSeen"].as_u64().unwrap_or(0);
+            if let Some((login, reviews)) = reviews
+                && changes_requested_since(&reviews, &login, mark)
+            {
+                set(&Value::Null).await?;
+                return Ok(Outcome::next("none", json!({"changesRequested": true, "quiet": true})));
             }
-            let was = approved.as_ref().and_then(|a| a["diff"].as_str()).map(String::from);
-            let approved_head = approved.as_ref().and_then(|a| a["headSha"].as_str()).unwrap_or_default().to_string();
-            match (was, read.ok().flatten()) {
+            if approved_head == head {
+                return Ok(Outcome::next("kept", json!({"note": "Approved at this head", "headSha": head})));
+            }
+            match (approved["diff"].as_str(), diff.flatten()) {
                 (Some(a), Some(b)) if a == b => Ok(Outcome::next(
                     "kept",
                     json!({"note": APPROVAL_KEPT, "approvedHead": approved_head, "headSha": head}),
@@ -309,6 +350,36 @@ impl NodeKind for PrApproval {
             }
         })
     }
+}
+
+/// Records the user's approval of #`n` at `head`, with its own diff and the newest review then (changes requested
+/// in a later one take it back); `moved` when the head is no longer `head`.
+async fn record_approval(
+    forge: &std::sync::Arc<dyn pdt_forge::Forge>,
+    repo: &str,
+    n: u32,
+    head: &str,
+    set: impl AsyncFnOnce(&Value) -> Result<bool, String>,
+) -> Result<Outcome, String> {
+    let (r, h) = (repo.to_string(), head.to_string());
+    let read = forge_call(forge, move |f| {
+        let head_now = |f: &dyn pdt_forge::Forge| {
+            f.change_request_number(&r, n).map(|p| p.map(|p| p.head_sha).unwrap_or_default())
+        };
+        let before = head_now(f)?;
+        let files = f.change_request_files_whole(&r, n)?;
+        let reviews = reviews_of(f, &r, n)?;
+        let after = head_now(f)?;
+        let seen = reviews.map(|(_, r)| newest_review(&r)).unwrap_or(0);
+        Ok((before == h && after == h).then(|| (files.and_then(|f| own_diff(&f)), seen)).ok_or(after))
+    })
+    .await?;
+    let (diff, seen) = match read {
+        Ok(read) => read,
+        Err(now) => return Ok(Outcome::next("moved", json!({"headSha": now, "quiet": true}))),
+    };
+    set(&json!({"headSha": head, "diff": diff, "at": now_ms(), "reviewsSeen": seen})).await?;
+    Ok(Outcome::next("out", json!({"headSha": head, "diff": diff, "quiet": true})))
 }
 
 #[cfg(test)]
@@ -326,5 +397,23 @@ mod tests {
         assert!(PrApproval.check(&a("forget")).is_ok());
         assert!(PrApproval.check(&a("drop")).unwrap_err().contains("record, check or forget"));
         assert_eq!(key("approval", "O/R", 7), "_pdt.approval.o/r#7");
+    }
+
+    #[test]
+    fn only_the_users_changes_requested_after_the_approval_take_it_back() {
+        let r = |id: u64, author: &str, state: &str| ChangeReview {
+            id,
+            author: author.into(),
+            is_bot: false,
+            state: state.into(),
+            body: String::new(),
+            url: String::new(),
+            collaborator: true,
+        };
+        let reviews = [r(3, "Me", "changes_requested"), r(5, "them", "changes_requested"), r(6, "me", "commented")];
+        assert_eq!(newest_review(&reviews), 6);
+        assert!(changes_requested_since(&reviews, "me", 2), "any case");
+        assert!(!changes_requested_since(&reviews, "me", 3), "from before the approval");
+        assert!(!changes_requested_since(&[], "me", 0));
     }
 }
