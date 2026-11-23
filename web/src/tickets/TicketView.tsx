@@ -63,11 +63,13 @@ export function useSection(ticketId: string): [HubTab, (t: HubTab) => void] {
 }
 
 /**
- * Overview · Conversation · Changes (with the branch's diff size), and what each shows: `overview` is the page's own
- * `<TabPanel id="overview">`.
+ * Overview · Conversation · Changes (with the branch's diff size) and the stage stepper on the same row, and what each
+ * tab shows: `overview` is the page's own `<TabPanel id="overview">`.
  */
-export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
+export function HubTabs({ ticket: t, value, onChange, diff, overview, stepper = true }: {
   ticket: Ticket;
+  /** False where the page shows the stage itself (the phone's ticket screen). */
+  stepper?: boolean;
   value: HubTab;
   onChange: (t: HubTab) => void;
   diff?: { added: number; removed: number; files: number } | null;
@@ -77,7 +79,15 @@ export function HubTabs({ ticket: t, value, onChange, diff, overview }: {
     ? { ...h, label: <>{h.label}<DiffStat added={diff.added} removed={diff.removed} className="ml-1.5 text-2xs" /></> }
     : h);
   return (
-    <Tabs aria-label="Ticket sections" tabs={tabs} value={value} onChange={onChange} listClassName="px-gutter">
+    <Tabs
+      aria-label="Ticket sections"
+      tabs={tabs}
+      value={value}
+      onChange={onChange}
+      listClassName="px-gutter"
+      // The stage, named at every step, on the tabs' row: the header has no room left for its labels.
+      end={stepper && <div className="flex @container w-full justify-end pr-gutter"><StageStepper stage={t.stage} compact="fit" /></div>}
+    >
       {overview}
       <TabPanel id="conversation"><TicketConversation ticket={t} /></TabPanel>
       <TabPanel id="changes"><TicketChanges ticket={t} /></TabPanel>
@@ -113,7 +123,6 @@ function TicketHeader({ ticket, onDeleted, partsShown }: { ticket: Ticket; onDel
       titleTooltip={ticket.title}
       meta={
         <>
-          <StageStepper stage={ticket.stage} />
           <PriorityIcon priority={ticket.priority} />
           <TicketBadges ticket={ticket} />
           {ticket.parts && !partsShown && <PartsStepper parts={ticket.parts} showCount className="hidden w-28 sm:flex" />}

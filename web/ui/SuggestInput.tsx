@@ -1,4 +1,4 @@
-import { useContext, useState, type KeyboardEvent } from 'react';
+import { useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ComboBox, ComboBoxStateContext } from 'react-aria-components';
 import { cn } from '@ui/lib/utils';
 import { Input as InputPrimitive } from '@ui/primitives/input';
@@ -82,6 +82,13 @@ function SuggestField({
   autoFocus?: boolean;
 }) {
   const state = useContext(ComboBoxStateContext);
+  const input = useRef<HTMLInputElement>(null);
+  // A frame after mount: a popover (and a dialog around it) moves focus to itself first, which `autoFocus` loses to.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const id = requestAnimationFrame(() => input.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [autoFocus]);
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.nativeEvent.isComposing) return;
     if (e.key !== 'Enter' && !commitKeys.includes(e.key)) return;
@@ -91,5 +98,5 @@ function SuggestField({
     commit(text);
     state?.close();
   };
-  return <InputPrimitive autoComplete="off" placeholder={placeholder} size={size} maxLength={maxLength} onKeyDown={onKeyDown} autoFocus={autoFocus} />;
+  return <InputPrimitive autoComplete="off" placeholder={placeholder} size={size} maxLength={maxLength} onKeyDown={onKeyDown} autoFocus={autoFocus} ref={input} />;
 }

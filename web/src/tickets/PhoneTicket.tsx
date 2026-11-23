@@ -159,6 +159,7 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
       <HeldBanner ticket={t} className="border-y" />
       <HubTabs
         ticket={t}
+        stepper={false}
         value={tab}
         onChange={setTab}
         diff={diff}

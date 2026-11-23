@@ -30,4 +30,11 @@ describe('StageStepper', () => {
     // Each dot names its stage on hover.
     expect(screen.getAllByRole('listitem').map((li) => li.getAttribute('title'))).toEqual(['Draft', 'Ready', 'To do', 'In progress', 'Done']);
   });
+
+  it('fit names every stage when its container is wide enough, else only the current one', () => {
+    render(<StageStepper stage="in_progress" compact="fit" />);
+    expect(screen.getByText('Draft').className).toContain('sr-only @md:not-sr-only');
+    expect(screen.getByText('In progress').className).not.toContain('sr-only');
+    expect(screen.getAllByRole('listitem')[0]).toHaveAttribute('title', 'Draft');
+  });
 });

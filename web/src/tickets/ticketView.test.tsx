@@ -89,7 +89,10 @@ describe('ticket tab', () => {
     stub();
     view();
     expect(await screen.findByRole('heading', { name: /Fix login/ })).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: 'Stage' })).toBeInTheDocument();
+    // The stage sits on the tabs' row, where its labels have room, not in the header.
+    const stage = screen.getByRole('list', { name: 'Stage' });
+    expect(stage.closest('header')).toBeNull();
+    expect(stage.closest('[class*="@container"]')).not.toBeNull();
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Conversation' })).toBeEnabled();
     expect(screen.getByRole('tab', { name: 'Changes' })).toBeEnabled();
@@ -299,8 +302,10 @@ describe('new ticket form', () => {
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Description' }), 'Why');
     await userEvent.click(within(dialog).getByRole('button', { name: /Priority/ }));
     await userEvent.click(await screen.findByRole('option', { name: 'High' }));
+    // + Add puts the cursor in the field: typing goes straight in.
     await userEvent.click(within(dialog).getByRole('button', { name: 'Add label' }));
-    await userEvent.type(screen.getByRole('combobox', { name: 'Add label' }), 'ui{Enter}');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Add label' })).toHaveFocus());
+    await userEvent.keyboard('ui{Enter}');
     await userEvent.keyboard('{Escape}');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Create ticket' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({

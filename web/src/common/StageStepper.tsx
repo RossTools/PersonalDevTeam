@@ -20,8 +20,9 @@ const FLOW: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done'];
 
 export interface StageStepperProps {
   stage: TicketStage;
-  /** Dots only, with just the current stage's label (the peek sheet, narrow headers). */
-  compact?: boolean;
+  /** `true`: dots only, with just the current stage's label (the peek sheet, narrow headers). `'fit'`: every label
+   *  when the nearest `@container` is at least 28rem wide, else like `true` (each dot names its stage on hover). */
+  compact?: boolean | 'fit';
   className?: string;
 }
 
@@ -34,7 +35,10 @@ export function StageStepper({ stage, compact = false, className }: StageStepper
   const steps: TicketStage[] = closedUndone ? ['draft', 'ready', 'todo', 'in_progress', 'wont_do'] : FLOW;
   const at = closedUndone ? steps.length - 1 : FLOW.indexOf(stage);
   return (
-    <ol aria-label="Stage" className={cn('flex min-w-0 items-center', compact ? 'gap-1' : 'gap-1.5', className)}>
+    <ol
+      aria-label="Stage"
+      className={cn('flex min-w-0 items-center', compact === true ? 'gap-1' : compact === 'fit' ? 'gap-1 @md:gap-1.5' : 'gap-1.5', className)}
+    >
       {steps.map((s, i) => {
         const current = i === at;
         // Done is the end of the flow: shown checked like the steps before it.
@@ -46,32 +50,33 @@ export function StageStepper({ stage, compact = false, className }: StageStepper
             key={s}
             aria-current={current ? 'step' : undefined}
             // Compact shows only the current stage's name: the others say theirs on hover.
-            title={compact ? label : undefined}
+            title={compact !== false ? label : undefined}
             data-state={current ? 'current' : past ? 'complete' : 'upcoming'}
             className="flex min-w-0 items-center gap-1.5"
           >
             {i > 0 && (
-              <span aria-hidden className={cn('h-px shrink-0 bg-border', compact ? 'w-2' : 'w-3 sm:w-5', past || (current && !crossed) ? 'bg-primary' : undefined)} />
+              <span aria-hidden className={cn('h-px shrink-0 bg-border', compact === true ? 'w-2' : compact === 'fit' ? 'w-2 @md:w-5' : 'w-3 sm:w-5', past || (current && !crossed) ? 'bg-primary' : undefined)} />
             )}
             <span
               aria-hidden
               className={cn(
                 'flex shrink-0 items-center justify-center rounded-full border [&>svg]:size-2.5',
-                compact ? 'size-3' : 'size-4',
+                compact === true ? 'size-3' : compact === 'fit' ? 'size-3 @md:size-4' : 'size-4',
                 past && 'border-primary bg-primary text-primary-foreground',
                 current && !past && !crossed && 'border-primary bg-accent text-link ring-2 ring-ring',
                 current && crossed && 'border-muted-foreground bg-muted text-muted-foreground',
                 !past && !current && 'border-muted-foreground/40 bg-card',
               )}
             >
-              {past && !compact && <Check strokeWidth={3} />}
+              {past && compact !== true && <Check strokeWidth={3} className={cn(compact === 'fit' && 'hidden @md:block')} />}
               {crossed && <X strokeWidth={3} />}
               {current && !past && !crossed && <span className="size-1.5 rounded-full bg-primary" />}
             </span>
             <span
               className={cn(
                 'truncate text-xs',
-                compact && !current && 'sr-only',
+                compact === true && !current && 'sr-only',
+                compact === 'fit' && !current && 'sr-only @md:not-sr-only',
                 current ? 'font-medium text-foreground' : 'text-muted-foreground',
                 crossed && 'line-through',
               )}
