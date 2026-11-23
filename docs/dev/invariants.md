@@ -127,9 +127,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `web/src/inbox/held.ts`): a new way to answer an Inbox item or a request goes through `useAnswer`, `answerApproval`
   or `guardedAnswer`, never `api.answerInbox` / `answerRequest` directly, or a double-click answers twice and Undo
   can't stop it. Which answers ask twice comes from the server: an `InboxChoice` that acts outside PDT is `outward`
-  (a gate's or a manual step's choice whose port leads to a node whose kind says `NodeKind::outward`; Allow on a tool
-  `ToolTable::outward` names: public, or open-world and not read-only). A node kind that posts or closes something
-  outside PDT as the user overrides `outward`; `needsConfirm` (`inbox/model.ts`) reads the flag, and keeps no list.
+  (a gate's or a manual step's choice whose port leads to a node whose kind says `NodeKind::outward`, directly or
+  through conditions, waits and `state.set` (`Catalog::leads_outward`); Allow on a tool `ToolTable::outward` names:
+  `ToolDecl::outward`, public, or open-world and not read-only). An action's node kind is outward as its tool is; any
+  other node kind that posts, closes, changes or starts something outside PDT as the user overrides `outward` (the
+  catalog tests list them); `needsConfirm` (`inbox/model.ts`) reads the flag, and keeps no list.
   A gate with `recommend` marks one choice `recommended` (and primary, so Enter takes it) and puts
   `body.recommendation` on the item; every other choice of that item asks twice.
 - **An asking tool asks somewhere the user sees** (pdt-api `mcp::tools::confirmable`): Claude's permission prompt

@@ -639,6 +639,11 @@ impl NodeKind for EnsureChannel {
         )
     }
 
+    /// It makes a channel on the Discord server (PDT-706).
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let c: EnsureChannelConfig = parse(config)?;
         if c.connection.trim().is_empty() {
