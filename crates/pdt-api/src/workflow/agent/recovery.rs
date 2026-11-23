@@ -218,7 +218,7 @@ pub(crate) async fn sweep(st: &AppState) {
                 (SessionStatus::Running, SessionMode::Conversation) => {
                     !crate::conversations::is_live_or_waiting(st, &s)
                 }
-                (SessionStatus::Running, _) => !st.ptys.is_running(&sid),
+                (SessionStatus::Running, _) => !st.terminal_running(&sid),
                 _ => true,
             },
             Ok(None) => true,

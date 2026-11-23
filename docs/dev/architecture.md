@@ -139,8 +139,29 @@ running. An agent's pdt-mcp call to the remote instance (`mcp::post`, `exec::rel
 `/link/exec/mcp` with its token, retried while the owner can't be reached; the owner answers it as its own. Git for a
 remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (`/link/exec/git`, the base merged
 in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
-worktree until Clean up, since the owner can't see what it holds. Terminals, runs, Files and Changes of a remote
-attempt are not remote yet.
+worktree until Clean up, since the owner can't see what it holds. Runs, Files and Changes of a remote attempt are not
+remote yet.
+
+**Remote terminals** (pdt-api `exec/terminals.rs` on the owner, `exec/remote_pty.rs` on the remote). A terminal
+session (an agent's TUI or a shell) in a remote worktree, or made with `NewSession.instanceId` ("Shell on win-box" in
+the new-tab chooser: the remote project's checkout), starts with `exec::open_terminal`: `/link/exec/pty/open` sends
+the owner's `Session` row, a branch (or none) and the launch's pieces (instructions, pdt-mcp, first prompt), and the
+remote runs `sessions::pty_spec` on its own PTY manager under the owner's session id, in the folder it picks itself
+(the row takes it), with an `exec_sessions` row. Restarts resume the agent's conversation when the remote has it
+saved (Claude), or by its external id: Devin's comes with its relayed hook, and a fresh Codex terminal's is found on
+the remote when it ends (`remote_pty::codex_conversation`, by launch time in its own Codex home, with fresh launches
+in a folder spaced as locally) and sent ahead of the exit as an `ExternalId` event. The remote ends its terminals'
+`exec_sessions` rows when it starts (`Store::end_open_exec_terminals`). The owner keeps a route without a sink per running terminal
+(`exec::is_remote_terminal`, `AppState::terminal_running`); its exit comes back with the instance's events and ends
+the session (`terminals::exited`), and `exec::resume_pollers` puts the routes back after an owner restart. The
+browser's `/api/sessions/{id}/pty` is bridged frame for frame (`exec::bridge_pty`) to the remote's
+`/link/exec/pty/ws/{ticket}`, which `pty_ws::upgrade` serves like a local terminal (scrollback kept while nobody
+watches, gzip, resize, exit); the ticket is one-time, from a signed `/link/exec/pty/attach`, and the bridge turns off
+Nagle so keystrokes go out at once. PDT's typed messages go through `/link/exec/pty/write`. The agent's hooks reach
+the remote's `/api/sessions/{id}/activity`, which passes them on to the owner's `/link/exec/activity`
+(`activity::report`); the owner tracks a remote agent terminal's activity from those hooks and the input it bridges
+(`activity::track_remote`), not from its output, which stays there. Switching a remote session between conversation
+and terminal, and a Codex conversation's live terminal, are refused.
 
 **Pickup per instance.** `tickets.candidates` places each candidate (`placement::Placer::pickup_place`,
 read once per project) as a pdt-core `pickup::Place`: the owner, a remote instance, `waiting` (offline or paused

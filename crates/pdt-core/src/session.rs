@@ -347,6 +347,11 @@ pub struct NewSession {
     #[serde(default)]
     #[ts(optional)]
     pub permission_mode: Option<crate::conversation::PermissionMode>,
+    /// A remote instance of the project to run it on, in its checkout of the project (a worktree's sessions run where
+    /// the worktree is). None: this instance.
+    #[serde(default)]
+    #[ts(optional)]
+    pub instance_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -361,6 +366,7 @@ pub struct ValidSession {
     pub mode: crate::conversation::SessionMode,
     pub model: Option<String>,
     pub permission_mode: Option<crate::conversation::PermissionMode>,
+    pub instance_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -447,6 +453,7 @@ impl NewSession {
             mode,
             model,
             permission_mode,
+            instance_id: self.instance_id.as_deref().map(str::trim).filter(|i| !i.is_empty()).map(String::from),
         })
     }
 }
@@ -1018,6 +1025,7 @@ mod tests {
             mode: None,
             model: None,
             permission_mode: None,
+            instance_id: None,
         }
     }
 

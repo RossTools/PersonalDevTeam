@@ -170,15 +170,6 @@ pub(crate) async fn start_ticket(
         (None, None) => crate::placement::place(&st, &project, &ticket.summary.labels, v.runs_on.as_deref()).await?,
         _ => None,
     };
-    if let Some(i) = &placed
-        && v.session_mode == SessionMode::Terminal
-        && !v.no_session
-    {
-        return Err(ApiError::conflict(
-            codes::PLACEMENT,
-            format!("{key} runs on {}, where agents run as conversations for now: start it as a conversation", i.name),
-        ));
-    }
     // Whether PDT named the branch from the project's template (PDT-594): Won't do may delete such a branch from the
     // remote, whatever its name. Only a name `start_branch` chose (and checked was free) is PDT's.
     let named = chat.is_none() && personal.is_none() && v.branch.is_none();
@@ -316,6 +307,7 @@ pub(crate) async fn start_ticket(
             mode: v.session_mode,
             model: None,
             permission_mode,
+            instance_id: None,
         },
         title: Some(started_session_title(&ticket.summary.title)),
         attempt_id: Some(attempt_id.clone()),

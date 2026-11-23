@@ -362,7 +362,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A bug report bound for GitHub goes through `bug_report::redact` with the user's own names.** pdt-api
   `bug_reports::redactions` gathers the token, the owner's login, the home folder, the machine's names and each
   project's name, key, folder, origin `owner/repo` and worktree branches and folders (not the release repository's
-  project); the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
+  project), this instance's name, each remote instance's name and host, and each remote project's name, key, owner
+  name and owner host; the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
   route. A new place that logs a user's name for something is covered only if it is one of these.
 - **A Codex terminal's secrets stay out of its shell commands**: each name `codex_tui_env` passes a secret in is in
   the `shell_environment_policy.exclude` it gets (pdt-agents `mcp.rs`), after the user's own patterns.
@@ -448,6 +449,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `Unavailable` for an offline or paused instance (even when the repository's needs pick it), and pickup turns that
   into a `waiting` hold, never the owner or another instance. Pickup counts each pool by the worktree's
   `instance_id`, so an attempt's worktree keeps the instance it was made on.
+- **An owner's terminal runs on a remote instance only in that project's folders.** The owner names a branch, never a
+  folder: `exec/remote_pty.rs` (`folder`) runs it in that branch's worktree of the remote project's checkout (a valid
+  branch name whose worktree is there) or in the checkout itself, whatever the session row says. Its WebSocket opens
+  only with a one-time ticket from a signed `/link/exec/pty/attach` for a PTY it runs for that link; shells this
+  instance opens for itself are `sessions` rows of its own projects and never reach the owner.
 - **An instance has a project either local or remote, never both**: joining refuses a project whose repository
   (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
 - **A project-link request is acted on only once signed by the link's other end for that project**

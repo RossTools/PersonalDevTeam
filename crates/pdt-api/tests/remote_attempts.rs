@@ -1,7 +1,8 @@
 //! Remote attempts (PDT-632): an owner (`studio`) and a remote instance (`win-box`) on loopback, paired for one
 //! project. A `windows` ticket's attempt runs on the remote instance: its worktree is in the remote's checkout, its
 //! agents (`fake-agent`) run there, their pdt-mcp calls are passed on to the owner, and their sessions are the owner's,
-//! under the ticket and interactive, through the whole Pipeline. A dropped link loses nothing.
+//! under the ticket and interactive, through the whole Pipeline. A dropped link loses nothing. (Terminals there:
+//! `remote_terminals.rs`.)
 
 use crate::common::wait::wait_until;
 use crate::common::{self, call, call_as_ui, git, mark_pushed};
@@ -19,19 +20,20 @@ use std::time::Duration;
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const ORIGIN: &str = "https://github.com/o/r.git";
 
-struct Instance {
-    app: axum::Router,
-    state: AppState,
-    url: String,
-    tmp: tempfile::TempDir,
+pub(crate) struct Instance {
+    pub(crate) app: axum::Router,
+    pub(crate) state: AppState,
+    pub(crate) url: String,
+    pub(crate) tmp: tempfile::TempDir,
 }
 
 /// An instance named `name` with `fake-agent` as Claude, served on a free loopback port; with a fake GitHub when `gh`.
-async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
+pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
+    state.platform.codex_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
@@ -59,23 +61,23 @@ fn repo(dir: &Path) {
     git(dir, &["config", "http.proxy", "http://127.0.0.1:1"]);
 }
 
-struct Pair {
-    owner: Instance,
-    remote: Instance,
-    gh: Arc<FakeForge>,
+pub(crate) struct Pair {
+    pub(crate) owner: Instance,
+    pub(crate) remote: Instance,
+    pub(crate) gh: Arc<FakeForge>,
     /// The owner's project.
-    project: String,
+    pub(crate) project: String,
     /// The remote instance's id of it.
-    remote_project: String,
+    pub(crate) remote_project: String,
     /// The remote instance's id (as the owner names it).
-    instance_id: String,
+    pub(crate) instance_id: String,
     /// Where the remote instance keeps the project's checkout.
-    checkout: PathBuf,
+    pub(crate) checkout: PathBuf,
 }
 
 /// Owner and remote paired for the owner's project, with `windows` tickets placed on the remote instance. Its
 /// checkout is a clone of the owner's repository (a real one would be cloned from origin on first use).
-async fn paired() -> Pair {
+pub(crate) async fn paired() -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
     let remote = instance("win-box", None).await;
@@ -116,7 +118,7 @@ async fn paired() -> Pair {
     Pair { owner, remote, gh, project, remote_project, instance_id, checkout }
 }
 
-async fn ticket(p: &Pair, title: &str, labels: &[&str]) -> String {
+pub(crate) async fn ticket(p: &Pair, title: &str, labels: &[&str]) -> String {
     let body = json!({"title": title, "labels": labels});
     let (s, t) = call_as_ui(&p.owner.app, "POST", &format!("/api/projects/{}/tickets", p.project), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
@@ -127,12 +129,12 @@ async fn get_ticket(p: &Pair, id: &str) -> Value {
     call(&p.owner.app, "GET", &format!("/api/tickets/{id}"), None).await.1
 }
 
-async fn sessions(p: &Pair) -> Vec<Value> {
+pub(crate) async fn sessions(p: &Pair) -> Vec<Value> {
     let (_, v) = call(&p.owner.app, "GET", &format!("/api/projects/{}/sessions", p.project), None).await;
     v.as_array().unwrap().clone()
 }
 
-async fn worktrees(p: &Pair) -> Vec<Value> {
+pub(crate) async fn worktrees(p: &Pair) -> Vec<Value> {
     let (_, v) = call(&p.owner.app, "GET", &format!("/api/projects/{}/worktrees", p.project), None).await;
     v.as_array().unwrap().clone()
 }
@@ -324,12 +326,6 @@ async fn unlabelled_tickets_still_run_on_the_owner() {
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let branch = started["attempt"]["branch"].as_str().unwrap();
     assert!(p.checkout.join(".worktrees").join(branch).is_dir());
-
-    // A terminal can't run there yet.
-    let t = ticket(&p, "A terminal", &["windows"]).await;
-    let start = json!({"agent": "claude", "sessionMode": "terminal"});
-    let (s, v) = call(&p.owner.app, "POST", &format!("/api/tickets/{t}/start"), Some(start)).await;
-    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("placement")), "{v}");
 }
 
 #[tokio::test]

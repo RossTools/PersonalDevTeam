@@ -369,6 +369,12 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// Where a session runs, as the instance that runs it says (a remote session in the remote's checkout, PDT-633).
+    pub async fn set_session_cwd(&self, id: &str, cwd: &str) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE sessions SET cwd = ? WHERE id = ?").bind(cwd).bind(id).execute(&self.pool).await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     /// Deletes a session; the Inbox lets go of it (`release_gone_sessions`).
     pub async fn delete_session(&self, id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM sessions WHERE id = ?").bind(id).execute(&self.pool).await?;

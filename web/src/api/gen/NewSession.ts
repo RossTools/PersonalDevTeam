@@ -30,4 +30,9 @@ model?: string,
 /**
  * Conversations only: the permission mode (default `ask`, or `bypass` when `bypassPermissions` is set).
  */
-permissionMode?: PermissionMode, };
+permissionMode?: PermissionMode, 
+/**
+ * A remote instance of the project to run it on, in its checkout of the project (a worktree's sessions run where
+ * the worktree is). None: this instance.
+ */
+instanceId?: string, };

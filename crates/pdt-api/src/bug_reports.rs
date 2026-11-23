@@ -180,7 +180,8 @@ fn token_word(t: &TokenState) -> &'static str {
     }
 }
 
-/// This machine's names: its hostname (and the part before the first dot) and its tailnet name.
+/// This machine's names: its hostname (and the part before the first dot) and its tailnet name, and the hosts of the
+/// instances it is linked with (the remote instances joined to its projects, the owners of its remote projects).
 async fn hostnames(st: &AppState) -> Vec<String> {
     let mut names: Vec<String> = ["HOSTNAME", "COMPUTERNAME"].iter().filter_map(|v| std::env::var(v).ok()).collect();
     let cmd = tokio::task::spawn_blocking(|| std::process::Command::new("hostname").output()).await;
@@ -191,6 +192,10 @@ async fn hostnames(st: &AppState) -> Vec<String> {
     }
     let remote = st.remote.lock().unwrap_or_else(|e| e.into_inner()).clone();
     names.extend(remote.dns_name.map(|d| d.trim_end_matches('.').to_string()));
+    let instances = st.store.list_remote_instances(None).await.unwrap_or_default();
+    let owners = st.store.list_remote_projects().await.unwrap_or_default();
+    let urls = instances.iter().map(|i| &i.url).chain(owners.iter().map(|(_, l)| &l.owner_url));
+    names.extend(urls.filter_map(|u| reqwest::Url::parse(u).ok()?.host_str().map(String::from)));
     let short: Vec<String> = names.iter().filter_map(|n| n.split_once('.').map(|(s, _)| s.to_string())).collect();
     names.extend(short);
     // Longest first, so a full name goes before its short form.
@@ -202,10 +207,18 @@ async fn hostnames(st: &AppState) -> Vec<String> {
 
 /// The user's own names, for redaction: each project's name, key and folder, its origin's `owner/repo` (and each
 /// part), and its git worktrees' branches and folders. The project of the release repository is left out: its names
-/// are PDT's own.
+/// are PDT's own. With them, the names of the instances it is linked with: its own instance name, its remote
+/// instances', its remote projects' owners', and those projects' names and keys.
 async fn own_names(st: &AppState) -> Vec<String> {
     let release = st.update.client.repo();
     let mut names = vec![];
+    names.extend(crate::link::instance_name(st).await.ok());
+    for i in st.store.list_remote_instances(None).await.unwrap_or_default() {
+        names.push(i.name);
+    }
+    for (p, l) in st.store.list_remote_projects().await.unwrap_or_default() {
+        names.extend([p.name, p.key, l.owner_name]);
+    }
     for p in st.store.list_projects().await.unwrap_or_default() {
         let repo = std::path::PathBuf::from(&p.repo_path);
         let folder = |path: &std::path::Path| path.file_name().map(|n| n.to_string_lossy().into_owned());

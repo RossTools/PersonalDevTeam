@@ -171,7 +171,7 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
         .into_iter()
         .filter(|s| s.worktree_id.as_deref() == Some(&id))
         .collect();
-    if sessions.iter().any(|s| st.ptys.is_running(&s.id)) {
+    if sessions.iter().any(|s| st.terminal_running(&s.id)) {
         return Err(ApiError::conflict(codes::WORKTREE_BUSY, "stop this branch's sessions first"));
     }
     let active_run = st.store.list_active_runs().await?.into_iter().any(|r| r.worktree_id.as_deref() == Some(&id));

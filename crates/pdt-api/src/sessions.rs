@@ -108,18 +108,28 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
                 .ok_or_else(|| ApiError::invalid("worktree does not belong to this project"))?;
             (Some(wt.id), wt.path, wt.branch, wt.instance)
         }
-        None => (None, project.repo_path.clone(), project.name.clone(), None),
+        // "New shell on win-box" (PDT-633): the remote's checkout, whose folder it names once it starts.
+        None => match &valid.instance_id {
+            Some(i) => {
+                let joined = crate::exec::joined_instance(st, &project.id, i).await?;
+                (None, String::new(), project.name.clone(), Some(joined))
+            }
+            None => (None, project.repo_path.clone(), project.name.clone(), None),
+        },
     };
-    // A remote worktree's sessions run on its instance (PDT-632): conversations only, for now.
-    if let Some(i) = &instance
-        && valid.mode != SessionMode::Conversation
+    // A remote worktree's sessions run on its instance (PDT-632), and only in its folders there.
+    if let (Some(asked), Some(wid)) = (&valid.instance_id, &valid.worktree_id)
+        && instance.as_ref().is_none_or(|i| &i.id != asked)
     {
-        return Err(ApiError::conflict(
-            codes::PLACEMENT,
-            format!("this worktree is on {}, where agents run as conversations for now", i.name),
-        ));
+        return Err(ApiError::invalid(format!("worktree {wid} isn't on that instance")));
     }
     if let Some(dir) = &req.cwd {
+        if let Some(i) = &instance {
+            return Err(ApiError::conflict(
+                codes::PLACEMENT,
+                format!("this runs on {}, in its checkout of the project", i.name),
+            ));
+        }
         cwd = dir.clone();
     }
     // A fresh Codex terminal is matched to its conversation by start time, so launches in a folder are spaced out.
@@ -163,6 +173,21 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         // The first prompt is the first message; the agent starts now so a missing program fails here.
         if let Err(e) = crate::conversations::start(st, &session, valid.initial_prompt).await {
             crate::conversations::forget(st, &session.id).await;
+            st.store.delete_session(&session.id).await?;
+            remove_data_dir(st, &session.id).await;
+            return Err(e);
+        }
+        if let Some(tab) = req.tab {
+            let item = pdt_core::workspace::TabItem::Session(session.id.clone());
+            crate::workspaces::open_for_new(st, &session.project_id, item, tab.as_ref()).await;
+        }
+        return load(st, &session.id).await;
+    }
+    if session.instance.is_some() {
+        let model = st.store.get_host_settings().await?.model_for(session.agent, session.model.as_deref());
+        if let Err(e) =
+            crate::exec::open_terminal(st, &session, valid.size, true, valid.initial_prompt.clone(), model).await
+        {
             st.store.delete_session(&session.id).await?;
             remove_data_dir(st, &session.id).await;
             return Err(e);
@@ -357,7 +382,7 @@ async fn plan_resume(st: &AppState, s: &Session) -> Resume {
 
 /// Waits until no other fresh Codex launch in this folder happened within the spacing, then claims the slot and
 /// returns its time (ms), which becomes the session's `fresh_started_at`. Nothing is held while waiting.
-async fn wait_for_fresh_codex_slot(st: &AppState, cwd: &str) -> i64 {
+pub(crate) async fn wait_for_fresh_codex_slot(st: &AppState, cwd: &str) -> i64 {
     let key = pdt_agents::launch::canonical_folder_key(cwd);
     let gap = i64::try_from(st.codex_spawn_spacing.as_millis()).unwrap_or(i64::MAX);
     loop {
@@ -504,9 +529,10 @@ async fn start_pty(
     Ok(())
 }
 
-/// The session's launch: writes its hook settings (and a prompt file), finds its program. Blocking.
+/// The session's launch: writes its hook settings (and a prompt file), finds its program. Blocking. (A remote
+/// instance runs it for its owner's terminals too, with the owner's session in its own folder.)
 #[allow(clippy::too_many_arguments)]
-fn pty_spec(
+pub(crate) fn pty_spec(
     st: &AppState,
     platform: &pdt_core::session::Platform,
     s: &Session,
@@ -758,6 +784,17 @@ pub(crate) async fn stop(st: &AppState, id: &str) -> Result<(), ApiError> {
     if session.mode == SessionMode::Conversation {
         return crate::conversations::stop(st, &session).await;
     }
+    if session.instance.is_some() {
+        crate::exec::close_terminal(st, &session).await?;
+        // Its exit comes back with the instance's events.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while crate::exec::is_remote_terminal(st, id) {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        return Ok(());
+    }
     st.kill_pty(id).await?;
     // Stopped means no longer running for whoever looks next: wait for the exit to be recorded. On Windows it lands
     // a moment after the kill, and a wind-down that looked again stopped (and counted) the session twice.
@@ -786,7 +823,7 @@ pub(crate) async fn restart(
         crate::conversations::reopen(&st, &session).await?;
         return Ok(Json(load(&st, &id).await?));
     }
-    if st.ptys.is_running(&id) {
+    if st.terminal_running(&id) {
         return Err(ApiError::conflict(codes::ALREADY_RUNNING, "this session is already running"));
     }
     restart_locked(&st, &id, size, None).await?;
@@ -804,6 +841,14 @@ pub(crate) async fn restart_locked(
     st.remove_pty(id).await;
     // After the previous run's exit task, which may have just bound its Codex conversation.
     let session = load(st, id).await?;
+    if session.instance.is_some() {
+        st.store.set_session_running(id).await?;
+        if let Err(e) = crate::exec::open_terminal(st, &session, size, false, None, None).await {
+            st.store.end_session(id, SessionStatus::Finished, None, now_ms()).await?;
+            return Err(e);
+        }
+        return Ok(());
+    }
     let resume = match planned {
         Some(r) => r,
         None => plan_resume(st, &session).await,
@@ -931,6 +976,7 @@ pub async fn resume_interrupted(st: &AppState) -> usize {
 /// worktree goes away.
 pub(crate) async fn discard(st: &AppState, id: &str) {
     let _guard = st.lock_session(id).await;
+    stop_remote_terminal(st, id).await;
     crate::conversations::forget(st, id).await;
     if st.ptys.is_running(id) {
         let _ = st.kill_pty(id).await;
@@ -984,6 +1030,7 @@ pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiEr
         st.forget_session_lock(id);
         return Ok(());
     }
+    stop_remote_terminal(st, id).await;
     if st.ptys.is_running(id) {
         let _ = st.kill_pty(id).await;
         let exited = tokio::time::timeout(STOP_WAIT, async {
@@ -997,6 +1044,25 @@ pub(crate) async fn stop_and_remove(st: &AppState, id: &str) -> Result<(), ApiEr
         }
     }
     remove_locked(st, id).await
+}
+
+/// Stops a session's terminal on a remote instance before the session goes, waiting a moment for its exit. When the
+/// instance can't be reached the session goes anyway (logged): its terminal there ends when that instance restarts.
+async fn stop_remote_terminal(st: &AppState, id: &str) {
+    let Ok(Some(s)) = st.store.get_session(id).await else { return };
+    if s.instance.is_none() || !crate::exec::is_remote_terminal(st, id) {
+        return;
+    }
+    if let Err(e) = crate::exec::close_terminal(st, &s).await {
+        tracing::warn!(session = %id, error = %e, "could not stop a remote terminal; removing its session anyway");
+        return;
+    }
+    let _ = tokio::time::timeout(STOP_WAIT, async {
+        while crate::exec::is_remote_terminal(st, id) {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.
