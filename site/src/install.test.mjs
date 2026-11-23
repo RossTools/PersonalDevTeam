@@ -225,7 +225,7 @@ test('installs the app on macOS into ~/Applications and opens it', { skip }, asy
   const dest = join(t.home, 'Applications', APP);
   assert.ok(existsSync(join(dest, 'Contents/Info.plist')));
   assert.equal(read(join(t.home, 'open.log')), `${dest}\n`);
-  assert.match(read(join(t.home, 'codesign.log')), /^--verify --deep --strict .*Personal Dev Team\.app\n$/);
+  assert.match(read(join(t.home, 'codesign.log')), /^--verify --deep --strict -R=anchor apple generic and identifier "dev\.personaldevteam\.desktop" and certificate leaf\[subject\.OU\] = "DX69RXFP5X" .*Personal Dev Team\.app\n$/);
 });
 
 test('an app whose signature does not verify is not installed', { skip }, async (ctx) => {
