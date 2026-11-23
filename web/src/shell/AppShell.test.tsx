@@ -263,13 +263,13 @@ describe('Get started (PDT-230)', () => {
     expect(here()).toBe('/setup');
   });
 
-  it('Settings › This host › Setup reopens it', async () => {
-    window.history.replaceState(null, '', '/settings/host/setup');
+  it('Settings › This host › Checks reopens it', async () => {
+    window.history.replaceState(null, '', '/settings/host/checks');
     stubApi({ 'GET /api/projects': [], ...hostRoutes, 'GET /api/host/setup': setupView(false) });
     renderWithQuery(<AppShell />);
-    const setup = await within(screen.getByRole('main')).findByRole('region', { name: 'Setup' });
-    expect(await within(setup).findByText('1 of 6 steps done.')).toBeInTheDocument();
-    await userEvent.click(within(setup).getByRole('button', { name: 'Open Get started' }));
+    const checks = await within(screen.getByRole('main')).findByRole('region', { name: 'Checks' });
+    expect(await within(checks).findByText(/Get started · 1 of 6 steps done/)).toBeInTheDocument();
+    await userEvent.click(within(checks).getByRole('button', { name: 'Open' }));
     await waitFor(() => expect(here()).toBe('/setup'));
   });
 

@@ -9,4 +9,8 @@ export type DiskView = {
 /**
  * PDT's data folder and the projects' folders on this disk.
  */
-folders: Array<string>, space: DiskSpace, level: DiskLevel, };
+folders: Array<string>, 
+/**
+ * What each of `folders` is, in the same order: "PDT data", or the project's name.
+ */
+labels: Array<string>, space: DiskSpace, level: DiskLevel, };

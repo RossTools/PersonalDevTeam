@@ -68,6 +68,12 @@ describe('Section', () => {
     expect(section.querySelector('[data-slot="section-card"]')!.className).toContain('border-destructive/40');
     expect(within(section).getByRole('heading').className).toContain('text-destructive');
   });
+  it('with no rows and no footer is only a heading: a screen title over sections of its own', () => {
+    render(<SettingsScreen lead="PM"><Section label="PM" description="What the PM does." /><Section label="Daily checkpoint"><p>x</p></Section></SettingsScreen>);
+    expect(screen.getByRole('heading', { name: 'PM' }).tagName).toBe('H2');
+    expect(screen.getByRole('region', { name: 'PM' }).querySelector('[data-slot="section-card"]')).toBeNull();
+    expect(screen.getByRole('region', { name: 'Daily checkpoint' }).querySelector('[data-slot="section-card"]')).not.toBeNull();
+  });
 });
 
 describe('SettingsRow', () => {

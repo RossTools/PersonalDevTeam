@@ -12,7 +12,7 @@ use ts_rs::TS;
 pub struct SetupState {
     /// This host needs setting up: false for an install that was already in use when the checklist arrived.
     pub needed: bool,
-    /// Dismissed by the user: it no longer opens on launch (Settings › This host › Setup reopens it).
+    /// Dismissed by the user: it no longer opens on launch (Open above Settings › This host › Checks reopens it).
     pub dismissed: bool,
     /// Every step was done once: it no longer opens on launch, even if a step comes undone later.
     pub finished: bool,

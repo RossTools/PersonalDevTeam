@@ -85,7 +85,8 @@ export interface SectionProps {
   danger?: boolean;
   /**
    * Rows (`SettingsRow`), or any block; each child is padded and divided from the next. A child with `data-flush`
-   * pads itself (a list whose items are the rows).
+   * pads itself (a list whose items are the rows). Without children or a footer there is no card: a screen's title
+   * over sections of its own.
    */
   children?: ReactNode;
   className?: string;
@@ -109,7 +110,7 @@ export function Section({ label, description, actions, notice, footer, dirty, da
         {actions != null && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
       </div>
       {notice}
-      <div
+      {(children != null || footer != null) && <div
         data-slot="section-card"
         className={cn(
           // clip, not hidden: a hidden overflow would be the sticky Save bar's scroller.
@@ -136,7 +137,7 @@ export function Section({ label, description, actions, notice, footer, dirty, da
             {footer}
           </div>
         )}
-      </div>
+      </div>}
     </section>
   );
 }

@@ -66,7 +66,7 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   ends that differ refuse each other with a message naming the one to update, except `/link/update`
   (`link::from_owner_any_protocol`), so the owner can always fix a mismatch.
 
-**Instances.** Each instance has a name (host setting `instance_name`, Settings → This host → Name and Get started;
+**Instances.** Each instance has a name (host setting `instance_name`, Settings → This host → Remote access and Get started;
 until the user picks one, pdt-core `instance::suggest_name` of the machine's host name) and an id made once (host
 value `instance.id`, `link::instance_id`). `/api/health` reports the name. A profile picks the defaults: `stable` (port 7420, data folder `<local data dir>/pdt`) and `dev` (7421,
 `pdt-dev`; debug builds default to it). `PDT_PORT` and `PDT_DATA_DIR` override them, and a lock file stops two pdtd

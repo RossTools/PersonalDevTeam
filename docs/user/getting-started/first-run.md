@@ -28,7 +28,7 @@ in any order; each ticks itself off when it's done, wherever you do it (here, in
 
 When all six are done, PDT says **You're set up.** with **Go to the board** and **Open the PM**.
 
-**Dismiss setup** hides the checklist; **Settings › This host › Setup** opens it again.
+**Dismiss setup** hides the checklist; **Open** above **Settings › This host › Checks** opens it again.
 
 ## Getting around
 

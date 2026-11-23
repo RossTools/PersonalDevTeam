@@ -13,7 +13,7 @@ ticket, marked **on win-box**.
 
 ## Before you start
 
-- **Name each instance** in **Settings › This host › Name** (or in **Get started**), so you can tell them apart.
+- **Name each instance** in **Settings › This host › Remote access** (or in **Get started**), so you can tell them apart.
 - **Turn on remote access on both**, with the same Tailscale owner. See
   [Remote access and your phone](remote-access.md). The two instances reach each other through it.
 
