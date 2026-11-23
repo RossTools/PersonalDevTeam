@@ -236,6 +236,25 @@ async fn a_hung_tailscale_times_out_and_releases_the_settings() {
     assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
 }
 
+/// PDT-658: a settings save that does not touch remote access goes through while an apply waits on the CLI.
+#[tokio::test]
+async fn a_slow_apply_does_not_hold_up_other_settings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fake = Arc::new(RecordingTailscale::new(Ok(ts(true))));
+    let (app, state) = setup(tmp.path(), fake.clone()).await;
+    assert_eq!(call(&app, "PUT", "/api/host/settings", Some(on())).await.0, StatusCode::OK);
+    fake.set_delay(Duration::from_secs(5));
+    let st = state.clone();
+    let apply = tokio::spawn(async move { apply_remote_access(&st).await });
+    common::wait::wait_until("the apply's `tailscale status`", async || fake.status_calls() == 2).await;
+    let started = Instant::now();
+    let (s, _) = call(&app, "PUT", "/api/host/settings", Some(json!({"updatePolicy": "manual"}))).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert!(!apply.is_finished(), "the apply was still running tailscale");
+    assert!(apply.await.unwrap().active);
+}
+
 #[tokio::test]
 async fn a_failed_reapply_withdraws_the_tailnet_name() {
     let tmp = tempfile::tempdir().unwrap();

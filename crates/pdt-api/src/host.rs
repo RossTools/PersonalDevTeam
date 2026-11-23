@@ -322,10 +322,11 @@ pub(crate) async fn put_settings(
     }
     st.store.put_host_settings(&next).await?;
     st.refresh_owner().await;
-    if patch.remote_access.is_some() {
-        crate::remote::apply_locked(&st).await;
-    }
     drop(guard);
+    // Applied after the lock is let go: the tailscale commands run without it (PDT-658).
+    if patch.remote_access.is_some() {
+        crate::remote::apply_remote_access(&st).await;
+    }
     // The update already on offer installs when idle now too (PDT-369).
     if to_auto {
         crate::install_updates::wake(&st).await;
