@@ -1,21 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Eye, ImagePlus, Pencil } from 'lucide-react';
-import { Alert, Button, SegmentedControl } from '@ui';
+import { ImagePlus } from 'lucide-react';
+import { Alert, Button } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { DocumentRead } from '../api/gen/DocumentRead';
+import { PreviewEdit } from '../common/PreviewEdit';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown, MarkdownImageContext } from '../common/Markdown';
 import { actionError, runAction } from '../common/useAction';
 import { documentKeys } from './queries';
 import { useDocumentEvents } from './useDocumentEvents';
 
-type Mode = 'read' | 'write';
-
-const MODES = [
-  { value: 'read' as const, label: 'Rendered', icon: <Eye aria-hidden className="size-3" /> },
-  { value: 'write' as const, label: 'Write', icon: <Pencil aria-hidden className="size-3" /> },
-];
+type Mode = 'preview' | 'edit';
 
 /** How long typing pauses before the text is saved. */
 const SAVE_AFTER = 800;
@@ -29,13 +25,13 @@ export interface DocEditorProps {
 }
 
 /**
- * A doc (PDT-315): Rendered or Write. Write saves as you type, on top of the version it opened; when someone else (an
+ * A doc (PDT-315): Preview or Edit. Edit saves as you type, on top of the version it opened; when someone else (an
  * agent) saved it in between, nothing is overwritten and a notice offers to keep yours or take theirs. Changes saved
  * elsewhere show at once while you have nothing unsaved. Images (Add image) are saved beside the doc.
  */
 export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
   const qc = useQueryClient();
-  const [mode, setMode] = useState<Mode>('read');
+  const [mode, setMode] = useState<Mode>('preview');
   const [text, setText] = useState(markdown);
   // The version the text on screen is based on, and whether it has changes not saved yet.
   const base = useRef(version);
@@ -125,7 +121,7 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
     const next = `${textRef.current.replace(/\n*$/, '')}\n\n![${alt}](${path})\n`;
     setText(next);
     setDirty(true);
-    setMode('write');
+    setMode('edit');
   });
 
   const resolveImage = useCallback((src: string) => api.documentAssetUrl(id, src), [id]);
@@ -134,8 +130,8 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
     <div className="flex flex-col gap-2">
       {editable && (
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl aria-label="View" size="sm" options={MODES} value={mode} onChange={(m) => setMode(m)} />
-          {mode === 'write' && (
+          <PreviewEdit value={mode} onChange={setMode} />
+          {mode === 'edit' && (
             <>
               <Button variant="ghost" size="sm" compact onClick={() => imageInput.current?.click()}><ImagePlus aria-hidden /> Add image</Button>
               <input
@@ -167,7 +163,7 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
         </Alert>
       )}
       {saveError && <Alert tone="error">Not saved: {saveError}</Alert>}
-      {mode === 'write' && editable ? (
+      {mode === 'edit' && editable ? (
         <MarkdownEditor
           label="Document text"
           value={text}
@@ -186,7 +182,7 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
           <Markdown variant="document">{text}</Markdown>
         </MarkdownImageContext.Provider>
       ) : (
-        <p className="text-xs text-muted-foreground">This document is empty.{editable && ' Switch to Write to add to it.'}</p>
+        <p className="text-xs text-muted-foreground">This document is empty.{editable && ' Switch to Edit to add to it.'}</p>
       )}
     </div>
   );

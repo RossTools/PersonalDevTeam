@@ -1,12 +1,13 @@
 import { Suspense, useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, ChevronDown, Eye, FolderGit2, Globe, Pencil, Pin, Ticket } from 'lucide-react';
-import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, SegmentedControl, shortDate, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
+import { Check, ChevronDown, FolderGit2, Globe, Pin, Ticket } from 'lucide-react';
+import { Alert, Button, EmptyState, IconButton, Input, MenuButton, RelativeTime, shortDate, Skeleton, StatusDot, useConfirm, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { PmNote } from '../api/gen/PmNote';
 import type { Project } from '../api/gen/Project';
 import { EndOfText } from '../common/EndOfText';
+import { PreviewEdit } from '../common/PreviewEdit';
 import { MarkdownEditor, type MarkdownEditorHandle } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/Markdown';
 import { useAction } from '../common/useAction';
@@ -19,12 +20,7 @@ import { useNoteDraft, type SaveState } from './useNoteDraft';
 import { plural } from '../common/text';
 import { pmKeys } from '../pm/queries';
 
-type Mode = 'write' | 'read';
-
-const MODE_OPTIONS = [
-  { value: 'write' as const, label: 'Write', icon: <Pencil aria-hidden className="size-3" /> },
-  { value: 'read' as const, label: 'Read', icon: <Eye aria-hidden className="size-3" /> },
-];
+type Mode = 'edit' | 'preview';
 
 export interface NoteScreenProps {
   /** The note's id, or `new` for one not created yet. */
@@ -81,14 +77,14 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   const projectId = server ? server.projectId : draftProject;
   const pinned = server ? server.pinned : draftPinned;
   const project = projectList.find((p) => p.id === projectId) ?? null;
-  const [mode, setMode] = useState<Mode | null>(isNew ? 'write' : null);
+  const [mode, setMode] = useState<Mode | null>(isNew ? 'edit' : null);
   const [makingTicket, setMakingTicket] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<MarkdownEditorHandle>(null);
-  // What Write focuses when it opens: the title for a new or empty note, else the text (at an offset, or its end).
+  // What Edit focuses when it opens: the title for a new or empty note, else the text (at an offset, or its end).
   const focusNext = useRef<'title' | null>(isNew ? 'title' : null);
   const [bodyFocus, setBodyFocus] = useState<number | 'end' | undefined>(undefined);
-  // Where the last press in Read started, so a drag that selects text doesn't count as a double-click.
+  // Where the last press in Preview started, so a drag that selects text doesn't count as a double-click.
   const pressedAt = useRef<{ x: number; y: number } | null>(null);
 
   const serverKind = server?.kind;
@@ -99,27 +95,27 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
   // An existing note opens to read when it has text, else to write (its title first).
   useEffect(() => {
     if (mode !== null || !draft.ready) return;
-    if (draft.body.trim()) setMode('read');
+    if (draft.body.trim()) setMode('preview');
     else {
       focusNext.current = 'title';
-      setMode('write');
+      setMode('edit');
     }
   }, [mode, draft.ready, draft.body]);
 
   useEffect(() => {
-    if (mode !== 'write' || !focusNext.current) return;
+    if (mode !== 'edit' || !focusNext.current) return;
     titleRef.current?.focus();
     focusNext.current = null;
   }, [mode]);
 
-  /** Opens Write focused on the title, or on the text at `at` (its end when not given). */
+  /** Opens Edit focused on the title, or on the text at `at` (its end when not given). */
   const openWrite = (on: 'title' | 'body', at: number | 'end' = 'end') => {
     focusNext.current = on === 'title' ? 'title' : null;
     setBodyFocus(on === 'body' ? at : undefined);
-    setMode('write');
+    setMode('edit');
   };
   const switchMode = (m: Mode) => {
-    if (m === 'write') openWrite(draft.title.trim() ? 'body' : 'title');
+    if (m === 'edit') openWrite(draft.title.trim() ? 'body' : 'title');
     else {
       void draft.flush();
       setMode(m);
@@ -143,7 +139,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      switchMode('read');
+      switchMode('preview');
     }
   };
 
@@ -211,7 +207,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
 
   const words = wordCount(draft.body);
   const status = <SaveStatus state={draft.state} savedAt={server?.updatedAt ?? null} onRetry={() => void draft.flush()} />;
-  const toggle = <SegmentedControl aria-label="Mode" size="sm" options={MODE_OPTIONS} value={mode} onChange={switchMode} />;
+  const toggle = <PreviewEdit aria-label="Mode" value={mode} onChange={switchMode} />;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {phone ? (
@@ -243,9 +239,9 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-auto">
-        {/* In Write the article fills the scroll area, its bottom room a tap target for the end of the text (PDT-264). */}
-        <article className={cn('mx-auto max-w-[680px] px-5 pt-6 md:px-8 md:pt-14', mode === 'write' ? 'flex min-h-full flex-col' : 'pb-16')}>
-          {mode === 'write' ? (
+        {/* In Edit the article fills the scroll area, its bottom room a tap target for the end of the text (PDT-264). */}
+        <article className={cn('mx-auto max-w-[680px] px-5 pt-6 md:px-8 md:pt-14', mode === 'edit' ? 'flex min-h-full flex-col' : 'pb-16')}>
+          {mode === 'edit' ? (
             <>
               <Input
                 ref={titleRef}

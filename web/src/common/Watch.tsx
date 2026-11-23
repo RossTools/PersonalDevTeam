@@ -3,8 +3,8 @@
 // `watch.event` notification's setting); a PM's tells its conversation. Every watch at once (PDT-555) marks watched
 // tickets on the board and backlog and watching conversations in the PM view, from one request per poll.
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { Eye, X } from 'lucide-react';
-import { IconButton, WatchMark, type MenuEntry } from '@ui';
+import { Bell, BellRing, Check, X } from 'lucide-react';
+import { Button, IconButton, WatchMark, type MenuEntry } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import type { WatchInfo } from '../api/gen/WatchInfo';
@@ -88,39 +88,48 @@ export function watchEntry(qc: QueryClient, of: WatchOf, watches: WatchInfo[] | 
   return { label: own ? 'Stop watching' : 'Watch', onSelect: () => void runAction(() => toggle(qc, of, own)) };
 }
 
-/** The Watch toggle: pressed while the user watches. */
+/** The Watch toggle, labelled (PDT-679): "Watch", or "Watching ✓" while the user watches. */
 export function WatchButton({ of }: { of: WatchOf }) {
   const qc = useQueryClient();
   const own = ownWatch(useWatches(of).data);
   return (
-    <IconButton
-      label={own ? 'Stop watching' : 'document' in of ? 'Watch: hear when it changes or someone comments' : 'Watch: hear when it finishes, fails or waits on you'}
-      pressed={!!own}
+    <Button
+      variant="ghost"
+      size="sm"
+      title={own ? 'Stop watching' : 'document' in of ? 'Hear when it changes or someone comments' : 'Hear when it finishes, fails or waits on you'}
+      aria-pressed={!!own}
       onClick={() => void runAction(() => toggle(qc, of, own))}
     >
-      <Eye aria-hidden />
-    </IconButton>
+      {own ? <><BellRing aria-hidden /> Watching <Check aria-hidden /></> : <><Bell aria-hidden /> Watch</>}
+    </Button>
   );
 }
 
-/** "Watched by you · PM “Docs and website”", each with a remove button; nothing when nobody watches. */
-export function Watchers({ of, className }: { of: WatchOf; className?: string }) {
+/**
+ * "Watched by you · PM “Docs and website”", each with a remove button; nothing when nobody watches. `inline` puts it in
+ * a meta line (after a `·`) instead of a line of its own.
+ */
+export function Watchers({ of, inline, className }: { of: WatchOf; inline?: boolean; className?: string }) {
   const qc = useQueryClient();
   const watches = useWatches(of).data ?? [];
   if (watches.length === 0) return null;
   const remove = (w: WatchInfo) => runAction(() => stopWatch(qc, w.id));
+  const Line = inline ? 'span' : 'p';
   return (
-    <p aria-label="Watched by" className={cn('flex flex-wrap items-center gap-x-1 text-meta text-muted-foreground', className)}>
-      <span>Watched by </span>
-      {watches.map((w, i) => (
-        <span key={w.id} className="inline-flex items-center">
-          {i > 0 && <span aria-hidden className="mr-1">· </span>}
-          {w.watcher}
-          <IconButton size="sm" label={w.sessionId === null ? 'Stop watching' : `Stop ${w.watcher} watching`} onClick={() => void remove(w)}>
-            <X aria-hidden />
-          </IconButton>
-        </span>
-      ))}
-    </p>
+    <>
+      {inline && <span aria-hidden>·</span>}
+      <Line aria-label="Watched by" className={cn('flex flex-wrap items-center gap-x-1 text-meta text-muted-foreground', inline && 'inline-flex', className)}>
+        <span>Watched by </span>
+        {watches.map((w, i) => (
+          <span key={w.id} className="inline-flex items-center">
+            {i > 0 && <span aria-hidden className="mr-1">· </span>}
+            {w.watcher}
+            <IconButton size="sm" label={w.sessionId === null ? 'Stop watching' : `Stop ${w.watcher} watching`} onClick={() => void remove(w)}>
+              <X aria-hidden />
+            </IconButton>
+          </span>
+        ))}
+      </Line>
+    </>
   );
 }
