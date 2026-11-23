@@ -457,6 +457,39 @@ async fn abandon_ends_the_attempt_and_removes_a_worktree_with_nothing_to_lose() 
     env.state.ptys.shutdown().await;
 }
 
+#[tokio::test]
+async fn an_agent_starts_on_an_active_attempt_with_none_at_work() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let id = ticket(&env, json!({"title": "By hand", "description": "Do it", "stage": "ready"})).await;
+    let r = started(&env, &id, json!({"agent": "claude", "noSession": true})).await;
+    let (aid, wid) = (s(&r["attempt"]["id"]).to_string(), s(&r["attempt"]["worktreeId"]).to_string());
+
+    let body = json!({"agent": "claude", "sessionMode": "terminal"});
+    let (st, session) = call(&env.app, "POST", &format!("/api/attempts/{aid}/session"), Some(body.clone())).await;
+    assert_eq!(st, StatusCode::CREATED, "{session}");
+    assert_eq!((s(&session["attemptId"]), s(&session["worktreeId"])), (aid.as_str(), wid.as_str()));
+    assert_eq!(session["ticket"], json!({"id": id, "key": "PDT-1"}));
+    let sid = s(&session["id"]).to_string();
+    // It belongs to the ticket, and its tab opens after the ticket's.
+    assert_eq!(get_ticket(&env, &id).await["sessions"][0]["id"], session["id"]);
+    assert_eq!(tabs(&workspaces(&env).await[0]), [("ticket", id.clone()), ("session", sid)]);
+    assert_eq!(event_kinds(&env, &id).await, ["created", "moved", "started", "session"]);
+    // Its first prompt is the ticket, as Start's.
+    let launch = recorded_launches(&env.bin, "fakeclaude", 1).await.remove(0);
+    if !cfg!(windows) {
+        assert!(last_arg(&launch).starts_with("PDT-1: By hand\n\nDo it"), "{launch:?}");
+    }
+
+    // An ended attempt, or none, starts nothing.
+    let (st, v) = call(&env.app, "POST", "/api/attempts/nope/session", Some(body.clone())).await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{v}");
+    call(&env.app, "POST", &format!("/api/attempts/{aid}/abandon"), None).await;
+    let (st, v) = call(&env.app, "POST", &format!("/api/attempts/{aid}/session"), Some(body)).await;
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "attempt_inactive"), "{v}");
+    env.state.ptys.shutdown().await;
+}
+
 /// Commits a change in the attempt's worktree; returns the worktree.
 fn work_in(env: &Env, folder: &str, file: &str) -> PathBuf {
     let wt = env.repo.join(".worktrees").join(folder);

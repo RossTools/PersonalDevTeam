@@ -14,7 +14,9 @@ use axum::http::StatusCode;
 use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::parts::TicketParent;
 use pdt_core::session::{SessionKind, ValidSession};
-use pdt_core::start::{StartMode, StartResult, StartTicket, ValidStart, start_prompt, started_session_title};
+use pdt_core::start::{
+    AttemptAgent, StartMode, StartResult, StartTicket, ValidStart, start_prompt, started_session_title,
+};
 use pdt_core::ticket::{Actor, AttemptState, EventKind, LinkDirection, LinkKind, Ticket, TicketStage};
 use pdt_core::workflow::events::MergeVia;
 use pdt_core::workspace::{TabItem, Workspace, valid_workspace_name};
@@ -267,56 +269,19 @@ pub(crate) async fn start_ticket(
         return Ok(StartResult { ticket, attempt, session: None });
     }
 
-    let part_context = match crate::parts::context(&st, &ticket).await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(ticket = %id, error = ?e, "could not read the part's parent for its prompt");
-            None
-        }
-    };
-    let comments = match st.store.comment_bodies(&id).await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(ticket = %id, error = ?e, "could not read the ticket's comments for its prompt");
-            Vec::new()
-        }
-    };
-    let conversation = v.session_mode == SessionMode::Conversation;
-    let permission_mode = conversation.then_some(v.permission_mode.unwrap_or(if v.bypass_permissions {
-        PermissionMode::Bypass
-    } else {
-        v.agent.default_permission_mode()
-    }));
-    let req = CreateSession {
-        valid: ValidSession {
-            project_id: project.id.clone(),
+    let req = ticket_session(
+        &st,
+        &ticket,
+        &v,
+        TicketSessionAt {
             worktree_id: wt.as_ref().map(|w| w.id.clone()),
-            kind: SessionKind::AgentTui,
-            agent: Some(v.agent),
-            bypass_permissions: v.bypass_permissions,
-            size: v.size,
-            // A conversation gets it as its first message, a terminal as the agent's last argument.
-            initial_prompt: Some(start_prompt(
-                &key,
-                &ticket.summary.title,
-                &ticket.description,
-                &branch,
-                part_context.as_ref(),
-                &comments,
-            )),
-            mode: v.session_mode,
-            model: None,
-            permission_mode,
-            instance_id: None,
+            branch: &branch,
+            attempt_id: &attempt_id,
+            cwd: personal.clone(),
+            tab: None,
         },
-        title: Some(started_session_title(&ticket.summary.title)),
-        attempt_id: Some(attempt_id.clone()),
-        ticket: Some(pdt_core::ticket::SessionTicket { id: ticket.summary.id.clone(), key: key.clone() }),
-        tab: None,
-        persona: None,
-        cwd: personal.clone(),
-        id: None,
-    };
+    )
+    .await;
     let session = match create_session(&st, req).await {
         Ok(s) => s,
         Err(e) => {
@@ -341,6 +306,119 @@ pub(crate) async fn start_ticket(
     let attempt =
         ticket.attempts.iter().find(|a| a.id == attempt_id).cloned().unwrap_or_else(|| started.attempt.clone());
     Ok(StartResult { ticket, attempt, session: Some(session) })
+}
+
+/// Where a ticket's agent session runs: the attempt's worktree (or a Personal project's folder) and branch, and where
+/// its tab opens ([`CreateSession::tab`]).
+struct TicketSessionAt<'a> {
+    worktree_id: Option<String>,
+    branch: &'a str,
+    attempt_id: &'a str,
+    cwd: Option<String>,
+    tab: Option<Option<pdt_core::workspace::TabPlacement>>,
+}
+
+/// The agent session Start (and Start an agent on an attempt) makes: its first prompt is the ticket, with its part's
+/// context and its comments.
+async fn ticket_session(st: &AppState, ticket: &Ticket, v: &ValidStart, at: TicketSessionAt<'_>) -> CreateSession {
+    let id = &ticket.summary.id;
+    let key = &ticket.summary.key;
+    let part_context = match crate::parts::context(st, ticket).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(ticket = %id, error = ?e, "could not read the part's parent for its prompt");
+            None
+        }
+    };
+    let comments = match st.store.comment_bodies(id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(ticket = %id, error = ?e, "could not read the ticket's comments for its prompt");
+            Vec::new()
+        }
+    };
+    let conversation = v.session_mode == SessionMode::Conversation;
+    let permission_mode = conversation.then_some(v.permission_mode.unwrap_or(if v.bypass_permissions {
+        PermissionMode::Bypass
+    } else {
+        v.agent.default_permission_mode()
+    }));
+    CreateSession {
+        valid: ValidSession {
+            project_id: ticket.summary.project_id.clone(),
+            worktree_id: at.worktree_id,
+            kind: SessionKind::AgentTui,
+            agent: Some(v.agent),
+            bypass_permissions: v.bypass_permissions,
+            size: v.size,
+            // A conversation gets it as its first message, a terminal as the agent's last argument.
+            initial_prompt: Some(start_prompt(
+                key,
+                &ticket.summary.title,
+                &ticket.description,
+                at.branch,
+                part_context.as_ref(),
+                &comments,
+            )),
+            mode: v.session_mode,
+            model: None,
+            permission_mode,
+            instance_id: None,
+        },
+        title: Some(started_session_title(&ticket.summary.title)),
+        attempt_id: Some(at.attempt_id.to_string()),
+        ticket: Some(pdt_core::ticket::SessionTicket { id: id.clone(), key: key.clone() }),
+        tab: at.tab,
+        persona: None,
+        cwd: at.cwd,
+        id: None,
+    }
+}
+
+/// `POST /api/attempts/{id}/session`: starts an agent on an active attempt that has none at work (its branch made by
+/// hand, or its agent ended): a session in the attempt's worktree whose first prompt is the ticket, as Start's. Its
+/// tab opens after the ticket's (else at the end of the project's workspace).
+pub(crate) async fn start_agent(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<AttemptAgent>, JsonRejection>,
+) -> Result<(StatusCode, Json<pdt_core::session::Session>), ApiError> {
+    let Json(input) = payload?;
+    let v = input.validate()?;
+    let info = st.store.get_attempt(&id).await?.or_404("attempt")?;
+    if info.attempt.state != AttemptState::Active {
+        return Err(ApiError::conflict(codes::ATTEMPT_INACTIVE, "the attempt has ended; start the ticket again"));
+    }
+    let ticket = crate::overlap::load_ticket(&st, &info.ticket_id).await?;
+    let project = st.project(&info.project_id).await?;
+    let cwd = match project.is_personal() {
+        true => Some(personal_folder(&project, &ticket.summary.key)?),
+        false if info.worktree_path.is_none() => {
+            return Err(ApiError::conflict(codes::WORKTREE_MISSING, "the attempt's worktree is gone"));
+        }
+        false => None,
+    };
+    let tab = match st.store.tab_for(&TabItem::Ticket(ticket.summary.id.clone())).await {
+        Ok(Some(t)) => {
+            Some(pdt_core::workspace::TabPlacement { workspace_id: t.workspace_id, position: Some(t.position + 1) })
+        }
+        _ => None,
+    };
+    let at = TicketSessionAt {
+        worktree_id: info.attempt.worktree_id.clone(),
+        branch: &info.attempt.branch,
+        attempt_id: &info.attempt.id,
+        cwd,
+        tab: Some(tab),
+    };
+    let session = create_session(&st, ticket_session(&st, &ticket, &v, at).await).await?;
+    let data = json!({"sessionId": session.id, "agent": v.agent, "attemptId": info.attempt.id});
+    st.store
+        .add_ticket_event(&ticket.summary.id, EventKind::Session, Actor::User, None, Some(data), now_ms())
+        .await
+        .log_warn("record the started session on the timeline");
+    outside_ticket(&st, &ticket.summary, &session.id).await;
+    Ok((StatusCode::CREATED, Json(session)))
 }
 
 /// Logs the start for workflows (`attempt.started`), now that it can no longer be undone. Logged, never fails Start.
@@ -854,4 +932,5 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/tickets/{id}/retry-auto-start", post(retry_auto_start))
         .route("/attempts/{id}/abandon", post(abandon))
         .route("/attempts/{id}/clean-up", post(clean_up))
+        .route("/attempts/{id}/session", post(start_agent))
 }
