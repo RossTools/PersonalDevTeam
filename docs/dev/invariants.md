@@ -218,12 +218,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 
 ## Workflows
 
-- **What a loop runs every few seconds searches an index.** History tables (`events`, `ticket_events`,
-  `workflow_runs`, `workflow_steps`, `agent_steps`) grow for 30 days, so a full scan in a loop costs seconds per pass
-  on a long-used database. A partial index is only used when the query repeats its `WHERE` (`status != 'done'`), not
+- **What a loop or the UI's poll runs every few seconds searches an index.** History tables (`events`,
+  `ticket_events`, `workflow_runs`, `workflow_steps`, `agent_steps`) grow for 30 days and `sessions` is never
+  pruned, so a full scan in a loop costs seconds per pass on a long-used database. A condition on an expression
+  (`COALESCE(a.ticket_id, s.ticket_id) = ?`) can't use an index; write it as indexed alternatives joined by `OR`. A partial index is only used when the query repeats its `WHERE` (`status != 'done'`), not
   for a narrower one (`status = 'waiting'` against `status IN (…)`); a column a deleted row's foreign key points from
   needs an index too, or each delete scans that table. pdt-store's `query_plans.rs` checks the loops' queries with
-  `EXPLAIN QUERY PLAN`; add a query a loop starts running there.
+  `EXPLAIN QUERY PLAN`; add a query a loop or poll starts running there.
 - **Everything runs at least once, maybe more.** Events are deduplicated by their key, runs by their run key. A new
   node kind with side effects either records its progress or sets `rerun_safe = false` (pdt-api
   `workflow/catalog.rs`), so a step cut short by a crash isn't repeated blindly.
@@ -433,6 +434,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `remote_project`, so the PM (overview, briefing, tools), workflows, pickup, the Inbox and every project route never
   see it. Only `remote_projects.rs` and the link reach it (`list_remote_projects`, `get_remote_project`). Don't look
   projects up another way, and don't give a remote project tickets, sessions or settings of this instance's.
+- **A remote instance runs only what its owner asks, and keeps no sessions of its own for it.** The owner's sessions
+  it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
+  checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
+  is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
+  instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
+  through its route (session and process); an exit removes the route, and events of another process are dropped.
 - **An instance has a project either local or remote, never both**: joining refuses a project whose repository
   (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
 - **A project-link request is acted on only once signed by the link's other end for that project**

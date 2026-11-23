@@ -437,6 +437,7 @@ async fn seed_with(
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     };
     state.store.insert_session(&session).await.unwrap();
     match status {

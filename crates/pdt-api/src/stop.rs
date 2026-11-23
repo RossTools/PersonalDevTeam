@@ -393,6 +393,17 @@ pub(crate) async fn clean_up_closed(st: &AppState, info: &AttemptInfo, now: bool
                 return notes;
             }
         }
+        // On a remote instance PDT can't see what it holds from here: it stays until Clean up.
+        if let Some(id) = info.attempt.worktree_id.as_deref()
+            && let Ok(Some(wt)) = st.store.get_worktree(id).await
+            && let Some(on) = &wt.instance
+        {
+            notes.push(format!(
+                "Kept the worktree and branch {} on {}. Clean up removes them there.",
+                info.attempt.branch, on.name
+            ));
+            return notes;
+        }
         let i = info.clone();
         let lose =
             tokio::task::spawn_blocking(move || would_lose(&i)).await.unwrap_or(Some("it could not be read".into()));

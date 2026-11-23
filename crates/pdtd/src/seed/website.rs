@@ -318,6 +318,7 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
             base_commit: head.base.clone(),
             created_at: at,
             missing: false,
+            instance: None,
         };
         store.insert_worktree(&wt).await?;
         let attempt = id();
@@ -405,6 +406,7 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     };
     // A ticket workspace per started ticket, in the order pickup started them (each new one goes last).
     let mut by_start: Vec<&(&str, String, String, String, Worktree)> = attempts.iter().collect();
@@ -932,6 +934,7 @@ async fn seed_pm(
         permission_mode: Some(PermissionMode::Ask),
         persona: None,
         background: vec![],
+        instance: None,
     };
     // The planning conversation first, so the overview is the newest.
     let plan = new_session("Plan guest checkout", at - 3 * HOUR, at);

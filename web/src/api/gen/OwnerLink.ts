@@ -17,6 +17,10 @@ ownerUrl: string, ownerVersion: string,
  */
 ownerPublicKey: string, repoUrl: string | null, 
 /**
+ * Where this instance keeps the project's checkout (and its worktrees); None: the default folder.
+ */
+checkoutPath: string | null, 
+/**
  * Paused here: the project takes no work on this instance.
  */
 paused: boolean, 

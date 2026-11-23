@@ -2,6 +2,7 @@
 import type { LinkState } from "./LinkState";
 import type { OwnerLink } from "./OwnerLink";
 import type { Project } from "./Project";
+import type { RunningView } from "./RunningView";
 
 /**
  * A remote project, as this instance lists it.
@@ -14,4 +15,12 @@ state: LinkState,
 /**
  * The owner's board, for "Open on <owner>".
  */
-openUrl: string, };
+openUrl: string, 
+/**
+ * Where this instance keeps the project's checkout and worktrees (the link's setting, else the default).
+ */
+checkoutPath: string, 
+/**
+ * The owner's sessions this instance runs now (read-only here).
+ */
+running: Array<RunningView>, };

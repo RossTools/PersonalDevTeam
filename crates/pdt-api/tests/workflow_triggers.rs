@@ -221,6 +221,7 @@ async fn agent_session(env: &Env, id: &str) -> String {
             permission_mode: None,
             persona: None,
             background: vec![],
+            instance: None,
         })
         .await
         .unwrap();

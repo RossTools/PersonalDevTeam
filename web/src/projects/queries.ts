@@ -16,6 +16,7 @@ export const projectKeys = {
   storageAll: ['storage'] as const,
   /** On the owner: a project's remote instances and the pairing code on show. */
   remoteInstances: (projectId: string) => ['remote-instances', projectId] as const,
+  placement: (projectId: string) => ['placement', projectId] as const,
   /** On a remote instance: the projects it joined. */
   remote: ['remote-projects'] as const,
 };
@@ -26,8 +27,12 @@ export function useRemoteProjects() {
 }
 
 /** A project's remote instances, polled for their heartbeats (and the pairing code's expiry). */
-export function useRemoteInstances(projectId: string) {
-  return useQuery({ queryKey: projectKeys.remoteInstances(projectId), queryFn: () => api.remoteInstances(projectId), refetchInterval: POLL.steady });
+export function useRemoteInstances(projectId: string, { enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ queryKey: projectKeys.remoteInstances(projectId), queryFn: () => api.remoteInstances(projectId), refetchInterval: POLL.steady, enabled });
+}
+
+export function usePlacement(projectId: string) {
+  return useQuery({ queryKey: projectKeys.placement(projectId), queryFn: () => api.placement(projectId) });
 }
 
 /** Every project. They change through this UI (which invalidates them), so a mount within 30 s doesn't refetch. */

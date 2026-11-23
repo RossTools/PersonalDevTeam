@@ -11,11 +11,12 @@ const SELECT: &str = "SELECT s.id, s.project_id, s.worktree_id, s.kind, s.agent,
                       s.status, s.exit_code, s.created_at, s.ended_at, s.external_session_id, s.fresh_started_at, \
                       s.activity, s.attention_at, s.last_viewed_at, s.attempt_id, s.mode, s.model, s.permission_mode, \
                       s.persona_id, s.persona_version, s.step_id, s.background_tasks, pe.name AS persona_name, \
-                      t.id AS ticket_id, \
+                      s.instance_id, ri.name AS instance_name, t.id AS ticket_id, \
                       COALESCE(p.key, '') AS ticket_pkey, t.number AS ticket_number \
                       FROM sessions s LEFT JOIN attempts a ON a.id = s.attempt_id \
                       LEFT JOIN tickets t ON t.id = COALESCE(a.ticket_id, s.ticket_id) LEFT JOIN projects p ON p.id = t.project_id \
-                      LEFT JOIN personas pe ON pe.id = s.persona_id";
+                      LEFT JOIN personas pe ON pe.id = s.persona_id \
+                      LEFT JOIN remote_instances ri ON ri.project_id = s.project_id AND ri.instance_id = s.instance_id";
 
 fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
     let kind: String = r.try_get("kind")?;
@@ -86,7 +87,15 @@ fn to_session(r: &SqliteRow) -> Result<Session, StoreError> {
         } else {
             vec![]
         },
+        instance: instance_ref(r)?,
     })
+}
+
+/// A row's `instance_id` with the joined instance's name (`instance_name`; its id once it has left the project).
+pub(crate) fn instance_ref(r: &SqliteRow) -> Result<Option<pdt_core::placement::InstanceRef>, StoreError> {
+    let id: Option<String> = r.try_get("instance_id")?;
+    let name: Option<String> = r.try_get("instance_name")?;
+    Ok(id.map(|id| pdt_core::placement::InstanceRef { name: name.unwrap_or_else(|| id.clone()), id }))
 }
 
 impl Store {
@@ -94,8 +103,8 @@ impl Store {
         sqlx::query(
             "INSERT INTO sessions (id, project_id, worktree_id, kind, agent, bypass_permissions, title, cwd, status, exit_code, created_at, ended_at, \
              external_session_id, fresh_started_at, activity, attention_at, last_viewed_at, attempt_id, mode, model, \
-             permission_mode, persona_id, persona_version, step_id, ticket_id) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             permission_mode, persona_id, persona_version, step_id, ticket_id, instance_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&s.id)
         .bind(&s.project_id)
@@ -122,6 +131,7 @@ impl Store {
         .bind(s.persona.as_ref().map(|p| i64::from(p.version)))
         .bind(s.persona.as_ref().and_then(|p| p.step_id.clone()))
         .bind(s.ticket.as_ref().map(|t| t.id.clone()))
+        .bind(s.instance.as_ref().map(|i| i.id.clone()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -364,10 +374,12 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
-    /// Marks every `running` session as `interrupted` (pdtd stopped or restarted). Returns how many changed.
+    /// Marks every `running` session as `interrupted` (pdtd stopped or restarted), but those on a remote instance,
+    /// whose processes run there still. Returns how many changed.
     pub async fn mark_running_interrupted(&self, ended_at: i64) -> Result<u64, StoreError> {
         let r = sqlx::query(
-            "UPDATE sessions SET status = 'interrupted', ended_at = ?, activity = NULL WHERE status = 'running'",
+            "UPDATE sessions SET status = 'interrupted', ended_at = ?, activity = NULL WHERE status = 'running' \
+             AND instance_id IS NULL",
         )
         .bind(ended_at)
         .execute(&self.pool)
@@ -483,6 +495,7 @@ pub(crate) mod tests {
             permission_mode: None,
             persona: None,
             background: vec![],
+            instance: None,
         }
     }
 
@@ -757,6 +770,7 @@ pub(crate) mod tests {
             base_commit: "c".into(),
             created_at: 1,
             missing: false,
+            instance: None,
         };
         store.insert_worktree(&w).await.unwrap();
         let mut s = session("a", 1);

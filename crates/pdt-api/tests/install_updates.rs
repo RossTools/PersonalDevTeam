@@ -119,6 +119,7 @@ async fn busy_session(env: &Env) {
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     };
     env.state.store.insert_session(&session).await.unwrap();
 }

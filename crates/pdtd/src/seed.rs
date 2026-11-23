@@ -92,6 +92,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         base_commit: repos.feature_base.clone(),
         created_at: now - 5 * HOUR,
         missing: false,
+        instance: None,
     };
     for p in [&app, &lib] {
         store.insert_project(p).await?;
@@ -124,6 +125,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     };
     let sessions = [
         session(&app, None, None, "main", 3 * DAY - HOUR),

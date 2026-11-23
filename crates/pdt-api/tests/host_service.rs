@@ -116,6 +116,7 @@ async fn busy_lists_the_working_agents_stopping_would_interrupt() {
             permission_mode: None,
             persona: None,
             background: vec![],
+            instance: None,
         })
         .await
         .unwrap();

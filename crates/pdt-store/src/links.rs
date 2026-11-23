@@ -9,7 +9,8 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 const OWNER_LINK_COLUMNS: &str = "project_id, link_id, owner_project_id, owner_instance_id, owner_name, owner_url, \
-                                  owner_version, owner_public_key, repo_url, paused, last_contact_at, created_at";
+                                  owner_version, owner_public_key, repo_url, paused, last_contact_at, created_at, \
+                                  checkout_path";
 
 fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
     Ok(OwnerLink {
@@ -22,6 +23,7 @@ fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
         owner_version: r.try_get("owner_version")?,
         owner_public_key: r.try_get("owner_public_key")?,
         repo_url: r.try_get("repo_url")?,
+        checkout_path: r.try_get("checkout_path")?,
         paused: r.try_get::<i64, _>("paused")? != 0,
         last_contact_at: r.try_get("last_contact_at")?,
         created_at: r.try_get("created_at")?,
@@ -74,8 +76,9 @@ impl Store {
         .bind(pdt_core::project::ProjectKind::Remote.as_str())
         .execute(&mut *tx)
         .await?;
-        let sql =
-            format!("INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        let sql = format!(
+            "INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&p.id)
             .bind(&link.link_id)
@@ -89,6 +92,7 @@ impl Store {
             .bind(link.paused)
             .bind(link.last_contact_at)
             .bind(link.created_at)
+            .bind(&link.checkout_path)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -164,6 +168,37 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// Sets (None: back to the default) where this instance keeps a remote project's checkout.
+    pub async fn set_remote_project_checkout(&self, project_id: &str, path: Option<&str>) -> Result<bool, StoreError> {
+        let r = sqlx::query("UPDATE remote_projects SET checkout_path = ? WHERE project_id = ?")
+            .bind(path)
+            .bind(project_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// How far the owner has read a joined instance's session events: the instance's boot they were numbered in, and
+    /// the last one taken.
+    pub async fn events_cursor(&self, link_id: &str) -> Result<(Option<String>, i64), StoreError> {
+        let row: Option<(Option<String>, i64)> =
+            sqlx::query_as("SELECT events_boot, events_after FROM remote_instances WHERE link_id = ?")
+                .bind(link_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.unwrap_or((None, 0)))
+    }
+
+    pub async fn set_events_cursor(&self, link_id: &str, boot: &str, after: i64) -> Result<(), StoreError> {
+        sqlx::query("UPDATE remote_instances SET events_boot = ?, events_after = ? WHERE link_id = ?")
+            .bind(boot)
+            .bind(after)
+            .bind(link_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     /// Joins an instance to one of this instance's projects.
@@ -248,11 +283,11 @@ impl Store {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use pdt_core::project::ProjectKind;
 
-    fn remote(id: &str) -> (Project, OwnerLink) {
+    pub(crate) fn remote(id: &str) -> (Project, OwnerLink) {
         let p = Project {
             id: id.into(),
             name: "Val".into(),
@@ -273,6 +308,7 @@ mod tests {
             owner_version: "1.0.0".into(),
             owner_public_key: "pk".into(),
             repo_url: Some("git@github.com:o/val.git".into()),
+            checkout_path: None,
             paused: false,
             last_contact_at: None,
             created_at: 1,

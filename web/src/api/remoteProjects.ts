@@ -1,12 +1,13 @@
 import { enc, request } from './core';
 import type { JoinRemoteProject } from './gen/JoinRemoteProject';
+import type { PlacementSettings } from './gen/PlacementSettings';
 import type { RemoteInstancesView } from './gen/RemoteInstancesView';
 import type { RemoteProjectPatch } from './gen/RemoteProjectPatch';
 import type { RemoteProjectView } from './gen/RemoteProjectView';
 
 /**
  * Remote projects: on the owner, a project's remote instances (pairing codes, heartbeats on demand, Remove); on a
- * remote instance, the projects it joined (join, Pause, Remove).
+ * remote instance, the projects it joined (join, Pause, Remove). On the owner, a project's placement rules too.
  */
 export const remoteProjectsApi = {
   remoteInstances: (projectId: string) => request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances`),
@@ -18,6 +19,9 @@ export const remoteProjectsApi = {
     request<RemoteInstancesView>(`/api/projects/${enc(projectId)}/remote-instances/check`, { method: 'POST' }),
   removeRemoteInstance: (projectId: string, linkId: string) =>
     request<void>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}`, { method: 'DELETE' }),
+  placement: (projectId: string) => request<PlacementSettings>(`/api/projects/${enc(projectId)}/placement`),
+  putPlacement: (projectId: string, s: PlacementSettings) =>
+    request<PlacementSettings>(`/api/projects/${enc(projectId)}/placement`, { method: 'PUT', body: JSON.stringify(s) }),
   listRemoteProjects: () => request<RemoteProjectView[]>('/api/remote-projects'),
   joinRemoteProject: (j: JoinRemoteProject) =>
     request<RemoteProjectView>('/api/remote-projects', { method: 'POST', body: JSON.stringify(j) }),

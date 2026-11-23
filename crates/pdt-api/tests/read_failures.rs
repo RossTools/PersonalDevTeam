@@ -161,6 +161,7 @@ fn session(project: &str, cwd: &std::path::Path) -> pdt_core::session::Session {
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     }
 }
 

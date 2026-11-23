@@ -150,6 +150,9 @@ pub mod codes {
     pub const PERMISSION_DENIED: &str = "permission_denied";
     pub const PERSONAL_PROJECT: &str = "personal_project";
     pub const PERSONA_IN_USE: &str = "persona_in_use";
+    /// 409: the ticket can't be placed: the instance it names hasn't joined, is offline or paused, or none meets what
+    /// the repository says its kind of ticket needs.
+    pub const PLACEMENT: &str = "placement";
     pub const PM_CLOSED: &str = "pm_closed";
     pub const PROGRAM_NOT_FOUND: &str = "program_not_found";
     pub const PROJECT_WORKSPACE: &str = "project_workspace";

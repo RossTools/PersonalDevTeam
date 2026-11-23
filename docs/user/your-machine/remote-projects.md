@@ -7,7 +7,9 @@ its **owner**, which keeps its board, tickets, workflows, Inbox and PM. Other in
 instances** to work on it for the owner, for example to build and test on another operating system. Each instance
 keeps its own projects as usual.
 
-For now a remote instance joins the project and reports on itself; work isn't sent to it yet.
+A ticket that has to run elsewhere (a Windows client, say) runs on a remote instance: its branch and worktree are
+there, and so are its agents. You follow and steer it from the owner as if it ran there: its sessions are under the
+ticket, marked **on win-box**.
 
 ## Before you start
 
@@ -46,6 +48,51 @@ pairing again needs a new code.
 **Needs an update** means the two instances speak different versions of the link. The message says which one to
 update, and to which version, for example "update win-box to v0.7.2".
 
+## Choose where tickets run
+
+On the owner, under the project's **Remote instances**, **Placement** maps a label to an instance: with
+`windows → win-box`, every ticket labelled `windows` runs on win-box. Tickets with no matching label run on the owner,
+as before. The PM suggests the label when it drafts a ticket whose work has to run somewhere in particular.
+
+The repository can say what a kind of ticket needs instead of naming an instance, so the rule works on anyone's
+instances. In `.pdt/project.toml`:
+
+```toml
+[[placement]]
+when = { labels = ["windows"] }
+needs = { os = "windows", tools = ["godot"] }
+```
+
+A `windows` ticket then runs on a joined instance that runs Windows and has Godot, unless the owner itself does.
+
+**Start…** has a **Runs on** choice when the project has remote instances: the project's rules (the default), this
+instance, or one of the remote instances. Placement goes in this order: **Runs on**, then the project's label rules,
+then the repository's needs, then the owner. A ticket placed on an instance that is offline or paused doesn't start;
+Start says why.
+
+## What runs on the remote instance
+
+For a ticket placed there:
+
+- **The checkout.** The remote instance clones the repository from the owner's `origin` the first time, into the
+  folder its **Remote projects** page shows, and makes the ticket's worktree there. It needs your git credentials for
+  fetching and pushing; the pull request, CI and merge stay with the owner.
+- **The agents.** The Coder, Reviewer and QA run there as conversations, in that worktree. On the owner they are under
+  the ticket and fully interactive: you read and answer them, approve their requests, interrupt, stop and restart
+  them, and they count in the Inbox, notifications and the board like any other.
+- **PDT's tools.** The agents' PDT tools (`submit_outcome`, `get_ticket`, and the rest) are answered by the owner, so
+  confirmations and cards work as usual.
+- **Git.** Bringing the branch up to date with its base at merge time, and removing the worktree when the ticket
+  finishes, happen there too.
+
+Terminals, runs and tests, and the Files and Changes views of a remote ticket aren't available yet: such a ticket's
+agents run as conversations.
+
+If the link between the instances drops, the agents keep working. Their PDT tool calls wait and go through once it is
+back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
+until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
+left off.
+
 ## On the remote instance: Remote projects
 
 **Settings › Remote projects** lists the projects this instance joined, each with its state and when the owner was
@@ -54,6 +101,10 @@ last heard from.
 - **Open on <owner>** opens the project's board on the owner.
 - **Pause** stops this instance taking work for the project; **Resume** starts it again.
 - **Leave…** stops working on the project and revokes the link; the owner keeps the project.
+- **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
+  a checkout already made stays where it is.
+
+It also lists what runs here for the owner now, read-only: each agent's ticket, title and how long it has run.
 
 A remote project has no board, tickets or settings here, and this instance's own PM, workflows, pickup and Inbox
 never see it.

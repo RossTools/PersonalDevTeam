@@ -384,6 +384,7 @@ mod tests {
             permission_mode: Some(pdt_core::conversation::PermissionMode::Plan),
             persona: None,
             background: vec![],
+            instance: None,
         };
         store.insert_session(&s).await.unwrap();
         let back = store.get_session("s1").await.unwrap().unwrap();

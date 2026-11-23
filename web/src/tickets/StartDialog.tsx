@@ -24,7 +24,8 @@ import { setWaiting } from './actions';
 import { AreaChips } from './Areas';
 import { useProjectAreas, useTicket } from './queries';
 import { SharedFiles } from './TicketParts';
-import { useProjects } from '../projects/queries';
+import { useProjects, useRemoteInstances } from '../projects/queries';
+
 
 
 /** The tickets that block this one and aren't Done or Won't do. */
@@ -75,6 +76,10 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const noSession = view === 'none';
   const sessionMode: SessionMode = isAcp(agent) ? 'conversation' : view === 'none' ? defaults.mode : view;
   const [branch, setBranch] = useState('');
+  // Runs on (a remote project's instances): '' lets the project's placement rules decide.
+  const [runsOn, setRunsOn] = useState('');
+  const remotes = useRemoteInstances(t?.projectId ?? '', { enabled: !!project && project.kind === 'repo' });
+  const instances = remotes.data?.instances ?? [];
   const [base, setBase] = useState('');
   // The host's default for tickets (Bypass unless changed) until this dialog picks another.
   const [pickedPermission, setPermission] = useState<PermissionMode | null>(null);
@@ -129,6 +134,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
       ...(noSession ? { noSession: true } : { sessionMode }),
       ...(!personal && branch.trim() ? { branch: branch.trim() } : {}),
       ...(!personal && base.trim() ? { base: base.trim() } : {}),
+      ...(!personal && runsOn ? { runsOn } : {}),
       ...(noSession ? {} : { permissionMode }),
       ...(newWorkspace ? { newWorkspace: true } : placement ? { tab: placement } : {}),
       mode,
@@ -268,6 +274,20 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               <Field label="Base branch">
                 <Input mono value={base} placeholder={project?.baseBranch ?? 'main'} maxLength={200} onChange={(e) => setBase(e.target.value)} />
               </Field>
+              {instances.length > 0 && (
+                <Field label="Runs on" hint="Where the branch, its worktree and the agents are. By default the project's placement rules pick, by the ticket's labels.">
+                  <Select<string>
+                    options={[
+                      { value: '', label: 'As the project says' },
+                      { value: 'owner', label: `${remotes.data?.name ?? 'This instance'} (this one)` },
+                      ...instances.map((i) => ({ value: i.instanceId, label: i.state === 'connected' ? i.name : `${i.name} · ${i.state}` })),
+                    ]}
+                    value={runsOn}
+                    onChange={setRunsOn}
+                    className="w-64"
+                  />
+                </Field>
+              )}
             </>
           )}
           {!noSession && sessionMode === 'conversation' && (

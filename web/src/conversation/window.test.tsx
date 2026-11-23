@@ -139,7 +139,7 @@ describe('opening a conversation', () => {
   const session = {
     id: 's1', projectId: 'p', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'PDT', cwd: '/r',
     status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null, activity: 'idle',
-    attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation', model: null, permissionMode: 'ask', persona: null, background: [],
+    attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation', model: null, permissionMode: 'ask', persona: null, background: [], instance: null,
   } as Session;
 
   it('shows that it is loading until the stored messages are in, never a blank pane', () => {

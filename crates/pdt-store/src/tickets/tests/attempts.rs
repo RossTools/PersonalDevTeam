@@ -28,6 +28,7 @@ fn agent_session(id: &str, attempt: Option<&str>, created_at: i64) -> pdt_core::
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     }
 }
 
@@ -243,6 +244,14 @@ async fn sessions_carry_their_ticket_and_tickets_list_their_sessions() {
         ticket.sessions.iter().map(|s| (s.id.as_str(), s.attempt_id.as_deref())).collect();
     assert_eq!(ids, [("rev", None), ("s2", Some("at1")), ("s1", Some("at1"))]);
     store.delete_session("rev").await.unwrap();
+    // A session with an attempt belongs to the attempt's ticket, whatever its own says.
+    add(&store, "b", new("B")).await;
+    let mut odd = agent_session("odd", Some("at1"), 5);
+    odd.ticket = Some(pdt_core::ticket::SessionTicket { id: "b".into(), key: String::new() });
+    store.insert_session(&odd).await.unwrap();
+    assert_eq!(store.get_ticket("a").await.unwrap().unwrap().sessions[0].id, "odd");
+    assert!(store.get_ticket("b").await.unwrap().unwrap().sessions.is_empty());
+    store.delete_session("odd").await.unwrap();
 
     // A chat joins an attempt once; a session with one keeps it.
     assert!(store.set_session_attempt("plain", "at1").await.unwrap());
