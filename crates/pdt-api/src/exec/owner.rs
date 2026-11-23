@@ -31,15 +31,17 @@ const WORKTREE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How long a git look or update there may take (a fetch, a merge, a push).
 const GIT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Where a remote session's outputs go on the owner: its conversation's sink.
-struct Route {
-    sink: EventSink,
-    /// The process its outputs come from; None while it is being opened.
-    proc: Option<String>,
-    alive: Arc<AtomicBool>,
-    link_id: String,
+/// Where a remote session's outputs go on the owner: its conversation's sink, or (a terminal) nowhere but its exit.
+pub(super) struct Route {
+    /// None: a terminal, whose only output here is its exit ([`super::terminals::exited`]).
+    pub(super) sink: Option<EventSink>,
+    /// The process its outputs come from; None while it is being opened (or, for a terminal, after the owner
+    /// restarted: any of the session's).
+    pub(super) proc: Option<String>,
+    pub(super) alive: Arc<AtomicBool>,
+    pub(super) link_id: String,
     /// When the open came back (ms): a poll sent after it lists the process as alive while it runs.
-    opened_at: i64,
+    pub(super) opened_at: i64,
 }
 
 pub(super) struct OwnerSide {
@@ -67,7 +69,7 @@ impl OwnerSide {
         self.retry_ms.store(retry.as_millis() as u64, Ordering::SeqCst);
     }
 
-    fn routes(&self) -> std::sync::MutexGuard<'_, HashMap<String, Route>> {
+    pub(super) fn routes(&self) -> std::sync::MutexGuard<'_, HashMap<String, Route>> {
         self.routes.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -78,13 +80,29 @@ pub(crate) fn is_routed(st: &AppState, session: &str) -> bool {
 }
 
 /// The joined instance `instance_id` of `project_id`, or why there is none.
-async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
+pub(super) async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
     st.store
         .list_remote_instances(Some(project_id))
         .await?
         .into_iter()
         .find(|i| i.instance_id == instance_id)
         .ok_or_else(|| ApiError::conflict(codes::REMOTE_PROJECT, "that remote instance has left the project"))
+}
+
+/// A joined instance of the project, as a session names it ("New shell on win-box", PDT-633).
+pub(crate) async fn joined_instance(
+    st: &AppState,
+    project_id: &str,
+    instance_id: &str,
+) -> Result<pdt_core::placement::InstanceRef, ApiError> {
+    let i = st
+        .store
+        .list_remote_instances(Some(project_id))
+        .await?
+        .into_iter()
+        .find(|i| i.instance_id == instance_id)
+        .ok_or_else(|| ApiError::invalid("that instance hasn't joined this project"))?;
+    Ok(pdt_core::placement::InstanceRef { id: i.instance_id, name: i.name })
 }
 
 /// The instance a worktree is on, when it is a remote one.
@@ -96,7 +114,7 @@ pub(crate) async fn worktree_instance(st: &AppState, wt: &Worktree) -> Result<Op
 }
 
 /// A signed call to the remote instance `i`.
-async fn call<T: serde::de::DeserializeOwned>(
+pub(super) async fn call<T: serde::de::DeserializeOwned>(
     st: &AppState,
     i: &RemoteInstance,
     path: &str,
@@ -138,6 +156,7 @@ pub(crate) async fn open(
         title: row.title.clone(),
         ticket_key: row.ticket.as_ref().map(|t| t.key.clone()),
         branch,
+        base: Some(st.project(&row.project_id).await?.base_branch),
         external_id: row.external_session_id.clone(),
         has_history: st.store.last_session_event_seq(&row.id).await? > 0,
         model: st.store.get_host_settings().await?.model_for(row.agent, row.model.as_deref()),
@@ -150,7 +169,7 @@ pub(crate) async fn open(
     let alive = Arc::new(AtomicBool::new(true));
     st.exec.owner.routes().insert(
         row.id.clone(),
-        Route { sink, proc: None, alive: alive.clone(), link_id: i.link_id.clone(), opened_at: 0 },
+        Route { sink: Some(sink), proc: None, alive: alive.clone(), link_id: i.link_id.clone(), opened_at: 0 },
     );
     ensure_poller(st, &i.link_id);
     let opened: Opened = match call(st, &i, OPEN_PATH, &req, OPEN_TIMEOUT).await {
@@ -163,6 +182,9 @@ pub(crate) async fn open(
     if let Some(r) = st.exec.owner.routes().get_mut(&row.id) {
         r.proc = Some(opened.proc);
         r.opened_at = now_ms();
+    }
+    if opened.cwd != row.cwd {
+        st.store.set_session_cwd(&row.id, &opened.cwd).await?;
     }
     let live = RemoteLive { st: st.clone(), instance: i, session_id: row.id.clone(), alive };
     Ok((Arc::new(live), stream))
@@ -242,8 +264,8 @@ impl LiveConversation for RemoteLive {
             tracing::warn!(session = %self.session_id, instance = %self.instance.name, error = %e, "could not close a remote session");
             let route = st_remove(&self.st, &self.session_id);
             self.alive.store(false, Ordering::SeqCst);
-            if let Some(r) = route {
-                let _ = r.sink.send(AdapterOutput::Exited { code: None, stderr_tail: String::new(), expected: true });
+            if let Some(sink) = route.and_then(|r| r.sink) {
+                let _ = sink.send(AdapterOutput::Exited { code: None, stderr_tail: String::new(), expected: true });
             }
         }
     }
@@ -258,7 +280,7 @@ fn st_remove(st: &AppState, session: &str) -> Option<Route> {
 }
 
 /// Makes sure a poller reads `link_id`'s events.
-fn ensure_poller(st: &AppState, link_id: &str) {
+pub(super) fn ensure_poller(st: &AppState, link_id: &str) {
     if !st.exec.owner.pollers.lock().unwrap_or_else(|e| e.into_inner()).insert(link_id.to_string()) {
         return;
     }
@@ -273,12 +295,17 @@ fn ensure_poller(st: &AppState, link_id: &str) {
     });
 }
 
-/// After a restart: pollers for the instances that run sessions of this owner's, whose events waited for it.
+/// After a restart: pollers for the instances that run sessions of this owner's, whose events waited for it. (As a
+/// remote instance: the terminals it ran for owners ended with its previous run.)
 pub async fn resume_pollers(st: &AppState) {
+    if let Err(e) = st.store.end_open_exec_terminals(now_ms()).await {
+        tracing::warn!(error = %e, "could not end the owners' terminals the last run left open");
+    }
     match st.store.list_remote_instances(None).await {
         Ok(list) => {
             for i in list {
                 if running_on(st, &i).await > 0 {
+                    super::terminals::resume_routes(st, &i).await;
                     ensure_poller(st, &i.link_id);
                 }
             }
@@ -340,7 +367,7 @@ async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&st
     }
     // Processes the remote instance no longer runs, with no exit to say so (it restarted): they ended.
     let alive: HashSet<&str> = batch.alive.iter().map(String::as_str).collect();
-    let gone: Vec<Route> = {
+    let gone: Vec<(String, Route)> = {
         let mut routes = st.exec.owner.routes();
         let ids: Vec<String> = routes
             .iter()
@@ -349,12 +376,17 @@ async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&st
             })
             .map(|(id, _)| id.clone())
             .collect();
-        ids.iter().filter_map(|id| routes.remove(id)).collect()
+        ids.into_iter().filter_map(|id| routes.remove(&id).map(|r| (id, r))).collect()
     };
-    for r in gone {
+    for (id, r) in gone {
         r.alive.store(false, Ordering::SeqCst);
-        let why = format!("{} no longer runs it (it restarted?)", i.name);
-        let _ = r.sink.send(AdapterOutput::Exited { code: None, stderr_tail: why, expected: false });
+        match r.sink {
+            Some(sink) => {
+                let why = format!("{} no longer runs it (it restarted?)", i.name);
+                let _ = sink.send(AdapterOutput::Exited { code: None, stderr_tail: why, expected: false });
+            }
+            None => super::terminals::exited(st, &id, None).await,
+        }
     }
 }
 
@@ -363,12 +395,20 @@ async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&st
 async fn route(st: &AppState, i: &RemoteInstance, e: WireEvent) {
     let exited = matches!(e.out, WireOut::Exited { .. });
     for attempt in 0..2 {
+        let mut terminal_exit = false;
         let delivered = {
             let mut routes = st.exec.owner.routes();
             match routes.get(&e.session_id) {
+                // A terminal being opened again: its process isn't known yet, so an exit now is an earlier run's.
+                Some(r) if r.sink.is_none() && r.proc.is_none() && r.opened_at == 0 && exited => Some(false),
                 Some(r) if r.proc.as_deref().is_none_or(|p| p == e.proc) => {
-                    let _ = r.sink.send(e.out.clone().into());
-                    if exited && r.proc.as_deref() == Some(e.proc.as_str()) {
+                    match &r.sink {
+                        Some(sink) => {
+                            let _ = sink.send(e.out.clone().into());
+                        }
+                        None => terminal_exit = exited,
+                    }
+                    if exited && (r.proc.as_deref() == Some(e.proc.as_str()) || r.sink.is_none()) {
                         r.alive.store(false, Ordering::SeqCst);
                         routes.remove(&e.session_id);
                     }
@@ -379,11 +419,32 @@ async fn route(st: &AppState, i: &RemoteInstance, e: WireEvent) {
                 None => None,
             }
         };
-        if delivered.is_some() || exited || attempt == 1 {
+        if terminal_exit && let WireOut::Exited { code, .. } = &e.out {
+            super::terminals::exited(st, &e.session_id, *code).await;
+        }
+        if delivered == Some(true)
+            && let WireOut::ExternalId { id } = &e.out
+            && !st.exec.owner.routes().get(&e.session_id).is_some_and(|r| r.sink.is_some())
+        {
+            super::terminals::conversation_found(st, &e.session_id, id).await;
+        }
+        if delivered.is_some() || attempt == 1 {
             return;
         }
         let Ok(Some(s)) = st.store.get_session(&e.session_id).await else { return };
         if s.status == SessionStatus::Finished || s.instance.as_ref().is_none_or(|r| r.id != i.instance_id) {
+            return;
+        }
+        // A terminal the owner has no route for (it restarted before seeing the exit).
+        if s.mode != pdt_core::conversation::SessionMode::Conversation {
+            match &e.out {
+                WireOut::Exited { code, .. } => super::terminals::exited(st, &s.id, *code).await,
+                WireOut::ExternalId { id } => super::terminals::conversation_found(st, &s.id, id).await,
+                _ => {}
+            }
+            return;
+        }
+        if exited {
             return;
         }
         if let Err(err) = crate::conversations::attach(st, &s).await {

@@ -234,7 +234,7 @@ async fn handled(st: &AppState, step_id: &str) {
 /// Whether a session can take a nudge: a conversation (a stopped one reopens), or a running terminal.
 pub(crate) fn takes_messages(st: &AppState, s: &Session) -> bool {
     s.kind == SessionKind::AgentTui
-        && (s.mode == SessionMode::Conversation || (s.status == SessionStatus::Running && st.ptys.is_running(&s.id)))
+        && (s.mode == SessionMode::Conversation || (s.status == SessionStatus::Running && st.terminal_running(&s.id)))
 }
 
 fn skipped(why: &str) -> Outcome {

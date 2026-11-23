@@ -21,7 +21,7 @@ ticket, marked **on win-box**.
 
 1. **On the owner**, open the project's settings, then **Remote instances**, and click **Add**. PDT shows a pairing
    code and this instance's address. The code works once, for 10 minutes.
-2. **On the other instance**, click **Add project**, choose **Remote project**, and enter the owner's address and the
+2. **On the other instance**, click **Add project**, choose **Join a remote**, and enter the owner's address and the
    code. Click **Join project**.
 
 The project then shows on the other instance under **Settings › Remote projects**, as
@@ -85,10 +85,24 @@ For a ticket placed there:
 - **Git.** Bringing the branch up to date with its base at merge time, and removing the worktree when the ticket
   finishes, happen there too.
 
-Terminals, runs and tests, and the Files and Changes views of a remote ticket aren't available yet: such a ticket's
-agents run as conversations.
+- **Terminals.** An agent started in its terminal, and any shell you open in the ticket's workspace, runs there too.
+  You type, resize and scroll back on the owner as in a local terminal; the remote instance keeps the output while
+  nobody watches, so reconnecting shows it.
 
-If the link between the instances drops, the agents keep working. Their PDT tool calls wait and go through once it is
+Runs and tests, and the Files and Changes views of a remote ticket, aren't available yet. A remote session keeps the
+view it started in: it can't switch between conversation and terminal.
+
+## Shells on a remote instance
+
+To work in the remote instance's checkout of the project yourself, open a new tab (**+**) with the project's
+repository as the place and choose **Shell on win-box**. A shell in a remote ticket's workspace opens in its worktree
+there by itself. Such a shell is a tab like any other, marked **on win-box**, and reopens when you restart it.
+
+A shell from the owner opens only in the remote project's checkout or its tickets' worktrees on that instance, never
+anywhere else on it. Shells you open in the remote instance's own window stay its own and never show on the owner.
+
+If the link between the instances drops, the agents keep working, and so do terminals: the terminal on the owner
+reconnects once the link is back. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
 until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
 left off.
@@ -104,7 +118,8 @@ last heard from.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
 
-It also lists what runs here for the owner now, read-only: each agent's ticket, title and how long it has run.
+It also lists what runs here for the owner now, read-only: each agent's or shell's ticket, title and how long it has
+run.
 
 A remote project has no board, tickets or settings here, and this instance's own PM, workflows, pickup and Inbox
 never see it.

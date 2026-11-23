@@ -117,7 +117,7 @@ See [Disk space](your-data.md#disk-space).
 
 ### Projects folder
 
-Where a repository you add by **Clone URL** is cloned to (`~/work` unless you change it).
+Where a repository you add by **Clone a URL** is cloned to (`~/work` unless you change it).
 
 ### Documents
 
