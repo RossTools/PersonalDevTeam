@@ -146,7 +146,9 @@ struct Handle {
 }
 
 struct Proc {
-    input: std_mpsc::Sender<Vec<u8>>,
+    /// The writer thread's channel, taken once the process exits so that the thread ends: it holds the handle and a
+    /// copy of the PTY master, which would otherwise outlive the session (PDT-651).
+    input: Mutex<Option<std_mpsc::Sender<Vec<u8>>>>,
     /// Bytes sent to `input` and not written to the terminal yet (at most [`MAX_QUEUED_INPUT`]).
     queued: std::sync::atomic::AtomicUsize,
     /// The child's side is gone (its output ended, or a write failed), though its exit may not be reported yet: input
@@ -159,6 +161,14 @@ struct Proc {
     /// once the session is removed, not when the last of the session's threads lets go.
     #[cfg(windows)]
     job: std::sync::Weak<job::Job>,
+}
+
+impl Proc {
+    /// Queues `bytes` for the writer thread; fails once the process has exited.
+    fn send(&self, bytes: Vec<u8>) -> Result<(), ()> {
+        let input = self.input.lock().unwrap_or_else(|e| e.into_inner());
+        input.as_ref().ok_or(())?.send(bytes).map_err(|_| ())
+    }
 }
 
 /// A followed log's controls.
@@ -295,7 +305,7 @@ fn start(spec: SpawnSpec) -> Result<Started, PtyError> {
         state: Mutex::new(State { scrollback, exited: None }),
         events,
         proc: Some(Proc {
-            input: input_tx,
+            input: Mutex::new(Some(input_tx)),
             queued: Default::default(),
             closed: Default::default(),
             master: Mutex::new(Some(pair.master)),
@@ -328,7 +338,7 @@ fn start(spec: SpawnSpec) -> Result<Started, PtyError> {
                         if let Some(p) = &h.proc {
                             // Counted like any input: the writer takes every write it makes off `queued`.
                             p.queued.fetch_add(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
-                            if p.input.send(CURSOR_REPLY.to_vec()).is_err() {
+                            if p.send(CURSOR_REPLY.to_vec()).is_err() {
                                 p.queued.fetch_sub(CURSOR_REPLY.len(), std::sync::atomic::Ordering::SeqCst);
                             }
                         }
@@ -381,9 +391,11 @@ fn start(spec: SpawnSpec) -> Result<Started, PtyError> {
             st.exited = Some(code);
             let _ = h.events.send(PtyEvent::Exit(code));
         }
-        // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then).
+        // Closing the master ends the reader (on Windows, ConPTY keeps the pipe open until then), and closing the
+        // input ends the writer once it has written what is queued.
         if let Some(p) = &h.proc {
             p.master.lock().unwrap_or_else(|e| e.into_inner()).take();
+            p.input.lock().unwrap_or_else(|e| e.into_inner()).take();
         }
         tracing::debug!(session = %id, code, "terminal exited");
         let _ = exit_tx.send(code);
@@ -525,7 +537,7 @@ impl PtyManager {
             p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
             return Err(PtyError::InputFull(id.to_string()));
         }
-        p.input.send(bytes.to_vec()).map_err(|_| {
+        p.send(bytes.to_vec()).map_err(|_| {
             p.queued.fetch_sub(bytes.len(), std::sync::atomic::Ordering::SeqCst);
             PtyError::NotRunning(id.to_string())
         })
@@ -838,6 +850,23 @@ mod tests {
         assert!(matches!(&r, Err(PtyError::Spawn(e)) if e == "no PTY"), "{r:?}");
         assert!(m.sessions.lock().unwrap().starting.is_empty(), "the reservation is released");
         assert_eq!(m.spawn_with(quick("f"), start).unwrap().await.unwrap(), 0, "the same session starts on a retry");
+        m.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_exited_and_removed_terminal_lets_go_of_its_handle() {
+        let m = PtyManager::new();
+        let exit = m.spawn(quick("gone")).unwrap();
+        let handle = std::sync::Arc::downgrade(&m.get("gone").unwrap());
+        assert_eq!(exit.await.unwrap(), 0);
+        m.remove("gone");
+        // The reader, writer and waiter threads each held the handle (and the writer a copy of the PTY master):
+        // once they end it is freed.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while handle.upgrade().is_some() {
+            assert!(std::time::Instant::now() < deadline, "the terminal's threads still hold its handle");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         m.shutdown().await;
     }
 }
