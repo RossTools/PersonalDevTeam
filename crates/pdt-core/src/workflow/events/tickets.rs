@@ -257,7 +257,7 @@ pub struct StartableTicket {
 pub struct SlotFreed {
     /// The project with fewer tickets in flight; none for an agent slot (the host's).
     pub project_id: Option<String>,
-    /// `attempt`, `cap` or `agent`.
+    /// `attempt`, `cap`, `instance` (a remote instance came back online) or `agent`.
     pub reason: String,
 }
 

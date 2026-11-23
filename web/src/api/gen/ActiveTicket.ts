@@ -3,4 +3,8 @@
 /**
  * A ticket in flight (an active attempt), for the area and label caps.
  */
-export type ActiveTicket = { id: string, key: string, labels: Array<string>, areas: Array<string>, };
+export type ActiveTicket = { id: string, key: string, labels: Array<string>, areas: Array<string>, 
+/**
+ * The remote instance it runs on (its id); None: the owner.
+ */
+instance: string | null, };

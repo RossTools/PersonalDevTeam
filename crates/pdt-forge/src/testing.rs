@@ -57,6 +57,8 @@ pub struct FakeForge {
     pub ahead: Mutex<HashMap<(String, String, String), u64>>,
     /// [`Forge::change_request_files`] by number (none when unset).
     pub files: Mutex<HashMap<u32, Vec<ChangeFile>>>,
+    /// Change requests whose file list reads cut off ([`Forge::change_request_files_whole`] is None).
+    pub cut_files: Mutex<Vec<u32>>,
     /// Reviews submitted: repo, number, verdict, body.
     pub reviews_submitted: Mutex<Vec<(String, u32, ReviewVerdict, String)>>,
     /// Change requests closed: repo and number.
@@ -103,6 +105,7 @@ impl Default for FakeForge {
             releases: Default::default(),
             ahead: Default::default(),
             files: Default::default(),
+            cut_files: Default::default(),
             reviews_submitted: Default::default(),
             closed_changes: Default::default(),
             update_branch_error: Default::default(),
@@ -377,6 +380,10 @@ impl Forge for FakeForge {
         self.call(format!("files {repo} {number}"));
         self.failing()?;
         Ok(self.files.lock().unwrap().get(&number).cloned().unwrap_or_default())
+    }
+    fn change_request_files_whole(&self, repo: &str, number: u32) -> Result<Option<Vec<ChangeFile>>, ForgeError> {
+        let files = self.change_request_files(repo, number)?;
+        Ok((!self.cut_files.lock().unwrap().contains(&number)).then_some(files))
     }
     fn review_change_request(
         &self,

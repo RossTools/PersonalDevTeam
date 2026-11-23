@@ -9,4 +9,8 @@ export type HeartbeatReply = { instance: InstanceHello, facts: InstanceFacts,
 /**
  * The user paused the project on the remote instance: it takes no work for it.
  */
-paused: boolean, };
+paused: boolean, 
+/**
+ * The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
+ */
+cap: number | null, };

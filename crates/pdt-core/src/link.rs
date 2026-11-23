@@ -270,6 +270,9 @@ pub struct HeartbeatReply {
     pub facts: InstanceFacts,
     /// The user paused the project on the remote instance: it takes no work for it.
     pub paused: bool,
+    /// The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
+    #[serde(default)]
+    pub cap: Option<u32>,
 }
 
 /// A link's state, as one end shows it.
@@ -291,6 +294,10 @@ pub enum LinkState {
 pub const OFFLINE_AFTER_MS: i64 = 90 * 1000;
 /// How often the owner sends heartbeats.
 pub const HEARTBEAT_EVERY_MS: i64 = 30 * 1000;
+/// How long an instance with work waiting for it may be offline before the owner notifies the user.
+pub const OFFLINE_NOTIFY_AFTER_MS: i64 = 2 * 60 * 60 * 1000;
+/// The tickets in flight on a remote instance at once when neither end sets a cap.
+pub const DEFAULT_INSTANCE_CAP: u32 = 1;
 
 /// A link's state from what was last heard: never, or at `last_seen`, whether its protocol fits ours, and the pause
 /// it reported.
@@ -332,6 +339,9 @@ pub struct OwnerLink {
     pub checkout_path: Option<String>,
     /// Paused here: the project takes no work on this instance.
     pub paused: bool,
+    /// The most of the project's tickets this instance takes at once (reported to the owner); None: no cap of its own.
+    #[serde(default)]
+    pub cap: Option<u32>,
     /// When the owner last reached this instance, in ms.
     #[ts(type = "number | null")]
     pub last_contact_at: Option<i64>,
@@ -363,8 +373,25 @@ pub struct RemoteInstance {
     pub last_seen_at: Option<i64>,
     /// Why its last heartbeat failed, when it did.
     pub last_error: Option<String>,
+    /// The most tickets in flight on it at once, as the owner's project settings say; None: no cap set here.
+    #[serde(default)]
+    pub cap: Option<u32>,
+    /// The cap the remote instance set for the project (its last heartbeat said so).
+    #[serde(default)]
+    pub remote_cap: Option<u32>,
     #[ts(type = "number")]
     pub created_at: i64,
+}
+
+impl RemoteInstance {
+    /// Its slot pool's size: the lower of the owner's cap and its own, else [`DEFAULT_INSTANCE_CAP`].
+    pub fn pool_cap(&self) -> u32 {
+        match (self.cap, self.remote_cap) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) | (None, Some(a)) => a,
+            (None, None) => DEFAULT_INSTANCE_CAP,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -431,6 +458,31 @@ mod tests {
         assert!(!same_repo("git@github.com:o/val.git", "git@github.com:o/other.git"));
         assert!(!same_repo("git@github.com:o/val.git", "git@gitlab.com:o/val.git"));
         assert!(same_repo("/srv/git/val.git", "/srv/git/val"));
+    }
+
+    #[test]
+    fn an_instances_pool_is_the_lower_of_both_caps() {
+        let i = RemoteInstance {
+            link_id: "l".into(),
+            project_id: "p".into(),
+            instance_id: "w".into(),
+            name: "win-box".into(),
+            url: String::new(),
+            public_key: String::new(),
+            version: String::new(),
+            protocol: PROTOCOL,
+            facts: None,
+            paused: false,
+            last_seen_at: None,
+            last_error: None,
+            cap: None,
+            remote_cap: None,
+            created_at: 0,
+        };
+        assert_eq!(i.pool_cap(), DEFAULT_INSTANCE_CAP);
+        assert_eq!(RemoteInstance { cap: Some(3), ..i.clone() }.pool_cap(), 3);
+        assert_eq!(RemoteInstance { remote_cap: Some(2), ..i.clone() }.pool_cap(), 2);
+        assert_eq!(RemoteInstance { cap: Some(3), remote_cap: Some(2), ..i }.pool_cap(), 2);
     }
 
     #[test]

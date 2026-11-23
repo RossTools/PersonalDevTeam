@@ -1371,6 +1371,7 @@ mod tests {
             merge_requested: false,
             merge_refused: false,
             branch_named: None,
+            instance_id: None,
         };
         let bk = buildkite();
         let mut build = bk.run("app/3", "app", "b", "h", CiState::Failed, "t");

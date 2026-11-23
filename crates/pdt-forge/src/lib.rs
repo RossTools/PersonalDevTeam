@@ -449,6 +449,11 @@ pub trait Forge: Send + Sync {
     fn change_request_files(&self, _repo: &str, _number: u32) -> Result<Vec<ChangeFile>, ForgeError> {
         unsupported(self.name(), "change request diffs")
     }
+    /// All of [`Self::change_request_files`], or None when the forge's list of them is cut off (PDT-696: an approval
+    /// is only of the whole diff).
+    fn change_request_files_whole(&self, _repo: &str, _number: u32) -> Result<Option<Vec<ChangeFile>>, ForgeError> {
+        unsupported(self.name(), "change request diffs")
+    }
     /// Submits a review of change request `number` with `body` (Markdown); its URL ([`Capabilities::reviews`]).
     fn review_change_request(
         &self,

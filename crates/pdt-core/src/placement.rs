@@ -13,6 +13,11 @@ use ts_rs::TS;
 pub struct InstanceRef {
     pub id: String,
     pub name: String,
+    /// When the owner last heard from it (None: never yet, or it left the project): the chip says it's offline when
+    /// that is a while ago.
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub last_seen_at: Option<i64>,
 }
 
 /// A project's rule on the owner: tickets with `label` run on the instance `instance` (its id).
@@ -92,6 +97,8 @@ pub struct Candidate<'a> {
     pub facts: Option<&'a InstanceFacts>,
     /// Heard from lately and not paused.
     pub available: bool,
+    /// Paused on the remote instance (when not available: paused rather than offline).
+    pub paused: bool,
 }
 
 /// Where an attempt goes.
@@ -116,9 +123,11 @@ pub enum Why {
 pub enum PlacementError {
     #[error("no instance called {0} has joined this project")]
     UnknownInstance(String),
-    #[error("{name} is offline or paused")]
-    Unavailable { name: String },
-    #[error("tickets labelled {label} need {needs}, and no instance that joined this project has it")]
+    /// The instance it goes on (`id`) is offline, or paused there: the ticket waits for it.
+    #[error("{name} is {}", if *paused { "paused" } else { "offline" })]
+    Unavailable { id: String, name: String, paused: bool },
+    /// No joined instance (nor the owner) meets the repository's needs for `label`.
+    #[error("no instance can run this (needs {needs})")]
     NoMatch { label: String, needs: String },
 }
 
@@ -140,7 +149,7 @@ pub fn place(
         if c.available {
             Ok(Placed::Remote { id: c.id.to_string(), why })
         } else {
-            Err(PlacementError::Unavailable { name: c.name.to_string() })
+            Err(PlacementError::Unavailable { id: c.id.to_string(), name: c.name.to_string(), paused: c.paused })
         }
     };
     if let Some(r) = runs_on.map(str::trim).filter(|r| !r.is_empty()) {
@@ -169,13 +178,14 @@ pub fn place(
     Ok(Placed::Owner)
 }
 
+/// `os=windows, godot`.
 fn needs_text(rule: &RepoRule) -> String {
     let mut parts = vec![];
     if let Some(os) = &rule.os {
-        parts.push(os.clone());
+        parts.push(format!("os={os}"));
     }
     parts.extend(rule.tools.iter().cloned());
-    if parts.is_empty() { "nothing".into() } else { parts.join(" and ") }
+    if parts.is_empty() { "nothing".into() } else { parts.join(", ") }
 }
 
 #[cfg(test)]
@@ -205,7 +215,7 @@ mod tests {
     #[test]
     fn the_override_wins_then_label_rules_then_the_owner() {
         let win = facts("windows", &["godot"]);
-        let c = [Candidate { id: "w1", name: "win-box", facts: Some(&win), available: true }];
+        let c = [Candidate { id: "w1", name: "win-box", facts: Some(&win), available: true, paused: false }];
         let rules = [rule("windows", "w1")];
         let remote = |why| Ok(Placed::Remote { id: "w1".into(), why });
         assert_eq!(place(None, &labels(&["Windows"]), &rules, &[], &c, None), remote(Why::Label("windows".into())));
@@ -216,16 +226,19 @@ mod tests {
         let off = [Candidate { available: false, ..c[0].clone() }];
         assert_eq!(
             place(None, &labels(&["windows"]), &rules, &[], &off, None),
-            Err(PlacementError::Unavailable { name: "win-box".into() })
+            Err(PlacementError::Unavailable { id: "w1".into(), name: "win-box".into(), paused: false })
         );
+        let paused = [Candidate { available: false, paused: true, ..c[0].clone() }];
+        let e = place(None, &labels(&["windows"]), &rules, &[], &paused, None).unwrap_err();
+        assert_eq!(e.to_string(), "win-box is paused");
     }
 
     #[test]
     fn repo_needs_match_the_instances_facts() {
         let (win, mac) = (facts("windows", &["godot", "git"]), facts("macos", &["git"]));
         let c = [
-            Candidate { id: "m", name: "mini", facts: Some(&mac), available: true },
-            Candidate { id: "w", name: "win-box", facts: Some(&win), available: true },
+            Candidate { id: "m", name: "mini", facts: Some(&mac), available: true, paused: false },
+            Candidate { id: "w", name: "win-box", facts: Some(&win), available: true, paused: false },
         ];
         let repo = [RepoRule { labels: labels(&["windows"]), os: Some("windows".into()), tools: labels(&["Godot"]) }];
         assert_eq!(
@@ -233,9 +246,14 @@ mod tests {
             Ok(Placed::Remote { id: "w".into(), why: Why::Needs("windows".into()) })
         );
         assert_eq!(place(None, &labels(&["windows"]), &[], &repo, &c, Some(&win)), Ok(Placed::Owner), "owner meets it");
+        let none = place(None, &labels(&["windows"]), &[], &repo, &c[..1], Some(&mac));
+        assert_eq!(none, Err(PlacementError::NoMatch { label: "windows".into(), needs: "os=windows, Godot".into() }));
+        assert_eq!(none.unwrap_err().to_string(), "no instance can run this (needs os=windows, Godot)");
+        // The matching instance is offline: the ticket waits for it rather than going elsewhere.
+        let off = [c[0].clone(), Candidate { available: false, ..c[1].clone() }];
         assert_eq!(
-            place(None, &labels(&["windows"]), &[], &repo, &c[..1], Some(&mac)),
-            Err(PlacementError::NoMatch { label: "windows".into(), needs: "windows and Godot".into() })
+            place(None, &labels(&["windows"]), &[], &repo, &off, Some(&mac)),
+            Err(PlacementError::Unavailable { id: "w".into(), name: "win-box".into(), paused: false })
         );
         assert!(RepoRule { os: Some("mac".into()), ..Default::default() }.met_by(&mac));
     }
