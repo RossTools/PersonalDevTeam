@@ -219,6 +219,7 @@ async fn a_remote_projects_checkout_repository_and_worktrees_are_redacted() {
         repo_url: Some("git@github.com:acme-corp/rocket.git".into()),
         checkout_path: Some(checkout.to_string_lossy().into_owned()),
         paused: false,
+        cap: None,
         last_contact_at: None,
         created_at: 1,
     };
