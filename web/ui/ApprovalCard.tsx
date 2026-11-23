@@ -119,6 +119,8 @@ export function ApprovalCard({
   const [reason, setReason] = useState('');
   // Always allow asks for a second press (PDT-623): when it was first pressed.
   const [alwaysArmed, setAlwaysArmed] = useState<number | null>(null);
+  // What a screen reader hears of it (PDT-667): armed, and lapsed when the second press didn't come.
+  const [alwaysSaid, setAlwaysSaid] = useState('');
   // An answer in flight, set before React re-renders: the second click of a double-click finds it.
   const inFlight = useRef(false);
   // Each question's answer, by its text: the choices picked and the user's own words.
@@ -141,14 +143,18 @@ export function ApprovalCard({
     }
   };
   const always = () => {
-    if (alwaysArmed === null) return setAlwaysArmed(Date.now());
+    if (alwaysArmed === null) {
+      setAlwaysSaid('Press again to always allow in this session.');
+      return setAlwaysArmed(Date.now());
+    }
     if (Date.now() - alwaysArmed < approvalTiming.confirmAfterMs) return;
     setAlwaysArmed(null);
+    setAlwaysSaid('');
     void answer('always', { type: 'approve', always: true });
   };
   useEffect(() => {
     if (alwaysArmed === null) return;
-    const t = setTimeout(() => setAlwaysArmed(null), 4000);
+    const t = setTimeout(() => { setAlwaysArmed(null); setAlwaysSaid('Not confirmed: always allow is off again.'); }, 4000);
     return () => clearTimeout(t);
   }, [alwaysArmed]);
   const approve = () => {
@@ -254,6 +260,7 @@ export function ApprovalCard({
           />
         ))}
 
+      <span aria-live="polite" className="sr-only">{alwaysSaid}</span>
       {denying && kind !== 'question' ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input

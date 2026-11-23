@@ -1,6 +1,6 @@
 // One layout for every Inbox item (PDT-361): the header (kind, ticket, persona, time, title and links), the line on
 // why it waits, its content, and the action bar fixed at the bottom.
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, type ReactNode } from 'react';
 import { Info } from 'lucide-react';
 import { ActionBar, Avatar, Button, Kbd, RelativeTime, Textarea } from '@ui';
 import { cn } from '@ui/lib/utils';
@@ -12,8 +12,24 @@ import { KindChip } from './kinds';
 import { longTitle } from './model';
 import { SnoozeMenu, snoozedLine, UnsnoozeButton } from './snooze';
 
-/** The kind, the ticket's key and title, the persona and the age; then the title and the links row. */
+/**
+ * Focus was lost with the item before (the button pressed went with it, or Undo's toast had it): not on something the
+ * user still works in, like the list's row or a field.
+ */
+function focusLost(): boolean {
+  const a = document.activeElement;
+  return !a || a === document.body || !!a.closest('[data-sonner-toaster]');
+}
+
+/**
+ * The kind, the ticket's key and title, the persona and the age; then the title and the links row. A new item takes
+ * the focus on its title when the last one had it (PDT-667: after an answer, Snooze or Undo), so Tab goes on from here.
+ */
 export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: ItemSpec; className?: string }) {
+  const title = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (focusLost()) title.current?.focus({ preventScroll: true });
+  }, []);
   const parts: ReactNode[] = [
     item.ticketKey ? (
       <span key="t" className="flex min-w-0 items-center gap-1.5">
@@ -39,7 +55,7 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
         <span className="ml-auto">{item.snooze ? <UnsnoozeButton item={item} /> : <SnoozeMenu item={item} />}</span>
       </div>
       {/* A long old-style question (the card below has it whole) is clamped, so it shows once. */}
-      <h2 className={cn('text-base leading-snug font-semibold break-words', longTitle(item) && 'line-clamp-2')} title={longTitle(item) ? item.title : undefined}>
+      <h2 ref={title} tabIndex={-1} className={cn('text-base leading-snug font-semibold break-words outline-none', longTitle(item) && 'line-clamp-2')} title={longTitle(item) ? item.title : undefined}>
         {item.title}
       </h2>
       <ItemLinks item={item} extra={spec.links} />
@@ -120,7 +136,7 @@ export function ItemLayout({ item, spec, note, onNote }: { item: InboxItem; spec
               {spec.note.hint && <p className="text-meta text-muted-foreground">{spec.note.hint}</p>}
             </div>
           )}
-          hint={spec.hint && <span aria-live="polite">{spec.hint}</span>}
+          hint={spec.hint}
           end={end.length > 0 && end.map((a) => <ActionButton key={a.id} a={a} enter={spec.enter} />)}
           below={spec.takeOver?.open && (
             <div role="group" aria-label="Pick the outcome" className="flex flex-wrap items-center gap-2">

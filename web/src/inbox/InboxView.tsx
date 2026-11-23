@@ -7,6 +7,7 @@ import { useOpenTicket } from '../common/open';
 import { after, selectedUpdate, step } from './model';
 import { useClearUpdate, useReadItemNotifications, useReadNotification } from '../notifications/queries';
 import { useAnswer } from './useAnswer';
+import { undoLast } from './held';
 import { useItemView } from './itemView';
 import { ItemLayout } from './ItemLayout';
 
@@ -25,7 +26,8 @@ function foreign(e: KeyboardEvent): boolean {
 /**
  * The Inbox's work area: the selected item in the one item layout (PDT-361). Triage keys: `j`/`k`
  * move, Enter takes the primary action, `o` opens the ticket, `e` dismisses where that makes sense, number keys pick
- * a question's choices, `y`/`n` answer an approval; answering moves to the next item. An Update (PDT-108) shows what
+ * a question's choices, `y`/`n` answer an approval; answering moves to the next item, and `u` undoes the last answer
+ * while it is held (PDT-667), showing its item again. An Update (PDT-108) shows what
  * it says and opens what it is about.
  */
 export function InboxView({ items, snoozed = [], updates = [], selectedId, onSelect, onOpenTarget, loading, failed }: {
@@ -45,6 +47,20 @@ export function InboxView({ items, snoozed = [], updates = [], selectedId, onSel
   const update = updateId ? updates.find((u) => u.id === updateId) ?? null : null;
   const item = updateId ? null : items.find((i) => i.id === selectedId) ?? snoozed.find((i) => i.id === selectedId) ?? null;
 
+  // `u` undoes the last answer still held, with or without an item on screen (the last one answered).
+  const select = useRef(onSelect);
+  select.current = onSelect;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'u' || foreign(e)) return;
+      const id = undoLast();
+      if (!id) return;
+      e.preventDefault();
+      select.current(id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   // An item that went away (answered elsewhere): show the first one left.
   useEffect(() => {
     if (!item && !updateId && items.length > 0) onSelect(step(items, null, 1));

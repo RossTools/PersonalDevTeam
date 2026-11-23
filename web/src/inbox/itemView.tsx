@@ -659,13 +659,21 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
   })();
 
   // An action that acts outside PDT or can't be taken back (Request changes, Close, Always allow) arms on its first
-  // press and acts on a second (PDT-623), not one inside a double-click. It disarms after a few seconds.
+  // press and acts on a second (PDT-623), not one inside a double-click. It disarms after a few seconds, and says so for
+  // a few more (PDT-667: the hint is what a screen reader hears).
   const [armed, setArmed] = useState<{ id: string; at: number } | null>(null);
+  const [lapsed, setLapsed] = useState(false);
   useEffect(() => {
     if (!armed) return;
-    const t = setTimeout(() => setArmed(null), 4000);
+    setLapsed(false);
+    const t = setTimeout(() => { setArmed(null); setLapsed(true); }, 4000);
     return () => clearTimeout(t);
   }, [armed]);
+  useEffect(() => {
+    if (!lapsed) return;
+    const t = setTimeout(() => setLapsed(false), 4000);
+    return () => clearTimeout(t);
+  }, [lapsed]);
   // Right after an answer the actions are off: a click meant for the answered item does nothing on this one.
   const held = useAnswersHeld();
   const actions = spec.actions.map((a): ItemAction => {
@@ -681,7 +689,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
   });
   const rec = recommendationOf(item);
   const hint = !armed
-    ? spec.hint
+    ? lapsed ? 'Not confirmed: nothing was sent.' : spec.hint
     : rec && againstRecommendation(item, armed.id)
       ? `Press again to confirm: ${rec.by} recommends ${rec.title}.`
       : waitingCommand

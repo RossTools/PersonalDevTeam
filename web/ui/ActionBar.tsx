@@ -4,7 +4,8 @@ import { cn } from './lib/utils';
 /**
  * A decision fixed under the content it is about: an optional note box, then the buttons (the primary one first,
  * with its key), a `hint` beside them, and `end` (Dismiss, Stop, Won't do) pushed to the right. `below` is for what
- * opens from a button (Take over's outcomes).
+ * opens from a button (Take over's outcomes). The hint is a live region that is always there, so a screen reader says
+ * each new hint ("Press again to confirm").
  */
 export function ActionBar({ note, children, hint, end, below, className, 'aria-label': ariaLabel = 'Actions' }: {
   note?: ReactNode;
@@ -21,7 +22,7 @@ export function ActionBar({ note, children, hint, end, below, className, 'aria-l
         {note}
         <div className="flex flex-wrap items-center gap-2">
           {children}
-          {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
+          <span aria-live="polite" className={cn('text-xs text-muted-foreground', !hint && 'sr-only')}>{hint}</span>
           {end && <span className="ml-auto flex flex-wrap items-center gap-2">{end}</span>}
         </div>
         {below}

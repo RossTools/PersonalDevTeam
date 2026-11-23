@@ -258,6 +258,26 @@ describe('Undo', () => {
     expect(answers(calls)).toEqual([]);
   });
 
+  it('waits while its toast is hovered or focused, and sends once it is left', async () => {
+    holdTiming.undoMs = 200;
+    toast.dismiss();
+    const calls = stubApi({ 'POST /api/inbox/a/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<Inbox items={[item('a')]} />);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    fireEvent.pointerOver(undo);
+    await new Promise((r) => setTimeout(r, 350));
+    expect(answers(calls)).toEqual([]);
+    fireEvent.pointerOver(document.body);
+    act(() => undo.focus());
+    await new Promise((r) => setTimeout(r, 350));
+    expect(answers(calls)).toEqual([]);
+    act(() => undo.blur());
+    await waitFor(() => expect(answers(calls).map((c) => c.body)).toEqual([{ choice: 'ship' }]));
+    // The toast goes with the answer: Undo is never offered once it is too late.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument());
+  });
+
   it('sends the answer once the window passes, saying how it was given', async () => {
     holdTiming.undoMs = 200;
     const calls = stubApi({ 'POST /api/inbox/a/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
@@ -343,5 +363,58 @@ describe('Recently answered', () => {
     renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={() => {}} />);
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
     expect(screen.queryByRole('heading', { name: 'Recently answered' })).not.toBeInTheDocument();
+  });
+});
+
+describe('focus (PDT-667)', () => {
+  it('moves to the next item’s title after an answer, so Tab goes on from there', async () => {
+    holdTiming.undoMs = 60_000;
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<Inbox items={[item('a', { title: 'First' }), item('b', { title: 'Second' })]} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    expect(await screen.findByRole('heading', { name: 'Second' })).toHaveFocus();
+  });
+
+  it('comes back to the item Undo brings back, from the toast or with u', async () => {
+    holdTiming.undoMs = 60_000;
+    toast.dismiss();
+    const calls = stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<Inbox items={[item('a', { title: 'First' }), item('b', { title: 'Second' })]} />);
+    await userEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    expect(await screen.findByRole('heading', { name: 'Second' })).toHaveFocus();
+    const undo = await screen.findByRole('button', { name: 'Undo' });
+    act(() => undo.focus());
+    await userEvent.click(undo);
+    expect(await screen.findByRole('heading', { name: 'First' })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole('button', { name: /^Ship/ }));
+    expect(await screen.findByRole('heading', { name: 'Second' })).toHaveFocus();
+    await userEvent.keyboard('u');
+    expect(await screen.findByRole('heading', { name: 'First' })).toHaveFocus();
+    expect(answers(calls)).toEqual([]);
+  });
+
+  it('stays on what the user works in, like a list row, when the item changes', () => {
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    outside.focus();
+    renderWithQuery(<InboxView items={[item('a')]} selectedId="a" onSelect={() => {}} />);
+    expect(outside).toHaveFocus();
+    outside.remove();
+  });
+
+  it('says when a confirm lapses, in the same live region', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    stubApi({ 'GET /api/inbox': { items: [], total: 0 } });
+    renderWithQuery(<Inbox items={[review]} />);
+    const live = screen.getByRole('group', { name: 'Your choice' }).querySelector('[aria-live=polite]')!;
+    expect(live).toBeEmptyDOMElement();
+    fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
+    expect(live).toHaveTextContent(/Press again to confirm/);
+    act(() => vi.advanceTimersByTime(4100));
+    expect(live).toHaveTextContent('Not confirmed: nothing was sent.');
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument();
+    vi.useRealTimers();
   });
 });
