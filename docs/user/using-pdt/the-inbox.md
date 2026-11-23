@@ -23,7 +23,8 @@ it beside the list, laid out the same for every kind:
   **Stop** or **Won't do** on the right.
 
 Keys: **j** / **k** down and up, **Enter** the main action, **o** open its ticket, **e** dismiss, **1**–**9** pick a
-question's choice, **y** / **n** allow or deny an approval.
+question's choice, **y** / **n** allow or deny an approval, **u** undo your last answer. After an answer, a snooze or
+an undo, the keyboard focus moves to the title of the item now showing, so **Tab** carries on from there.
 
 ## Undo, and answers that ask twice
 
@@ -36,7 +37,8 @@ A few answers ask for a second press, because they act outside PDT or can't be t
 step that posts, closes, changes or starts something outside PDT: a Jira comment, a chat message, a release workflow,
 an HTTP request that isn't a plain read), **Always allow**, and **Allow** on a call that changes something outside PDT as you (a pull request comment, an
 issue, a Jira comment, a chat message). The first press turns the button red and reads
-**Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
+**Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice. A screen
+reader hears "Press again to confirm", and hears when the few seconds pass without the second press.
 
 **Approve** on a command waiting for your approval asks twice too, naming the command, since it then runs in every
 branch of the project. Enter doesn't take it: press the button.
@@ -45,8 +47,9 @@ When a workflow's earlier step recommends one of the choices (a pull request's r
 the item leads with it, as **Reviewer recommends: Close**, and Enter takes it. Any other choice asks for a second
 press, saying what was recommended.
 
-Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up. Undo puts the item back
-as it was, and nothing it would have done happens: no review is posted, no pull request closed, no ticket made. If
+Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up (or press **u**). The five
+seconds stop while the pointer or the keyboard focus is on the notice, and the notice goes once the answer has gone
+out. Undo puts the item back as it was, and nothing it would have done happens: no review is posted, no pull request closed, no ticket made. If
 you close or reload PDT within those seconds, the answer goes out at once. When PDT is updated, the page waits for
 your answers to go out before it reloads.
 
@@ -59,7 +62,7 @@ answered. Answers still waiting out their five seconds are at the top, with **Un
 ## Snooze
 
 Something you can't act on yet (a pull request waiting for another fix to land, say) needn't sit in **Needs you**.
-**Snooze** at the top of any item puts it out of sight:
+**Snooze** at the top of any item puts it out of sight, and a notice says until when:
 
 - **Until tomorrow**: back at 9:00 tomorrow morning;
 - **For 1 week**;
