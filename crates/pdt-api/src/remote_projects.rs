@@ -206,13 +206,14 @@ async fn join(
             e
         }
     };
-    if !pdt_core::link::compatible(st.link.protocol(), reply.owner.protocol) {
+    // What the owner sent is checked as pairing checks this instance's own name and version.
+    let owner = match link::checked_hello(reply.owner.clone()) {
+        Ok(o) => o,
+        Err(e) => return Err(undo(ApiError::upstream(codes::LINK_UNREACHABLE, format!("{owner_url}: {e}"))).await),
+    };
+    if !pdt_core::link::compatible(st.link.protocol(), owner.protocol) {
         let me = link::hello(&st).await?;
-        let them = pdt_core::link::Side {
-            name: &reply.owner.name,
-            protocol: reply.owner.protocol,
-            version: &reply.owner.version,
-        };
+        let them = pdt_core::link::Side { name: &owner.name, protocol: owner.protocol, version: &owner.version };
         let us = pdt_core::link::Side { name: &me.name, protocol: me.protocol, version: &me.version };
         let e = ApiError::conflict(codes::LINK_INCOMPATIBLE, pdt_core::link::incompatible_message(them, us));
         return Err(undo(e).await);
@@ -230,34 +231,46 @@ async fn join(
         );
         return Err(undo(e).await);
     }
-    // Paired again with the same owner's project: the new link replaces the old one.
-    for (p, l) in st.store.list_remote_projects().await? {
-        if l.owner_instance_id == pending.owner_instance_id && l.owner_project_id == pending.owner_project_id {
-            st.store.delete_project(&p.id).await?;
-            link::delete_key(&st, &l.link_id).await;
-        }
+    // Paired again with the same owner's project: the new link replaces the old one (and may keep its key).
+    let replaced: Vec<_> = st
+        .store
+        .list_remote_projects()
+        .await?
+        .into_iter()
+        .filter(|(_, l)| {
+            l.owner_instance_id == pending.owner_instance_id && l.owner_project_id == pending.owner_project_id
+        })
+        .collect();
+    let keys: Vec<String> =
+        st.store.project_keys().await?.into_iter().filter(|k| !replaced.iter().any(|(p, _)| &p.key == k)).collect();
+    let joined = match pdt_core::link::joined_project(&reply.project, &keys) {
+        Ok(j) => j,
+        Err(e) => return Err(undo(ApiError::upstream(codes::LINK_UNREACHABLE, format!("{owner_url}: {e}"))).await),
+    };
+    for (p, l) in replaced {
+        st.store.delete_project(&p.id).await?;
+        link::delete_key(&st, &l.link_id).await;
     }
     if let Err(e) = link::save_key(&st, &reply.link_id, &key).await {
         return Err(undo(e).await);
     }
-    let keys = st.store.project_keys().await?;
-    let project_key = if keys.iter().any(|k| k == &reply.project.key) {
-        pdt_core::project::suggest_key(&reply.project.name, &keys)
-    } else {
-        reply.project.key.clone()
-    };
     let project = Project {
         id: uuid::Uuid::now_v7().to_string(),
-        name: reply.project.name.clone(),
+        name: joined.name,
         // Not a folder: the checkout comes when work is placed here. Unique, as every project's path is.
         repo_path: format!("remote:{}", reply.link_id),
-        base_branch: reply.project.base_branch.clone(),
+        base_branch: joined.base_branch,
         created_at: now_ms(),
-        key: project_key,
+        key: joined.key,
         forge: None,
         kind: ProjectKind::Remote,
     };
-    let link = OwnerLink { project_id: project.id.clone(), ..pending.clone() };
+    let link = OwnerLink {
+        project_id: project.id.clone(),
+        owner_name: owner.name,
+        owner_version: owner.version,
+        ..pending.clone()
+    };
     if let Err(e) = st.store.insert_remote_project(&project, &link).await {
         link::delete_key(&st, &reply.link_id).await;
         return Err(undo(e.into()).await);

@@ -420,7 +420,7 @@ pub(crate) async fn post<T: DeserializeOwned>(
     signed: Option<(&SigningKey, &str, &str)>,
     body: &impl Serialize,
 ) -> Result<T, PeerError> {
-    post_within(st, CALL_TIMEOUT, base_url, path, signed, body).await
+    read_answer(st, CALL_TIMEOUT, MAX_SHORT_ANSWER, base_url, path, signed, body).await
 }
 
 /// [`post`], for a call that may take up to `timeout` (an agent starting, a fetch, a tool call waiting on the user).
@@ -432,9 +432,29 @@ pub(crate) async fn post_within<T: DeserializeOwned>(
     signed: Option<(&SigningKey, &str, &str)>,
     body: &impl Serialize,
 ) -> Result<T, PeerError> {
+    read_answer(st, timeout, MAX_ANSWER, base_url, path, signed, body).await
+}
+
+/// The most of an answer to a [`post`] (a heartbeat, pairing, status) this instance reads.
+const MAX_SHORT_ANSWER: usize = 1024 * 1024;
+/// The most of an answer to a [`post_within`] (a relayed call: a file, a diff, a conversation) this instance reads.
+const MAX_ANSWER: usize = 64 * 1024 * 1024;
+/// The most of an error answer this instance reads.
+const MAX_ERROR_ANSWER: usize = 64 * 1024;
+
+async fn read_answer<T: DeserializeOwned>(
+    st: &AppState,
+    timeout: Duration,
+    cap: usize,
+    base_url: &str,
+    path: &str,
+    signed: Option<(&SigningKey, &str, &str)>,
+    body: &impl Serialize,
+) -> Result<T, PeerError> {
     let res = send(st, timeout, base_url, path, signed, body).await?;
     let status = res.status();
-    let text = res.text().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
+    let bytes = read_capped(res, cap).await?;
+    let text = String::from_utf8_lossy(&bytes);
     let text = if text.trim().is_empty() { "null" } else { &text };
     serde_json::from_str(text).map_err(|e| PeerError::Refused {
         status: status.as_u16(),
@@ -480,7 +500,7 @@ pub(crate) async fn send(
     if status.is_success() {
         return Ok(res);
     }
-    let text = res.text().await.map_err(|e| PeerError::Unreachable(short_error(&e)))?;
+    let text = String::from_utf8_lossy(&read_capped(res, MAX_ERROR_ANSWER).await?).into_owned();
     let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     Err(PeerError::Refused {
         status: status.as_u16(),
@@ -488,6 +508,22 @@ pub(crate) async fn send(
         message: v["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(200).collect()),
         data: v.get("data").cloned(),
     })
+}
+
+/// The answer's body, refused once it passes `cap` bytes (without reading the rest).
+async fn read_capped(mut res: reqwest::Response, cap: usize) -> Result<Vec<u8>, PeerError> {
+    let too_large = || PeerError::Unreachable(format!("its answer is larger than {} KiB", cap / 1024));
+    if res.content_length().is_some_and(|n| n > cap as u64) {
+        return Err(too_large());
+    }
+    let mut out = Vec::new();
+    while let Some(chunk) = res.chunk().await.map_err(|e| PeerError::Unreachable(short_error(&e)))? {
+        if out.len() + chunk.len() > cap {
+            return Err(too_large());
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
 }
 
 fn short_error(e: &reqwest::Error) -> String {
@@ -606,6 +642,9 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     let url = link::instance_url(&req.url).map_err(|e| ApiError::invalid(e.to_string()))?;
     parse_public_key(&req.public_key).ok_or_else(|| ApiError::invalid("the remote instance's key can't be read"))?;
     let name = pdt_core::instance::valid_name(&req.instance.name).map_err(|e| ApiError::invalid(e.to_string()))?;
+    if !link::valid_version(&req.instance.version) {
+        return Err(ApiError::invalid("the remote instance's version can't be read"));
+    }
 
     for old in st.store.list_remote_instances(Some(&project.id)).await? {
         if old.instance_id == req.instance.instance_id {
@@ -749,7 +788,7 @@ async fn heartbeat_route(
 ) -> Result<Json<HeartbeatReply>, ApiError> {
     let link = from_owner(&st, &method, &uri, &headers, &body).await?;
     let sent: HeartbeatBody = crate::host_guard::optional_json(&headers, &body)?;
-    let owner_version = sent.owner.map(|o| o.version);
+    let owner_version = sent.owner.map(|o| o.version).filter(|v| link::valid_version(v));
     st.store.owner_contact(&link.link_id, now_ms(), owner_version.as_deref()).await?;
     let secrets = crate::exec::own_secret_names(&st, &link.project_id).await?;
     Ok(Json(HeartbeatReply {
@@ -993,7 +1032,8 @@ async fn heartbeat_once(
         match post(st, &i.url, HEARTBEAT_PATH, Some((&key, &i.link_id, &project.id)), &body).await {
             Ok(r) => r,
             Err(PeerError::Refused { code, data: Some(data), .. }) if code == codes::LINK_INCOMPATIBLE => {
-                let them: Option<InstanceHello> = serde_json::from_value(data["instance"].clone()).ok();
+                let them: Option<InstanceHello> =
+                    serde_json::from_value(data["instance"].clone()).ok().and_then(|t| checked_hello(t).ok());
                 return Err(match them {
                     Some(t) => {
                         let side = Side { name: &t.name, protocol: t.protocol, version: &t.version };
@@ -1007,12 +1047,24 @@ async fn heartbeat_once(
             }
             Err(e) => return Err((e.text(), None)),
         };
+    let mut reply = reply;
+    reply.instance = checked_hello(reply.instance).map_err(|e| (e, None))?;
     if !link::compatible(me.protocol, reply.instance.protocol) {
         let t = &reply.instance;
         let side = Side { name: &t.name, protocol: t.protocol, version: &t.version };
         return Err((link::incompatible_message(side, us), Some((t.protocol, t.version.clone()))));
     }
     Ok(reply)
+}
+
+/// Another instance's account of itself, checked as pairing checks it: its name (trimmed) and version.
+pub(crate) fn checked_hello(mut t: InstanceHello) -> Result<InstanceHello, String> {
+    t.name =
+        pdt_core::instance::valid_name(&t.name).map_err(|_| "it sent a name this instance can't use".to_string())?;
+    if !link::valid_version(&t.version) {
+        return Err("it sent a version this instance can't read".into());
+    }
+    Ok(t)
 }
 
 /// The owner's heartbeats to every joined instance, side by side (the `project links` loop, and tests).
