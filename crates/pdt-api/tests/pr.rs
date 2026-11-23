@@ -811,6 +811,21 @@ async fn comments(env: &Env) -> Vec<String> {
     items.iter().filter(|e| e["kind"] == "comment").map(|e| e["body"].as_str().unwrap_or("").to_string()).collect()
 }
 
+/// A merge the forge failed is GitHub's failure (502), not a conflict in PDT's state (PDT-656).
+#[tokio::test]
+async fn a_merge_the_forge_fails_is_a_bad_gateway() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let attempt = ticket(&env).await["attempt"]["id"].as_str().unwrap().to_string();
+    env.gh.set_pr(BRANCH, Some(pr()));
+    env.gh.set_runs(BRANCH, vec![run(7, CiState::Passed)]);
+    pdt_api::refresh_prs(&env.state).await;
+    *env.gh.merge_error.lock().unwrap() = Some("the request timed out".into());
+    let (s, v) = call(&env.app, "POST", &format!("/api/attempts/{attempt}/merge"), Some(json!({"by": "user"}))).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_GATEWAY, Some("merge_failed")), "{v}");
+    assert_eq!(v["message"], "the request timed out");
+}
+
 /// PDT-104: a pull request set to merge that fails gets an agent on it and merges again, with a Reviewer first when
 /// the agent calls the fix large, up to the try limit.
 #[tokio::test]

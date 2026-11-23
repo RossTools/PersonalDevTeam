@@ -667,6 +667,16 @@ async fn record_merge(st: &AppState, info: &AttemptInfo, input: &MergeRequest) -
     Ok(())
 }
 
+/// A forge's merge that failed, by kind (PDT-656): a forge PDT can't reach is 503, one that failed or refused the
+/// merge 502, as the other forge routes say; not a conflict in PDT's state.
+fn merge_error(e: ForgeError) -> ApiError {
+    match e {
+        ForgeError::Unavailable(m) => ApiError::unavailable(codes::FORGE_UNAVAILABLE, m),
+        ForgeError::Failed(m) | ForgeError::NotReady(m) => ApiError::upstream(codes::MERGE_FAILED, m),
+        ForgeError::Unsupported(m) => ApiError::bad_request(codes::UNSUPPORTED, m),
+    }
+}
+
 /// The Merge command (the route, and the `attempt.merge` node as an automated merger): the project's policy, then
 /// what would stop the merge, then the merge. A refusal is `Ok(Err(_))`. A refusal never records the request to merge
 /// (PDT-124): set to merge, PR notices would turn auto-merge on once CI passes, also for a fix nobody reviewed. (The
@@ -787,7 +797,7 @@ pub(crate) async fn merge_attempt(
             Ok(()) => {}
             // The forge can't hold it for checks it doesn't require (PDT-297): PDT does.
             Err(ForgeError::NotReady(why)) => return Ok(Ok(hold_merge(&st, &info, input, &name, &why).await?)),
-            Err(e) => return Err(ApiError::conflict(codes::MERGE_FAILED, e.to_string())),
+            Err(e) => return Err(merge_error(e)),
         }
         record_merge(&st, &info, input).await?;
         if no_ci {

@@ -23,7 +23,8 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
 - **pdtd** (`crates/pdtd`) is the daemon and does all the work: one axum server (routes in pdt-api) on
   `127.0.0.1:<port>`, a SQLite database, the agents' terminals and conversations, and the background loops (the
   PR/merge poll every 60 s, the workflow engine every 2 s, overlaps every 30 s, the pickup watch every 10 s,
-  notifications, update checks, remote access). A loop that panics ends only that pass. It also serves the built web UI, from
+  notifications, update checks, remote access, the local CI watch). A loop that panics ends only that pass (an
+  event-driven one, `loops::run_on`, only that message's handling), and each is listed in `/api/health`. It also serves the built web UI, from
   `PDT_WEB_DIR`, a `web/` folder beside the executable, or the macOS bundle's resources.
 - **pdt-host** (`crates/pdt-host`) supervises pdtd: starts it (passing the port from Settings), restarts it, adopts a
   pdtd that is already running, and installs updates: pdtd downloads and verifies a release, pdt-host copies the

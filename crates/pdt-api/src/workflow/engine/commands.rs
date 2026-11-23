@@ -1,6 +1,7 @@
 //! The engine's commands used by the API: Run now, sub-workflows, retry, resume, cancel, delete and gate answers.
 
 use super::{CUT_SHORT, R, complete_step, end_step_extras, err, finish_run, lock_run, new_step, start_run};
+use crate::error::{ApiError, DB_UNREADABLE};
 use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use crate::workflow::catalog::{StepCx, parse};
@@ -9,14 +10,81 @@ use pdt_core::workflow::api::{Run, RunStatus, Step, StepStatus, Workflow};
 use pdt_core::workflow::refs::resolve;
 use serde_json::{Value, json};
 
+/// Why a command (Run now, retry, resume, cancel, a gate's answer) didn't do it, by kind, so the routes answer each
+/// with its own status where a message alone would make them all 409.
+#[derive(Debug)]
+pub(crate) enum CmdError {
+    /// The run or step it names doesn't exist: 404.
+    NotFound(&'static str),
+    /// Not in this state, or not with this input: 409, with the route's code.
+    Conflict(String),
+    /// PDT failed (a write it couldn't make, its database unreadable): the error as the API gives it.
+    Failed(ApiError),
+}
+
+impl CmdError {
+    /// The API's error, `code` for a conflict (`cannot_retry`).
+    pub(crate) fn into_api(self, code: &'static str) -> ApiError {
+        match self {
+            Self::NotFound(what) => ApiError::not_found(what),
+            Self::Conflict(m) => ApiError::conflict(code, m),
+            Self::Failed(e) => e,
+        }
+    }
+}
+
+impl std::fmt::Display for CmdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(what) => write!(f, "no such {what}"),
+            Self::Conflict(m) => f.write_str(m),
+            Self::Failed(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl From<pdt_store::StoreError> for CmdError {
+    fn from(e: pdt_store::StoreError) -> Self {
+        Self::Failed(e.into())
+    }
+}
+
+/// The engine's own steps' text ([`R`]): a store error in it is known by what [`err`] made it say.
+impl From<String> for CmdError {
+    fn from(m: String) -> Self {
+        if pdt_store::is_write_failure(&m) {
+            Self::Failed(ApiError::write_failed(m))
+        } else if m == DB_UNREADABLE {
+            Self::Failed(ApiError::internal_as(DB_UNREADABLE, &m))
+        } else {
+            Self::Conflict(m)
+        }
+    }
+}
+
+impl From<&str> for CmdError {
+    fn from(m: &str) -> Self {
+        Self::Conflict(m.into())
+    }
+}
+
+/// For the engine's callers that speak text (an Inbox answer, an MCP tool).
+impl From<CmdError> for String {
+    fn from(e: CmdError) -> Self {
+        e.to_string()
+    }
+}
+
+type C<T> = Result<T, CmdError>;
+
 /// "Run now": a run of the workflow's `manual` trigger with `input`.
 pub(crate) async fn start_manual(
     st: &AppState,
     wf: &Workflow,
     input: Value,
     run_key: Option<String>,
-) -> R<Option<String>> {
-    let doc = st.store.workflow_doc(&wf.id, wf.version).await.map_err(err)?.ok_or("the workflow has no document")?;
+) -> C<Option<String>> {
+    let doc = st.store.workflow_doc(&wf.id, wf.version).await?.ok_or("the workflow has no document")?;
     let node = doc.nodes.iter().find(|n| n.kind == MANUAL).ok_or("the workflow has no Run now trigger")?;
     let manual = manual_config(st, node)?;
     let trigger = manual.input(&input).map_err(|e| format!("{} can't run with that input: {e}", wf.name))?;
@@ -24,10 +92,10 @@ pub(crate) async fn start_manual(
         && trigger.get("projectId").and_then(Value::as_str).is_none_or(str::is_empty)
         && crate::workflow::catalog::doc_needs_project(st.registry().catalog(), &doc)
     {
-        return Err(format!(
+        return Err(CmdError::Conflict(format!(
             "{} needs a project to run in (its steps work on the run's project): give projectId",
             wf.name
-        ));
+        )));
     }
     let configured = manual.run_key;
     let key = run_key
@@ -36,7 +104,7 @@ pub(crate) async fn start_manual(
         })
         .unwrap_or_else(|| format!("manual:{}", uuid::Uuid::now_v7()));
     let _engine = st.engine_lock.lock().await;
-    start_run(st, wf, &doc, &node.id, trigger, None, key, None).await
+    Ok(start_run(st, wf, &doc, &node.id, trigger, None, key, None).await?)
 }
 
 /// A Run now trigger's config at its kind's current version.
@@ -63,13 +131,13 @@ pub(crate) async fn start_child(cx: &StepCx<'_>, workflow_id: &str, input: Value
 }
 
 /// Retries a failed run from its failed step.
-pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
+pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> C<()> {
     let _locked = lock_run(st, Some(run_id)).await;
-    let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
+    let mut run = st.store.get_workflow_run(run_id).await?.ok_or(CmdError::NotFound("run"))?;
     if run.status != RunStatus::Failed {
         return Err("only a failed run can be retried".into());
     }
-    let steps = st.store.list_steps(run_id).await.map_err(err)?;
+    let steps = st.store.list_steps(run_id).await?;
     let mut failed =
         steps.into_iter().rev().find(|s| s.status == StepStatus::Failed).ok_or("the run has no failed step")?;
     failed.status = StepStatus::Pending;
@@ -80,13 +148,13 @@ pub(crate) async fn retry_run(st: &AppState, run_id: &str) -> R<()> {
     if let Value::Object(w) = &mut failed.wait {
         w.remove(CUT_SHORT);
     }
-    st.store.put_step(&failed).await.map_err(err)?;
+    st.store.put_step(&failed).await?;
     run.status = RunStatus::Running;
     run.error = None;
     run.ended_at = None;
     // Its runtime limit counts from now, as its waits' timeouts do.
     run.resumed_at = Some(now_ms());
-    st.store.update_workflow_run(&run).await.map_err(err)
+    Ok(st.store.update_workflow_run(&run).await?)
 }
 
 /// Takes a run back to `step`, the agent step it timed out or stopped at (PDT-123), so it can go on from there: what
@@ -139,14 +207,14 @@ pub(crate) async fn next_seq(st: &AppState, run_id: &str) -> R<i64> {
 /// Resumes a run from the agent step it timed out or stopped at (PDT-123): the node runs again in the same run, so
 /// with the same trigger, ticket and attempt, and in that step's session while it is there. `note` (the user's) goes
 /// to the session first.
-pub(crate) async fn resume_run(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
+pub(crate) async fn resume_run(st: &AppState, run_id: &str, note: Option<String>) -> C<()> {
     let _locked = lock_run(st, Some(run_id)).await;
     resume_locked(st, run_id, note).await
 }
 
 /// `resume_run` for a caller that holds the run's and the engine's locks.
-pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<String>) -> R<()> {
-    let steps = st.store.list_steps(run_id).await.map_err(err)?;
+pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<String>) -> C<()> {
+    let steps = st.store.list_steps(run_id).await?;
     let step = pdt_core::workflow::agent::resumable_step(&steps)
         .cloned()
         .ok_or("the run has no agent step that timed out or stopped to resume from")?;
@@ -155,28 +223,28 @@ pub(crate) async fn resume_locked(st: &AppState, run_id: &str, note: Option<Stri
     let note = note.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
     // A resumed step doesn't count against the node's loop limit: the user asked for it.
     next.wait = json!({"loopAllowed": true, "resumeOf": step.id, "note": note});
-    st.store.put_step(&next).await.map_err(err)
+    Ok(st.store.put_step(&next).await?)
 }
 
 /// Cancels a run. It takes only the engine lock, so it never waits for a step that is running (a hung request): that
 /// step's result is dropped when it comes.
-pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> R<()> {
+pub(crate) async fn cancel_run(st: &AppState, run_id: &str) -> C<()> {
     let _engine = st.engine_lock.lock().await;
     cancel_locked(st, run_id).await
 }
 
 /// `cancel_run` for a caller that holds the engine lock.
-pub(crate) async fn cancel_locked(st: &AppState, run_id: &str) -> R<()> {
+pub(crate) async fn cancel_locked(st: &AppState, run_id: &str) -> C<()> {
     cancel_because(st, run_id, "cancelled").await
 }
 
 /// `cancel_locked` with why (the run's error).
-pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> R<()> {
-    let mut run = st.store.get_workflow_run(run_id).await.map_err(err)?.ok_or("no such run")?;
+pub(crate) async fn cancel_because(st: &AppState, run_id: &str, why: &str) -> C<()> {
+    let mut run = st.store.get_workflow_run(run_id).await?.ok_or(CmdError::NotFound("run"))?;
     if run.status.is_finished() {
         return Err("the run has ended".into());
     }
-    finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await
+    Ok(finish_run(st, &mut run, RunStatus::Cancelled, Value::Null, Some(why.into())).await?)
 }
 
 /// Deletes a workflow (PDT-131): its runs still going are cancelled first (a run of another workflow waiting on one,
@@ -204,9 +272,9 @@ pub(crate) async fn delete_workflow(st: &AppState, id: &str) -> R<bool> {
 /// Answers a waiting gate with `choice`. The user's `text` with it (why they rejected, what to change) goes on the
 /// run's ticket as their comment, so the timeline keeps it and the agent working on the ticket hears it ("Ticket
 /// comments to the agent"); the gate's output carries it too.
-pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &str, text: Option<&str>) -> R<()> {
+pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &str, text: Option<&str>) -> C<()> {
     let _locked = lock_run(st, Some(run_id)).await;
-    let step = st.store.get_step(step_id).await.map_err(err)?.filter(|s| s.run_id == run_id).ok_or("no such step")?;
+    let step = st.store.get_step(step_id).await?.filter(|s| s.run_id == run_id).ok_or(CmdError::NotFound("step"))?;
     let choices: Vec<String> = step
         .wait
         .pointer("/answer/choices")
@@ -214,19 +282,19 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
         .filter(|_| step.status == StepStatus::Waiting)
         .ok_or("the step is not waiting for an answer")?;
     if !choices.iter().any(|c| c == choice) {
-        return Err(format!("{choice} is not one of {}", choices.join(", ")));
+        return Err(CmdError::Conflict(format!("{choice} is not one of {}", choices.join(", "))));
     }
     // A choice that approves records the user's approval of the run's attempt.
     if step.wait.pointer("/answer/approve").and_then(Value::as_str) == Some(choice)
-        && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
+        && let Some(run) = st.store.get_workflow_run(run_id).await?
         && let Some(attempt) = run.attempt_id.as_deref()
-        && let Some(info) = st.store.get_attempt(attempt).await.map_err(err)?
+        && let Some(info) = st.store.get_attempt(attempt).await?
     {
         let extra = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id});
-        crate::review::record_approval(st, &info, extra).await.map_err(|e| e.message().to_string())?;
+        crate::review::record_approval(st, &info, extra).await.map_err(CmdError::Failed)?;
     }
     // Its Inbox item is answered, wherever the answer came from.
-    for item in st.store.open_items_for_step(step_id).await.map_err(err)? {
+    for item in st.store.open_items_for_step(step_id).await? {
         st.store
             .end_inbox_item(&item.id, pdt_core::inbox::InboxStatus::Resolved, &json!({"choice": choice}), now_ms())
             .await
@@ -236,16 +304,38 @@ pub(crate) async fn answer(st: &AppState, run_id: &str, step_id: &str, choice: &
     // The gate's own ticket when the run has none (PDT-269).
     let gate_ticket = step.wait.pointer("/answer/ticket").and_then(Value::as_str).map(String::from);
     if let Some(note) = text
-        && let Some(run) = st.store.get_workflow_run(run_id).await.map_err(err)?
+        && let Some(run) = st.store.get_workflow_run(run_id).await?
         && let Some(ticket) = run.ticket_id.as_deref().or(gate_ticket.as_deref())
     {
-        let body = pdt_core::ticket::valid_comment(note).map_err(crate::workflow::err)?;
+        let body = pdt_core::ticket::valid_comment(note).map_err(|e| CmdError::Failed(e.into()))?;
         let data = json!({"workflowId": run.workflow_id, "workflowName": run.workflow_name, "runId": run.id,
                           "choice": choice});
-        st.store
-            .add_comment_by(ticket, &body, pdt_core::ticket::Actor::User, Some(data), now_ms())
-            .await
-            .map_err(err)?;
+        st.store.add_comment_by(ticket, &body, pdt_core::ticket::Actor::User, Some(data), now_ms()).await?;
     }
-    complete_step(st, &step, choice, json!({"choice": choice, "answeredBy": "user", "text": text})).await
+    Ok(complete_step(st, &step, choice, json!({"choice": choice, "answeredBy": "user", "text": text})).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::codes;
+    use axum::http::StatusCode;
+
+    fn api(e: impl Into<CmdError>) -> (StatusCode, &'static str) {
+        let e = e.into().into_api(codes::CANNOT_RETRY);
+        (e.status(), e.code())
+    }
+
+    #[test]
+    fn command_errors_keep_their_kind() {
+        assert_eq!(api(CmdError::NotFound("run")), (StatusCode::NOT_FOUND, codes::NOT_FOUND));
+        assert_eq!(api("only a failed run can be retried"), (StatusCode::CONFLICT, codes::CANNOT_RETRY));
+        // A store error, directly or as the engine's steps say it.
+        let write = || pdt_store::StoreError::Write(sqlx::Error::Protocol("database or disk is full".into()));
+        assert_eq!(api(write()), (StatusCode::SERVICE_UNAVAILABLE, codes::WRITE_FAILED));
+        assert_eq!(api(err(write())), (StatusCode::SERVICE_UNAVAILABLE, codes::WRITE_FAILED));
+        assert_eq!(api(DB_UNREADABLE.to_string()), (StatusCode::INTERNAL_SERVER_ERROR, codes::INTERNAL));
+        let unreadable = pdt_store::StoreError::Corrupt("a row".into());
+        assert_eq!(api(err(unreadable)), (StatusCode::INTERNAL_SERVER_ERROR, codes::INTERNAL));
+    }
 }

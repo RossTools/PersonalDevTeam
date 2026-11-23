@@ -1010,20 +1010,22 @@ impl CiProvider for LocalCi {
 }
 
 /// Reads again at once the attempt whose local CI run just ended (its CI news, and a merge waiting for it), then
-/// checks it for the merge. pdtd runs it for its lifetime.
+/// checks it for the merge. pdtd runs it for its lifetime, as the `local CI` loop: each ended run is handled in its
+/// own task, so a panic ends only that one (PDT-657).
 pub async fn run_local_ci_watch(st: AppState) {
-    let Some(mut ended) = st.local_ci.ended_rx.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
-    while let Some((project, branch)) = ended.recv().await {
-        if st.shutting_down.load(std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
+    let Some(ended) = st.local_ci.ended_rx.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    crate::loops::run_on(st, "local CI", LOCAL_CI_HEARTBEAT, ended, |st, (project, branch)| async move {
         let attempts = st.store.list_active_attempts().await.unwrap_or_default();
         if let Some(info) = attempts.into_iter().find(|a| a.project_id == project && a.attempt.branch == branch) {
             crate::github::refresh_attempt(&st, &info).await;
             crate::start::end_if_merged(&st, &info).await;
         }
-    }
+    })
+    .await;
 }
+
+/// How often the local CI watch records a pass while no run ends.
+const LOCAL_CI_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// `GET /api/local-ci/runs/{id}/log`: a local CI run's output so far, as text.
 pub(crate) async fn run_log(
