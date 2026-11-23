@@ -1,13 +1,20 @@
 use crate::{Store, StoreError};
 use pdt_core::worktree::Worktree;
 
-type WorktreeRow = (String, String, String, String, String, i64);
+type WorktreeRow = (String, String, String, String, String, i64, Option<String>, Option<String>);
 
-fn to_worktree((id, project_id, branch, path, base_commit, created_at): WorktreeRow) -> Worktree {
-    Worktree { id, project_id, branch, path, base_commit, created_at, missing: false }
+fn to_worktree(
+    (id, project_id, branch, path, base_commit, created_at, instance_id, instance_name): WorktreeRow,
+) -> Worktree {
+    let instance = instance_id
+        .map(|id| pdt_core::placement::InstanceRef { name: instance_name.unwrap_or_else(|| id.clone()), id });
+    Worktree { id, project_id, branch, path, base_commit, created_at, missing: false, instance }
 }
 
-const COLUMNS: &str = "id, project_id, branch, path, base_commit, created_at";
+/// For `FROM worktrees` (unaliased), with the name of the instance a remote worktree is on.
+const COLUMNS: &str = "id, project_id, branch, path, base_commit, created_at, instance_id, \
+                       (SELECT ri.name FROM remote_instances ri WHERE ri.project_id = worktrees.project_id \
+                       AND ri.instance_id = worktrees.instance_id) AS instance_name";
 
 /// A worktree's ticket: the one of the attempt working in it (its active one, else the newest).
 #[derive(Debug, Clone, PartialEq)]
@@ -29,7 +36,8 @@ type TicketRow = (String, String, String, i64, String, String, Option<i64>, Stri
 impl Store {
     pub async fn insert_worktree(&self, w: &Worktree) -> Result<(), StoreError> {
         sqlx::query(
-            "INSERT INTO worktrees (id, project_id, branch, path, base_commit, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO worktrees (id, project_id, branch, path, base_commit, created_at, instance_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&w.id)
         .bind(&w.project_id)
@@ -37,6 +45,7 @@ impl Store {
         .bind(&w.path)
         .bind(&w.base_commit)
         .bind(w.created_at)
+        .bind(w.instance.as_ref().map(|i| i.id.clone()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -124,6 +133,7 @@ pub(crate) mod tests {
             base_commit: "abc".into(),
             created_at: 2,
             missing: false,
+            instance: None,
         }
     }
 

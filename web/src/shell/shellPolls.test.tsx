@@ -16,7 +16,7 @@ const session = (id: string, more: Partial<Session> = {}): Session => ({
   id, projectId: 'host', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: 'PM',
   cwd: '/data/pm', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'working', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation',
-  model: null, permissionMode: 'ask', persona: { id: 'pm', name: 'PM', version: 1, stepId: null }, background: [],
+  model: null, permissionMode: 'ask', persona: { id: 'pm', name: 'PM', version: 1, stepId: null }, background: [], instance: null,
   ...more,
 });
 

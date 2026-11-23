@@ -50,4 +50,8 @@ noSession?: boolean,
  * On a parent: start its next part (the first open part, by rank, that is not started or merged and has no
  * open blockers) instead of refusing with `ticket_has_parts`.
  */
-next?: boolean, cols?: number, rows?: number, };
+next?: boolean, 
+/**
+ * Runs on: a joined instance's id or name, or `owner`; None: the project's placement rules decide.
+ */
+runsOn?: string, cols?: number, rows?: number, };

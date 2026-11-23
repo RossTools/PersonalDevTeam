@@ -35,8 +35,8 @@ const CHECKPOINT_EVERY_MS: i64 = 10 * 60 * 1000;
 static LAST_CHECKPOINT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
 /// Housekeeping pdtd runs every minute: reads `.pdt/workflows/` in each project's repo, stops idle MCP servers and
-/// lists stale ones' tools again, prunes old events, finished runs, told messages, ended Inbox items and old
-/// conversation frames, and every ten minutes empties the database's WAL.
+/// lists stale ones' tools again, prunes old events, finished runs, told messages, ended Inbox items and watches,
+/// and old conversation frames, and every ten minutes empties the database's WAL.
 pub async fn maintain_workflows(st: &AppState) {
     repo::sync_all(st).await;
     crate::mcp_client::maintain(st).await;
@@ -59,6 +59,9 @@ pub async fn maintain_workflows(st: &AppState) {
     }
     if let Err(e) = st.store.prune_inbox_items(now - pdt_store::EVENT_RETENTION_MS).await {
         tracing::warn!(error = %e, "could not prune old Inbox items");
+    }
+    if let Err(e) = st.store.prune_watches(now - pdt_store::EVENT_RETENTION_MS).await {
+        tracing::warn!(error = %e, "could not prune ended watches");
     }
     if let Err(e) = st.store.prune_session_event_raw(now - pdt_store::RAW_RETENTION_MS).await {
         tracing::warn!(error = %e, "could not prune old conversation frames");

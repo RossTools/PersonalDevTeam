@@ -21,6 +21,7 @@ import { applyDrop } from './WorkspaceBar';
 import { RowField } from '../common/RowField';
 import { worktreesQuery } from '../common/worktrees';
 import { useSameList } from '../common/useSameList';
+import { InstanceChip } from '../common/InstanceChip';
 
 const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -277,6 +278,12 @@ export function AgentsSection({ ws, onRenameTab, onChoose, touch = false }: {
                     <span className="flex min-w-0 items-center gap-1.5">
                       <SessionTicketChip session={info.session} className="flex shrink-0" />
                       <span className="truncate">{info.title}</span>
+                      <InstanceChip instance={info.session.instance} />
+                    </span>
+                  ) : info.session?.instance ? (
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate">{info.title}</span>
+                      <InstanceChip instance={info.session.instance} />
                     </span>
                   ) : info.title
                 }

@@ -295,6 +295,10 @@ pub struct StartTicket {
     #[serde(default)]
     #[ts(optional)]
     pub next: Option<bool>,
+    /// Runs on: a joined instance's id or name, or `owner`; None: the project's placement rules decide.
+    #[serde(default)]
+    #[ts(optional)]
+    pub runs_on: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub cols: Option<u16>,
@@ -322,6 +326,8 @@ pub struct ValidStart {
     /// On a parent: start its next part.
     pub next: bool,
     pub size: TerminalSize,
+    /// Runs on (the Start dialog's override).
+    pub runs_on: Option<String>,
     /// The caller checked the running cap and the overlap rule itself, under its own lock (`ticket.start`, with the
     /// caps and overlap rule a workflow chose under, PDT-327, PDT-381): Start doesn't refuse for the project's cap, and
     /// refuses only for conflicts ([`refusing_overlaps`]). Never set from a request.
@@ -380,6 +386,7 @@ impl StartTicket {
             no_session,
             next: self.next.unwrap_or(false),
             size: TerminalSize { cols, rows },
+            runs_on: nonblank(&self.runs_on),
             pickup_checked: false,
         })
     }
@@ -609,9 +616,12 @@ mod tests {
                 no_session: false,
                 next: false,
                 size: DEFAULT_SIZE,
+                runs_on: None,
                 pickup_checked: false,
             }
         );
+        let on = start(serde_json::json!({"agent": "claude", "runsOn": " win-box "})).unwrap();
+        assert_eq!(on.runs_on.as_deref(), Some("win-box"));
         assert!(start(serde_json::json!({"agent": "claude", "next": true})).unwrap().next);
         // A permission mode wins over bypassPermissions, which follows it.
         let m =

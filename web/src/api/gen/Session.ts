@@ -2,6 +2,7 @@
 import type { Activity } from "./Activity";
 import type { AgentKind } from "./AgentKind";
 import type { BackgroundTask } from "./BackgroundTask";
+import type { InstanceRef } from "./InstanceRef";
 import type { PermissionMode } from "./PermissionMode";
 import type { SessionKind } from "./SessionKind";
 import type { SessionMode } from "./SessionMode";
@@ -79,4 +80,8 @@ persona: SessionPersona | null,
  * Conversations: the background tasks still running, as the agent last reported them (PDT-332). With the agent
  * idle, its turn has ended while they run: the sidebar shows it as Background, not Done. Empty when none run.
  */
-background: Array<BackgroundTask>, };
+background: Array<BackgroundTask>, 
+/**
+ * The remote instance it runs on (a remote attempt's, on the project's owner); None: this instance.
+ */
+instance: InstanceRef | null, };

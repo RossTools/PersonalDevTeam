@@ -1,12 +1,14 @@
 //! Watches (PDT-319): who hears about a ticket, a workflow run or a document, and how far each has looked.
 
 use crate::{Store, StoreError};
+use pdt_core::document::DocumentContent;
 use pdt_core::watch::{Watch, WatchEvent, WatchNote, WatchTarget};
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
-const COLUMNS: &str = "id, target, target_id, session_id, events, once, cursor, inbox_since, run_status, pending, snapshot, created_at, \
-     ended_at";
+/// Every column but `snapshot` (up to 2 MB of JSON, read only when a change is told: [`Store::watch_snapshot`]).
+const COLUMNS: &str = "id, target, target_id, session_id, events, once, cursor, inbox_since, run_status, pending, \
+     snapshot IS NOT NULL AS has_snapshot, created_at, ended_at";
 
 fn to_watch(r: &SqliteRow) -> Result<Watch, StoreError> {
     let target: String = r.try_get("target")?;
@@ -24,7 +26,7 @@ fn to_watch(r: &SqliteRow) -> Result<Watch, StoreError> {
         inbox_since: r.try_get("inbox_since")?,
         run_status: r.try_get("run_status")?,
         pending: serde_json::from_str::<Vec<WatchNote>>(&pending).unwrap_or_default(),
-        snapshot: r.try_get::<Option<String>, _>("snapshot")?.and_then(|s| serde_json::from_str(&s).ok()),
+        has_snapshot: r.try_get::<i64, _>("has_snapshot")? != 0,
         created_at: r.try_get("created_at")?,
         ended_at: r.try_get("ended_at")?,
     })
@@ -35,8 +37,9 @@ fn to_json<T: serde::Serialize>(v: &T) -> String {
 }
 
 impl Store {
-    /// Adds a watch, or, when the watcher already watches the target, sets that one's events and `once`: the watch.
-    pub async fn put_watch(&self, w: &Watch) -> Result<Watch, StoreError> {
+    /// Adds a watch (with a document's `snapshot`), or, when the watcher already watches the target, sets that one's
+    /// events and `once`: the watch.
+    pub async fn put_watch(&self, w: &Watch, snapshot: Option<&DocumentContent>) -> Result<Watch, StoreError> {
         let mut tx = self.write_tx().await?;
         let sql = format!(
             "SELECT {COLUMNS} FROM watches WHERE target = ? AND target_id = ? AND COALESCE(session_id, '') = ? \
@@ -74,7 +77,7 @@ impl Store {
                 .bind(w.inbox_since)
                 .bind(&w.run_status)
                 .bind(to_json(&w.pending))
-                .bind(w.snapshot.as_ref().map(to_json))
+                .bind(snapshot.map(to_json))
                 .bind(w.created_at)
                 .execute(&mut *tx)
                 .await?;
@@ -119,32 +122,51 @@ impl Store {
         rows.iter().map(to_watch).collect()
     }
 
-    /// Records how far a watch has looked and what it has to tell (and a document's snapshot), in one write (so a
-    /// restart neither repeats nor misses an event). False when it ended meanwhile.
-    pub async fn set_watch_progress(&self, w: &Watch) -> Result<bool, StoreError> {
+    /// A document watch's snapshot; None for another watch, or one without.
+    pub async fn watch_snapshot(&self, id: &str) -> Result<Option<DocumentContent>, StoreError> {
+        let s: Option<Option<String>> =
+            sqlx::query_scalar("SELECT snapshot FROM watches WHERE id = ?").bind(id).fetch_optional(&self.pool).await?;
+        Ok(s.flatten().and_then(|s| serde_json::from_str(&s).ok()))
+    }
+
+    /// Records how far a watch has looked and what it has to tell (and a document's new snapshot, when given; the
+    /// one it has stays otherwise), in one write (so a restart neither repeats nor misses an event). False when it
+    /// ended meanwhile.
+    pub async fn set_watch_progress(&self, w: &Watch, snapshot: Option<&DocumentContent>) -> Result<bool, StoreError> {
         let r = sqlx::query(
-            "UPDATE watches SET cursor = ?, inbox_since = ?, run_status = ?, pending = ?, snapshot = ? \
-             WHERE id = ? AND ended_at IS NULL",
+            "UPDATE watches SET cursor = ?, inbox_since = ?, run_status = ?, pending = ?, \
+             snapshot = COALESCE(?, snapshot) WHERE id = ? AND ended_at IS NULL",
         )
         .bind(w.cursor)
         .bind(w.inbox_since)
         .bind(&w.run_status)
         .bind(to_json(&w.pending))
-        .bind(w.snapshot.as_ref().map(to_json))
+        .bind(snapshot.map(to_json))
         .bind(&w.id)
         .execute(&self.pool)
         .await?;
         Ok(r.rows_affected() > 0)
     }
 
-    /// Ends a watch; false when it had ended.
+    /// Ends a watch (dropping what it had left to tell and its snapshot); false when it had ended.
     pub async fn end_watch(&self, id: &str, now: i64) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE watches SET ended_at = ?, pending = '[]' WHERE id = ? AND ended_at IS NULL")
-            .bind(now)
-            .bind(id)
+        let r = sqlx::query(
+            "UPDATE watches SET ended_at = ?, pending = '[]', snapshot = NULL WHERE id = ? AND ended_at IS NULL",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
+    /// Deletes the watches that ended before `before`: how many.
+    pub async fn prune_watches(&self, before: i64) -> Result<u64, StoreError> {
+        let r = sqlx::query("DELETE FROM watches WHERE ended_at IS NOT NULL AND ended_at < ?")
+            .bind(before)
             .execute(&self.pool)
             .await?;
-        Ok(r.rows_affected() > 0)
+        Ok(r.rows_affected())
     }
 
     /// Moves a conversation's watches to the one that took its place (a PM Reset): those of targets the new one
@@ -152,7 +174,7 @@ impl Store {
     pub async fn move_watches(&self, from: &str, to: &str, now: i64) -> Result<u64, StoreError> {
         let mut tx = self.write_tx().await?;
         sqlx::query(
-            "UPDATE watches SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL AND EXISTS \
+            "UPDATE watches SET ended_at = ?, snapshot = NULL WHERE session_id = ? AND ended_at IS NULL AND EXISTS \
              (SELECT 1 FROM watches w WHERE w.session_id = ? AND w.ended_at IS NULL AND w.target = watches.target \
               AND w.target_id = watches.target_id)",
         )
@@ -188,7 +210,7 @@ mod tests {
             inbox_since: 10,
             run_status: None,
             pending: vec![],
-            snapshot: None,
+            has_snapshot: false,
             created_at: 1,
             ended_at: None,
         }
@@ -198,43 +220,67 @@ mod tests {
     async fn one_watch_per_watcher_and_target() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
-        let a = store.put_watch(&watch("a", "t", Some("pm"))).await.unwrap();
+        let a = store.put_watch(&watch("a", "t", Some("pm")), None).await.unwrap();
         assert_eq!((a.cursor, a.once), (3, true));
         let mut again = watch("b", "t", Some("pm"));
         again.events = vec![WatchEvent::Comment];
         again.once = false;
-        let b = store.put_watch(&again).await.unwrap();
+        let b = store.put_watch(&again, None).await.unwrap();
         assert_eq!(b.id, "a", "the same watch, with the new settings");
         assert_eq!((b.events.clone(), b.once), (vec![WatchEvent::Comment], false));
-        store.put_watch(&watch("u", "t", None)).await.unwrap();
+        store.put_watch(&watch("u", "t", None), None).await.unwrap();
         assert_eq!(store.watches_of(WatchTarget::Ticket, "t").await.unwrap().len(), 2, "the user's apart");
         assert_eq!(store.watches_by(None).await.unwrap()[0].id, "u");
 
         let mut p = b.clone();
         p.cursor = 9;
         p.pending = vec![WatchNote { event: WatchEvent::Comment, at: 5, line: "x".into(), ends: false, outside: None }];
-        p.snapshot = Some(pdt_core::document::DocumentContent::Doc { markdown: "# A".into(), version: None });
-        assert!(store.set_watch_progress(&p).await.unwrap());
+        let doc = DocumentContent::Doc { markdown: "# A".into(), version: None };
+        assert!(store.set_watch_progress(&p, Some(&doc)).await.unwrap());
         let got = store.get_watch("a").await.unwrap().unwrap();
-        assert_eq!((got.pending, got.snapshot), (p.pending.clone(), p.snapshot.clone()));
+        assert_eq!((got.pending, got.has_snapshot), (p.pending.clone(), true));
+        assert_eq!(store.watch_snapshot("a").await.unwrap(), Some(doc.clone()));
+        p.cursor = 10;
+        assert!(store.set_watch_progress(&p, None).await.unwrap());
+        assert_eq!(store.watch_snapshot("a").await.unwrap(), Some(doc.clone()), "kept when none is given");
         assert!(store.end_watch("a", 7).await.unwrap());
         assert!(!store.end_watch("a", 8).await.unwrap());
-        assert!(!store.set_watch_progress(&p).await.unwrap(), "an ended watch stays ended");
-        assert_eq!(store.get_watch("a").await.unwrap().unwrap().ended_at, Some(7));
-        assert_eq!(store.put_watch(&watch("c", "t", Some("pm"))).await.unwrap().id, "c", "a new one after the end");
+        assert!(!store.set_watch_progress(&p, Some(&doc)).await.unwrap(), "an ended watch stays ended");
+        let ended = store.get_watch("a").await.unwrap().unwrap();
+        assert_eq!((ended.ended_at, ended.has_snapshot), (Some(7), false), "an ended watch drops its snapshot");
+        assert_eq!(
+            store.put_watch(&watch("c", "t", Some("pm")), None).await.unwrap().id,
+            "c",
+            "a new one after the end"
+        );
     }
 
     #[tokio::test]
     async fn watches_move_to_the_conversation_that_took_over() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store_with_project(tmp.path()).await;
-        store.put_watch(&watch("a", "t1", Some("old"))).await.unwrap();
-        store.put_watch(&watch("b", "t2", Some("old"))).await.unwrap();
-        store.put_watch(&watch("c", "t2", Some("new"))).await.unwrap();
+        store.put_watch(&watch("a", "t1", Some("old")), None).await.unwrap();
+        store.put_watch(&watch("b", "t2", Some("old")), None).await.unwrap();
+        store.put_watch(&watch("c", "t2", Some("new")), None).await.unwrap();
         assert_eq!(store.move_watches("old", "new", 5).await.unwrap(), 1);
         let ids: Vec<String> = store.watches_by(Some("new")).await.unwrap().into_iter().map(|w| w.id).collect();
         assert_eq!(ids, ["a", "c"]);
         assert!(store.watches_by(Some("old")).await.unwrap().is_empty());
         assert_eq!(store.get_watch("b").await.unwrap().unwrap().ended_at, Some(5));
+    }
+
+    #[tokio::test]
+    async fn ended_watches_are_pruned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.put_watch(&watch("a", "t1", None), None).await.unwrap();
+        store.put_watch(&watch("b", "t2", None), None).await.unwrap();
+        store.put_watch(&watch("c", "t3", None), None).await.unwrap();
+        store.end_watch("a", 5).await.unwrap();
+        store.end_watch("b", 10).await.unwrap();
+        assert_eq!(store.prune_watches(10).await.unwrap(), 1, "ended at `before`: kept");
+        assert!(store.get_watch("a").await.unwrap().is_none());
+        assert_eq!(store.prune_watches(100).await.unwrap(), 1, "the one still on stays");
+        assert_eq!(store.active_watches().await.unwrap().len(), 1);
     }
 }

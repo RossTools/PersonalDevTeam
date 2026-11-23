@@ -406,6 +406,7 @@ mod tests {
             permission_mode: None,
             persona: None,
             background: vec![],
+            instance: None,
         }
     }
 

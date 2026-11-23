@@ -105,14 +105,14 @@ impl Conversations {
 }
 
 /// The environment variables removed from agents under a credential policy.
-fn scrubbed(creds: CredentialPolicy) -> Vec<String> {
+pub(crate) fn scrubbed(creds: CredentialPolicy) -> Vec<String> {
     std::env::vars_os()
         .filter_map(|(k, _)| k.into_string().ok())
         .filter(|k| is_scrubbed(SessionKind::AgentTui, k, creds))
         .collect()
 }
 
-fn login_path_env(st: &AppState) -> Vec<(String, String)> {
+pub(crate) fn login_path_env(st: &AppState) -> Vec<(String, String)> {
     st.platform.login_path.iter().map(|p| ("PATH".to_string(), p.clone())).collect()
 }
 
@@ -229,7 +229,7 @@ impl Conv {
     }
 }
 
-async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn AgentAdapter>, ApiError> {
+pub(crate) async fn adapter_for(st: &AppState, agent: Option<AgentKind>) -> Result<Box<dyn AgentAdapter>, ApiError> {
     match agent {
         Some(AgentKind::Claude) => Ok(Box::new(ClaudeAdapter)),
         Some(AgentKind::Codex) => Ok(Box::new(CodexAdapter { server: codex_server(st).await? })),
@@ -264,7 +264,7 @@ pub(crate) async fn acp_agent(st: &AppState, agent: AgentKind) -> Result<AcpAgen
     ))
 }
 
-fn adapter_error(e: AdapterError) -> ApiError {
+pub(crate) fn adapter_error(e: AdapterError) -> ApiError {
     match e {
         AdapterError::ProgramNotFound(p) => {
             ApiError::conflict(codes::AGENT_NOT_FOUND, format!("{p} was not found; install it or set its path"))
@@ -301,6 +301,14 @@ pub(crate) async fn start(st: &AppState, session: &Session, first: Option<String
     if let Some(text) = first {
         send_message(st, session, &text, &[], Delivery::Next, Sender::User, None).await?;
     }
+    Ok(())
+}
+
+/// Attaches to a remote session's process that runs there already (the owner restarted while it ran): its
+/// conversation's runtime, with the process as its live one.
+pub(crate) async fn attach(st: &AppState, session: &Session) -> Result<(), ApiError> {
+    let c = conv(st, session).await?;
+    ensure_live(st, &c, session).await?;
     Ok(())
 }
 
@@ -617,7 +625,9 @@ pub async fn run_conversation_ticker(st: AppState) {
 pub async fn shutdown_conversations(st: &AppState) {
     let convs: Vec<Arc<Conv>> =
         st.conversations.map.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
-    futures_util::future::join_all(convs.iter().map(|c| park(st, c))).await;
+    // A remote session's process runs on its instance, which keeps its events for the owner's return.
+    let local: Vec<&Arc<Conv>> = convs.iter().filter(|c| !crate::exec::is_routed(st, &c.id)).collect();
+    futures_util::future::join_all(local.iter().map(|c| park(st, c))).await;
     // A last try at events still waiting for a write: what is not stored now is lost with this process (PDT-331).
     for c in &convs {
         let mut q = c.unstored.lock().await;

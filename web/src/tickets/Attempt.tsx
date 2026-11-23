@@ -15,6 +15,7 @@ import { isClosed } from './model';
 import { useAllSessions, useProjectForge } from './queries';
 import { CiDetails, PrDetails } from './PullRequest';
 import { OverviewSection } from './TicketParts';
+import { InstanceChip } from '../common/InstanceChip';
 
 const STATE_LABEL: Record<AttemptState, string> = { active: 'Active', merged: 'Merged', abandoned: 'Abandoned' };
 const STATE_TONE: Record<AttemptState, BadgeTone> = { active: 'running', merged: 'accent', abandoned: 'neutral' };
@@ -86,7 +87,7 @@ function SessionList({ ticket: t, sessions }: { ticket: Ticket; sessions: Attemp
             key={s.id}
             id={s.id}
             textValue={title}
-            title={title}
+            title={live?.instance ? <span className="flex min-w-0 items-center gap-1.5"><span className="truncate">{title}</span><InstanceChip instance={live.instance} /></span> : title}
             bold={!!live && sessionUnseen(live)}
             className="px-1 py-0.5 text-xs"
             leading={<span className="flex items-center gap-2"><AgentDot state={state} /><SessionKindIcon session={live ?? { kind: 'agent_tui', agent: s.agent }} /></span>}

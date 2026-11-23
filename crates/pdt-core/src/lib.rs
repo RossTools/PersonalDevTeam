@@ -48,6 +48,7 @@ pub mod overlap;
 pub mod parts;
 pub mod persona;
 pub mod pickup;
+pub mod placement;
 pub mod pm;
 pub mod policy;
 pub mod pr;

@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
-import { Badge, Button, EmptyState, Page, Section, Skeleton, useConfirm } from '@ui';
+import { Badge, Button, EmptyState, Input, Page, Section, Skeleton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import { openExternal } from '../common/open';
@@ -9,6 +10,34 @@ import { useAction } from '../common/useAction';
 import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 import { projectKeys, useRemoteProjects } from './queries';
 import { LINK_STATE, ago } from './RemoteInstances';
+
+/** Where this instance keeps the project's checkout and worktrees; empty goes back to the default folder. */
+function CheckoutFolder({ r }: { r: RemoteProjectView }) {
+  const qc = useQueryClient();
+  const [path, setPath] = useState<string | null>(null);
+  const [save, saving] = useAction(async () => {
+    await api.patchRemoteProject(r.project.id, { checkoutPath: (path ?? '').trim() });
+    setPath(null);
+    await qc.invalidateQueries({ queryKey: projectKeys.remote });
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-meta">
+      <span className="text-muted-foreground">Checkout</span>
+      <Input
+        mono
+        size="sm"
+        aria-label={`Checkout folder of ${r.project.name}`}
+        className="min-w-72 flex-1"
+        value={path ?? r.checkoutPath}
+        maxLength={1024}
+        onChange={(e) => setPath(e.target.value)}
+      />
+      {path !== null && path !== r.checkoutPath && (
+        <Button size="sm" pending={saving} onClick={() => void save()}>Save</Button>
+      )}
+    </div>
+  );
+}
 
 function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
   const qc = useQueryClient();
@@ -48,15 +77,29 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         <span className="font-mono">{r.link.ownerUrl}</span>
         <span>{owner} v{r.link.ownerVersion}</span>
         <span>{r.link.lastContactAt ? `last heard from ${ago(r.link.lastContactAt)}` : `waiting for ${owner}`}</span>
-        <span>Nothing runs here yet.</span>
+        {r.running.length === 0 && <span>Nothing runs here for {owner} now.</span>}
       </span>
+      {r.running.length > 0 && (
+        <ul aria-label={`Running for ${owner}`} className="flex flex-col gap-0.5 text-meta">
+          {r.running.map((s) => (
+            <li key={s.sessionId} className="flex flex-wrap items-center gap-2">
+              <Badge tone={s.live ? 'running' : 'neutral'}>{s.live ? 'running' : 'parked'}</Badge>
+              {s.ticketKey && <span className="font-mono">{s.ticketKey}</span>}
+              <span className="truncate">{s.title}</span>
+              <span className="text-muted-foreground">{s.agent} · since {ago(s.startedAt)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <CheckoutFolder r={r} />
     </li>
   );
 }
 
 /**
  * Settings → Remote projects: the projects other instances own that this one joined to work for them. Their board,
- * tickets and PM are on the owner; here they show their link's state, Pause and Leave.
+ * tickets and PM are on the owner; here they show their link's state, what runs here for the owner (read-only), the
+ * checkout's folder, Pause and Leave.
  */
 export function RemoteProjectsPage() {
   const q = useRemoteProjects();

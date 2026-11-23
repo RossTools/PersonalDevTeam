@@ -248,6 +248,9 @@ pub struct Session {
     /// idle, its turn has ended while they run: the sidebar shows it as Background, not Done. Empty when none run.
     #[serde(default)]
     pub background: Vec<crate::conversation::BackgroundTask>,
+    /// The remote instance it runs on (a remote attempt's, on the project's owner); None: this instance.
+    #[serde(default)]
+    pub instance: Option<crate::placement::InstanceRef>,
 }
 
 /// A session's persona.

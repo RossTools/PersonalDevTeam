@@ -163,6 +163,45 @@ impl NodeKind for UpdateBase {
     }
 }
 
+fn static_port(port: &str) -> &'static str {
+    match port {
+        "current" => "current",
+        "updated" => "updated",
+        "conflict" => "conflict",
+        _ => "skipped",
+    }
+}
+
+/// [`update`] on a remote instance, in its checkout of a remote project: the base merged in and pushed, or the
+/// conflicts left for an agent. The repository's regeneration rules need the owner's approvals, so none run here:
+/// a conflict in generated files goes to the agent too.
+pub(crate) async fn update_without_rules(
+    repo: &Path,
+    worktree: &Path,
+    base: &str,
+    branch: &str,
+    remote_pr: bool,
+) -> (String, Value) {
+    if !worktree.is_dir() {
+        let d = skipped("the attempt has no worktree");
+        return (d.port.into(), d.output);
+    }
+    let (r, wt, b, br) = (repo.to_path_buf(), worktree.to_path_buf(), base.to_string(), branch.to_string());
+    let prepared = tokio::task::spawn_blocking(move || prepare(&r, &wt, &b, &br, remote_pr))
+        .await
+        .map_err(crate::workflow::err)
+        .and_then(|r| r);
+    let d = match prepared {
+        Err(why) => skipped(&why),
+        Ok(p) => match &p.merged {
+            Merged::Current => done("current", json!({"how": "current", "base": p.base_ref})),
+            Merged::Clean => finish(worktree, &p, "clean", &[]).await,
+            Merged::Conflicts(files) => conflict(worktree, &p, files, &[], None).await,
+        },
+    };
+    (d.port.into(), d.output)
+}
+
 /// How an update ended: the port it leaves by, and its output.
 struct Done {
     port: &'static str,
@@ -209,8 +248,28 @@ async fn regenerate_rules(st: &AppState, info: &AttemptInfo) -> (Vec<RegenerateD
     }
 }
 
+/// The attempt's worktree on a remote instance, when it is on one.
+async fn remote_worktree(st: &AppState, info: &AttemptInfo) -> Result<Option<pdt_core::link::RemoteInstance>, String> {
+    let Some(id) = info.attempt.worktree_id.as_deref() else { return Ok(None) };
+    let Some(wt) = st.store.get_worktree(id).await.map_err(crate::workflow::err)? else { return Ok(None) };
+    crate::exec::worktree_instance(st, &wt).await.map_err(|e| e.message().to_string())
+}
+
 /// What the update did, as the node's outcome.
 async fn update(st: &AppState, info: &AttemptInfo) -> Done {
+    match remote_worktree(st, info).await {
+        Ok(Some(i)) => {
+            let pr = crate::github::watched_pr(st, &info.attempt.id).filter(|p| p.state == pdt_core::pr::PrState::Open);
+            let remote_pr = pr.as_ref().is_some_and(|p| !p.local);
+            let (base, branch) = (&info.attempt.base_branch, &info.attempt.branch);
+            return match crate::exec::update_base(st, &i, branch, base, remote_pr).await {
+                Ok((port, output)) => done(static_port(&port), output),
+                Err(why) => skipped(&why),
+            };
+        }
+        Ok(None) => {}
+        Err(why) => return skipped(&why),
+    }
     let Some(worktree) = info.worktree_path.as_deref().map(PathBuf::from).filter(|p| p.is_dir()) else {
         return skipped("the attempt has no worktree");
     };

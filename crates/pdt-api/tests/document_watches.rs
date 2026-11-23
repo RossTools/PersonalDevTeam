@@ -213,3 +213,42 @@ async fn a_document_its_provider_no_longer_has_ends_the_watch() {
     assert!(n[0]["title"].as_str().unwrap().contains("its provider no longer has it"), "{}", n[0]);
     assert!(watches_of(&env, &doc).await.is_empty(), "the watch ended");
 }
+
+/// A watch's snapshot, as the store keeps it (`has_snapshot`): the watch of `doc`.
+async fn kept_snapshot(env: &Env, doc: &str) -> bool {
+    let w = env.state.store.watches_of(pdt_core::watch::WatchTarget::Document, doc).await.unwrap();
+    assert_eq!(w.len(), 1, "{w:?}");
+    w[0].has_snapshot
+}
+
+#[tokio::test]
+async fn a_document_too_large_to_diff_keeps_no_snapshot_and_an_ended_watch_drops_its_own() {
+    let (env, fake) = env().await;
+    let doc = document(&env, "Big", "google", "# Big").await;
+    // Larger than a request may carry: grown at the provider.
+    let reference = env.state.store.get_document(&doc).await.unwrap().unwrap().provider_ref;
+    let markdown = format!("# Big\n\n{}", "word ".repeat(500_000));
+    use pdt_api::documents::DocumentProvider;
+    fake.apply(&reference, vec![pdt_core::document::DocumentEdit::ReplaceText { markdown }]).await.unwrap();
+    // Before the sensor's first look: the read now is too large to keep.
+    let (s, w) = call(&env.app, "POST", "/api/watches", Some(json!({"document": doc}))).await;
+    assert_eq!(s, StatusCode::CREATED, "{w}");
+    assert!(!kept_snapshot(&env, &doc).await);
+    // The sensor found it too large: a new watch doesn't read it itself.
+    pdt_api::documents::watch::refresh(&env.state).await;
+    pdt_api::tick_watches_at(&env.state, now()).await;
+    assert!(!kept_snapshot(&env, &doc).await, "the tick's first look takes none either");
+    let id = w["id"].as_str().unwrap();
+    call(&env.app, "DELETE", &format!("/api/watches/{id}"), None).await;
+    call(&env.app, "POST", "/api/watches", Some(json!({"document": doc}))).await;
+    assert!(!kept_snapshot(&env, &doc).await);
+
+    // A small one keeps its snapshot while watched, and drops it when the watch ends.
+    let small = document(&env, "Small", "local", "# Small\n\nText.").await;
+    let (_, w) = call(&env.app, "POST", "/api/watches", Some(json!({"document": small}))).await;
+    assert!(kept_snapshot(&env, &small).await);
+    let id = w["id"].as_str().unwrap().to_string();
+    assert!(env.state.store.watch_snapshot(&id).await.unwrap().is_some());
+    call(&env.app, "DELETE", &format!("/api/watches/{id}"), None).await;
+    assert_eq!(env.state.store.watch_snapshot(&id).await.unwrap(), None, "an ended watch drops it");
+}

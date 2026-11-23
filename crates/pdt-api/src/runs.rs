@@ -160,6 +160,7 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
             base_commit: head,
             created_at: now_ms(),
             missing: false,
+            instance: None,
         };
         st.store.insert_worktree(&wt).await?;
         return Ok(wt.id);
@@ -185,6 +186,7 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
         base_commit,
         created_at: now_ms(),
         missing: false,
+        instance: None,
     };
     st.store.insert_worktree(&wt).await?;
     Ok(wt.id)
