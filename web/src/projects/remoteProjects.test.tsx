@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
+import { toast } from '@ui';
 import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
 import { ago, RemoteInstances } from './RemoteInstances';
@@ -36,7 +37,7 @@ describe('Remote instances (the owner)', () => {
   it('lists each instance with its state, version, OS, agents and disk, and removes one after asking', async () => {
     const calls = stubApi({
       'GET /api/projects/p/remote-instances': view({ instances: [winBox, { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'old-box', state: 'incompatible', problem: 'update old-box to v0.7.0 to link it with studio', facts: { ...winBox.facts!, agents: [], agentsCheckedAt: null } }] }),
-      'DELETE /api/projects/p/remote-instances/l1': undefined,
+      'DELETE /api/projects/p/remote-instances/l1': { told: true },
       'GET /api/projects/p/placement': { rules: [] },
     });
     renderWithQuery(<RemoteInstances project={project} />);
@@ -56,6 +57,21 @@ describe('Remote instances (the owner)', () => {
     await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p/remote-instances/l1', body: undefined }));
+  });
+
+  it('says when an instance that was removed couldn\'t be told', async () => {
+    const info = vi.spyOn(toast, 'info');
+    stubApi({
+      'GET /api/projects/p/remote-instances': view({ instances: [{ ...winBox, state: 'offline' }] }),
+      'DELETE /api/projects/p/remote-instances/l1': { told: false },
+      'GET /api/projects/p/placement': { rules: [] },
+    });
+    renderWithQuery(<RemoteInstances project={project} />);
+    const section = await screen.findByRole('region', { name: 'Remote instances' });
+    const row = (await within(section).findByText('offline')).closest('li')!;
+    await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(info).toHaveBeenCalledWith("win-box couldn't be told; leave Valley there too.", expect.anything()));
   });
 
   it('maps a label to an instance in Placement', async () => {
@@ -107,7 +123,7 @@ const remote: RemoteProjectView = {
   link: {
     projectId: 'rp', linkId: 'l1', ownerProjectId: 'p', ownerInstanceId: 'o', ownerName: 'studio', ownerUrl: 'https://studio.example.ts.net',
     ownerVersion: '0.7.0', ownerPublicKey: 'k', repoUrl: null, checkoutPath: null, paused: false, ownUpdateChannel: false, cap: null,
-    lastContactAt: Date.now(), createdAt: 1,
+    lastContactAt: Date.now(), removedAt: null, createdAt: 1,
   },
   state: 'connected',
   openUrl: 'https://studio.example.ts.net/tickets?view=board',
@@ -132,6 +148,23 @@ describe('Remote projects (the remote instance)', () => {
     expect(open).toHaveBeenCalledWith('https://studio.example.ts.net/tickets?view=board', '_blank', 'noopener,noreferrer');
     await userEvent.click(within(row).getByRole('button', { name: 'Pause' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/remote-projects/rp', body: { paused: true } }));
+  });
+
+  it('says when the owner removed this instance, and when leaving couldn\'t tell the owner', async () => {
+    const info = vi.spyOn(toast, 'info');
+    stubApi({
+      'GET /api/remote-projects': [{ ...remote, state: 'removed', link: { ...remote.link, removedAt: 1 } }, { ...remote, project: { ...remote.project, id: 'rp2', name: 'Hills' }, state: 'offline' }],
+      'DELETE /api/remote-projects/rp2': { told: false },
+      'GET /api/host/settings': { settings: {}, remote: { active: true } },
+    });
+    renderWithQuery(<RemoteProjectsPage />);
+    const row = (await screen.findByText('Valley')).closest('li')!;
+    expect(within(row).getByText('removed by its owner')).toBeInTheDocument();
+    expect(row).toHaveTextContent('studio removed this instance from Valley, or removed the project. Leave it to finish here.');
+    const hills = screen.getByText('Hills').closest('li')!;
+    await userEvent.click(within(hills).getByRole('button', { name: /Leave/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Leave project' }));
+    await waitFor(() => expect(info).toHaveBeenCalledWith("studio couldn't be told; remove this instance from Hills there too."));
   });
 
   it('lists what runs here for the owner, read-only, and moves the checkout', async () => {

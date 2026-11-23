@@ -94,7 +94,7 @@
           "title": "Bring a pull request up to date"
         },
         {
-          "description": "`record`: remembers that the user approved the pull request at `headSha`, with an id of its own diff (against its merge base, as git's patch-id: line numbers left out); a pull request whose head is no longer `headSha` (pushed since) records nothing and leaves by `moved`. `forget`: the user decided otherwise since (Request changes, Close): the approval is gone. `check`: whether an approval holds for `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when there is none. A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
+          "description": "`record`: remembers that the user approved the pull request at `headSha`, with an id of its own diff (against its merge base, as git's patch-id: line numbers left out); a pull request whose head is no longer `headSha` (pushed since) records nothing and leaves by `moved`. `forget`: the user decided otherwise since (Request changes, Close): the approval is gone. `check`: whether an approval holds for `headSha`: `kept` when it is the head approved, or its own diff is the one approved (only the base changed, as after a rebase; output `note`), `changed` when its diff changed, `none` when there is none. An approval older than 30 days, or one the user has since requested changes on in a review on the forge itself, is forgotten: `none`. A diff with a file the forge shows no patch for (binary, too large) never carries an approval.",
           "id": "github.pr.approval",
           "title": "The user's approval of a pull request"
         },

@@ -64,8 +64,13 @@ When the pull request's branch only takes in its base (a rebase, or its base mer
 and so does your **Approve & merge**: it merges once CI passes, without asking again, and its run says **Approval
 kept: only the base changed**. If its own changes are different (a new commit, a file changed), it's reviewed and
 you're asked again. A file GitHub shows no changes for (a binary file, or one too large) always asks again, as does a pull request with
-more than 1,000 files. Choosing
-**Request changes** or **Close** after approving takes the approval back, so the next update is asked about again.
+more than 1,000 files.
+
+These take the approval back, so the next update is reviewed and asked about again:
+- **Request changes** or **Close** in your Inbox.
+- Closing the pull request on GitHub (even if it is reopened later), or requesting changes on it in a review of your own
+  on GitHub.
+- Time: an approval holds for 30 days.
 
 ### A ticket for each pull request
 

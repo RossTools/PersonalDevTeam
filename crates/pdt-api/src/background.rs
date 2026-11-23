@@ -50,13 +50,17 @@ pub fn start_background(state: &AppState) {
     tokio::spawn(crate::run_pickup_watch(state.clone()));
     // Agents that aren't logged in (PDT-604): checked again while their steps wait.
     tokio::spawn(crate::run_login_watch(state.clone()));
-    // The owner's heartbeats to the instances joined to its projects, with the facts they report (PDT-631).
+    // The owner's heartbeats to the instances joined to its projects, with the facts they report (PDT-631), and a
+    // remote instance's question to the owners it hasn't heard from whether they still have its links (PDT-702).
     tokio::spawn(run_every(
         state.clone(),
         "project links",
         Duration::from_millis(pdt_core::link::HEARTBEAT_EVERY_MS as u64),
         Start::Now,
-        |st| async move { crate::link::heartbeat_all(&st).await },
+        |st| async move {
+            crate::link::heartbeat_all(&st).await;
+            crate::link::check_owners(&st).await;
+        },
     ));
     // Worktrees' sizes, and the cleanup of finished tickets' build output (PDT-324).
     tokio::spawn(crate::run_storage(state.clone()));

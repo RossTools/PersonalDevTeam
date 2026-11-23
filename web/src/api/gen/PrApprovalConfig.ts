@@ -14,7 +14,7 @@ number: number | string,
  */
 headSha: string, 
 /**
- * `record` (the user approved this head), `forget` (they decided otherwise since) or `check` (does an approval
- * hold for it).
+ * `record` (the user approved this head), `forget` (they decided otherwise since, or it was closed) or `check`
+ * (does an approval hold for it: not after 30 days, nor after the user requested changes on the forge).
  */
 action: string, };
