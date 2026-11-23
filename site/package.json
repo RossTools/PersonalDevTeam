@@ -12,11 +12,11 @@
     "check-docs": "node src/user-docs-check.mjs"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "^7.3.9",
+    "@astrojs/markdown-remark": "^7.3.10",
     "@astrojs/starlight": "^0.43.1",
     "@fontsource/inter": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
-    "astro": "^7.4.12",
+    "astro": "^7.4.13",
     "unist-util-visit": "^5.2.0"
   },
   "devDependencies": {
