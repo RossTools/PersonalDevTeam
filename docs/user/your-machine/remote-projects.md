@@ -124,7 +124,8 @@ For a ticket placed there:
   instance's maximum of runs (its **Settings › This host › Runs**), not the owner's. If the remote instance
   restarts, its runs stop.
 - **Files.** In **Files**, pick the ticket's branch (marked **on win-box**) to browse, read, edit, search and download
-  its files on the remote instance, as you would locally.
+  its files on the remote instance, as you would locally. Each project also lists its own checkout on every instance
+  that joined it (**Repository** marked **on win-box**).
 - **Changes.** The ticket's **Changes** show its diff on the remote instance, with review comments, **Send feedback**
   and **Approve** as usual. Merge checks (commits to merge, conflicts with the base) are done there; a remote ticket
   merges through its pull request.

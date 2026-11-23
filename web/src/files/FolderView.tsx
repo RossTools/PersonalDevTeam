@@ -7,7 +7,7 @@ import {
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, ApiError } from '../api/client';
-import type { DownloadOptions } from '../api/files';
+import { checkoutParams, type DownloadOptions } from '../api/files';
 import type { FileContent } from '../api/gen/FileContent';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Session } from '../api/gen/Session';
@@ -18,7 +18,7 @@ import { PreviewEdit, type PreviewEditMode } from '../common/PreviewEdit';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
-import { PlacePicker, type Place } from '../common/PlacePicker';
+import { PlacePicker, placeKey, type Place } from '../common/PlacePicker';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
 import { EmptyPane } from '../common/EmptyPane';
 import { useNavigationGuard } from '../shell/router';
@@ -56,8 +56,8 @@ const toNode = (e: FileEntry): FileNode => ({
 /** One folder's entries, as a query (one per folder, cached by place and path). */
 function useFolder(place: Place, path: string) {
   return useQuery({
-    queryKey: fileKeys.folder(place.projectId, place.worktreeId, path),
-    queryFn: () => api.listFiles(place.projectId, place.worktreeId, path),
+    queryKey: fileKeys.folder(place.projectId, place, path),
+    queryFn: () => api.listFiles(place.projectId, place, path),
   });
 }
 
@@ -112,10 +112,10 @@ const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.last
 function useFileOps(state: FolderViewState, place: Place) {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
+  const wt = checkoutParams(place);
   const refresh = () => {
-    void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
-    void qc.invalidateQueries({ queryKey: fileKeys.contents(place.projectId, place.worktreeId) });
+    void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place) });
+    void qc.invalidateQueries({ queryKey: fileKeys.contents(place.projectId, place) });
   };
   const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e));
   const create = async (path: string) => {
@@ -145,7 +145,7 @@ function useFileOps(state: FolderViewState, place: Place) {
     });
     if (!ok) return;
     try {
-      await api.deleteFile(place.projectId, place.worktreeId, path);
+      await api.deleteFile(place.projectId, place, path);
       refresh();
       if (state.file === path) state.setFile(null);
     } catch (e) { fail(e); }
@@ -153,8 +153,8 @@ function useFileOps(state: FolderViewState, place: Place) {
   // Checked first, so a folder over the size cap (or a file gone since) says why rather than saving an error.
   const save = async (path: string, o: DownloadOptions = {}) => {
     try {
-      await api.checkFileDownload(place.projectId, place.worktreeId, path, o);
-      download(api.fileDownloadUrl(place.projectId, place.worktreeId, path, o));
+      await api.checkFileDownload(place.projectId, place, path, o);
+      download(api.fileDownloadUrl(place.projectId, place, path, o));
     } catch (e) { fail(e); }
   };
   const downloads = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => (e.dir
@@ -190,10 +190,10 @@ export function FolderTree({ state }: { state: FolderViewState }) {
   return (
     <div className="flex flex-col gap-2 py-1">
       <div className="flex items-center gap-1 px-1">
-        <div className="min-w-0 flex-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>
-        <NewFileButton key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} />
+        <div className="min-w-0 flex-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} remote /></div>
+        <NewFileButton key={placeKey(state.place)} state={state} place={state.place} />
       </div>
-      <FileSearch key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place}>
+      <FileSearch key={placeKey(state.place)} state={state} place={state.place}>
         <Files state={state} place={state.place} />
       </FileSearch>
     </div>
@@ -208,13 +208,13 @@ export function FolderList({ state, dir }: { state: FolderViewState; dir: string
   if (!state.place) return <EmptyState icon={<FolderOpen />}>Add a project to browse its files.</EmptyState>;
   return (
     <div className="flex flex-col gap-2 py-1">
-      {dir === '' && <div className="px-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} /></div>}
+      {dir === '' && <div className="px-1"><PlacePicker projects={state.projects} place={state.place} onPick={state.pick} remote /></div>}
       {dir === '' ? (
-        <FileSearch key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place}>
+        <FileSearch key={placeKey(state.place)} state={state} place={state.place}>
           <FolderEntries state={state} place={state.place} dir={dir} />
         </FileSearch>
       ) : (
-        <FolderEntries key={`${state.place.projectId}:${state.place.worktreeId}`} state={state} place={state.place} dir={dir} />
+        <FolderEntries key={placeKey(state.place)} state={state} place={state.place} dir={dir} />
       )}
     </div>
   );
@@ -256,14 +256,14 @@ function FolderEntries({ state, place, dir }: { state: FolderViewState; place: P
 export function FileViewer({ state, readOnly = false }: { state: FolderViewState; readOnly?: boolean }) {
   const place = state.place;
   const q = useQuery({
-    queryKey: fileKeys.content(place?.projectId ?? '', place?.worktreeId ?? null, state.file),
-    queryFn: () => api.fileContent(place!.projectId, place!.worktreeId, state.file!),
+    queryKey: fileKeys.content(place?.projectId ?? '', place ?? { worktreeId: null }, state.file),
+    queryFn: () => api.fileContent(place!.projectId, place!, state.file!),
     enabled: !!place && !!state.file,
   });
   if (!state.file || !place) return <EmptyPane icon={<File />}>{readOnly ? 'Pick a file to view it.' : 'Pick a file to view or edit it.'}</EmptyPane>;
   if (q.isPending) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
   if (q.isError) return <div className="p-4"><Alert tone="error">{q.error.message}</Alert></div>;
-  return <OpenFile key={`${place.projectId}:${place.worktreeId}:${q.data.path}`} state={state} place={place} file={q.data} readOnly={readOnly} />;
+  return <OpenFile key={`${placeKey(place)}:${q.data.path}`} state={state} place={place} file={q.data} readOnly={readOnly} />;
 }
 
 /** An edit under way: the file as it was when editing started (or last saved), and the text now. */
@@ -277,9 +277,10 @@ interface Edit {
 
 const editOf = (f: FileContent, n = 0): Edit | null => (f.text === null ? null : { base: { ...f, text: f.text }, text: f.text, start: f.text, n });
 
-/** Agent sessions working in the checkout (they may change the file too). */
+/** Agent sessions working in the checkout (they may change the file too); none here in a remote instance's. */
 function useAgentsAt(place: Place): Session[] {
   const sessions = useQuery(sessionsQuery(place.projectId));
+  if (place.instanceId) return [];
   return (sessions.data ?? []).filter(
     (s) => s.kind === 'agent_tui' && s.status === 'running' && s.activity === 'working' && s.worktreeId === place.worktreeId,
   );
@@ -291,7 +292,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   const ops = useFileOps(state, place);
   const agents = useAgentsAt(place);
   // How the file was shown and where it was scrolled come back when it is left and opened again (PDT-379).
-  const remembered = `file:${place.projectId}:${place.worktreeId ?? ''}:${f.path}`;
+  const remembered = `file:${placeKey(place)}:${f.path}`;
   const [markdownView, setMarkdownView] = useViewState<'rendered' | 'source'>(`${remembered}:view`, 'rendered');
   const renderedScroll = useRememberedScroll(`${remembered}:rendered`);
   const [editView, setEditView] = useState<'edit' | 'preview'>('edit');
@@ -306,8 +307,8 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   // Saving was refused: the file changed on disk. `disk` is what is there now (null: deleted), once fetched.
   const [conflict, setConflict] = useState<{ disk?: FileContent | null; diff: boolean } | null>(null);
   const dirty = !!edit && edit.text !== edit.base.text;
-  const fileKey = fileKeys.content(place.projectId, place.worktreeId, f.path);
-  const wt = place.worktreeId ? { worktreeId: place.worktreeId } : {};
+  const fileKey = fileKeys.content(place.projectId, place, f.path);
+  const wt = checkoutParams(place);
   const { setUnsaved } = state;
   useEffect(() => {
     if (!dirty) return;
@@ -336,7 +337,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
       api.saveFile(place.projectId, { ...wt, path: f.path, text, ...(baseHash ? { baseHash } : {}) }),
     onSuccess: (saved, { text }) => {
       qc.setQueryData(fileKey, saved);
-      void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place.worktreeId) });
+      void qc.invalidateQueries({ queryKey: fileKeys.folders(place.projectId, place) });
       setConflict(null);
       // Typing during the save keeps the newer text unsaved.
       setEdit((e) => (e && saved.text !== null ? { ...e, base: { ...saved, text: saved.text }, text: e.text === text ? saved.text : e.text } : e));
@@ -372,7 +373,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
   /** The file as it is on disk now (null when it was deleted). */
   const fetchDisk = async (): Promise<FileContent | null> => {
     try {
-      const disk = await api.fileContent(place.projectId, place.worktreeId, f.path);
+      const disk = await api.fileContent(place.projectId, place, f.path);
       qc.setQueryData(fileKey, disk);
       return disk;
     } catch (e) {

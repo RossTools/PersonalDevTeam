@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../api/gen/Project';
 import type { Worktree } from '../api/gen/Worktree';
 import { renderWithQuery, stubApi } from '../test-utils';
-import { PlacePicker } from './PlacePicker';
+import { PlacePicker, type Place } from './PlacePicker';
 
 const project = (id: string, name: string, key: string): Project =>
   ({ id, name, key, repoPath: `/r/${id}`, baseBranch: 'main', createdAt: 0, forge: null, kind: 'repo' });
@@ -15,13 +15,19 @@ const projects = [project('p1', 'PersonalDevTeam', 'PDT'), project('p2', 'Demo',
 
 afterEach(() => vi.unstubAllGlobals());
 
-function setup(place = { projectId: 'p1', worktreeId: null as string | null }) {
+const joined = (instanceId: string, name: string, state = 'connected') => ({ instanceId, name, state, linkId: `l-${instanceId}` });
+
+function setup(place: Place = { projectId: 'p1', worktreeId: null }, remote = false) {
   const calls = stubApi({
     'GET /api/projects/p1/worktrees': [wt('w1', 'p1', 'phase-3c'), wt('w2', 'p1', 'gone', true)],
     'GET /api/projects/p2/worktrees': [wt('w3', 'p2', 'feature'), { ...wt('w4', 'p2', 'win'), instance: { id: 'i1', name: 'win-box' } }],
+    'GET /api/projects/p1/remote-instances': { name: 'studio', address: null, pairing: null, instances: [] },
+    'GET /api/projects/p2/remote-instances': {
+      name: 'studio', address: null, pairing: null, instances: [joined('i1', 'win-box'), joined('i2', 'gone-box', 'removed')],
+    },
   });
   const onPick = vi.fn();
-  renderWithQuery(<PlacePicker projects={projects} place={place} onPick={onPick} />);
+  renderWithQuery(<PlacePicker projects={projects} place={place} onPick={onPick} remote={remote} />);
   return { onPick, calls };
 }
 
@@ -59,5 +65,32 @@ describe('PlacePicker', () => {
     expect(screen.getAllByRole('menuitem').map((e) => e.textContent)).toEqual(['Repository', 'feature', 'win on win-box']);
     await user.keyboard('{Enter}');
     expect(onPick).toHaveBeenCalledWith({ projectId: 'p2', worktreeId: null });
+  });
+
+  it("lists, with remote, the project's checkout on each joined instance, and picks one", async () => {
+    const user = userEvent.setup();
+    const { onPick, calls } = setup(undefined, true);
+    await user.click(screen.getByRole('button', { name: /^Place/ }));
+    const list = screen.getByRole('menu', { name: 'Places' });
+    expect(await within(list).findByRole('menuitem', { name: 'Repository on win-box' })).toBeInTheDocument();
+    expect(within(list).getAllByRole('menuitem').map((e) => e.textContent))
+      .toEqual(['Repository', 'phase-3c', 'Repository', 'Repository on win-box', 'feature', 'win on win-box']);
+    await user.click(within(list).getByRole('menuitem', { name: 'Repository on win-box' }));
+    expect(onPick).toHaveBeenCalledWith({ projectId: 'p2', worktreeId: null, instanceId: 'i1' });
+    expect(calls.map((c) => c.path)).toContain('/api/projects/p2/remote-instances');
+  });
+
+  it('names the checkout on a joined instance "Repository · on <instance>"', async () => {
+    const { calls } = setup({ projectId: 'p2', worktreeId: null, instanceId: 'i1' }, true);
+    expect(await screen.findByRole('button', { name: 'Place: Demo › Repository · on win-box' })).toBeInTheDocument();
+    expect(calls.map((c) => c.path)).toEqual(['/api/projects/p2/remote-instances']);
+  });
+
+  it('leaves remote checkouts out without remote', async () => {
+    const user = userEvent.setup();
+    const { calls } = setup();
+    await user.click(screen.getByRole('button', { name: /^Place/ }));
+    await screen.findByRole('menuitem', { name: 'feature' });
+    expect(calls.some((c) => c.path.includes('remote-instances'))).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Project } from '../api/gen/Project';
-import type { Place } from '../common/PlacePicker';
+import { placeKey as keyOf, type Place } from '../common/PlacePicker';
 import { whenAllowed } from '../shell/router';
 import type { CodeTarget } from './CodeViewer';
 
@@ -28,7 +28,7 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
     else whenAllowed(() => { setOwnPicked(p); setOwnFile(f); });
   };
   const place = picked ?? initial ?? (projects[0] ? { projectId: projects[0].id, worktreeId: null } : null);
-  const placeKey = place ? `${place.projectId}:${place.worktreeId}` : '';
+  const placeKey = place ? keyOf(place) : '';
   const [open, setOpen] = useState<Set<string>>(new Set());
   // The file with unsaved edits, if any: it can't be renamed or deleted under the editor.
   const [unsaved, setUnsaved] = useState<string | null>(null);

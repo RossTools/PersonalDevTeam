@@ -186,6 +186,31 @@ async function startEditing(name: RegExp, editor = 'Editor') {
 }
 
 describe('editing files', () => {
+  it("browses and edits a joined instance's checkout of the project", async () => {
+    const calls = stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/sessions': [agent()],
+      'GET /api/projects/p/remote-instances': {
+        name: 'studio', address: null, pairing: null, instances: [{ instanceId: 'i1', name: 'win-box', state: 'connected', linkId: 'l1' }],
+      },
+      'GET /api/projects/p/files?path=': [entry('a.rs')],
+      'GET /api/projects/p/files?instanceId=i1&path=': [entry('w.rs')],
+      'GET /api/projects/p/files/content?instanceId=i1&path=w.rs': text('w.rs', 'remote\n'),
+      'PUT /api/projects/p/files/content': ({ body }: { body: { text: string } }) => text('w.rs', body.text, `h-${body.text}`, 'M'),
+    });
+    renderWithQuery(<Harness />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Place: PDT › Repository' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Repository on win-box' }));
+    expect(await screen.findByRole('button', { name: 'Place: PDT › Repository · on win-box' })).toBeInTheDocument();
+    const editor = await startEditing(/w\.rs/);
+    await userEvent.clear(editor);
+    await userEvent.type(editor, 'there');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ instanceId: 'i1', path: 'w.rs', text: 'there', baseHash: 'h-remote\n' }));
+    // A session working here is in this instance's checkout, not the remote one.
+    expect(screen.queryByText(/is working here/)).not.toBeInTheDocument();
+  });
+
   it('edits a file and saves it with the hash it was opened at, by button or ⌘S', async () => {
     const calls = stubApi(editRoutes({
       'PUT /api/projects/p/files/content': ({ body }: { body: { text: string } }) => text('a.rs', body.text, `h-${body.text}`, 'M'),

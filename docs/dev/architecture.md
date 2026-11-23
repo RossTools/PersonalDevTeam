@@ -150,7 +150,8 @@ remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (
 in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
 worktree until Clean up, since the owner can't see what it holds. Files, Changes and overlaps of a remote attempt
 are read there (`exec/files.rs`, `exec/review.rs`): `files::resolve` says where a checkout is (`Checkout::Here` or
-`Checkout::Remote`, a remote worktree or `instanceId` for the remote project's checkout), and each Files request is
+`Checkout::Remote`, a remote worktree or `instanceId` for the remote project's checkout, which the web's `Place` and
+Files route carry as `instanceId` / `?instance=`), and each Files request is
 one `/link/exec/files` call (downloads stream through `/link/exec/download`) that the remote instance runs with the
 same `files*::*_in` functions in a folder it picks (`exec::files::place`). Changes are one `/link/exec/git` call
 (`GitOp::Changes`) returning the diff and both sides of its files (up to 8 MB), kept on the owner by worktree and
