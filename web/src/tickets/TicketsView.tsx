@@ -40,7 +40,7 @@ import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportBy
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
-import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
+import { invalidateTickets, ticketKeys, useCheckMerge, useScopeLabels, useTicket, useTicketId, useTicketPages } from './queries';
 import { LabelChips } from '../common/LabelChips';
 import { TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
@@ -398,7 +398,8 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const total = pages.data?.pages[0]?.total;
   useClearToStartToasts(mode === 'backlog' ? items : []);
-  const labels = useLabels(project?.id ?? null);
+  const projectIds = useMemo(() => projects.map((p) => p.id), [projects]);
+  const labels = useScopeLabels(project?.id ?? null, projectIds);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   // Phones: rows get checkboxes only in bulk mode (a row's menu → Select), which ends once nothing is selected.
   const [selecting, setSelecting] = useState(false);
@@ -458,8 +459,8 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
     return () => window.removeEventListener('keydown', onKey);
   }, [hasSelection, clearSelection]);
   const allLabels = useMemo(
-    () => [...new Set([...(labels.data ?? []), ...items.flatMap((t) => t.labels)])].sort(),
-    [labels.data, items],
+    () => [...new Set([...labels, ...items.flatMap((t) => t.labels)])].sort(),
+    [labels, items],
   );
 
   const sections = useMemo(() => {

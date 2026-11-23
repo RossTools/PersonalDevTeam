@@ -108,6 +108,15 @@ describe('board', () => {
     expect(calls.filter((c) => c.path.startsWith('/api/watches')).map((c) => c.path)).toEqual(['/api/watches']);
   });
 
+  it("offers every project's labels in the Label filter with All projects, without visiting the Backlog first", async () => {
+    stub({ [`GET /api/projects/${project.id}/labels`]: ['ui', 'auth'] });
+    renderWithQuery(<Harness />);
+    await within(column('To do')).findByText('Ticket 1');
+    await userEvent.click(screen.getByRole('button', { name: 'Label filter' }));
+    expect(await screen.findByRole('checkbox', { name: 'auth' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'ui' })).toBeInTheDocument();
+  });
+
   it('follows the project chosen for the backlog', async () => {
     localStorage.setItem('pdt.tickets.view', JSON.stringify({ projectId: project.id, mode: 'board', filters: {} }));
     const calls = stub();
