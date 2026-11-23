@@ -631,7 +631,8 @@ of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, w
 the document is linked to lets the PM act) or the project or ticket they name. The project's `agent_documents` policy
 (`AgentDocuments`, set only from the web app) lets any agent's `document_create`, `doc_edit`, `sheet_edit` and
 `document_link` through unasked on its own ticket's documents or the project's: pdt-core `document_access.rs` decides
-from the resolved ids, and pdt-api `documents/access.rs` resolves the call, answers both Claude's permission prompt
+from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
+outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
 `document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. A document's title, content and comments
 come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON

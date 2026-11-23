@@ -39,8 +39,13 @@ fn given(v: Option<&str>) -> Option<&str> {
     v.map(str::trim).filter(|v| !v.is_empty())
 }
 
-/// Whether the session's project lets it make this call without asking the user.
+/// Whether the session's project lets it make this call without asking the user. A session that reads input from
+/// outside PDT (PDT-646: triage, a run an issue or a webhook started) always asks, whatever the level: the setting is
+/// for the project's own agents' work, not for text an outsider wrote steering them.
 pub(crate) async fn unasked(st: &AppState, s: &Session, wants: Wants<'_>) -> bool {
+    if crate::untrusted::triaging(st, s).await {
+        return false;
+    }
     let level = match st.store.get_project_settings(&s.project_id).await {
         Ok(p) => p.policy.agent_documents,
         Err(_) => return false,
