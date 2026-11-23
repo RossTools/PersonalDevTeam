@@ -27,6 +27,8 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
   workspace** in the sidebar makes a free-form one.
 - The sidebar lists the workspaces, the **Tickets** being worked on (with pull request and agent state), and your
   **Agents** sessions. Right-click (or long-press) anything for rename, move and close.
+- A new conversation is named after your first message to it; its second line in the sidebar says where it runs (the
+  branch, or the project). A name you give it with **Rename** stays.
 - A session's dot and label say what it is doing: **Working**, **Needs you**, **Done** (finished, not looked at yet),
   **Idle**, **Ended**, **Interrupted** (PDT restarted while it ran and it wasn't resumed). **Background** (a slowly
   pulsing green ring) means its turn ended but tasks it started in the background still run; hover to see them. It turns

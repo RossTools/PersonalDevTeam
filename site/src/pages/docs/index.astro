@@ -1,10 +1,14 @@
 ---
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import { LinkCard, CardGrid } from '@astrojs/starlight/components';
-import { USER_SECTIONS, docId } from '../../docs-pages.mjs';
+import { getCollection } from 'astro:content';
+import { docId, presentSections } from '../../docs-pages.mjs';
 
 const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 const page = (id: string) => `${base}${id}/`;
+// The sections as the published docs have them (the newest release's, which may lack a page main lists).
+const ids = new Set((await getCollection('docs')).map((e) => e.id));
+const sections = presentSections((p: string) => ids.has(docId(p)));
 ---
 
 <StarlightPage frontmatter={{ title: 'PDT docs', description: 'How to install PDT and get work done with it.' }}>
@@ -15,7 +19,7 @@ const page = (id: string) => `${base}${id}/`;
 		<a href={page(docId('user/getting-started/install.md'))}>install it</a>.
 	</p>
 	<CardGrid>
-		{USER_SECTIONS.map((s) => (
+		{sections.map((s) => (
 			<LinkCard title={s.label} description={s.summary} href={page(docId(`user/${s.dir}/${s.pages[0]}.md`))} />
 		))}
 	</CardGrid>

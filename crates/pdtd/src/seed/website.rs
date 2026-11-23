@@ -504,6 +504,7 @@ pub async fn seed_website(store: &Store, data_dir: &Path, now: i64) -> anyhow::R
         error: (state == RunState::Failed).then(|| "tests failed (exit code 1)".into()),
         detached: false,
         process: None,
+        instance: None,
         created_at: now - ago,
         updated_at: now - ago + MINUTE,
     };

@@ -211,6 +211,7 @@ pub(crate) async fn post_message(
     let pending =
         send_message(&st, &session, &body.text, &images, body.delivery.unwrap_or_default(), Sender::User, None).await?;
     crate::pm::user_wrote(&st, &session, &body.text).await;
+    crate::sessions::user_wrote(&st, &session, &body.text).await;
     Ok((StatusCode::ACCEPTED, Json(pending)))
 }
 

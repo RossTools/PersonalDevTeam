@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rewriteLink } from './remark-docs-links.mjs';
-import { MOVED, docId, isPublished } from './docs-pages.mjs';
+import { MOVED, USER_SECTIONS, docId, isPublished, presentSections } from './docs-pages.mjs';
 
 const REPO = 'https://github.com/RossTools/PersonalDevTeam/blob/main';
 
@@ -47,4 +47,15 @@ test('which docs are published', () => {
   assert.equal(docId('user/getting-started/install.md'), 'docs/getting-started/install');
   assert.equal(docId('user/troubleshooting/troubleshooting.md'), 'docs/troubleshooting');
   assert.equal(MOVED['/docs/contributing/contributing/'], '/docs/contributing/');
+});
+
+test('the sidebar leaves out pages the published docs lack', () => {
+  const all = presentSections(() => true);
+  assert.deepEqual(all, USER_SECTIONS.map((s) => ({ ...s, more: s.more })));
+  const sections = presentSections((p) => p !== 'user/your-machine/remote-projects.md' && !p.startsWith('user/troubleshooting/'));
+  const machine = sections.find((s) => s.dir === 'your-machine');
+  assert.ok(!machine.pages.includes('remote-projects'));
+  assert.ok(machine.pages.includes('settings'));
+  assert.ok(!sections.some((s) => s.dir === 'troubleshooting'));
+  assert.deepEqual(sections.find((s) => s.dir === 'contributing').more, USER_SECTIONS.at(-1).more);
 });

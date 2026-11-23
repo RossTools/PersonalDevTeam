@@ -166,7 +166,11 @@ pub(crate) async fn list(
     crate::projects::needs_repo(&project, "commands")?;
     let (dir, _) = crate::runconfig::checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
     let trusted = trusted(&st, &id, &project.repo_path).await?;
-    let (commands, error) = match crate::runconfig::load_effective(&st, &id, &dir).await {
+    let config = match crate::runconfig::remote_file(&st, w.worktree_id.as_deref()).await? {
+        Some(remote) => crate::runconfig::effective_for_file(&st, &id, remote.file.as_deref()).await,
+        None => crate::runconfig::load_effective(&st, &id, &dir).await,
+    };
+    let (commands, error) = match config {
         Ok(c) => (command_trust::of_config(&c), None),
         Err(e) => (vec![], Some(e.message().to_string())),
     };

@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { Run } from '../api/gen/Run';
 import { agentState, AgentDot } from '../common/AgentState';
 import { BranchChip } from '../common/BranchChip';
+import { InstanceChip } from '../common/InstanceChip';
 import { copyToClipboard } from '../common/clipboard';
 import { usePolledAt } from '../common/usePolledAt';
 import { useAction } from '../common/useAction';
@@ -117,7 +118,12 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
           }
           title={name}
           titleTooltip={`${name} · ${run.branch}`}
-          meta={<BranchChip branch={run.branch} forge={theForge} base={theBase} className="min-w-0" />}
+          meta={
+            <>
+              <BranchChip branch={run.branch} forge={theForge} base={theBase} className="min-w-0" />
+              <InstanceChip instance={run.instance} className="shrink-0" />
+            </>
+          }
           actions={<MenuButton label="Run actions" placement="bottom end" entries={phoneEntries} />}
         />
       ) : (
@@ -128,6 +134,7 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
         meta={
           <>
             <BranchChip branch={run.branch} forge={theForge} base={theBase} className="min-w-0" />
+            <InstanceChip instance={run.instance} className="shrink-0" />
             <span className="shrink-0">{state}</span>
             {run.url && run.state === 'ready' ? (
               <Link href={run.url} external className="min-w-0 truncate">{run.url}</Link>
@@ -156,7 +163,12 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
           value={step}
           onChange={(s) => setPicked({ state: run.state, step: s })}
         />
-        {run.detached && step === 'command' && (
+        {run.instance && (
+          <span className="ml-2 self-center truncate text-xs text-muted-foreground" title={`It runs on ${run.instance.name}`}>
+            Runs on {run.instance.name} · output only
+          </span>
+        )}
+        {!run.instance && run.detached && step === 'command' && (
           <span className="ml-2 self-center truncate text-xs text-muted-foreground" title="detach = true: the command runs outside PDT's terminals">
             Detached: keeps running when PDT restarts or updates · output only
           </span>
@@ -168,7 +180,7 @@ export const RunView = memo(function RunView({ run, onRemoved, branchLink, forge
         url={runPtyUrl(run.id, step)}
         sessionStatus={stepLive ? 'running' : 'finished'}
         polledAt={polledAt}
-        readOnly={run.detached && step === 'command'}
+        readOnly={!!run.instance || (run.detached && step === 'command')}
       />
     </div>
   );

@@ -5,4 +5,9 @@ export type RunDef = { name: string, setup: string | null, command: string, web:
  * The command runs outside PDT's terminals and keeps running when pdtd restarts or updates (PDT-32). Its
  * output goes to a log file the run's tab follows; it takes no input.
  */
-detach: boolean, env: { [key in string]: string }, };
+detach: boolean, env: { [key in string]: string }, 
+/**
+ * The systems it runs on (`windows`, `macos`, `linux`); empty: every one. It is offered and starts only where
+ * the checkout it would run in is on one of them.
+ */
+os: Array<string>, };

@@ -29,6 +29,15 @@ pub(crate) struct Instance {
 
 /// An instance named `name` with `fake-agent` as Claude, served on a free loopback port; with a fake GitHub when `gh`.
 pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
+    instance_with(name, gh, None).await
+}
+
+/// [`instance`], with `tailscale` as its Tailscale when given.
+async fn instance_with(
+    name: &str,
+    gh: Option<&Arc<FakeForge>>,
+    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
+) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
@@ -39,6 +48,9 @@ pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instanc
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     state.exec.set_poll_timing(Duration::from_millis(500), Duration::from_millis(100));
+    if let Some(t) = tailscale {
+        state.tailscale = t;
+    }
     if let Some(gh) = gh {
         state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(gh))]);
     }
@@ -78,9 +90,14 @@ pub(crate) struct Pair {
 /// Owner and remote paired for the owner's project, with `windows` tickets placed on the remote instance. Its
 /// checkout is a clone of the owner's repository (a real one would be cloned from origin on first use).
 pub(crate) async fn paired() -> Pair {
+    paired_with(None).await
+}
+
+/// [`paired`], with `tailscale` as the remote instance's Tailscale when given.
+pub(crate) async fn paired_with(tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>) -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
-    let remote = instance("win-box", None).await;
+    let remote = instance_with("win-box", None, tailscale).await;
     let main = owner.tmp.path().join("valley");
     repo(&main);
     let (s, p) =

@@ -16,7 +16,8 @@ org can open it).
   and `docs/user/README.md` has the style notes for writing them), plus `agent-guide.md` (under Guides), and the
   developer guide in `dev/` with `SDLC.md` (under Contributing, after its own page: `DEVELOPER_PAGES`). `prompts/`,
   `run-config.md` (the agents' part of the run-config guide) and the READMEs in `user/` stay out. There is no copy step: edit the file in `docs/` and the next
-  deploy shows it. A page's title is its first `# heading`; relative links between published docs point at their
+  deploy shows it (for the user docs and the agent guide, the next deploy after a release: "Which docs the site
+  publishes" below). A page's title is its first `# heading`; relative links between published docs point at their
   pages on the site, and links to anything else in the repository at the file on GitHub
   (`src/remark-docs-links.mjs`). Its meta description (search results, link previews) is its first paragraph
   (`src/doc-description.mjs`), so that paragraph should say what the page is for. A page that moves gets a redirect
@@ -94,10 +95,25 @@ pnpm --filter site test     # the link-rewriting tests and the user docs check
 pnpm --filter site check-docs  # the user docs check alone
 ```
 
+## Which docs the site publishes
+
+The deployed site's user docs (`docs/user`, but for the Contributing section) and agent guide are the **newest stable
+release's** (the newest `vX.Y.Z` tag; nightlies never count), while everything else, the site's code, the developer
+guide, `SDLC.md` and Contributing, follows `main`. The Download buttons and install scripts install the newest stable
+release, so a reader following the docs finds what they describe; a feature merged since then appears on the site
+with the release that ships it. `pages.yml` runs `scripts/site-release-docs.sh` before the build, which puts those
+files back to the tag's (pages added since are removed), and the release workflow runs `pages.yml` once it publishes
+a stable release. The sidebar and the docs home leave out a page `USER_SECTIONS` lists that the release doesn't have
+yet (`presentSections` in `src/docs-pages.mjs`).
+
+So a fix to a page about something already released also waits for the next release. Local builds and CI's `site`
+job build the checkout's docs as they are; to see what the deploy will publish, run `scripts/site-release-docs.sh`
+first, then `git restore docs` afterwards.
+
 ## Deploys
 
 `.github/workflows/pages.yml` builds the site and deploys it with `actions/deploy-pages` on every push to `main`
-that touches `site/**` or `docs/**`, on the 1st of every month (so `/.well-known/security.txt`, whose `Expires` is set
+that touches `site/**` or `docs/**`, after every stable release (release.yml's `publish` job starts it), on the 1st of every month (so `/.well-known/security.txt`, whose `Expires` is set
 at build time to 180 days out, never runs out), and when run by hand (Actions → pages → Run workflow). It takes the site's URL
 and base path from `actions/configure-pages`, so the same build works on the private Pages domain, a project path or
 a custom domain.

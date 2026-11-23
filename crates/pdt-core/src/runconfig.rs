@@ -173,9 +173,19 @@ pub struct EntryFile {
     pub data: Option<bool>,
     pub detach: Option<bool>,
     pub env: Option<BTreeMap<String, String>>,
+    /// `os = "windows"` or `os = ["macos", "linux"]`: the systems it runs on (an older PDT refuses the key).
+    pub os: Option<OsFile>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+/// `os` as written: one system or a list.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum OsFile {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct RunDef {
@@ -188,7 +198,21 @@ pub struct RunDef {
     /// output goes to a log file the run's tab follows; it takes no input.
     pub detach: bool,
     pub env: BTreeMap<String, String>,
+    /// The systems it runs on (`windows`, `macos`, `linux`); empty: every one. It is offered and starts only where
+    /// the checkout it would run in is on one of them.
+    #[serde(default)]
+    pub os: Vec<String>,
 }
+
+impl RunDef {
+    /// Whether it runs on `os` (as `std::env::consts::OS` names it, or an instance reports it).
+    pub fn runs_on(&self, os: &str) -> bool {
+        self.os.is_empty() || self.os.iter().any(|o| crate::placement::same_os(o, os))
+    }
+}
+
+/// The systems `os` may name.
+const KNOWN_OS: [&str; 3] = ["windows", "macos", "linux"];
 
 /// `GET /api/projects/{id}/areas`: the areas the project's main checkout and the host overrides declare.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
@@ -268,6 +292,8 @@ pub enum RunConfigError {
     WebTest(String),
     #[error("test \"{0}\" cannot be detached")]
     DetachedTest(String),
+    #[error("\"{name}\" has os = \"{os}\": it must be windows, macos or linux")]
+    BadOs { name: String, os: String },
     #[error("\"{0}\" cannot be an area name: it must be 1–{max} characters with no commas", max = crate::ticket::MAX_AREA)]
     BadAreaName(String),
     #[error("the area name \"{0}\" is used twice")]
@@ -328,6 +354,7 @@ fn merge_list(base: Vec<EntryFile>, over: Vec<EntryFile>) -> Result<Vec<EntryFil
                 b.web = o.web.or(b.web);
                 b.data = o.data.or(b.data);
                 b.detach = o.detach.or(b.detach);
+                b.os = o.os.or(b.os.take());
                 if let Some(env) = o.env {
                     b.env.get_or_insert_with(BTreeMap::new).extend(env);
                 }
@@ -372,7 +399,22 @@ fn finish(e: EntryFile, test: bool) -> Result<RunDef, RunConfigError> {
         return Err(RunConfigError::DetachedTest(name));
     }
     let setup = e.setup.filter(|s| !s.trim().is_empty());
-    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), detach, env })
+    let os = match e.os {
+        None => vec![],
+        Some(OsFile::One(o)) => vec![o],
+        Some(OsFile::Many(list)) => list,
+    };
+    let os = os
+        .into_iter()
+        .map(|o| {
+            let n = crate::placement::normalize_os(&o);
+            KNOWN_OS
+                .contains(&n.as_str())
+                .then_some(n)
+                .ok_or_else(|| RunConfigError::BadOs { name: name.clone(), os: o })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RunDef { name, setup, command, web, data: e.data.unwrap_or(false), detach, env, os })
 }
 
 /// Areas merge by name like runs: an override's fields replace the file's.
@@ -696,6 +738,7 @@ mod tests {
             data: false,
             detach: false,
             env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            os: vec![],
         };
         assert!(uses_run_host(&def(None, "x", &[("PDT_ALLOWED_HOSTS", "$PDT_RUN_HOST:$PORT")])));
         assert!(uses_run_host(&def(None, "x", &[("PUBLIC", "${PDT_RUN_URL}")])));
@@ -863,6 +906,25 @@ command = "cargo run"
             assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadPushRemote(_))), "{bad}");
         }
         assert!(matches!(parse("[push]\nurl = \"x\"\n", Source::File), Err(RunConfigError::Parse { .. })));
+    }
+
+    #[test]
+    fn runs_and_tests_can_be_limited_to_systems() {
+        let text = "[[run]]\nname = \"client\"\ncommand = \"x\"\nos = \"Windows\"\n\n\
+                    [[test]]\nname = \"unix\"\ncommand = \"y\"\nos = [\"mac\", \"linux\"]\n\n\
+                    [[test]]\nname = \"all\"\ncommand = \"z\"\n";
+        let c = merge(Some(parse(text, Source::File).unwrap()), None).unwrap();
+        assert_eq!(c.runs[0].os, ["windows"]);
+        assert_eq!(c.tests[0].os, ["macos", "linux"]);
+        assert!(c.runs[0].runs_on("windows") && !c.runs[0].runs_on("macos"));
+        assert!(c.tests[0].runs_on("darwin") && c.tests[0].runs_on("linux") && !c.tests[0].runs_on("windows"));
+        assert!(c.tests[1].os.is_empty() && c.tests[1].runs_on("windows"));
+        // The overrides' list replaces the file's.
+        let over = parse("[[run]]\nname = \"client\"\nos = [\"linux\"]\n", Source::Overrides).unwrap();
+        let c = merge(Some(parse(text, Source::File).unwrap()), Some(over)).unwrap();
+        assert_eq!(c.runs[0].os, ["linux"]);
+        let bad = parse("[[run]]\nname = \"r\"\ncommand = \"x\"\nos = \"beos\"\n", Source::File).unwrap();
+        assert_eq!(merge(Some(bad), None).unwrap_err(), RunConfigError::BadOs { name: "r".into(), os: "beos".into() });
     }
 
     #[test]

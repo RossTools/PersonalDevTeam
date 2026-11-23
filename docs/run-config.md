@@ -36,3 +36,7 @@ Notes for writing it:
 - `[ci] providers` needs PDT 0.3.0 or newer; an older PDT refuses the whole file over the unknown key.
 - `[[merge.regenerate]]` needs a PDT newer than 0.5.1; an older one skips `[merge]` (listed in `effective.ignored`).
 - `[[placement]]` needs a PDT newer than 0.6.4; an older one skips it (listed in `effective.ignored`).
+- `os` on a run or test needs a PDT newer than 0.6.4; an older one refuses the whole file over the unknown key.
+- `run-config` with a `worktreeId` lists only the runs and tests for that checkout's system (its `os`). A run in a
+  worktree on a remote instance has `instance` (`{ id, name }`): it runs there, its `url` is that instance's, and its
+  `port` and `dataDir` are null on this one.

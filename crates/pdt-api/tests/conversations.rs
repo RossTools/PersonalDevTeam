@@ -1081,3 +1081,29 @@ async fn a_gap_left_by_lost_writes_is_filled_in_from_claudes_transcript() {
     assert_eq!(by_pos, items);
     assert_eq!(shown(&seen), items, "the first viewer has every row in its place");
 }
+
+#[tokio::test]
+async fn a_conversation_is_named_after_its_first_message_unless_renamed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path()).await;
+    let s = new_conversation(&env, json!({"initialPrompt": "Split the login form\nin two"})).await;
+    assert_eq!(s["title"], "Split the login form", "named after the prompt it starts with");
+    call(&env.app, "POST", &format!("/api/sessions/{}/kill", s["id"].as_str().unwrap()), None).await;
+
+    let s = new_conversation(&env, json!({})).await;
+    let id = s["id"].as_str().unwrap();
+    assert_eq!(s["title"], "P", "the project until the user writes");
+    send(&env, id, "## Store sessions in which DB?\nmore").await;
+    assert_eq!(session(&env, id).await["title"], "Store sessions in which DB?");
+    send(&env, id, "and another thing").await;
+    assert_eq!(session(&env, id).await["title"], "Store sessions in which DB?", "only the first message names it");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+
+    let s = new_conversation(&env, json!({})).await;
+    let id = s["id"].as_str().unwrap();
+    let (st, _) = call(&env.app, "PATCH", &format!("/api/sessions/{id}"), Some(json!({"title": "Mine"}))).await;
+    assert_eq!(st, 200);
+    send(&env, id, "hello").await;
+    assert_eq!(session(&env, id).await["title"], "Mine", "the user's rename wins");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}
