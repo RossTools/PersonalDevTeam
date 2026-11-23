@@ -136,8 +136,8 @@ repository), **GitHub issue**, **Local ticket** (a draft ticket here, nothing se
 filed as your GitHub login once you've connected GitHub in **Settings › Plugins › GitHub** (or with the update
 token, if you've saved one). Without either, **Open on GitHub** opens PDT's bug form on GitHub with your report filled in, and copies the diagnostics for you to paste, so you
 send it yourself. The report form shows what it includes before you send it. Its log excerpt is cleaned of secrets,
-tokens, your machine's names and the names of your projects, repositories, branches and worktrees (each shown as
-`[name]`). A report an agent files has the same names taken out of what it wrote.
+tokens, your machine's names, the names of your projects, repositories, branches and worktrees, and the names of
+this instance, the instances it is linked with and your remote projects (each shown as `[name]`). A report an agent files has the same names taken out of what it wrote.
 
 ### Checks
 
