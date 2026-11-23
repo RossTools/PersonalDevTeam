@@ -107,6 +107,10 @@ pub const UPDATE_CHECK_MINUTES: std::ops::RangeInclusive<u32> = 5..=7 * 24 * 60;
 #[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct HostSettings {
+    /// This instance's name (Settings → This host, asked in Get started; e.g. `studio`), shown wherever an instance
+    /// is mentioned. None until the user picks one: it then goes by the machine's host name
+    /// ([`crate::instance::suggest_name`]).
+    pub instance_name: Option<String>,
     pub remote_access: bool,
     /// The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
     pub owner_login: Option<String>,
@@ -187,6 +191,7 @@ pub fn is_repo_name(s: &str) -> bool {
 impl Default for HostSettings {
     fn default() -> Self {
         Self {
+            instance_name: None,
             remote_access: false,
             owner_login: None,
             update_policy: UpdatePolicy::Notify,
@@ -226,6 +231,10 @@ impl Default for HostSettings {
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct HostSettingsPatch {
+    /// This instance's name ([`crate::instance::valid_name`]).
+    #[serde(default)]
+    #[ts(optional)]
+    pub instance_name: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub remote_access: Option<bool>,
@@ -327,6 +336,8 @@ pub struct HostSettingsPatch {
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum HostSettingsError {
+    #[error("{0}")]
+    BadInstanceName(#[from] crate::instance::NameError),
     #[error("the run port range must lie within 1024–65535, start at or below its end, and hold at most 1000 ports")]
     BadPortRange,
     #[error("the maximum number of concurrent runs must be between 1 and 32")]
@@ -369,8 +380,16 @@ impl HostSettings {
         }
     }
 
+    /// The name this instance goes by: the one the user picked, else one from the machine's host name.
+    pub fn instance_name_or(&self, host_name: &str) -> String {
+        self.instance_name.clone().unwrap_or_else(|| crate::instance::suggest_name(host_name))
+    }
+
     pub fn apply(&self, p: &HostSettingsPatch) -> Result<HostSettings, HostSettingsError> {
         let mut s = self.clone();
+        if let Some(raw) = &p.instance_name {
+            s.instance_name = Some(crate::instance::valid_name(raw)?);
+        }
         if let Some(v) = p.remote_access {
             s.remote_access = v;
         }
@@ -611,6 +630,17 @@ mod tests {
 
     fn patch() -> HostSettingsPatch {
         HostSettingsPatch::default()
+    }
+
+    #[test]
+    fn the_instance_name_is_checked_and_defaults_to_the_host_name() {
+        let s = HostSettings::default();
+        assert_eq!(s.instance_name_or("Studio.local"), "studio");
+        let named = s.apply(&HostSettingsPatch { instance_name: Some(" win-box ".into()), ..patch() }).unwrap();
+        assert_eq!(named.instance_name.as_deref(), Some("win-box"));
+        assert_eq!(named.instance_name_or("Studio.local"), "win-box");
+        let bad = s.apply(&HostSettingsPatch { instance_name: Some("two words".into()), ..patch() });
+        assert!(matches!(bad, Err(HostSettingsError::BadInstanceName(_))));
     }
 
     #[test]

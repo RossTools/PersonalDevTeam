@@ -23,6 +23,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'PM', terms: ['Daily checkpoint', 'Daily update', 'Journal', 'At a set time', 'Days'] },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
   { label: 'Startup', terms: ['Start PDT at login', 'Login item', 'Background service', 'Stop PDT'] },
+  { label: 'Name', terms: ['Instance name', 'This instance', 'Remote projects'] },
   { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   {
@@ -44,6 +45,7 @@ export const HOST_PAGES = [
   { id: 'plugins', label: 'Plugins', terms: ['Integrations'] },
   { id: 'connections', label: 'All connections', terms: ['Connections'] },
   { id: 'secrets', label: 'Secrets', terms: ['Keychain', 'Tokens'] },
+  { id: 'remote-projects', label: 'Remote projects', terms: ['Join a remote project', 'Pairing code', 'Owner', 'Pause'] },
   { id: 'mcp-servers', label: 'MCP servers', terms: ['MCP', 'Model Context Protocol', 'OAuth', 'Sign in', 'Slack', 'Tools', 'Use only PDT’s MCP servers'] },
 ] as const;
 
@@ -61,6 +63,7 @@ const PROJECT_SECTIONS: readonly (SectionInfo & { repoOnly?: true })[] = [
   },
   { label: 'Plugins', terms: ['Connection'], repoOnly: true },
   { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Design doc', 'Docs', 'Sheets'] },
+  { label: 'Remote instances', terms: ['Pairing code', 'Add remote instance', 'Other instances', 'Heartbeat'], repoOnly: true },
   { label: 'Danger zone', terms: ['Remove this project'] },
 ];
 

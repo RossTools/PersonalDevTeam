@@ -9,7 +9,13 @@ import type { SessionMode } from "./SessionMode";
 import type { UpdateChannel } from "./UpdateChannel";
 import type { UpdatePolicy } from "./UpdatePolicy";
 
-export type HostSettings = { remoteAccess: boolean, 
+export type HostSettings = { 
+/**
+ * This instance's name (Settings → This host, asked in Get started; e.g. `studio`), shown wherever an instance
+ * is mentioned. None until the user picks one: it then goes by the machine's host name
+ * ([`crate::instance::suggest_name`]).
+ */
+instanceName: string | null, remoteAccess: boolean, 
 /**
  * The Tailscale login allowed to use this host remotely. `PDT_OWNER_LOGIN` overrides it.
  */

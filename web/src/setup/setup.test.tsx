@@ -20,7 +20,8 @@ const checks = (o: { claude?: boolean; codex?: boolean; devin?: boolean; git?: b
 });
 
 function view(o: Partial<Omit<SetupView, 'steps'>> & { steps?: Partial<SetupView['steps']> } = {}): SetupView {
-  const steps = { agents: 'todo', github: 'todo', project: 'todo', defaultAgent: 'todo', permissions: 'todo', ...o.steps } as SetupView['steps'];
+  // Named already unless a test says otherwise: most tests are about the other steps.
+  const steps = { name: 'done', agents: 'todo', github: 'todo', project: 'todo', defaultAgent: 'todo', permissions: 'todo', ...o.steps } as SetupView['steps'];
   return {
     state: { needed: true, dismissed: false, finished: false, githubSkipped: false, defaultAgentConfirmed: false, permissionsConfirmed: false },
     done: Object.values(steps).filter((s) => s !== 'todo').length,
@@ -53,6 +54,7 @@ const step = (name: string) => screen.findByRole('region', { name });
 describe('Get started', () => {
   it('opens the first step not done', () => {
     expect(firstOpenStep(view())).toBe('agents');
+    expect(firstOpenStep(view({ steps: { name: 'todo' } }))).toBe('name');
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'skipped' } }))).toBe('project');
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done' } }))).toBe('permissions');
     expect(firstOpenStep(view({ steps: { agents: 'done', github: 'done', project: 'done', defaultAgent: 'done', permissions: 'done' } }))).toBeNull();
@@ -63,8 +65,8 @@ describe('Get started', () => {
   it('shows the progress and each step’s state, and lists git and the agents with their paths', async () => {
     stub(view({ steps: { agents: 'done', github: 'skipped' } }));
     renderWithQuery(<SetupPage {...props()} />);
-    expect(await screen.findByRole('progressbar', { name: 'Setup progress' })).toHaveAttribute('aria-valuenow', '2');
-    expect(screen.getByText('2 of 5')).toBeInTheDocument();
+    expect(await screen.findByRole('progressbar', { name: 'Setup progress' })).toHaveAttribute('aria-valuenow', '3');
+    expect(screen.getByText('3 of 6')).toBeInTheDocument();
     expect(within(await step('Agents on this machine')).getByRole('img', { name: 'done' })).toBeInTheDocument();
     expect(within(await step('Connect GitHub')).getByRole('img', { name: 'skipped' })).toBeInTheDocument();
     expect(within(await step('Add a project')).getByRole('img', { name: 'to do' })).toBeInTheDocument();
@@ -238,6 +240,21 @@ describe('Get started', () => {
     await userEvent.click(within(group).getByRole('radio', { name: /Bypass \(dangerous\)/ }));
     await userEvent.click(within(perms).getByRole('button', { name: 'Use Bypass (dangerous)' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'PUT' && c.path === '/api/host/settings')?.body).toEqual({ ticketPermissionMode: 'bypass' }));
+  });
+
+  it('names the instance, starting from the name it goes by', async () => {
+    const calls = stub(view({ steps: { name: 'todo' } }), {
+      'GET /api/health': { instanceName: 'studio-mini' },
+      'PUT /api/host/settings': { settings: { instanceName: 'studio' }, projectsDir: '/u/work', programs: [] },
+    });
+    renderWithQuery(<SetupPage {...props()} />);
+    const name = await step('Name this instance');
+    const input = await within(name).findByRole('textbox', { name: 'Instance name' });
+    await waitFor(() => expect(input).toHaveValue('studio-mini'));
+    await userEvent.clear(input);
+    await userEvent.type(input, 'studio');
+    await userEvent.click(within(name).getByRole('button', { name: 'Use this name' }));
+    await waitFor(() => expect(calls).toContainEqual({ method: 'PUT', path: '/api/host/settings', body: { instanceName: 'studio' } }));
   });
 
   it('says so when every step is done, with the board and the PM', async () => {

@@ -6,6 +6,7 @@ mod events;
 mod health;
 mod host;
 mod inbox;
+mod links;
 mod local_forge;
 mod migrate;
 mod notifications;
@@ -32,6 +33,7 @@ pub use event_log::{EVENT_RETENTION_MS, EventFilter};
 pub use events::{NewEvent, RAW_RETENTION_MS};
 pub use health::{WRITE_FAILED, WriteFailure, is_disk_full, is_write_failure, write_backoff_ms};
 pub use host::ProjectSettings;
+pub use links::Heard;
 pub use local_forge::{LocalChange, LocalCiRun};
 pub use notifications::NotificationFilter;
 pub use pm::{NoteFilter, PmSessionRow};
@@ -204,14 +206,20 @@ impl Store {
     }
 
     pub async fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
-        // The host project (the PM's, PDT-81) is PDT's own: never listed.
-        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE kind != 'host' ORDER BY created_at, id");
+        // The host project (the PM's, PDT-81) is PDT's own: never listed. Remote projects (PDT-631) belong to another
+        // instance: they are listed apart (`list_remote_projects`), so nothing that goes through this list (the PM,
+        // workflows, pickup, the Inbox) sees them.
+        let sql = format!(
+            "SELECT {PROJECT_COLUMNS} FROM projects WHERE kind NOT IN ('host', 'remote') ORDER BY created_at, id"
+        );
         let rows: Vec<ProjectRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(to_project).collect())
     }
 
+    /// One of this instance's own projects (or the host project). A remote project (PDT-631) is never found here, so
+    /// nothing that looks a project up by id works on one: `get_remote_project` finds those.
     pub async fn get_project(&self, id: &str) -> Result<Option<Project>, StoreError> {
-        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ?");
+        let sql = format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE id = ? AND kind != 'remote'");
         let row: Option<ProjectRow> =
             sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.pool).await?;
         Ok(row.map(to_project))

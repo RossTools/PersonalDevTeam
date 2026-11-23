@@ -417,6 +417,19 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `issue_links::FindError::Local`. Every code is in `error::codes`, the plugins' too (`codes_come_from_the_one_list`
   scans every `pdt-int-*`). Text that is the user's own input (a path they typed, a workflow's
   bad input) and a forge's or agent's answer meant for them stay as they are.
+- **A remote project is invisible to everything of the instance's own.** `Store::list_projects` and
+  `Store::get_project` skip kind `remote`, a ticket is never numbered in one, and `AppState::project` refuses one with
+  `remote_project`, so the PM (overview, briefing, tools), workflows, pickup, the Inbox and every project route never
+  see it. Only `remote_projects.rs` and the link reach it (`list_remote_projects`, `get_remote_project`). Don't look
+  projects up another way, and don't give a remote project tickets, sessions or settings of this instance's.
+- **An instance has a project either local or remote, never both**: joining refuses a project whose repository
+  (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
+- **A project-link request is acted on only once signed by the link's other end for that project**
+  (`link::SignedParts`: the link exists here, the header's project is the link's, the signature verifies with the
+  stored public key, the time is within 5 minutes and the nonce is new), on top of the identity guard. A new link
+  route checks the same way, with its body read through `host_guard::optional_json`. Private keys stay in the
+  keychain and are deleted when the link goes, at either end. A change to what crosses the link that an older build
+  can't read bumps `pdt_core::link::PROTOCOL`.
 - **A run's link is set under `settings_lock`, together with registering its driver** (`run_manager::relaunch`,
   `runs::create`). Applying remote access holds the same lock while it relinks and restarts the running runs, so a
   run started meanwhile never keeps the other setting's link.

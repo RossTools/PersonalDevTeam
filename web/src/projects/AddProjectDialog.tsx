@@ -1,5 +1,7 @@
 import { Dialog } from '@ui';
 import type { Project } from '../api/gen/Project';
+import { routePath } from '../shell/route';
+import { navigate } from '../shell/router';
 import { AddProjectForm, type AddProjectMode } from './AddProjectForm';
 
 /**
@@ -9,7 +11,8 @@ import { AddProjectForm, type AddProjectMode } from './AddProjectForm';
 export function AddProjectDialog({ onClose, onAdded, mode }: { onClose: () => void; onAdded: (p: Project) => void; mode?: AddProjectMode }) {
   return (
     <Dialog onClose={onClose} title="Add project">
-      <AddProjectForm autoFocus initialMode={mode} onAdded={(p) => { onAdded(p); onClose(); }} />
+      <AddProjectForm autoFocus initialMode={mode} onAdded={(p) => { onAdded(p); onClose(); }}
+        onJoined={() => { onClose(); navigate(routePath({ view: 'settings', page: { kind: 'remote-projects' } })); }} />
     </Dialog>
   );
 }

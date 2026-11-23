@@ -15,6 +15,7 @@ export type SettingsPage =
   | { kind: 'plugins'; id: string | null }
   | { kind: 'connections' }
   | { kind: 'secrets' }
+  | { kind: 'remote-projects' }
   | { kind: 'mcp-servers' }
   | { kind: 'notifications' }
   | { kind: 'project'; key: string; section: string | null };
@@ -101,6 +102,7 @@ export function parseRoute(pathname: string, search = ''): Route {
       if (a === 'host' && b === 'github') return { view: 'settings', page: { kind: 'plugins', id: 'github' } };
       if (a === 'connections') return { view: 'settings', page: { kind: 'connections' } };
       if (a === 'secrets') return { view: 'settings', page: { kind: 'secrets' } };
+      if (a === 'remote-projects') return { view: 'settings', page: { kind: 'remote-projects' } };
       if (a === 'mcp-servers') return { view: 'settings', page: { kind: 'mcp-servers' } };
       if (a === 'notifications') return { view: 'settings', page: { kind: 'notifications' } };
       // A project's first section was "Project" before it was "General" (PDT-231).
@@ -155,6 +157,7 @@ export function routePath(r: Route): string {
         case 'plugins': return p.id ? `/settings/plugins/${enc(p.id)}` : '/settings/plugins';
         case 'connections': return '/settings/connections';
         case 'secrets': return '/settings/secrets';
+        case 'remote-projects': return '/settings/remote-projects';
         case 'mcp-servers': return '/settings/mcp-servers';
         case 'notifications': return '/settings/notifications';
         case 'project': return `/settings/projects/${enc(p.key)}${p.section ? `/${enc(p.section)}` : ''}`;

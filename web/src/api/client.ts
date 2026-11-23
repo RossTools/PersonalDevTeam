@@ -16,6 +16,7 @@ import { personasApi } from './personas';
 import { pmApi } from './pm';
 import { pmCheckpointApi } from './pmCheckpoint';
 import { projectsApi } from './projects';
+import { remoteProjectsApi } from './remoteProjects';
 import { reviewApi } from './review';
 import { runsApi } from './runs';
 import { secretsApi } from './secrets';
@@ -47,6 +48,7 @@ export const api = {
   ...pmApi,
   ...pmCheckpointApi,
   ...projectsApi,
+  ...remoteProjectsApi,
   ...reviewApi,
   ...runsApi,
   ...secretsApi,

@@ -3,6 +3,10 @@ import type { StepState } from "./StepState";
 
 export type SetupSteps = { 
 /**
+ * This instance has a name the user picked.
+ */
+name: StepState, 
+/**
  * git is found, and at least one agent is found and logged in.
  */
 agents: StepState, 
