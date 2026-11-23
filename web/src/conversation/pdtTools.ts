@@ -113,7 +113,9 @@ export function ticketEdit(input: unknown, output?: string): { key: string; chan
   const a = isRecord(input) ? input : {};
   const r = resultOf(output) ?? {};
   const done = Array.isArray(r.changes)
-    ? r.changes.flatMap((c): FieldChange[] => (isRecord(c) && typeof c.field === 'string' ? [{ field: c.field, from: c.from, to: c.to }] : []))
+    ? r.changes.flatMap((c): FieldChange[] =>
+        isRecord(c) && typeof c.field === 'string' ? [{ field: c.field, from: unfenced(c.from), to: unfenced(c.to) }] : [],
+      )
     : null;
   const asked = EDIT_FIELDS.flatMap((f): FieldChange[] => (a[f] !== undefined ? [{ field: f, to: f === 'description' ? undefined : a[f] }] : []));
   return { key: nonBlank(r.key) ?? nonBlank(a.ticket) ?? 'a ticket', changes: done ?? asked, files: strings(a.files).length };

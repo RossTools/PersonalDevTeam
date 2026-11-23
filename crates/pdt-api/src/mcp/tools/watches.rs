@@ -53,7 +53,9 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
             let a: crate::watches::NewWatch = args(a)?;
             let w = crate::watches::watch(st, &a, Some(&cx.session.id)).await.map_err(api)?;
             let info = crate::watches::infos(st, vec![w]).await.map_err(api)?;
-            Ok(json!({"watching": info}))
+            let outside = crate::untrusted::Outside::new();
+            let info = fenced(st, info, &outside).await?;
+            Ok(outside.noted(json!({"watching": info})))
         }
         "unwatch" => {
             let a: Unwatch = args(a)?;
@@ -63,8 +65,30 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
         "list_watches" => {
             let _: NoArgs = args(a)?;
             let watches = st.store.watches_by(Some(&cx.session.id)).await.map_err(store)?;
-            Ok(json!({"watches": crate::watches::infos(st, watches).await.map_err(api)?}))
+            let info = crate::watches::infos(st, watches).await.map_err(api)?;
+            let outside = crate::untrusted::Outside::new();
+            let info = fenced(st, info, &outside).await?;
+            Ok(outside.noted(json!({"watches": info})))
         }
         other => Err(format!("no tool is called {other}")),
     }
+}
+
+/// The watches with an external ticket's title fenced (PDT-727): what an outsider wrote, as in search_tickets.
+async fn fenced(
+    st: &AppState,
+    mut info: Vec<pdt_core::watch::WatchInfo>,
+    outside: &crate::untrusted::Outside,
+) -> Result<Vec<pdt_core::watch::WatchInfo>, String> {
+    let mut seen = std::collections::HashMap::new();
+    for w in &mut info {
+        if w.target != pdt_core::watch::WatchTarget::Ticket {
+            continue;
+        }
+        if let Some(t) = w.target_title.take() {
+            let external = crate::untrusted::external_ticket(st, &w.target_id, &mut seen).await.map_err(api)?;
+            w.target_title = Some(if external { outside.wrap(&t) } else { t });
+        }
+    }
+    Ok(info)
 }
