@@ -5,6 +5,10 @@ section is a folder, each page a Markdown file whose first `# heading` is its ti
 their order are listed in `site/src/docs-pages.mjs` (`USER_SECTIONS`); a new page goes there too, or the site test
 fails. This README is not published.
 
+The website publishes these pages as they are in the newest stable release, not on `main` (site/README.md "Which docs
+the site publishes"): document a change in the same pull request as usual, and pdt.dev shows it once a release ships
+it.
+
 | Folder | Section |
 | --- | --- |
 | `getting-started/` | Getting started: install, first run, connecting agents and GitHub, a first project and ticket |

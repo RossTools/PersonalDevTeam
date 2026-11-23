@@ -137,7 +137,8 @@ names another (below, "Runners").
 - **Tests never depend on the checked-in version**: `test (linux)` sets it to 9.9.9 in its own checkout, so a test
   that hard-codes `0.x.y` fails on its own PR. Compare with `pdt_core::BUILD_VERSION` or `env!("CARGO_PKG_VERSION")`.
 - **Main runs no checks**: `ci.yml` has no `push` trigger (the queue has just checked that tree). On main,
-  `pages.yml` redeploys the website when `site/**` or `docs/**` changed, and `cache.yml` rebuilds the build caches
+  `pages.yml` redeploys the website when `site/**` or `docs/**` changed (the user docs it publishes are the newest
+  stable release's: site/README.md "Which docs the site publishes"; a stable release redeploys it too), and `cache.yml` rebuilds the build caches
   when the dependencies change (below, "Caching").
 - **macOS waits for the queue** because macOS minutes cost the most (on Namespace, 10× Linux); a macOS-only break
   shows when the PR enters the queue. Label a PR `macos` to see it earlier.

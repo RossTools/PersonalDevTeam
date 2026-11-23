@@ -3,15 +3,17 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import { unified } from '@astrojs/markdown-remark';
 import { remarkDocsLinks } from './src/remark-docs-links.mjs';
-import { docId, MOVED, USER_SECTIONS } from './src/docs-pages.mjs';
+import { existsSync } from 'node:fs';
+import { docId, MOVED, presentSections } from './src/docs-pages.mjs';
 import { sharedHead } from './src/head.mjs';
 import { siteUrl } from './src/site-url.mjs';
 import { SITE_NAME, TAGLINE } from './src/brand.mjs';
 
 // Starlight's `autogenerate` only sees src/content/docs, and the docs live in the repository's docs/: the user docs
 // sections are listed in docs-pages.mjs, each page labelled with its title. Contributing also lists the developer
-// guide (docs/dev/) and SDLC.md.
-const sections = USER_SECTIONS.map((s) => ({
+// guide (docs/dev/) and SDLC.md. The deployed site publishes the newest release's user docs (site/README.md), so a page
+// main lists may not be there: it is left out.
+const sections = presentSections((p) => existsSync(new URL(`../docs/${p}`, import.meta.url))).map((s) => ({
   label: s.label,
   items: [...s.pages.map((p) => `user/${s.dir}/${p}.md`), ...(s.more ?? [])].map((f) => ({ slug: docId(f) })),
 }));
