@@ -57,8 +57,8 @@ export function Why({ children }: { children: ReactNode }) {
   );
 }
 
-function ActionButton({ a }: { a: ItemAction }) {
-  const key = a.kbd ?? (a.primary ? '↵' : null);
+function ActionButton({ a, enter }: { a: ItemAction; enter: boolean }) {
+  const key = a.kbd ?? (a.primary && enter ? '↵' : null);
   return (
     <Button
       variant={a.confirming ? 'danger' : a.primary ? 'primary' : a.danger ? 'danger' : a.end ? 'ghost' : 'secondary'}
@@ -104,7 +104,7 @@ export function ItemLayout({ item, spec, note, onNote }: { item: InboxItem; spec
             </div>
           )}
           hint={spec.hint && <span aria-live="polite">{spec.hint}</span>}
-          end={end.length > 0 && end.map((a) => <ActionButton key={a.id} a={a} />)}
+          end={end.length > 0 && end.map((a) => <ActionButton key={a.id} a={a} enter={spec.enter} />)}
           below={spec.takeOver?.open && (
             <div role="group" aria-label="Pick the outcome" className="flex flex-wrap items-center gap-2">
               <span className="text-sm text-muted-foreground">The step ends with:</span>
@@ -114,7 +114,7 @@ export function ItemLayout({ item, spec, note, onNote }: { item: InboxItem; spec
             </div>
           )}
         >
-          {main.map((a) => <ActionButton key={a.id} a={a} />)}
+          {main.map((a) => <ActionButton key={a.id} a={a} enter={spec.enter} />)}
         </ActionBar>
       )}
     </div>

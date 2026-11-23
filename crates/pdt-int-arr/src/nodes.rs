@@ -412,6 +412,11 @@ impl NodeKind for Add {
         }
     }
 
+    /// It adds to the library and starts a search (PDT-706).
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     fn check(&self, config: &Value) -> Result<(), String> {
         let (id, field) = match self.0 {
             Arr::Radarr => (parse::<RadarrAddConfig>(config)?.tmdb_id, "tmdbId"),

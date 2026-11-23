@@ -110,6 +110,11 @@ impl NodeKind for RerunHead {
         parses::<CiHeadConfig>(config)
     }
 
+    /// It runs CI again on the forge as the user.
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// Asked twice, the provider re-runs twice (or refuses while the first is going).
     fn rerun_safe(&self, _input: &Value) -> bool {
         false

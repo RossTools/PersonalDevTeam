@@ -78,6 +78,11 @@ impl NodeKind for Retry {
         )
     }
 
+    /// It runs jobs on Buildkite again as the user (PDT-706).
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.
     fn rerun_safe(&self, _input: &Value) -> bool {
         false
@@ -164,6 +169,11 @@ impl NodeKind for TriggerBuild {
             &[("out", "Then")],
             false,
         )
+    }
+
+    /// It starts a build on Buildkite as the user (PDT-706).
+    fn outward(&self, _config: &Value) -> bool {
+        true
     }
 
     /// What it does can't be told apart from doing it twice (PDT-131): cut short, it isn't run again on its own.

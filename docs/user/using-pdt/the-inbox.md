@@ -31,10 +31,14 @@ or a click meant for the item you just answered doesn't answer the next one too.
 in a conversation.
 
 A few answers ask for a second press, because they act outside PDT or can't be taken back: **Request changes** and
-**Close** on a pull request's review (and any workflow's choice that leads to posting or closing something outside
-PDT), **Always allow**, and **Allow** on a call that changes something outside PDT as you (a pull request comment, an
+**Close** on a pull request's review (and any workflow's choice that leads, even after a condition or a wait, to a
+step that posts, closes, changes or starts something outside PDT: a Jira comment, a chat message, a release workflow,
+an HTTP request that isn't a plain read), **Always allow**, and **Allow** on a call that changes something outside PDT as you (a pull request comment, an
 issue, a Jira comment, a chat message). The first press turns the button red and reads
 **Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
+
+**Approve** on a command waiting for your approval asks twice too, naming the command, since it then runs in every
+branch of the project. Enter doesn't take it: press the button.
 
 When a workflow's earlier step recommends one of the choices (a pull request's reviewer suggesting **Close**, say),
 the item leads with it, as **Reviewer recommends: Close**, and Enter takes it. Any other choice asks for a second
