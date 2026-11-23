@@ -206,6 +206,6 @@ Each project has its own sections. A personal project (one without a repository)
 - **Plugins**: which Jira project, Buildkite pipeline or other service this project's issues and CI live in.
 - **Documents**: the [documents](../using-pdt/documents.md) linked to the project, with **Add**, and its own
   **Default provider** and **Local documents folder** (blank: this host's).
-- **Remote instances**: the other instances that work on this project for this one, and **Add** to pair one. See
+- **Remote instances**: the other instances that work on this project for this one, and **Add instance** to pair one. See
   [Remote projects](remote-projects.md).
 - **Danger zone**: **Remove this project**. PDT forgets it and stops its sessions and runs; the files on disk stay.

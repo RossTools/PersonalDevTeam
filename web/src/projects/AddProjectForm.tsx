@@ -29,9 +29,16 @@ const modes = [
 
 /**
  * Adds a project from a folder on this host, by cloning a repository URL into the Projects folder, or as a Personal
- * project with no repository (PDT makes its folder); or joins a remote project of another instance (`onJoined`).
+ * project with no repository (PDT makes its folder); or joins a remote project of another instance (`onJoined`;
+ * `onLeave` runs before it goes to turn remote access on).
  */
-export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMode = 'path' }: { onAdded?: (p: Project) => void; onJoined?: () => void; autoFocus?: boolean; initialMode?: Mode }) {
+export function AddProjectForm({ onAdded, onJoined, onLeave, autoFocus = false, initialMode = 'path' }: {
+  onAdded?: (p: Project) => void;
+  onJoined?: () => void;
+  onLeave?: () => void;
+  autoFocus?: boolean;
+  initialMode?: Mode;
+}) {
   const qc = useQueryClient();
   const errorId = useId();
   const [mode, setMode] = useState<Mode>(initialMode);
@@ -82,7 +89,7 @@ export function AddProjectForm({ onAdded, onJoined, autoFocus = false, initialMo
     return (
       <div className="flex flex-col gap-3 p-2">
         {choose}
-        <JoinRemoteProjectForm autoFocus={autoFocus} onJoined={() => onJoined?.()} />
+        <JoinRemoteProjectForm autoFocus={autoFocus} onJoined={() => onJoined?.()} onLeave={onLeave} />
       </div>
     );
   }
