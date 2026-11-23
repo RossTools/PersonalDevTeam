@@ -27,7 +27,7 @@ const session = (over: Partial<Session> = {}): Session => ({
 
 const run = (over: Partial<Run> = {}): Run => ({
   id: 'r1', projectId: 'p1', worktreeId: null, branch: 'main', name: 'pdt', kind: 'run', state: 'stopped', port: null,
-  url: null, dataDir: null, cwd: '/r/p1', exitCode: null, error: null, detached: false, createdAt: 0, updatedAt: 0, ...over,
+  url: null, dataDir: null, cwd: '/r/p1', exitCode: null, error: null, detached: false, createdAt: 0, updatedAt: 0, instance: null, ...over,
 });
 
 describe('closePrompt', () => {
