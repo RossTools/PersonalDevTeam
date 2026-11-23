@@ -485,7 +485,7 @@ async fn reusable_session(st: &AppState, cx: &StepCx<'_>, t: Option<&Target>) ->
             && match (s.mode, s.status) {
                 (_, SessionStatus::Finished) => false,
                 (SessionMode::Conversation, _) => true,
-                (_, SessionStatus::Running) => st.ptys.is_running(&s.id),
+                (_, SessionStatus::Running) => st.terminal_running(&s.id),
                 (_, SessionStatus::Interrupted) => st.resume_pending(&s.id),
             }
     };
@@ -579,6 +579,7 @@ pub(crate) async fn new_session(
             mode: SessionMode::Conversation,
             model: persona.setup.model.clone(),
             permission_mode: Some(mode),
+            instance_id: None,
         },
         title: Some(title),
         attempt_id,

@@ -81,6 +81,24 @@ describe('NewTabChooser', () => {
       return panel;
     };
 
+    it("offers a shell on each of the project's remote instances, in its checkout there", async () => {
+      const remote = (name: string, state: string) => ({ instanceId: `i-${name}`, name, state });
+      const calls = stubApi({
+        ...routes,
+        'POST /api/sessions': created,
+        [`GET /api/projects/${project.id}/remote-instances`]: { name: 'studio', address: null, pairing: null, instances: [remote('win-box', 'connected'), remote('linux-box', 'offline')] },
+      });
+      setNarrow(false);
+      const ws = { ...fakeWs(), projects: [{ ...project, kind: 'repo' }] } as unknown as WorkspacesApi;
+      renderWithQuery(<NewTabChooser ws={ws} onClose={vi.fn()} />);
+      const panel = screen.getByRole('dialog', { name: 'New tab' });
+      const offline = await within(panel).findByRole('menuitem', { name: /^Shell on linux-box/ });
+      expect(offline).toHaveAttribute('aria-disabled', 'true');
+      await userEvent.click(within(panel).getByRole('menuitem', { name: /^Shell on win-box/ }));
+      await waitFor(() => expect(post(calls)).toMatchObject({ kind: 'shell', instanceId: 'i-win-box' }));
+      expect(post(calls)).not.toHaveProperty('worktreeId');
+    });
+
     it('c opens a Claude conversation', async () => {
       const calls = stubApi({ ...routes, 'POST /api/sessions': created });
       await open();
