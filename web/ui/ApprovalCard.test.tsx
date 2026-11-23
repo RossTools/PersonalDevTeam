@@ -19,7 +19,7 @@ describe('ApprovalCard', () => {
     render(<ApprovalCard title="Edit this file?" subject="a.ts" canAlways onAnswer={onAnswer} />);
     await userEvent.click(screen.getByRole('button', { name: 'Always allow in this session' }));
     expect(onAnswer).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm: always allow in this session' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm always allow in this session' }));
     expect(onAnswer).toHaveBeenCalledWith({ type: 'approve', always: true });
   });
 
@@ -59,6 +59,23 @@ describe('ApprovalCard', () => {
     expect(screen.getByRole('button', { name: 'Allow' })).toBeInTheDocument();
   });
 
+  it('has Allow, Always allow in this session, then Deny, as the Inbox has', () => {
+    render(<ApprovalCard title="Run this command?" subject="ls" canAlways onAnswer={() => {}} />);
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual(['Allow', 'Always allow in this session', 'Deny']);
+  });
+
+  it('shows a question without a header over it, and dismisses it on e, not n', async () => {
+    const onAnswer = vi.fn();
+    render(<ApprovalCard kind="question" title="A question for you" keyboard onAnswer={onAnswer}
+      questions={[{ question: 'Which database?', options: [{ label: 'SQLite' }] }]} />);
+    expect(screen.queryByText('A question for you')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'A question for you' })).toBeInTheDocument();
+    await userEvent.keyboard('n');
+    expect(onAnswer).not.toHaveBeenCalled();
+    await userEvent.keyboard('e');
+    expect(onAnswer).toHaveBeenCalledWith({ type: 'deny' });
+  });
+
   it('answers questions with the picked option labels', async () => {
     const onAnswer = vi.fn();
     render(
@@ -72,7 +89,7 @@ describe('ApprovalCard', () => {
         onAnswer={onAnswer}
       />,
     );
-    const submit = screen.getByRole('button', { name: 'Submit' });
+    const submit = screen.getByRole('button', { name: 'Send answers' });
     expect(submit).toBeDisabled();
     expect(screen.getByText('DB')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'SQLite' }));
@@ -101,7 +118,7 @@ describe('ApprovalCard', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'apple' }));
     await userEvent.click(screen.getByRole('radio', { name: 'Something else' }));
     expect(screen.getByRole('radio', { name: 'apple' })).not.toBeChecked();
-    expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send answers' })).toBeDisabled();
     await userEvent.type(screen.getByRole('textbox', { name: 'Something else for question 1' }), ' plum {Enter}');
     expect(onAnswer).toHaveBeenCalledWith({ type: 'question', answers: { 'Which word?': ['plum'] } });
   });

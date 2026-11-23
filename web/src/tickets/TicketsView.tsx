@@ -40,7 +40,7 @@ import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportBy
 import {
   BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
 } from './model';
-import { invalidateTickets, ticketKeys, useCheckMerge, useLabels, useTicket, useTicketId, useTicketPages } from './queries';
+import { invalidateTickets, ticketKeys, useCheckMerge, useScopeLabels, useTicket, useTicketId, useTicketPages } from './queries';
 import { LabelChips } from '../common/LabelChips';
 import { TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
 import type { BacklogState } from './useBacklog';
@@ -398,7 +398,8 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
   const total = pages.data?.pages[0]?.total;
   useClearToStartToasts(mode === 'backlog' ? items : []);
-  const labels = useLabels(project?.id ?? null);
+  const projectIds = useMemo(() => projects.map((p) => p.id), [projects]);
+  const labels = useScopeLabels(project?.id ?? null, projectIds);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   // Phones: rows get checkboxes only in bulk mode (a row's menu → Select), which ends once nothing is selected.
   const [selecting, setSelecting] = useState(false);
@@ -458,8 +459,8 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
     return () => window.removeEventListener('keydown', onKey);
   }, [hasSelection, clearSelection]);
   const allLabels = useMemo(
-    () => [...new Set([...(labels.data ?? []), ...items.flatMap((t) => t.labels)])].sort(),
-    [labels.data, items],
+    () => [...new Set([...labels, ...items.flatMap((t) => t.labels)])].sort(),
+    [labels, items],
   );
 
   const sections = useMemo(() => {
@@ -606,7 +607,7 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
   } else if (projects.length === 0) {
     body = <EmptyState>Add a project in Settings to start writing tickets.</EmptyState>;
   } else if (mode === 'board') {
-    body = <Board projectId={project?.id ?? null} onPeek={peekTo} phone={phone} />;
+    body = <Board projectId={project?.id ?? null} filters={filters} onPeek={peekTo} phone={phone} />;
   } else if (pages.isPending) {
     body = <div className="p-3"><Skeleton lines={3} label="Loading tickets" /></div>;
   } else if (pages.isError && !pages.data) {
@@ -710,21 +711,24 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
           </>
         }
       />
-      {mode === 'backlog' && projects.length > 0 && (
+      {projects.length > 0 && (
         <>
           <div className="shrink-0 border-b border-border">
-            {selected.length > 0 ? bulkBar : (
+            {mode === 'backlog' && selected.length > 0 ? bulkBar : (
+              // The Board's columns are the stages: no Stage chip and no view options there.
               <FilterBar
                 search={filters.q}
                 onSearchChange={(q) => backlog.setFilters({ q })}
                 searchLabel="Search tickets"
-                trailing={viewOptions}
+                trailing={mode === 'backlog' ? viewOptions : null}
               >
-                <MultiChip<TicketStage>
-                  label="Stage"
-                  none={filters.showClosed ? undefined : BACKLOG_STAGES.map((s) => STAGE_LABEL[s]).join(', ')}
-                  options={stageOptions}
-                  selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
+                {mode === 'backlog' && (
+                  <MultiChip<TicketStage>
+                    label="Stage"
+                    none={filters.showClosed ? undefined : BACKLOG_STAGES.map((s) => STAGE_LABEL[s]).join(', ')}
+                    options={stageOptions}
+                    selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
+                )}
                 <MultiChip<Priority> label="Priority" options={priorityOptions} selected={filters.priorities} onChange={(priorities) => backlog.setFilters({ priorities })} />
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 <ChoiceChip label="Blocked" yes="Blocked" no="Unblocked" value={filters.blocked} onChange={(blocked) => backlog.setFilters({ blocked })} />
@@ -732,7 +736,7 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
               </FilterBar>
             )}
           </div>
-          {project && <QuickAdd projectId={project.id} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
+          {mode === 'backlog' && project && <QuickAdd projectId={project.id} before={rankable ? items[0]?.id : undefined} onDetails={(title) => onNewTicket(project.id, title)} />}
         </>
       )}
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>

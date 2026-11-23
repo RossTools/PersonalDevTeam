@@ -141,12 +141,13 @@ describe('phone inbox: opening a question (PDT-209)', () => {
     expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Questions' })).toHaveTextContent('Which library?');
     await userEvent.click(screen.getByText('Which library?'));
-    // A question, as its conversation shows it, not a permission check on the tool.
-    expect(screen.getByText('A question for you')).toBeInTheDocument();
-    expect(screen.getByText("PM asks you in its conversation; the answer goes back to it.")).toBeInTheDocument();
+    // A question, laid out as PDT's own questions are (PDT-684), not a permission check on the tool.
+    expect(screen.queryByText('A question for you')).not.toBeInTheDocument();
+    expect(screen.getByText("PM asks you in its conversation; the answers go back to it.")).toBeInTheDocument();
     expect(screen.queryByText(/permission mode|AskUserQuestion/)).not.toBeInTheDocument();
+    expect(barLabels()).toEqual(['Dismiss', 'Send']);
     await userEvent.click(screen.getByRole('radio', { name: /valibot/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await userEvent.click(bar().getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/req-9')?.body)
       .toEqual({ answer: { type: 'question', answers: { 'Which library?': ['valibot'] } } }));
   });
@@ -236,12 +237,13 @@ describe('phone triage', () => {
     await waitFor(() => expect(onMove).toHaveBeenCalledWith('st'));
   });
 
-  it('has Deny · Always · Allow for an approval, answered in its session', async () => {
+  it('has Deny · Allow, then Always allow in this session under them, for an approval, answered in its session', async () => {
     const { calls } = triage([approval], 'approval:sess:r1', { 'POST /api/sessions/sess/requests/r1': undefined });
-    expect(barLabels()).toEqual(['Deny', 'Always', 'Allow']);
+    // The conversation's card on a phone has the same words and layout (PDT-684).
+    expect(barLabels()).toEqual(['Deny', 'Allow', 'Always allow in this session']);
     // Always allow asks for a second press (PDT-623).
-    await userEvent.click(bar().getByRole('button', { name: 'Always' }));
-    await userEvent.click(bar().getByRole('button', { name: 'Confirm' }));
+    await userEvent.click(bar().getByRole('button', { name: 'Always allow in this session' }));
+    await userEvent.click(bar().getByRole('button', { name: 'Confirm always allow in this session' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/sess/requests/r1')?.body)
       .toEqual({ answer: { type: 'approve', always: true } }));
     expect(await screen.findByText('All clear')).toBeInTheDocument();

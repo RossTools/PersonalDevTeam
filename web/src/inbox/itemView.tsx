@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  AgentMessage, answerText, ApprovalCard, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
+  AgentMessage, answerText, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, requestAnswers, SectionLabel, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
@@ -49,6 +49,8 @@ export interface ItemAction {
   kbd?: string;
   disabled?: boolean;
   pending?: boolean;
+  /** The phone gives it a row of its own, under the rest (a long label: Always allow in this session). */
+  wide?: boolean;
   /** A toggle (Take over): whether what it opens is open. */
   expanded?: boolean;
   /** Pressed once, it waits for a second press to act (PDT-623). */
@@ -120,8 +122,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
 }): { spec: ItemSpec; note: string; setNote: (s: string) => void } {
   const [note, setNote] = useState('');
   // A question's recommended choice starts picked (PDT-476); the user still sends it.
+  // An approval's are the agent's own questions (AskUserQuestion, PDT-684).
   const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
-    item.kind === 'question' ? questionsOf(item).map((q) => (q.recommended ? { choice: q.recommended, other: null } : NO_ANSWER)) : []);
+    item.kind === 'question' ? questionsOf(item).map((q) => (q.recommended ? { choice: q.recommended, other: null } : NO_ANSWER))
+      : item.kind === 'approval' ? requestQuestions(item.body.input).map(() => NO_ANSWER) : []);
   const [active, setActive] = useState(0);
   const [takingOver, setTakingOver] = useState(false);
   const [secret, setSecret] = useState('');
@@ -181,27 +185,41 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
     };
   };
 
+  // A page of questions (PDT's `ask_user`, or the agent's own): each one's answer, and how many are answered.
+  const questionState = (count: number) => {
+    const at = (n: number) => answers[n] ?? NO_ANSWER;
+    const set = (n: number, a: QuestionAnswer) => setAnswers(Array.from({ length: count }, (_, i) => (i === n ? a : at(i))));
+    const answered = Array.from({ length: count }, (_, n) => at(n)).filter((a) => answerText(a).trim() || (a.choices?.length ?? 0) > 0).length;
+    return { at, set, answered };
+  };
+  // A number key picks that choice of the question in hand (ticks it, for several), the last one types an own answer;
+  // a single pick moves on to the next question.
+  const numberKeys = (qs: { choices: string[]; multiple?: boolean }[]) => (key: string) => {
+    const { at, set } = questionState(qs.length);
+    const n = Math.min(active, qs.length - 1);
+    const q = qs[n];
+    const k = Number(key);
+    if (!q || !Number.isInteger(k) || k < 1 || k > q.choices.length + 1 || q.choices.length === 0) return false;
+    if (k > q.choices.length) {
+      set(n, { ...at(n), other: at(n).other ?? '' });
+      document.getElementById(otherInputId(`${item.id}-q${n}`))?.focus();
+    } else if (q.multiple) {
+      const label = q.choices[k - 1];
+      const ticked = at(n).choices ?? [];
+      set(n, { ...at(n), choices: ticked.includes(label) ? ticked.filter((l) => l !== label) : [...ticked, label] });
+    } else {
+      set(n, { choice: q.choices[k - 1], other: null });
+      if (n + 1 < qs.length) setActive(n + 1);
+    }
+    return true;
+  };
+
   const spec = ((): Omit<ItemSpec, 'enter'> & { enter?: boolean } => {
     switch (item.kind) {
       case 'question': {
         const qs = questionsOf(item);
-        const at = (n: number) => answers[n] ?? NO_ANSWER;
-        const set = (n: number, a: QuestionAnswer) => setAnswers(qs.map((_, i) => (i === n ? a : at(i))));
-        const answered = qs.filter((_, n) => answerText(at(n)).trim()).length;
-        const pickKey = (key: string) => {
-          const n = Math.min(active, qs.length - 1);
-          const q = qs[n];
-          const k = Number(key);
-          if (!q || !Number.isInteger(k) || k < 1 || k > q.choices.length + 1 || q.choices.length === 0) return false;
-          if (k <= q.choices.length) {
-            set(n, { choice: q.choices[k - 1].label, other: null });
-            if (n + 1 < qs.length) setActive(n + 1);
-          } else {
-            set(n, { choice: at(n).choice, other: at(n).other ?? '' });
-            document.getElementById(otherInputId(`${item.id}-q${n}`))?.focus();
-          }
-          return true;
-        };
+        const { at, set, answered } = questionState(qs.length);
+        const pickKey = numberKeys(qs.map((q) => ({ choices: q.choices.map((c) => c.label) })));
         return {
           region: 'Questions',
           why: `${persona} waits for your answers${item.ticketKey ? ` on ${item.ticketKey}` : ''}; its step carries on with them.${
@@ -265,13 +283,30 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
         const questions = requestQuestions(item.body.input);
         const why = `${item.personaName ?? nonBlank(item.body.sessionTitle) ?? 'The agent'}'s permission mode asks before this. It waits here until you decide.`;
         if (questions.length > 0) {
-          // The agent's own questions (AskUserQuestion): the card asks them and sends the answers. A question, as in
-          // its conversation, not a permission check (PDT-576).
+          // The agent's own questions (AskUserQuestion): a question, as in its conversation, not a permission check
+          // (PDT-576), laid out as PDT's own questions are (PDT-684): numbered choices, Send answers, Dismiss on `e`.
           const who = item.personaName ?? nonBlank(item.body.sessionTitle) ?? 'The agent';
+          const { at, set, answered } = questionState(questions.length);
+          const sent = requestAnswers(questions, at);
+          const all = Object.values(sent).every((x) => x.length > 0);
+          const send = () => { if (all) approve({ type: 'question', answers: sent }); };
           return {
-            region: 'Question', why: `${who} asks you in its conversation; the answer goes back to it.`, actions: [],
-            content: <ApprovalCard kind="question" title="A question for you" questions={questions} keyboard={!phone}
-              onAnswer={(a) => approve(a)} />,
+            region: 'Questions',
+            why: `${who} asks you in its conversation; the answers go back to it.`,
+            content: questions.map((q, n) => (
+              <QuestionCard key={n} id={`${item.id}-q${n}`} index={n} total={questions.length} label={q.question} numbers={!phone}
+                question={questions.length === 1 && q.question === item.title && !longTitle(item) ? undefined
+                  : <>{q.header && <SectionLabel as="span" className="mr-1.5">{q.header}</SectionLabel>}{q.question}</>}
+                choices={q.options} multiple={q.multiSelect}
+                value={at(n)} disabled={busy} onChange={(a) => { set(n, a); setActive(n); }} onSubmit={send} />
+            )),
+            actions: [
+              { id: 'send', title: 'Send answers', short: 'Send', primary: true, disabled: !all, run: send },
+              // It answers the agent (not PDT's Dismiss), so a phone keeps it in the bar.
+              { id: 'decline', title: 'Dismiss', kbd: 'e', end: true, run: () => approve({ type: 'deny' }) },
+            ],
+            hint: `${answered} of ${questions.length} answered`,
+            onKey: numberKeys(questions.map((q) => ({ choices: q.options.map((o) => o.label), multiple: q.multiSelect }))),
           };
         }
         const send = approve;
@@ -304,9 +339,10 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
           ),
           note: { label: 'Reason (optional)', placeholder: 'Why not (optional): the agent gets it with Deny' },
           actions: [
-            { id: 'allow', title: 'Allow once', short: 'Allow', primary: true, kbd: 'y', run: allow },
+            // The same words and order as the conversation's card (PDT-684).
+            { id: 'allow', title: 'Allow', primary: true, kbd: 'y', run: allow },
             ...(item.choices.some((c) => c.id === 'allow_always')
-              ? [{ id: 'always', title: 'Always allow', short: 'Always', run: () => send({ type: 'approve', always: true }) }]
+              ? [{ id: 'always', title: 'Always allow in this session', wide: true, run: () => send({ type: 'approve', always: true }) }]
               : []),
             { id: 'deny', title: 'Deny', kbd: 'n', end: true, danger: true, run: deny },
           ],

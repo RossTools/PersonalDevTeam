@@ -2,6 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserRound } from 'lucide-react';
 import {
+  ActionBar,
   Badge,
   Button,
   Checkbox,
@@ -15,6 +16,7 @@ import {
   SettingsRow,
   Skeleton,
   Textarea,
+  toast,
   useConfirm,
 } from '@ui';
 import { api } from '../api/client';
@@ -39,23 +41,15 @@ import {
   sameSetup,
   setupOf,
   sortPersonas,
+  toolSummary,
   usePersonaTools,
   usePersonas,
   type ModeChoice,
 } from './model';
 import { LoadError } from '../common/QueryStatus';
+import { ToolsDialog } from './ToolsDialog';
 
 const MAX_NAME = 60;
-
-/** A form's Save with its "Saved" note, for a section footer. */
-function SaveFooter({ label, text = 'Save', dirty, saved, pending }: { label: string; text?: string; dirty: boolean; saved: boolean; pending: boolean }) {
-  return (
-    <>
-      {saved && !dirty && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
-      <Button type="submit" variant="primary" size="sm" aria-label={label} disabled={!dirty} pending={pending}>{text}</Button>
-    </>
-  );
-}
 
 // ---------------------------------------------------------------------------------------------------------------
 // The setup fields (one version): agent, model, permission mode, tools, instructions
@@ -71,11 +65,11 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
   // The persona's agent stays listed even if the host no longer offers it (an ACP agent removed since, or one switched
   // off in Settings → Agents).
   const agentOptions = agents.all.includes(value.agent) ? agents.all : [...agents.all, value.agent];
+  const [choosing, setChoosing] = useState(false);
+  // Tools the persona has that the server doesn't list stay on (and saved) until turned off.
   const checked = value.tools;
-  const toggle = (name: string, on: boolean) =>
-    set({ tools: normalTools(orderTools(on ? [...checked, name] : checked.filter((t) => t !== name), known ?? [])) });
-  // Tools the persona has that the server doesn't list stay checked (and saved) until unchecked.
-  const unknown = known ? checked.filter((n) => !known.some((t) => t.name === n)) : [];
+  const toggle = (names: string[], on: boolean) =>
+    set({ tools: normalTools(orderTools(on ? [...checked, ...names] : checked.filter((t) => !names.includes(t)), known ?? [])) });
   return (
     <>
       <SettingsRow label="Agent" htmlFor={agentId}>
@@ -117,32 +111,18 @@ function SetupFields({ value, onChange }: { value: PersonaSetup; onChange: (s: P
         />
       </SettingsRow>
       <SettingsRow
-        stacked
         label="Tools"
         description="PDT's tools its sessions get; a persona that picks none gets none. A new persona starts with the default set."
       >
         {known ? (
-          <ul className="flex flex-col gap-1.5">
-            {known.map((t) => (
-              <li key={t.name}>
-                <Checkbox checked={checked.includes(t.name)} onChange={(on) => toggle(t.name, on)}>
-                  <span className="font-mono text-xs">{t.name}</span>
-                  <span className="text-xs text-muted-foreground"> · {t.does}{t.asks && ' (asks you first)'}</span>
-                </Checkbox>
-              </li>
-            ))}
-            {unknown.map((n) => (
-              <li key={n}>
-                <Checkbox checked onChange={(on) => toggle(n, on)}>
-                  <span className="font-mono text-xs">{n}</span>
-                  <span className="text-xs text-muted-foreground"> · not a tool this PDT has</span>
-                </Checkbox>
-              </li>
-            ))}
-          </ul>
+          <>
+            <span role="status" aria-label="Tools on" className="text-xs tabular-nums text-muted-foreground">{toolSummary(checked, known)}</span>
+            <Button size="sm" onClick={() => setChoosing(true)}>Choose tools…</Button>
+          </>
         ) : (
-          <Skeleton lines={4} label="Loading the tools" />
+          <Skeleton lines={1} label="Loading the tools" className="w-40" />
         )}
+        {choosing && known && <ToolsDialog known={known} checked={checked} onToggle={toggle} onClose={() => setChoosing(false)} />}
       </SettingsRow>
       <SettingsRow stacked label="Instructions" description="Markdown, added to its sessions' instructions.">
         <PreviewEdit aria-label="Instructions view" className="self-start" value={preview} onChange={setPreview} />
@@ -229,79 +209,42 @@ function NewPersonaForm({ onSelect }: { onSelect: (id: string) => void }) {
 // ---------------------------------------------------------------------------------------------------------------
 // An existing persona
 
-/** What Identity is keyed on: a change from elsewhere starts the form over. */
+/** What the Persona fields are keyed on: a change from elsewhere (or a save) starts them over. */
 const identityKey = (p: Pick<Persona, 'id' | 'name' | 'role' | 'description'>) => `${p.id}:${p.name}:${p.role}:${p.description}`;
 
-/**
- * Name, role and description: one form, PATCH on Save. A save remounts it (it is keyed on these), so whether it was
- * just saved comes from the parent: `savedAs` is the key the last save led to.
- */
-function Identity({ persona, savedAs, onSaved }: { persona: Persona; savedAs: string | null; onSaved: (key: string) => void }) {
-  const qc = useQueryClient();
+type IdentityFields = Pick<Persona, 'name' | 'role' | 'description'>;
+const identityOf = (p: Persona): IdentityFields => ({ name: p.name, role: p.role, description: p.description });
+
+/** A form's edits of `init()`, started over when `key` changes (the persona changed elsewhere, or was saved): the
+ *  value, a setter and a reset. */
+function useDraft<T>(key: string, init: () => T): [T, (v: T) => void, () => void] {
+  const [draft, setDraft] = useState(() => ({ key, value: init() }));
+  let current = draft;
+  if (draft.key !== key) {
+    current = { key, value: init() };
+    setDraft(current);
+  }
+  return [current.value, (value) => setDraft({ key, value }), () => setDraft({ key, value: init() })];
+}
+
+/** Name, role and description. */
+function IdentityFieldsRows({ value, onChange }: { value: IdentityFields; onChange: (v: IdentityFields) => void }) {
   const nameId = useId();
   const roleId = useId();
   const descId = useId();
-  const [name, setName] = useState(persona.name);
-  const [role, setRole] = useState(persona.role);
-  const [description, setDescription] = useState(persona.description);
-  const [saved, setSaved] = useState(savedAs === identityKey(persona));
-  const dirty = name.trim() !== persona.name || role.trim() !== persona.role || description !== persona.description;
-  const [save, saving] = useAction(async () => {
-    await api.patchPersona(persona.id, {
-      ...(name.trim() !== persona.name ? { name: name.trim() } : {}),
-      ...(role.trim() !== persona.role ? { role: role.trim() } : {}),
-      ...(description !== persona.description ? { description } : {}),
-    });
-    onSaved(identityKey({ id: persona.id, name: name.trim(), role: role.trim(), description }));
-    await qc.invalidateQueries({ queryKey: personaKeys.all });
-    setSaved(true);
-  });
+  const set = (p: Partial<IdentityFields>) => onChange({ ...value, ...p });
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (dirty && name.trim()) void save(); }}>
-      <Section label="Persona" footer={<SaveFooter label="Save persona" dirty={dirty} saved={saved} pending={saving} />}>
-        <SettingsRow label="Name" htmlFor={nameId}>
-          <Input id={nameId} aria-label="Name" required maxLength={MAX_NAME} className="w-64 max-w-full" value={name} onChange={(e) => { setName(e.target.value); setSaved(false); }} />
-        </SettingsRow>
-        <SettingsRow label="Role" htmlFor={roleId} description="Free text: refiner, coder, reviewer, qa…">
-          <Input id={roleId} aria-label="Role" className="w-64 max-w-full" value={role} onChange={(e) => { setRole(e.target.value); setSaved(false); }} />
-        </SettingsRow>
-        <SettingsRow stacked label="Description" htmlFor={descId}>
-          <Textarea id={descId} aria-label="Description" rows={2} value={description} onChange={(e) => { setDescription(e.target.value); setSaved(false); }} />
-        </SettingsRow>
-      </Section>
-    </form>
-  );
-}
-
-/** The current version's setup; Save makes a new version (with an optional note). */
-function Setup({ persona }: { persona: Persona }) {
-  const qc = useQueryClient();
-  const noteId = useId();
-  const [setup, setSetup] = useState<PersonaSetup>(() => setupOf(persona));
-  const [note, setNote] = useState('');
-  const dirty = !sameSetup(setup, setupOf(persona));
-  const [save, saving] = useAction(async () => {
-    await api.savePersona(persona.id, { note: note.trim(), ...cleanSetup(setup) });
-    await qc.invalidateQueries({ queryKey: personaKeys.all });
-  });
-  return (
-    <form onSubmit={(e) => { e.preventDefault(); if (dirty) void save(); }}>
-      <Section
-        label={`Setup · version ${persona.version}`}
-        description={
-          persona.builtin
-            ? "Saving makes a new version. PDT brings a built-in persona up to its newer templates, except the fields you changed."
-            : 'Saving makes a new version; sessions record the version they ran with.'
-        }
-        footer={<SaveFooter label="Save a new version" text="Save new version" dirty={dirty} saved={false} pending={saving} />}
-      >
-        {persona.builtin && <TemplateNote persona={persona} onLoad={(s) => setSetup(setupOf(s))} />}
-        <SetupFields value={setup} onChange={setSetup} />
-        <SettingsRow label="Note" htmlFor={noteId} description="Optional: what this version changes.">
-          <Input id={noteId} aria-label="Version note" className="w-72 max-w-full" value={note} onChange={(e) => setNote(e.target.value)} />
-        </SettingsRow>
-      </Section>
-    </form>
+    <>
+      <SettingsRow label="Name" htmlFor={nameId}>
+        <Input id={nameId} aria-label="Name" required maxLength={MAX_NAME} className="w-64 max-w-full" value={value.name} onChange={(e) => set({ name: e.target.value })} />
+      </SettingsRow>
+      <SettingsRow label="Role" htmlFor={roleId} description="Free text: refiner, coder, reviewer, qa…">
+        <Input id={roleId} aria-label="Role" className="w-64 max-w-full" value={value.role} onChange={(e) => set({ role: e.target.value })} />
+      </SettingsRow>
+      <SettingsRow stacked label="Description" htmlFor={descId}>
+        <Textarea id={descId} aria-label="Description" rows={2} value={value.description} onChange={(e) => set({ description: e.target.value })} />
+      </SettingsRow>
+    </>
   );
 }
 
@@ -428,8 +371,35 @@ function Delete({ persona, onDeleted }: { persona: Persona; onDeleted: () => voi
   );
 }
 
+/**
+ * An existing persona: its Persona and Setup fields are one form, saved from the bar that sticks to the bottom of the
+ * page while either has changes. Name, role and description are changed in place (PATCH); a changed setup is saved as
+ * a new version, with the bar's note.
+ */
 function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSelect: (id: string) => void; others: Persona[] }) {
-  const [savedAs, setSavedAs] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const [identity, setIdentity, resetIdentity] = useDraft(identityKey(persona), () => identityOf(persona));
+  const [setup, setSetup, resetSetup] = useDraft(String(persona.version), () => setupOf(persona));
+  const [note, setNote, resetNote] = useDraft(String(persona.version), () => '');
+  const patch = {
+    ...(identity.name.trim() !== persona.name ? { name: identity.name.trim() } : {}),
+    ...(identity.role.trim() !== persona.role ? { role: identity.role.trim() } : {}),
+    ...(identity.description !== persona.description ? { description: identity.description } : {}),
+  };
+  const identityDirty = Object.keys(patch).length > 0;
+  const setupDirty = !sameSetup(setup, setupOf(persona));
+  const [save, saving] = useAction(async () => {
+    if (identityDirty) await api.patchPersona(persona.id, patch);
+    const saved = setupDirty ? await api.savePersona(persona.id, { note: note.trim(), ...cleanSetup(setup) }) : null;
+    await qc.invalidateQueries({ queryKey: personaKeys.all });
+    toast.success(saved ? `Saved as version ${saved.version}` : 'Saved');
+  });
+  const discard = () => {
+    resetIdentity();
+    resetSetup();
+    resetNote();
+  };
+  const what = [identityDirty && 'Persona', setupDirty && 'Setup'].filter(Boolean).join(' and ');
   return (
     <Page
       title={persona.name}
@@ -441,11 +411,52 @@ function PersonaDetail({ persona, onSelect, others }: { persona: Persona; onSele
         </>
       }
     >
-      <Identity key={identityKey(persona)} persona={persona} savedAs={savedAs} onSaved={setSavedAs} />
-      <Setup key={`${persona.id}:${persona.version}`} persona={persona} />
-      <Versions key={persona.id} persona={persona} />
-      <Archive persona={persona} />
-      {!persona.builtin && <Delete persona={persona} onDeleted={() => onSelect(others[0]?.id ?? 'new')} />}
+      {/* contents: the sections stay the page's own, so the bar sticks to the bottom of the page, not of the form. */}
+      <form aria-label="Edit persona" className="contents" onSubmit={(e) => { e.preventDefault(); if (what && identity.name.trim()) void save(); }}>
+        <Section label="Persona">
+          <IdentityFieldsRows value={identity} onChange={setIdentity} />
+        </Section>
+        <Section
+          label={`Setup · version ${persona.version}`}
+          description={
+            persona.builtin
+              ? "Saving it makes a new version. PDT brings a built-in persona up to its newer templates, except the fields you changed."
+              : 'Saving it makes a new version; sessions record the version they ran with.'
+          }
+        >
+          {persona.builtin && <TemplateNote persona={persona} onLoad={(s) => setSetup(setupOf(s))} />}
+          <SetupFields value={setup} onChange={setSetup} />
+        </Section>
+        <Versions key={persona.id} persona={persona} />
+        <Archive persona={persona} />
+        {!persona.builtin && <Delete persona={persona} onDeleted={() => onSelect(others[0]?.id ?? 'new')} />}
+        {what && (
+          <ActionBar
+            aria-label="Unsaved changes"
+            className="sticky bottom-0 rounded-lg border shadow-popover"
+            end={
+              <>
+                <Button size="sm" onClick={discard}>Discard</Button>
+                <Button type="submit" variant="primary" size="sm" disabled={!identity.name.trim()} pending={saving}>
+                  {setupDirty ? 'Save new version' : 'Save'}
+                </Button>
+              </>
+            }
+          >
+            <span className="text-xs font-medium text-foreground">Unsaved changes to {what}</span>
+            {setupDirty && (
+              <Input
+                aria-label="Version note"
+                size="sm"
+                placeholder="Note: what this version changes (optional)"
+                className="w-72 max-w-full"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            )}
+          </ActionBar>
+        )}
+      </form>
     </Page>
   );
 }
