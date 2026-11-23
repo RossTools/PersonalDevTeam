@@ -29,13 +29,14 @@ pub(crate) struct Instance {
 
 /// An instance named `name` with `fake-agent` as Claude, served on a free loopback port; with a fake GitHub when `gh`.
 pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
-    instance_with(name, gh, None).await
+    instance_with(name, gh, None, None).await
 }
 
-/// [`instance`], with its own update service when `update` is given.
+/// [`instance`], with `tailscale` as its Tailscale and its own update service when given.
 pub(crate) async fn instance_with(
     name: &str,
     gh: Option<&Arc<FakeForge>>,
+    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
     update: Option<Arc<pdt_api::UpdateService>>,
 ) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
@@ -51,6 +52,9 @@ pub(crate) async fn instance_with(
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     state.exec.set_poll_timing(Duration::from_millis(500), Duration::from_millis(100));
+    if let Some(t) = tailscale {
+        state.tailscale = t;
+    }
     if let Some(gh) = gh {
         state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(gh))]);
     }
@@ -90,14 +94,17 @@ pub(crate) struct Pair {
 /// Owner and remote paired for the owner's project, with `windows` tickets placed on the remote instance. Its
 /// checkout is a clone of the owner's repository (a real one would be cloned from origin on first use).
 pub(crate) async fn paired() -> Pair {
-    paired_with(None).await
+    paired_with(None, None).await
 }
 
-/// [`paired`], the remote instance with its own update service when `update` is given.
-pub(crate) async fn paired_with(update: Option<Arc<pdt_api::UpdateService>>) -> Pair {
+/// [`paired`], the remote instance with `tailscale` as its Tailscale and its own update service when given.
+pub(crate) async fn paired_with(
+    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
+    update: Option<Arc<pdt_api::UpdateService>>,
+) -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
-    let remote = instance_with("win-box", None, update).await;
+    let remote = instance_with("win-box", None, tailscale, update).await;
     let main = owner.tmp.path().join("valley");
     repo(&main);
     let (s, p) =

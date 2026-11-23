@@ -203,7 +203,7 @@ async fn the_owner_asks_an_instance_on_another_protocol_to_update_on_its_channel
     // win-box under pdt-host, behind a release; studio on the stable channel, win-box's own set to nightly.
     let (base, _fake) = crate::update::fake_github().await;
     let svc = pdt_api::UpdateService::new(&base, "o/r", true, "0.1.0-local");
-    let p = paired_with(Some(Arc::new(svc))).await;
+    let p = paired_with(None, Some(Arc::new(svc))).await;
     let (s, v) = call(&p.remote.app, "PUT", "/api/host/settings", Some(json!({"updateChannel": "nightly"}))).await;
     assert_eq!(s, StatusCode::OK, "{v}");
 

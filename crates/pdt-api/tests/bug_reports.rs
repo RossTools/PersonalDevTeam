@@ -190,6 +190,62 @@ async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
 }
 
 #[tokio::test]
+async fn a_remote_projects_checkout_repository_and_worktrees_are_redacted() {
+    use pdt_core::link::OwnerLink;
+    use pdt_core::project::{Project, ProjectKind};
+    let env = setup().await;
+    // The remote project's checkout here, in a folder the user picked, with a worktree on a branch of theirs.
+    let checkout = env.tmp.path().join("hidden-checkout");
+    crate::common::init_repo(&checkout);
+    let worktree = env.tmp.path().join("secret-wt");
+    git(&checkout, &["worktree", "add", "-q", "-b", "feature/moonshot", worktree.to_str().unwrap()]);
+    let remote = Project {
+        id: "rp".into(),
+        name: "Valhalla".into(),
+        repo_path: "remote:rp".into(),
+        base_branch: "main".into(),
+        created_at: 1,
+        key: "VALH".into(),
+        forge: None,
+        kind: ProjectKind::Remote,
+    };
+    let link = OwnerLink {
+        project_id: "rp".into(),
+        link_id: "l-out".into(),
+        owner_project_id: "op".into(),
+        owner_instance_id: "oi".into(),
+        owner_name: "studio-mac".into(),
+        owner_url: "https://studio-mac.tail1234.ts.net:7420".into(),
+        owner_version: "1.0.0".into(),
+        owner_public_key: "pk".into(),
+        repo_url: Some("git@github.com:acme-corp/rocket.git".into()),
+        checkout_path: Some(checkout.to_string_lossy().into_owned()),
+        paused: false,
+        own_update_channel: false,
+        cap: None,
+        last_contact_at: None,
+        created_at: 1,
+    };
+    env.state.store.insert_remote_project(&remote, &link).await.unwrap();
+    let logs = env.state.data_dir.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(
+        logs.join("pdtd.2026-11-23.log"),
+        "INFO fetched acme-corp/rocket into /x/hidden-checkout\n\
+         INFO branch=feature/moonshot folder=/x/secret-wt worktree added\n",
+    )
+    .unwrap();
+
+    let (s, p) = call(&env.app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!(s, StatusCode::OK, "{p}");
+    let preview = p["diagnostics"].as_str().unwrap();
+    for name in ["acme-corp", "rocket", "hidden-checkout", "moonshot", "secret-wt"] {
+        assert!(!preview.contains(name), "{name} in {preview}");
+    }
+    assert!(preview.contains("INFO fetched [name] into /x/[name]\n"), "{preview}");
+}
+
+#[tokio::test]
 async fn the_instance_with_the_release_project_files_a_draft_ticket_and_never_calls_github() {
     let env = setup().await;
     store_token(&env, TOKEN);

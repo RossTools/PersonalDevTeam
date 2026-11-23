@@ -106,7 +106,7 @@ async fn stamp(checkout: &FsPath) -> Result<Stamp, ApiError> {
 }
 
 /// The checkout's run configuration file, read on the blocking pool.
-async fn read_file(checkout: &FsPath) -> Result<Option<String>, ApiError> {
+pub(crate) async fn read_file(checkout: &FsPath) -> Result<Option<String>, ApiError> {
     let path = checkout.join(PROJECT_CONFIG_FILE);
     let read = tokio::task::spawn_blocking(move || std::fs::read_to_string(path)).await.map_err(ApiError::internal)?;
     match read {
@@ -165,6 +165,24 @@ pub(crate) async fn effective_for_file(
     Ok(effective(file, overrides.as_deref())?)
 }
 
+/// The run configuration file of a worktree on a remote instance, read there, with that instance's system (PDT-634);
+/// None for a place on this instance.
+pub(crate) async fn remote_file(
+    st: &AppState,
+    worktree_id: Option<&str>,
+) -> Result<Option<crate::exec::RemoteConfig>, ApiError> {
+    let Some(wt) = (match worktree_id {
+        Some(id) => st.store.get_worktree(id).await?,
+        None => None,
+    }) else {
+        return Ok(None);
+    };
+    match crate::exec::worktree_instance(st, &wt).await? {
+        Some(i) => Ok(Some(crate::exec::remote_run_config(st, &i, Some(&wt.branch)).await?)),
+        None => Ok(None),
+    }
+}
+
 /// Checks override text before it is stored. Unlike the repository's file, which may be written for a newer PDT, the
 /// overrides are written for this one, so a section it does not know is a mistake.
 pub(crate) fn validate_overrides(text: &str) -> Result<(), ApiError> {
@@ -192,10 +210,18 @@ pub(crate) async fn get_config(
 ) -> Result<Json<RunConfigView>, ApiError> {
     let project = st.project(&id).await?;
     let (dir, _) = checkout_dir(&st, &project, w.worktree_id.as_deref()).await?;
-    let file = read_file(&dir).await?;
+    let (file, os) = match remote_file(&st, w.worktree_id.as_deref()).await? {
+        Some(r) => (r.file, r.os),
+        None => (read_file(&dir).await?, std::env::consts::OS.to_string()),
+    };
     let overrides = st.store.get_project_settings(&id).await?.run_overrides;
+    // Only the runs and tests that run there are offered.
     let (effective, error) = match effective(file.as_deref(), overrides.as_deref()) {
-        Ok(c) => (Some(c), None),
+        Ok(mut c) => {
+            c.runs.retain(|d| d.runs_on(&os));
+            c.tests.retain(|d| d.runs_on(&os));
+            (Some(c), None)
+        }
         Err(e) => (None, Some(e.to_string())),
     };
     Ok(Json(RunConfigView {

@@ -1,6 +1,8 @@
 name: pages
 # The website (site/, Astro + Starlight; site/README.md) on GitHub Pages. It reads docs/ in place, so a merge that
-# changes either deploys it. ci.yml's `site` job builds it on pull requests and in the merge queue.
+# changes either deploys it, but the user docs come from the newest stable release (scripts/site-release-docs.sh): the
+# Download buttons install that release. release.yml runs this workflow when it publishes one. ci.yml's `site` job
+# builds it on pull requests and in the merge queue, with their own docs.
 on:
   push:
     branches: [main]
@@ -37,6 +39,8 @@ jobs:
         with:
           # The whole history and the tags: the landing page counts tickets, merged PRs and releases from them.
           fetch-depth: 0
+      # The user docs (and agent guide) as of the newest stable release, which is what the site's downloads install.
+      - run: scripts/site-release-docs.sh
       - uses: ./.github/actions/pnpm
       # The URL Pages serves the site at (its custom domain or github.io address; the site makes an http:// one https://).
       - id: pages

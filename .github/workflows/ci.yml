@@ -190,6 +190,7 @@ jobs:
       - run: scripts/notarize-macos.test.sh
       - run: scripts/scratch-daemon.test.sh
       - run: scripts/clean-targets.test.sh
+      - run: scripts/site-release-docs.test.sh
       - run: scripts/check-action-pins.sh
       - run: scripts/check-labels.test.sh
       - run: scripts/check-labels.sh

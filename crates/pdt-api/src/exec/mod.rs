@@ -15,6 +15,9 @@
 //!   (`/link/exec/activity`).
 //! - **Git.** The remote instance keeps the project's checkout (cloned on first use) and its worktrees; the owner asks
 //!   it to make and remove worktrees and to look at or update a branch.
+//! - **Runs and tests** ([`runs`]). The owner keeps each run's row and decides (its configuration, approval, the
+//!   system it runs on); the remote instance drives the process with `run_manager` and reports its state and output
+//!   with the sessions' events. A web run's link is the remote instance's own (its `tailscale serve`, owner-checked).
 //! - **Files, Changes and overlaps** (PDT-635, [`files`], [`review`]): one call per request, each run there by the
 //!   functions a local one uses, in a folder the remote instance picks; Changes come whole and are kept on the owner
 //!   until the diff changes.
@@ -29,6 +32,7 @@ mod owner;
 mod remote;
 mod remote_pty;
 mod review;
+mod runs;
 mod secrets;
 mod terminals;
 
@@ -42,6 +46,12 @@ pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
 pub(crate) use remote_pty::relay_activity;
 pub(crate) use review::{changed_files, changes, file_sides, merge_check};
+pub(crate) use runs::RemoteConfig;
+pub(crate) use runs::{
+    claim as claim_remote_run, config_file as remote_run_config, config_of as remote_run_config_of,
+    launch as launch_remote_run, mirror_logs as remote_run_logs, relaunch as relaunch_remote_run,
+    resume as resume_remote_run, run_ports as remote_run_ports, stop as stop_remote_run,
+};
 pub(crate) use secrets::{SecretOp, own_secret_names, remote_secrets, use_secrets};
 pub(crate) use terminals::{
     bridge as bridge_pty, close as close_terminal, is_remote_terminal, open as open_terminal, write as write_terminal,
@@ -83,6 +93,7 @@ pub(crate) const SECRETS_PATH: &str = "/api/link/exec/secrets";
 pub struct ExecRuntime {
     owner: owner::OwnerSide,
     remote: remote::RemoteSide,
+    runs: runs::RunsSide,
     /// Remote worktrees' Changes, kept on the owner.
     changes: review::ChangesCache,
 }
@@ -210,6 +221,12 @@ pub(crate) struct Batch {
     pub events: Vec<WireEvent>,
     /// The sessions whose process runs there now.
     pub alive: Vec<String>,
+    /// Runs' reports, numbered with the sessions' events.
+    #[serde(default)]
+    pub runs: Vec<runs::WireRunEvent>,
+    /// The runs driven there now.
+    #[serde(default)]
+    pub runs_alive: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,6 +455,9 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/remove-worktree", post(remote::remove_worktree_route))
         .route("/link/exec/git", post(remote::git_route))
         .route("/link/exec/mcp", post(owner::mcp_route))
+        .route("/link/exec/run/start", post(runs::start_route))
+        .route("/link/exec/run/stop", post(runs::stop_route))
+        .route("/link/exec/run/config", post(runs::config_route))
         .route(
             "/link/exec/files",
             post(files::files_route).layer(axum::extract::DefaultBodyLimit::max(files::MAX_FILES_BODY)),

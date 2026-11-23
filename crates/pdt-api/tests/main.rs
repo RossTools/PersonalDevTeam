@@ -69,6 +69,7 @@ mod remote;
 mod remote_attempts;
 mod remote_files;
 mod remote_projects;
+mod remote_runs;
 mod remote_secrets;
 mod remote_terminals;
 mod retired_builtins;

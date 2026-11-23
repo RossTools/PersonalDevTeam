@@ -104,6 +104,12 @@ For a ticket placed there:
   confirmations and cards work as usual.
 - **Git.** Bringing the branch up to date with its base at merge time, and removing the worktree when the ticket
   finishes, happen there too.
+- **Runs and tests.** Those you start in the ticket's worktree run there, from its `.pdt/project.toml`, and only those
+  for its operating system are offered (`os` in Run configuration). You start, stop and restart them on the owner,
+  where they show marked **on win-box** with their state and output. A web run's link is the remote instance's own,
+  through its remote access, so **Open** works from the owner (and only for you). They count toward the remote
+  instance's maximum of runs (its **Settings › This host › Runs**), not the owner's. If the remote instance
+  restarts, its runs stop.
 - **Files.** In **Files**, pick the ticket's branch (marked **on win-box**) to browse, read, edit, search and download
   its files on the remote instance, as you would locally.
 - **Changes.** The ticket's **Changes** show its diff on the remote instance, with review comments, **Send feedback**
@@ -118,7 +124,7 @@ For a ticket placed there:
 Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
 wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
 
-Runs and tests of a remote ticket aren't available yet. For secrets on a remote instance, see
+The local forge's CI isn't available for a remote ticket yet. For secrets on a remote instance, see
 [Secrets on a remote instance](#secrets-on-a-remote-instance). A remote session keeps the view it started in: it can't switch
 between conversation and terminal.
 
