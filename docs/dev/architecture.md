@@ -149,8 +149,29 @@ never a session's event, and a read carries at most a few MB of it); the owner's
 `runs/logs/<run>.<step>.log`, which the run's terminals follow read-only). A web run's port, link and `tailscale serve`
 mapping are the remote's; the owner's row has its `url` and no `port`. A start marks the row active (`exec::claim`)
 under `run_start_lock` and calls the remote (`exec::launch`) after letting it go. Runs count toward the remote's
-maximum of runs, not the owner's. Terminals, Files and Changes of a remote
-attempt, and the local forge's CI for one, are not remote yet.
+maximum of runs, not the owner's. Files and Changes of a remote attempt, and the local forge's CI for one, are not
+remote yet.
+
+**Remote terminals** (pdt-api `exec/terminals.rs` on the owner, `exec/remote_pty.rs` on the remote). A terminal
+session (an agent's TUI or a shell) in a remote worktree, or made with `NewSession.instanceId` ("Shell on win-box" in
+the new-tab chooser: the remote project's checkout), starts with `exec::open_terminal`: `/link/exec/pty/open` sends
+the owner's `Session` row, a branch (or none) and the launch's pieces (instructions, pdt-mcp, first prompt), and the
+remote runs `sessions::pty_spec` on its own PTY manager under the owner's session id, in the folder it picks itself
+(the row takes it), with an `exec_sessions` row. Restarts resume the agent's conversation when the remote has it
+saved (Claude), or by its external id: Devin's comes with its relayed hook, and a fresh Codex terminal's is found on
+the remote when it ends (`remote_pty::codex_conversation`, by launch time in its own Codex home, with fresh launches
+in a folder spaced as locally) and sent ahead of the exit as an `ExternalId` event. The remote ends its terminals'
+`exec_sessions` rows when it starts (`Store::end_open_exec_terminals`). The owner keeps a route without a sink per running terminal
+(`exec::is_remote_terminal`, `AppState::terminal_running`); its exit comes back with the instance's events and ends
+the session (`terminals::exited`), and `exec::resume_pollers` puts the routes back after an owner restart. The
+browser's `/api/sessions/{id}/pty` is bridged frame for frame (`exec::bridge_pty`) to the remote's
+`/link/exec/pty/ws/{ticket}`, which `pty_ws::upgrade` serves like a local terminal (scrollback kept while nobody
+watches, gzip, resize, exit); the ticket is one-time, from a signed `/link/exec/pty/attach`, and the bridge turns off
+Nagle so keystrokes go out at once. PDT's typed messages go through `/link/exec/pty/write`. The agent's hooks reach
+the remote's `/api/sessions/{id}/activity`, which passes them on to the owner's `/link/exec/activity`
+(`activity::report`); the owner tracks a remote agent terminal's activity from those hooks and the input it bridges
+(`activity::track_remote`), not from its output, which stays there. Switching a remote session between conversation
+and terminal, and a Codex conversation's live terminal, are refused.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.
@@ -668,7 +689,8 @@ of the `documents` integration (pdt-api `documents/tools.rs`); the writes ask, w
 the document is linked to lets the PM act) or the project or ticket they name. The project's `agent_documents` policy
 (`AgentDocuments`, set only from the web app) lets any agent's `document_create`, `doc_edit`, `sheet_edit` and
 `document_link` through unasked on its own ticket's documents or the project's: pdt-core `document_access.rs` decides
-from the resolved ids, and pdt-api `documents/access.rs` resolves the call, answers both Claude's permission prompt
+from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
+outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
 `document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. A document's title, content and comments
 come fenced as outside input (`Outside`: one fence per call, `outsideText` when it was used; a sheet's content as JSON

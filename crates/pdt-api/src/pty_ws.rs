@@ -36,7 +36,13 @@ pub(crate) async fn connect(
     ApiQuery(params): ApiQuery<PtyParams>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Result<Response, ApiError> {
-    st.session(&id).await?;
+    let s = st.session(&id).await?;
+    // A terminal on a remote instance (PDT-633): bridged to it there.
+    if s.instance.is_some() {
+        let ws = ws
+            .map_err(|_| ApiError::bad_request(codes::WEBSOCKET_REQUIRED, "this endpoint needs a WebSocket upgrade"))?;
+        return Ok(crate::exec::bridge_pty(st, s, params.gzip_replay(), ws));
+    }
     upgrade(st, id, params.gzip_replay(), ws)
 }
 

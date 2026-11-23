@@ -291,8 +291,11 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
              doc_read gives a doc as Markdown, sheet_read a sheet's cells."
         );
     }
-    // What the project lets agents do to documents without asking (PDT-618).
+    // What the project lets agents do to documents without asking (PDT-618); nothing for a session that reads outside
+    // input, which always asks (PDT-646).
     let docs = st.store.get_project_settings(&ticket_project).await.map_err(store)?.policy.agent_documents;
+    let docs =
+        if crate::untrusted::triaging(st, cx.session).await { pdt_core::policy::AgentDocuments::Off } else { docs };
     if let Some(note) = documents_unasked_note(docs) {
         v["documentsWithoutAsking"] = json!(docs);
         v["documentsWithoutAskingNote"] = json!(note);

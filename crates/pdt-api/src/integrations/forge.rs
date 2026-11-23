@@ -187,6 +187,7 @@ pub struct ViewInput {
 pub struct ViewOutput {
     pub number: u32,
     pub url: String,
+    /// Fenced: whoever opened the pull request wrote it.
     pub title: String,
     /// `open`, `closed` or `merged`.
     pub state: String,
@@ -204,10 +205,9 @@ pub struct ViewOutput {
     /// timeline in PDT shows them).
     #[serde(skip_serializing_if = "is_zero")]
     pub left_out: u32,
-    /// How to read the fenced blocks, when there are any: bots' comments and reviews came from outside PDT (a bot can
+    /// How to read the fenced blocks: the title, and bots' comments and reviews, came from outside PDT (a bot can
     /// relay what anyone wrote).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outside_text: Option<String>,
+    pub outside_text: String,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -228,7 +228,7 @@ impl Action for ChangeRequestView {
             "View the pull request",
             "The session's pull request (or one by number or branch) on the project's forge: its state, whether it \
              can merge, and every comment and review by the repository's collaborators and bots (others' are left \
-             out: `leftOut` counts them; bots' text is fenced as outside input). Review comments have an id to answer with `change_request_comment`'s \
+             out: `leftOut` counts them; the title and bots' text are fenced as outside input). Review comments have an id to answer with `change_request_comment`'s \
              `replyTo`.",
         )
     }
@@ -272,12 +272,11 @@ impl Action for ChangeRequestView {
                     url: r.url,
                 })
                 .collect();
-            let mut bodies = comments.iter().map(|c| &c.body).chain(reviews.iter().map(|r| &r.body));
-            let outside_text = bodies.any(|b| fence.used_in(b)).then(|| fence.note());
             Ok(ViewOutput {
                 number: pr.number,
                 url: pr.url,
-                title: pr.title,
+                // Anyone can open a pull request, and its number can be any (PDT-645): its title is outside text.
+                title: fence.wrap(&pr.title),
                 state: name_of(&pr.state),
                 draft: pr.draft,
                 base_branch: pr.base_branch,
@@ -289,7 +288,7 @@ impl Action for ChangeRequestView {
                 left_out,
                 comments,
                 reviews,
-                outside_text,
+                outside_text: fence.note(),
             })
         })
     }
@@ -310,11 +309,13 @@ pub struct DiffInput {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffFileOut {
+    /// Fenced: whoever pushed the commits named the file (git allows spaces and newlines in a name).
     pub path: String,
     /// `added`, `modified`, `removed`, `renamed`, …
     pub status: String,
     pub additions: u64,
     pub deletions: u64,
+    /// Fenced, as `path`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_path: Option<String>,
 }
@@ -378,8 +379,8 @@ impl Action for ChangeRequestDiff {
                 .open_world(),
             "Read a pull request's diff",
             "A pull request of the project's repository by number, read through the forge's API (nothing is checked \
-             out or run): its state, base, head commit, whether it can merge, its files and their diffs. The title \
-             and the diff are fenced as outside input.",
+             out or run): its state, base, head commit, whether it can merge, its files and their diffs. The title, \
+             the files' names and the diff are fenced as outside input.",
         )
     }
 
@@ -409,11 +410,11 @@ impl Action for ChangeRequestDiff {
                 files: files
                     .into_iter()
                     .map(|f| DiffFileOut {
-                        path: f.path,
+                        path: fence.wrap(&f.path),
                         status: f.status,
                         additions: f.additions,
                         deletions: f.deletions,
-                        previous_path: f.previous_path,
+                        previous_path: f.previous_path.as_deref().map(|p| fence.wrap(p)),
                     })
                     .collect(),
                 diff: fence.wrap(&diff),

@@ -50,9 +50,13 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   once, as an automatic nudge (`workflow/agent/recovery.rs` `restarted_while_waiting`). Terminals don't report
   background tasks, so their agents aren't told.
 - **Text from outside is fenced.** Issue and PR text (titles too, a linked issue's on any ticket: `get_ticket`,
-  `link_issue`), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
+  `link_issue`; an external ticket's title wherever an agent reads it, through `untrusted::Outside`: searches, the
+  overview, the PM's briefing and daily update, watch messages, and the Inbox items about it; a PR's title and its
+  files' names in the forge tools), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
   payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
-  that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). Bots' comments and
+  that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). A session that
+  `untrusted::triaging` says reads outside input never changes documents unasked, whatever the project's
+  `agent_documents` (`documents::access::unasked`). Bots' comments and
   reviews are outside text whatever their role on the repository (they relay others' text). Fenced trigger text in a
   step's agent text is cut to a budget (`fence::BUDGET`, halved while the field is over `fence::PROMPT_MAX`;
   `engine::fence_input`), so outside text alone can never push a message over `conversation::MAX_MESSAGE`: only the
@@ -358,7 +362,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A bug report bound for GitHub goes through `bug_report::redact` with the user's own names.** pdt-api
   `bug_reports::redactions` gathers the token, the owner's login, the home folder, the machine's names and each
   project's name, key, folder, origin `owner/repo` and worktree branches and folders (not the release repository's
-  project); the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
+  project), this instance's name, each remote instance's name and host, and each remote project's name, key, owner
+  name and owner host; the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
   route. A new place that logs a user's name for something is covered only if it is one of these.
 - **A Codex terminal's secrets stay out of its shell commands**: each name `codex_tui_env` passes a secret in is in
   the `shell_environment_policy.exclude` it gets (pdt-agents `mcp.rs`), after the user's own patterns.
@@ -445,6 +450,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.
+- **An owner's terminal runs on a remote instance only in that project's folders.** The owner names a branch, never a
+  folder: `exec/remote_pty.rs` (`folder`) runs it in that branch's worktree of the remote project's checkout (a valid
+  branch name whose worktree is there) or in the checkout itself, whatever the session row says. Its WebSocket opens
+  only with a one-time ticket from a signed `/link/exec/pty/attach` for a PTY it runs for that link; shells this
+  instance opens for itself are `sessions` rows of its own projects and never reach the owner.
 - **An instance has a project either local or remote, never both**: joining refuses a project whose repository
   (`link::same_repo` on `origin`) is one of its own, and adding a project refuses a remote project's repository.
 - **A project-link request is acted on only once signed by the link's other end for that project**

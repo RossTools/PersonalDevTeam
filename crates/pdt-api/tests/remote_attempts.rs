@@ -1,7 +1,8 @@
 //! Remote attempts (PDT-632): an owner (`studio`) and a remote instance (`win-box`) on loopback, paired for one
 //! project. A `windows` ticket's attempt runs on the remote instance: its worktree is in the remote's checkout, its
 //! agents (`fake-agent`) run there, their pdt-mcp calls are passed on to the owner, and their sessions are the owner's,
-//! under the ticket and interactive, through the whole Pipeline. A dropped link loses nothing.
+//! under the ticket and interactive, through the whole Pipeline. A dropped link loses nothing. (Terminals there:
+//! `remote_terminals.rs`.)
 
 use crate::common::wait::wait_until;
 use crate::common::{self, call, call_as_ui, git, mark_pushed};
@@ -41,6 +42,7 @@ async fn instance_with(
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
     state.platform.claude_program = FAKE.to_string();
+    state.platform.codex_program = FAKE.to_string();
     state.platform.login_path = None;
     state.platform.claude_config_dir = Some(tmp.path().join("claude-config"));
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
@@ -144,12 +146,12 @@ async fn get_ticket(p: &Pair, id: &str) -> Value {
     call(&p.owner.app, "GET", &format!("/api/tickets/{id}"), None).await.1
 }
 
-async fn sessions(p: &Pair) -> Vec<Value> {
+pub(crate) async fn sessions(p: &Pair) -> Vec<Value> {
     let (_, v) = call(&p.owner.app, "GET", &format!("/api/projects/{}/sessions", p.project), None).await;
     v.as_array().unwrap().clone()
 }
 
-async fn worktrees(p: &Pair) -> Vec<Value> {
+pub(crate) async fn worktrees(p: &Pair) -> Vec<Value> {
     let (_, v) = call(&p.owner.app, "GET", &format!("/api/projects/{}/worktrees", p.project), None).await;
     v.as_array().unwrap().clone()
 }
@@ -341,12 +343,6 @@ async fn unlabelled_tickets_still_run_on_the_owner() {
     assert_eq!(s, StatusCode::CREATED, "{started}");
     let branch = started["attempt"]["branch"].as_str().unwrap();
     assert!(p.checkout.join(".worktrees").join(branch).is_dir());
-
-    // A terminal can't run there yet.
-    let t = ticket(&p, "A terminal", &["windows"]).await;
-    let start = json!({"agent": "claude", "sessionMode": "terminal"});
-    let (s, v) = call(&p.owner.app, "POST", &format!("/api/tickets/{t}/start"), Some(start)).await;
-    assert_eq!((s, v["code"].as_str()), (StatusCode::CONFLICT, Some("placement")), "{v}");
 }
 
 #[tokio::test]

@@ -30,7 +30,7 @@ pdt-tailscale.workspace = true
 pdt-github.workspace = true
 pdt-update.workspace = true
 flate2 = "1.1.10"
-tokio-tungstenite = "0.30.0"
+tokio-tungstenite = { version = "0.30.0", features = ["native-tls"] }
 sha2 = "0.11.1"
 schemars = "1.2.3"
 hmac = "0.13.0"

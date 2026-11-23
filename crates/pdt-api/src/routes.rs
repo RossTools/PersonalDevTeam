@@ -463,6 +463,11 @@ impl AppState {
         self.resume_changed.send_modify(|v| *v += 1);
     }
 
+    /// Whether a session's terminal runs: here, or on the remote instance it was started on (PDT-633).
+    pub(crate) fn terminal_running(&self, id: &str) -> bool {
+        self.ptys.is_running(id) || crate::exec::is_remote_terminal(self, id)
+    }
+
     /// Kills a terminal off the async runtime: on Windows this waits for `taskkill` to end the process tree.
     pub(crate) async fn kill_pty(&self, id: &str) -> Result<(), pdt_agents::PtyError> {
         // PDT stopped it: its exit is not news (PDT-108).

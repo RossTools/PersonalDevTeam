@@ -90,11 +90,24 @@ For a ticket placed there:
   through its remote access, so **Open** works from the owner (and only for you). They count toward the remote
   instance's maximum of runs (its **Settings › This host › Runs**), not the owner's. If the remote instance
   restarts, its runs stop.
+- **Terminals.** An agent started in its terminal, and any shell you open in the ticket's workspace, runs there too.
+  You type, resize and scroll back on the owner as in a local terminal; the remote instance keeps the output while
+  nobody watches, so reconnecting shows it.
 
-Terminals, the local forge's CI, and the Files and Changes views of a remote ticket aren't available yet: such a
-ticket's agents run as conversations.
+The local forge's CI, and the Files and Changes views of a remote ticket, aren't available yet. A remote session keeps
+the view it started in: it can't switch between conversation and terminal.
 
-If the link between the instances drops, the agents keep working. Their PDT tool calls wait and go through once it is
+## Shells on a remote instance
+
+To work in the remote instance's checkout of the project yourself, open a new tab (**+**) with the project's
+repository as the place and choose **Shell on win-box**. A shell in a remote ticket's workspace opens in its worktree
+there by itself. Such a shell is a tab like any other, marked **on win-box**, and reopens when you restart it.
+
+A shell from the owner opens only in the remote project's checkout or its tickets' worktrees on that instance, never
+anywhere else on it. Shells you open in the remote instance's own window stay its own and never show on the owner.
+
+If the link between the instances drops, the agents keep working, and so do terminals: the terminal on the owner
+reconnects once the link is back. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
 until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
 left off.
@@ -110,7 +123,8 @@ last heard from.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
 
-It also lists what runs here for the owner now, read-only: each agent's ticket, title and how long it has run.
+It also lists what runs here for the owner now, read-only: each agent's or shell's ticket, title and how long it has
+run.
 
 A remote project has no board, tickets or settings here, and this instance's own PM, workflows, pickup and Inbox
 never see it.

@@ -140,7 +140,9 @@ async fn levels_changed_before_carry_over() {
 #[tokio::test]
 async fn an_inbox_item_left_unanswered_is_escalated() {
     let env = setup(vec![]).await;
-    let (s, v) = put(&env, json!({"values": {"escalate": true, "escalateAfter": 300}})).await;
+    // Long enough for both runs to be seen waiting and one item closed first, even on a loaded Windows runner (300 ms
+    // ran out before the check there).
+    let (s, v) = put(&env, json!({"values": {"escalate": true, "escalateAfter": 3000}})).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     let wf = v["workflowId"].as_str().unwrap().to_string();
     env.state.store.open_inbox_item(&gate("late")).await.unwrap();

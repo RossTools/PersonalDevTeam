@@ -133,18 +133,27 @@ impl Item {
 
 pub(super) struct RemoteSide {
     running: Mutex<HashMap<String, Running>>,
+    /// The owners' terminals this instance runs, by session (PDT-633).
+    pub(super) ptys: Mutex<HashMap<String, super::remote_pty::PtyRun>>,
+    /// One-time tickets for a terminal's WebSocket: by ticket, the session, its link and when it expires.
+    pub(super) tickets: Mutex<HashMap<String, super::remote_pty::Ticket>>,
+    /// The Codex conversations found for the owners' terminals, so two never take the same one.
+    pub(super) codex_bound: Mutex<std::collections::HashSet<String>>,
     outbox: Mutex<Outbox>,
     added: tokio::sync::Notify,
     /// This process: an owner that read another one's events starts again from the first.
     boot: String,
     /// Opens one at a time, so two opens of one session never start two agents.
-    opening: tokio::sync::Mutex<()>,
+    pub(super) opening: tokio::sync::Mutex<()>,
 }
 
 impl Default for RemoteSide {
     fn default() -> Self {
         Self {
             running: Default::default(),
+            ptys: Default::default(),
+            tickets: Default::default(),
+            codex_bound: Default::default(),
             outbox: Mutex::new(Outbox { next: 0, items: VecDeque::new(), output: 0 }),
             added: Default::default(),
             boot: uuid::Uuid::new_v4().to_string(),
@@ -158,7 +167,7 @@ impl RemoteSide {
         self.running.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn push(&self, link_id: &str, session_id: &str, proc: &str, out: WireOut) {
+    pub(super) fn push(&self, link_id: &str, session_id: &str, proc: &str, out: WireOut) {
         let (session_id, proc) = (session_id.to_string(), proc.to_string());
         self.push_item(link_id, |seq| Item::Session(WireEvent { seq, session_id, proc, out }));
     }
@@ -221,10 +230,15 @@ pub(crate) async fn open_route(
     body: Bytes,
 ) -> Result<Json<Opened>, ApiError> {
     let (link, req): (OwnerLink, OpenReq) = checked(&st, &method, &uri, &headers, &body).await?;
-    let checkout = checkout_dir(&st, &link);
-    let cwd = match &req.branch {
-        Some(b) => worktree_path(&checkout, b),
-        None => checkout,
+    let cwd = match (&req.branch, &req.base) {
+        (Some(b), _) => {
+            pdt_core::worktree::NewWorktree { branch: b.clone(), base: None }
+                .validate()
+                .map_err(|e| ApiError::invalid(e.to_string()))?;
+            worktree_path(&checkout_dir(&st, &link), b)
+        }
+        (None, Some(base)) => ensure_checkout(&st, &link, base).await?,
+        (None, None) => checkout_dir(&st, &link),
     };
     let cwd_text = cwd.to_string_lossy().into_owned();
     let _one = st.exec.remote.opening.lock().await;
@@ -315,6 +329,7 @@ pub(crate) async fn open_route(
         token: req.mcp.as_ref().map(|m| m.token.clone()).unwrap_or_default(),
         created_at: now_ms(),
         ended_at: None,
+        terminal: false,
     };
     st.store.put_exec_session(&row).await?;
     tokio::spawn(forward(st.clone(), req.session_id.clone(), proc.clone(), link.link_id.clone(), rx));
@@ -322,7 +337,7 @@ pub(crate) async fn open_route(
     Ok(Json(Opened { proc, cwd: cwd_text }))
 }
 
-fn write_instructions(dir: &Path, name: &str, text: &str) -> std::io::Result<PathBuf> {
+pub(super) fn write_instructions(dir: &Path, name: &str, text: &str) -> std::io::Result<PathBuf> {
     let name = Path::new(name).file_name().map(|n| n.to_owned()).unwrap_or_else(|| "instructions.md".into());
     std::fs::create_dir_all(dir)?;
     let path = dir.join(name);
@@ -332,7 +347,7 @@ fn write_instructions(dir: &Path, name: &str, text: &str) -> std::io::Result<Pat
 
 /// pdt-mcp as this instance serves it to the owner's session: at its own address, with the owner's token and tools,
 /// and none of this instance's own MCP servers.
-fn mcp_server(
+pub(super) fn mcp_server(
     st: &AppState,
     dir: &Path,
     agent: AgentKind,
@@ -463,6 +478,7 @@ pub(crate) async fn close_route(
     if let Ok(live) = live_of(&st, &link, &req.session_id) {
         live.close().await;
     }
+    super::remote_pty::kill(&st, &link.link_id, &req.session_id).await;
     Ok(Json(Value::Null))
 }
 
@@ -471,6 +487,19 @@ pub(crate) async fn close_link(st: &AppState, link_id: &str) {
     let lives: Vec<Arc<dyn LiveConversation>> =
         st.exec.remote.running().values().filter(|r| r.link_id == link_id).map(|r| r.live.clone()).collect();
     futures_util::future::join_all(lives.iter().map(|l| l.close())).await;
+    let ptys: Vec<String> = st
+        .exec
+        .remote
+        .ptys
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(_, r)| r.link_id == link_id)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in ptys {
+        super::remote_pty::kill(st, link_id, &id).await;
+    }
     super::runs::stop_link(st, link_id).await;
 }
 
@@ -509,18 +538,19 @@ pub(crate) async fn events_route(
             Item::Run(e) => runs.push(e),
         }
     }
-    let alive = side
+    let mut alive: Vec<String> = side
         .running()
         .iter()
         .filter(|(_, r)| r.link_id == link.link_id && r.live.is_alive())
         .map(|(id, _)| id.clone())
         .collect();
+    alive.extend(super::remote_pty::alive(&st, &link.link_id));
     let runs_alive = super::runs::alive(&st, &link.link_id);
     Ok(Json(Batch { boot: side.boot.clone(), events, alive, runs, runs_alive }))
 }
 
 /// The remote project's checkout, cloned from the owner's `origin` on first use, else fetched (best effort).
-async fn ensure_checkout(st: &AppState, link: &OwnerLink, base: &str) -> Result<PathBuf, ApiError> {
+pub(super) async fn ensure_checkout(st: &AppState, link: &OwnerLink, base: &str) -> Result<PathBuf, ApiError> {
     let dir = checkout_dir(st, link);
     let (d, url, base) = (dir.clone(), link.repo_url.clone(), base.to_string());
     tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
@@ -587,7 +617,11 @@ pub(crate) async fn remove_worktree_route(
     let rows = st.store.list_exec_sessions(Some(&link.link_id)).await?;
     let busy = {
         let running = st.exec.remote.running();
-        rows.iter().any(|e| Path::new(&e.cwd) == path && running.get(&e.session_id).is_some_and(|r| r.live.is_alive()))
+        let ptys = super::remote_pty::alive(&st, &link.link_id);
+        rows.iter().any(|e| {
+            Path::new(&e.cwd) == path
+                && (running.get(&e.session_id).is_some_and(|r| r.live.is_alive()) || ptys.contains(&e.session_id))
+        })
     };
     if busy {
         return Err(ApiError::conflict(codes::WORKTREE_BUSY, "stop this branch's sessions first"));
@@ -724,11 +758,12 @@ pub struct RunningView {
 /// What this instance runs for the owner on `link_id`.
 pub(crate) async fn running_view(st: &AppState, link_id: &str) -> Vec<RunningView> {
     let rows = st.store.list_exec_sessions(Some(link_id)).await.unwrap_or_default();
+    let ptys = super::remote_pty::alive(st, link_id);
     let running = st.exec.remote.running();
     rows.into_iter()
         .filter(|e| e.ended_at.is_none() || running.contains_key(&e.session_id))
         .map(|e| RunningView {
-            live: running.get(&e.session_id).is_some_and(|r| r.live.is_alive()),
+            live: running.get(&e.session_id).is_some_and(|r| r.live.is_alive()) || ptys.contains(&e.session_id),
             session_id: e.session_id,
             title: e.title,
             agent: e.agent,

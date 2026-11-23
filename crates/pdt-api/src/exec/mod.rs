@@ -7,6 +7,12 @@
 //!   (`/link/exec/events`, a long poll), so a dropped link or a restarted owner loses nothing.
 //! - **Agents' PDT tools.** The remote instance serves `/api/mcp` to its agents and passes each call, with the session's
 //!   token, to the owner (`/link/exec/mcp`), retrying while the link is down: the owner answers it as its own.
+//! - **Terminals** (PDT-633). A remote terminal session (an agent's TUI or a shell) is a PTY on the remote instance,
+//!   under the owner's session id, in the remote project's checkout or one of its worktrees and nowhere else
+//!   ([`terminals`] on the owner, `remote_pty` there). The remote keeps its scrollback while nobody watches; a browser's
+//!   terminal on the owner is bridged to it (`/link/exec/pty/ws/{ticket}`, a one-time ticket the owner gets with a
+//!   signed call), and its exit comes back with the events. Its agent's hooks are passed on to the owner
+//!   (`/link/exec/activity`).
 //! - **Git.** The remote instance keeps the project's checkout (cloned on first use) and its worktrees; the owner asks
 //!   it to make and remove worktrees and to look at or update a branch.
 //! - **Runs and tests** ([`runs`]). The owner keeps each run's row and decides (its configuration, approval, the
@@ -18,20 +24,26 @@
 
 mod owner;
 mod remote;
+mod remote_pty;
 mod runs;
+mod terminals;
 
 pub use owner::resume_pollers;
 pub(crate) use owner::{
-    branch_head, has_changes, is_routed, make_worktree, open as open_remote, remove_worktree, update_base,
-    worktree_instance,
+    branch_head, has_changes, is_routed, joined_instance, make_worktree, open as open_remote, remove_worktree,
+    update_base, worktree_instance,
 };
 pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
+pub(crate) use remote_pty::relay_activity;
 pub(crate) use runs::RemoteConfig;
 pub(crate) use runs::{
     claim as claim_remote_run, config_file as remote_run_config, config_of as remote_run_config_of,
     launch as launch_remote_run, mirror_logs as remote_run_logs, relaunch as relaunch_remote_run,
     resume as resume_remote_run, run_ports as remote_run_ports, stop as stop_remote_run,
+};
+pub(crate) use terminals::{
+    bridge as bridge_pty, close as close_terminal, is_remote_terminal, open as open_terminal, write as write_terminal,
 };
 
 use pdt_agents::adapter::{AdapterOutput, AgentInfo};
@@ -55,6 +67,12 @@ pub(crate) const WORKTREE_PATH: &str = "/api/link/exec/worktree";
 pub(crate) const REMOVE_WORKTREE_PATH: &str = "/api/link/exec/remove-worktree";
 pub(crate) const GIT_PATH: &str = "/api/link/exec/git";
 pub(crate) const MCP_PATH: &str = "/api/link/exec/mcp";
+pub(crate) const PTY_OPEN_PATH: &str = "/api/link/exec/pty/open";
+pub(crate) const PTY_ATTACH_PATH: &str = "/api/link/exec/pty/attach";
+pub(crate) const PTY_WRITE_PATH: &str = "/api/link/exec/pty/write";
+/// The WebSocket a ticket from [`PTY_ATTACH_PATH`] opens: `<this>/<ticket>`.
+pub(crate) const PTY_WS_PATH: &str = "/api/link/exec/pty/ws";
+pub(crate) const ACTIVITY_PATH: &str = "/api/link/exec/activity";
 
 /// What the executor keeps in memory, on both ends.
 #[derive(Default)]
@@ -82,6 +100,9 @@ pub(crate) struct OpenReq {
     pub ticket_key: Option<String>,
     /// The worktree's branch; None: the project's checkout.
     pub branch: Option<String>,
+    /// The project's base branch, fetched when the checkout is used (cloned first when it isn't there).
+    #[serde(default)]
+    pub base: Option<String>,
     pub external_id: Option<String>,
     /// The conversation has events already (it resumes when the agent saved it).
     pub has_history: bool,
@@ -343,6 +364,52 @@ pub(crate) struct McpReply {
     pub body: String,
 }
 
+/// `/link/exec/pty/open`: start (or attach to) a terminal session there. The session is the owner's row; the remote
+/// instance runs it in `branch`'s worktree of its checkout (None: the checkout itself, cloned first when it isn't
+/// there), whatever the row's folder says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PtyOpenReq {
+    pub session: pdt_core::session::Session,
+    pub ticket_key: Option<String>,
+    pub branch: Option<String>,
+    /// The project's base branch, fetched when the checkout is used.
+    pub base: String,
+    pub cols: u16,
+    pub rows: u16,
+    /// Made just now: the agent starts afresh (else it resumes its conversation when the remote has it saved).
+    pub fresh: bool,
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    pub credentials: CredentialPolicy,
+    pub instructions: Option<WireInstructions>,
+    pub mcp: Option<WireMcp>,
+}
+
+/// `/link/exec/pty/attach`: a one-time ticket for the session's terminal WebSocket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PtyTicket {
+    pub ticket: String,
+}
+
+/// `/link/exec/pty/write`: bytes typed into a terminal there (a message PDT types into an agent's TUI).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PtyWriteReq {
+    pub session_id: String,
+    /// Base64.
+    pub data: String,
+}
+
+/// `/link/exec/activity`: a hook report from a terminal agent there, for its session on the owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityReq {
+    pub session_id: String,
+    pub report: pdt_core::activity::HookReport,
+}
+
 /// The executor's routes (the other end calls them); `link::router` merges them.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::post;
@@ -361,6 +428,11 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/run/start", post(runs::start_route))
         .route("/link/exec/run/stop", post(runs::stop_route))
         .route("/link/exec/run/config", post(runs::config_route))
+        .route("/link/exec/pty/open", post(remote_pty::open_route))
+        .route("/link/exec/pty/attach", post(remote_pty::attach_route))
+        .route("/link/exec/pty/write", post(remote_pty::write_route))
+        .route("/link/exec/pty/ws/{ticket}", axum::routing::get(remote_pty::ws_route))
+        .route("/link/exec/activity", post(terminals::activity_route))
 }
 
 #[cfg(test)]

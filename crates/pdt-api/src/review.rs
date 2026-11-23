@@ -330,7 +330,7 @@ async fn coder_session(st: &AppState, wt: &Worktree, attempt: Option<&AttemptInf
         ));
     }
     agents.sort_by_key(|s| s.created_at);
-    agents.into_iter().rev().find(|s| s.mode == SessionMode::Conversation || st.ptys.is_running(&s.id)).ok_or_else(
+    agents.into_iter().rev().find(|s| s.mode == SessionMode::Conversation || st.terminal_running(&s.id)).ok_or_else(
         || {
             ApiError::conflict(
                 codes::SESSION_NOT_RUNNING,

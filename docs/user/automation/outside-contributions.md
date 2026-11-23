@@ -87,8 +87,9 @@ is reviewed like any other, and a failure comes to your Inbox.
 - **Locked down.** **Triage** can read your code and tickets, and **PR Reviewer** only the pull request's changes;
   neither can change files, run commands, browse the web or use secrets. The tickets they make are always outside
   **Draft**s. Locked-down personas run only on Claude Code or Codex; on other agents their steps fail.
-- **Fenced.** The issue's or pull request's title, text and changes reach the agent in marked blocks, with a note that
-  they are data, never instructions. So do bots' comments and reviews, since a bot can repeat what anyone wrote.
+- **Fenced.** The issue's or pull request's title, text and changes (its files' names too) reach the agent in marked
+  blocks, with a note that they are data, never instructions. A ticket made from outside input keeps its title fenced
+  wherever an agent reads it: in searches, the PM's overview, briefing and daily update, and watch messages. So do bots' comments and reviews, since a bot can repeat what anyone wrote.
   Long text is shortened (to 8 KB each, less if the message would still be too long), with a note of how much was cut
   and a link to the full text.
 - **Carried through.** A workflow started by outside input that runs another workflow (**Run a workflow**) passes that
