@@ -589,6 +589,17 @@ pub fn default_title(place: &str) -> String {
     place.to_string()
 }
 
+/// The title a session takes from the user's message `text` (PDT-683): one still called [`default_title`] of `place`
+/// is named after the message, by the PM's rule ([`crate::pm::conversation_title`]). None when it keeps its title: the
+/// user (or whoever started it) named it, or the message has no words.
+pub fn title_from_message(title: &str, place: &str, text: &str) -> Option<String> {
+    if title != default_title(place) || text.trim().is_empty() {
+        return None;
+    }
+    let t = crate::pm::conversation_title(text);
+    (t != crate::pm::NEW_TITLE).then_some(t)
+}
+
 /// What a session runs, for messages that name it: "Claude", "Codex", "Devin" or "Shell".
 pub fn kind_label(kind: SessionKind, agent: Option<AgentKind>) -> &'static str {
     match (kind, agent) {
@@ -1179,6 +1190,17 @@ mod tests {
         assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Devin)), "Devin");
         assert_eq!(kind_label(SessionKind::AgentTui, Some(AgentKind::Claude)), "Claude");
         assert_eq!(default_title("feature-x"), "feature-x");
+    }
+
+    #[test]
+    fn a_default_title_is_named_after_the_first_message() {
+        assert_eq!(
+            title_from_message("Sample App", "Sample App", "## Store sessions in which DB?\nmore").as_deref(),
+            Some("Store sessions in which DB?")
+        );
+        assert_eq!(title_from_message("Renamed", "Sample App", "hello"), None, "the user's own name stays");
+        assert_eq!(title_from_message("Sample App", "Sample App", "  \n "), None, "no words");
+        assert_eq!(title_from_message("Sample App", "Sample App", "##"), None, "nothing left of it");
     }
 
     #[test]
