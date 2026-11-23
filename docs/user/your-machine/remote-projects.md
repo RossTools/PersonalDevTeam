@@ -106,7 +106,8 @@ For a ticket placed there:
 
 - **The checkout.** The remote instance clones the repository from the owner's `origin` the first time, into the
   folder its **Remote projects** page shows, and makes the ticket's worktree there. It needs your git credentials for
-  fetching and pushing; the pull request, CI and merge stay with the owner.
+  fetching and pushing; the pull request, CI and merge stay with the owner. A repository with no `origin` is copied
+  from the owner instead, and catches up with the owner's base branch the same way.
 - **The agents.** The Coder, Reviewer and QA run there as conversations, in that worktree. On the owner they are under
   the ticket and fully interactive: you read and answer them, approve their requests, interrupt, stop and restart
   them, and they count in the Inbox, notifications and the board like any other.
@@ -134,7 +135,12 @@ For a ticket placed there:
 Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
 wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
 
-The local forge's CI isn't available for a remote ticket yet. For secrets on a remote instance, see
+On the local forge (see Run configuration), a remote ticket works as a local one: the owner brings its branch over
+from the remote instance on each check, opens its change request and merges it into its own base, while CI runs in
+the ticket's worktree on the remote instance. Its log is on the owner like any other. CI waits while the remote
+instance can't be reached.
+
+For secrets on a remote instance, see
 [Secrets on a remote instance](#secrets-on-a-remote-instance). A remote session keeps the view it started in: it can't switch
 between conversation and terminal.
 

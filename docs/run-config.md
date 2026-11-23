@@ -32,7 +32,8 @@ Notes for writing it:
   refused in host overrides, which are written for this PDT.
 - A detached run's output is also at `<PDT data dir>/runs/logs/<run id>.log`. PDT sets `PYTHONUNBUFFERED=1` for it
   unless it is set.
-- The local forge's CI log for a run is at `GET /api/local-ci/runs/<id>/log` (the CI-failed message gives the URL).
+- The local forge's CI log for a run is at `GET /api/local-ci/runs/<id>/log` (the CI-failed message gives the URL),
+  also for a ticket on a remote instance, whose CI runs in its worktree there.
 - `[ci] providers` needs PDT 0.3.0 or newer; an older PDT refuses the whole file over the unknown key.
 - `[[merge.regenerate]]` needs a PDT newer than 0.5.1; an older one skips `[merge]` (listed in `effective.ignored`).
 - `[[placement]]` needs a PDT newer than 0.6.4; an older one skips it (listed in `effective.ignored`).

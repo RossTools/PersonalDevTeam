@@ -137,6 +137,18 @@ pub(super) async fn call<T: serde::de::DeserializeOwned>(
     link::post_within(st, timeout, &i.url, path, Some((&key, &i.link_id, &i.project_id)), body).await
 }
 
+/// [`call`], with the remote instance's successful response unread (a bundle streams through).
+pub(super) async fn send(
+    st: &AppState,
+    i: &RemoteInstance,
+    path: &str,
+    body: &impl Serialize,
+    timeout: Duration,
+) -> Result<reqwest::Response, PeerError> {
+    let key = link::load_key(st, &i.link_id).await.map_err(|e| PeerError::Unreachable(e.message().to_string()))?;
+    link::send(st, timeout, &i.url, path, Some((&key, &i.link_id, &i.project_id)), body).await
+}
+
 /// Opens (or attaches to) a remote session's agent on its instance: the live process and its outputs, for
 /// `conversations::ensure_live`.
 pub(crate) async fn open(
@@ -326,7 +338,7 @@ pub async fn resume_pollers(st: &AppState) {
     }
 }
 
-/// How many sessions and active runs are on the instance, as the owner's store says.
+/// How many sessions, active runs and CI runs are on the instance, as the owner knows them.
 async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
     let sessions = match st.store.list_sessions(&i.project_id).await {
         Ok(list) => list
@@ -337,7 +349,7 @@ async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
             .count(),
         Err(_) => 1,
     };
-    sessions + super::runs::active_on(st, i).await.len()
+    sessions + super::runs::active_on(st, i).await.len() + super::ci::active_on(st, &i.link_id)
 }
 
 /// Reads a joined instance's events into their conversations until nothing on it is followed any more.
@@ -376,7 +388,10 @@ async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&st
         last = last.max(e.seq);
         route(st, i, e).await;
     }
-    last = last.max(super::runs::apply(st, i, batch.runs, start).await);
+    let (ci, runs): (Vec<_>, Vec<_>) = batch.runs.into_iter().partition(|e| super::ci::is_ci(&e.run_id));
+    last = last.max(super::ci::apply(st, i, ci, start).await);
+    last = last.max(super::runs::apply(st, i, runs, start).await);
+    super::ci::reconcile(st, i, &batch.runs_alive, sent_at);
     super::runs::reconcile(st, i, &batch.runs_alive, sent_at).await;
     if let Err(e) = st.store.set_events_cursor(&i.link_id, &batch.boot, last).await {
         tracing::warn!(instance = %i.name, error = %e, "could not record how far a remote instance's events were read");
