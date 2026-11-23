@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueries, useQuery, useQueryClient, type Query, type QueryClient } from '@tanstack/react-query';
-import { useConfirm, type Status } from '@ui';
+import { useConfirm, type ConfirmOptions, type Status } from '@ui';
 import { api } from '../api/client';
 import type { Activity } from '../api/gen/Activity';
 import type { Project } from '../api/gen/Project';
@@ -91,6 +91,40 @@ function changesInfo(w: Worktree): ItemInfo {
     item: { kind: 'changes', id: w.id }, title: `Changes · ${w.branch}`, status: 'idle', activity: null, unseen: false,
     projectId: w.projectId, worktreeId: w.id,
   };
+}
+
+/**
+ * What closing an item's tab asks, or null when it just closes. Closing removes a session or run: an agent session
+ * (conversation or terminal) always asks, running or not, since its history can't be brought back (PDT-711); a shell
+ * or run asks only while it runs.
+ */
+export function closePrompt(i: ItemInfo | null | undefined): ConfirmOptions | null {
+  if (i?.session) {
+    const s = i.session;
+    const running = s.status === 'running';
+    const agent = s.kind === 'agent_tui';
+    if (!running && !agent) return null;
+    const lost = s.mode === 'conversation'
+      ? 'Its conversation history is deleted. Files in its folder stay.'
+      : agent
+        ? 'Its terminal history is deleted and it can no longer be restarted or resumed here. Files in its folder stay.'
+        : 'Its terminal history is deleted and it can no longer be restarted. Files in its folder stay.';
+    return {
+      title: `Close ${i.title}?`,
+      body: running ? `Closing the tab stops the ${agent ? 'agent' : 'session'} and removes it. ${lost}` : `Closing the tab removes it. ${lost}`,
+      action: running ? 'Stop and close' : 'Close and remove',
+      danger: true,
+    };
+  }
+  if (i?.run && isActive(i.run.state)) {
+    return {
+      title: `Close ${i.title}?`,
+      body: 'Closing the tab stops the run and removes it. Its data folder stays.',
+      action: 'Stop and close',
+      danger: true,
+    };
+  }
+  return null;
 }
 
 /**
@@ -258,21 +292,12 @@ export function useWorkspaces(routed?: RoutedChoice) {
     [workspace, tab],
   );
 
-  /** Closes a tab. A session or run goes with its tab (the daemon stops and removes it), so a running one asks first. */
+  /** Closes a tab. A session or run goes with its tab (the daemon stops and removes it), so it asks first ([`closePrompt`]). */
   const closeTab = useCallback(
     async (t: Tab) => {
-      const i = info(itemOf(t));
-      const running = i?.session ? i.session.status === 'running' : i?.run ? isActive(i.run.state) : false;
-      if (running && i) {
-        const what = i.session ? (i.session.kind === 'agent_tui' ? 'agent' : 'session') : 'run';
-        const { ok } = await confirm({
-          title: `Close ${i.title}?`,
-          body: i.session
-            ? `Closing the tab stops the ${what} and removes it: its terminal history is deleted and it can no longer be resumed. Files in its folder stay.`
-            : 'Closing the tab stops the run and removes it. Its data folder stays.',
-          action: 'Stop and close',
-          danger: true,
-        });
+      const prompt = closePrompt(info(itemOf(t)));
+      if (prompt) {
+        const { ok } = await confirm(prompt);
         if (!ok) return;
       }
       // Closed first: a close that fails leaves the tab where it was, still selected.

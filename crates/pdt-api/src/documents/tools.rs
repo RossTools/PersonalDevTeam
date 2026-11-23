@@ -436,6 +436,7 @@ impl Action for DocEdit {
             need_kind(&d, DocumentKind::Doc, "doc_edit")?;
             edits_for(&i.edits, true)?;
             let unasked = unasked(cx, access::Wants::Change { document: &d.id }).await;
+            let backup = if unasked.is_some() { access::backup(cx.st, &d).await } else { None };
             let n = i.edits.len();
             let before = match read(cx.st, &d).await? {
                 DocumentContent::Doc { markdown, .. } => markdown,
@@ -450,8 +451,13 @@ impl Action for DocEdit {
             let diff = pdt_core::document_ops::diff(&before, &after);
             if let Some(s) = &unasked {
                 let summary = edits_summary(n);
-                let change =
-                    access::Change { tool: "doc_edit", summary, version: r.version.clone(), diff: Some(diff.clone()) };
+                let change = access::Change {
+                    tool: "doc_edit",
+                    summary,
+                    version: r.version.clone(),
+                    diff: Some(diff.clone()),
+                    backup,
+                };
                 access::record(cx.st, s, &d, change).await;
             }
             let fence = Outside::new();
@@ -576,12 +582,14 @@ impl Action for SheetEdit {
             need_kind(&d, DocumentKind::Sheet, "sheet_edit")?;
             edits_for(&i.edits, false)?;
             let unasked = unasked(cx, access::Wants::Change { document: &d.id }).await;
-            // A sheet has no diff: the operations, and the version to go back to.
+            // A sheet has no diff: the operations, and (a local one) what it was before, to restore.
+            let backup = if unasked.is_some() { access::backup(cx.st, &d).await } else { None };
             let ops: Vec<&str> = i.edits.iter().map(DocumentEdit::op).collect();
             let summary = format!("{}: {}", edits_summary(ops.len()), ops.join(", "));
             let r = apply_edits(cx.st, &d, i.edits).await.map_err(api)?;
             if let Some(s) = &unasked {
-                let change = access::Change { tool: "sheet_edit", summary, version: r.version.clone(), diff: None };
+                let change =
+                    access::Change { tool: "sheet_edit", summary, version: r.version.clone(), diff: None, backup };
                 access::record(cx.st, s, &d, change).await;
             }
             let fence = Outside::new();
@@ -686,6 +694,7 @@ impl Action for DocumentCreate {
                     summary: format!("Created the {kind}"),
                     version: None,
                     diff,
+                    backup: None,
                 };
                 access::record(cx.st, s, &d, change).await;
             }
@@ -766,8 +775,13 @@ impl Action for DocumentLink {
             }
             if let Some(s) = &unasked {
                 let summary = if i.unlink { format!("Unlinked from {what}") } else { format!("Linked to {what}") };
-                access::record(st, s, &d, access::Change { tool: "document_link", summary, version: None, diff: None })
-                    .await;
+                access::record(
+                    st,
+                    s,
+                    &d,
+                    access::Change { tool: "document_link", summary, version: None, diff: None, backup: None },
+                )
+                .await;
             }
             let fence = Outside::new();
             Ok(fence.noted(fence.brief(&document(st, &d.id).await.map_err(api)?)))

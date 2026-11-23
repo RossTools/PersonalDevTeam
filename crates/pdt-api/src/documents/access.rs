@@ -5,7 +5,7 @@
 //! user can review it and roll it back.
 
 use crate::routes::{AppState, now_ms};
-use pdt_core::document::{Document, DocumentChange};
+use pdt_core::document::{Document, DocumentBackup, DocumentChange};
 use pdt_core::document_access::{Caller, DocumentCall, allows};
 use pdt_core::policy::AgentDocuments;
 use pdt_core::session::Session;
@@ -120,6 +120,22 @@ pub(crate) struct Change {
     pub summary: String,
     pub version: Option<String>,
     pub diff: Option<String>,
+    /// What a local document was before it ([`backup`]).
+    pub backup: Option<DocumentBackup>,
+}
+
+/// What a local document is before an unasked change, so the user can restore it (PDT-709); none for another
+/// provider's (its own history keeps versions) or a file too large to keep.
+pub(crate) async fn backup(st: &AppState, d: &Document) -> Option<DocumentBackup> {
+    if d.provider != super::local::ID {
+        return None;
+    }
+    st.local
+        .backup(&d.id, &d.provider_ref)
+        .await
+        .inspect_err(|e| tracing::warn!(document = %d.id, error = %e, "could not keep a copy before an agent's change"))
+        .ok()
+        .flatten()
 }
 
 /// Keeps a change an agent made without asking: on the document's changes, and in the history of the ticket the agent
@@ -136,8 +152,9 @@ pub(crate) async fn record(st: &AppState, s: &Session, d: &Document, c: Change) 
         version: c.version,
         diff: c.diff.filter(|d| !d.trim().is_empty()),
         agent: agent.clone(),
+        restorable: c.backup.is_some(),
     };
-    if let Err(e) = st.store.add_document_change(&change).await {
+    if let Err(e) = st.store.add_document_change(&change, c.backup.as_ref()).await {
         tracing::warn!(document = %d.id, error = %e, "could not record an agent's document change");
     }
     let Some(ticket) = &agent.from_ticket_id else { return };
@@ -159,6 +176,20 @@ pub(crate) async fn changes(
 ) -> Result<axum::Json<Vec<DocumentChange>>, crate::error::ApiError> {
     let d = super::routes::document(&st, &id).await?;
     Ok(axum::Json(st.store.document_changes(&d.id).await?))
+}
+
+/// `POST /api/documents/{id}/changes/{change}/restore`: puts a local document back as it was before an agent's
+/// unasked change (PDT-709). Every change since goes too, the user's as well.
+pub(crate) async fn restore(
+    axum::extract::State(st): axum::extract::State<AppState>,
+    axum::extract::Path((id, change)): axum::extract::Path<(String, String)>,
+) -> Result<axum::Json<super::routes::EditResult>, crate::error::ApiError> {
+    let d = super::routes::document(&st, &id).await?;
+    let Some(backup) = st.store.document_change_backup(&d.id, &change).await? else {
+        return Err(crate::error::ApiError::not_found("a kept copy of the document before that change"));
+    };
+    let version = st.local.restore(&d.id, &d.provider_ref, backup).await?;
+    Ok(axum::Json(super::routes::EditResult { version: Some(version), charts: vec![] }))
 }
 
 /// A diff as a Markdown code block, fenced longer than any run of backticks in it.

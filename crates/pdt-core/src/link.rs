@@ -270,6 +270,10 @@ pub struct HeartbeatReply {
     pub facts: InstanceFacts,
     /// The user paused the project on the remote instance: it takes no work for it.
     pub paused: bool,
+    /// The names of the secrets the remote instance keeps for the project itself (never their values): they win
+    /// over the owner's of the same name, which then isn't forwarded (PDT-637).
+    #[serde(default)]
+    pub secrets: Vec<String>,
     /// The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
     #[serde(default)]
     pub cap: Option<u32>,
@@ -339,6 +343,9 @@ pub struct OwnerLink {
     pub checkout_path: Option<String>,
     /// Paused here: the project takes no work on this instance.
     pub paused: bool,
+    /// An update the owner asks for uses this instance's own update channel, not the owner's (PDT-637).
+    #[serde(default)]
+    pub own_update_channel: bool,
     /// The most of the project's tickets this instance takes at once (reported to the owner); None: no cap of its own.
     #[serde(default)]
     pub cap: Option<u32>,
@@ -373,6 +380,9 @@ pub struct RemoteInstance {
     pub last_seen_at: Option<i64>,
     /// Why its last heartbeat failed, when it did.
     pub last_error: Option<String>,
+    /// The names of the secrets it keeps for the project itself, from its last heartbeat (PDT-637).
+    #[serde(default)]
+    pub secrets: Vec<String>,
     /// The most tickets in flight on it at once, as the owner's project settings say; None: no cap set here.
     #[serde(default)]
     pub cap: Option<u32>,
@@ -381,6 +391,18 @@ pub struct RemoteInstance {
     pub remote_cap: Option<u32>,
     #[ts(type = "number")]
     pub created_at: i64,
+}
+
+/// What the owner's update step says a joined instance needs: None when it can stay as it is. Ends that speak another
+/// protocol must update one of them (the older; [`incompatible_message`]); an instance on an older version than the
+/// owner's is offered the owner's (`update win-box to v0.7.3`). Local builds' versions aren't compared.
+pub fn update_needed(them: Side<'_>, owner: Side<'_>) -> Option<String> {
+    if !compatible(owner.protocol, them.protocol) {
+        return Some(incompatible_message(them, owner));
+    }
+    let (theirs, ours) = (crate::release::parse_version(them.version)?, crate::release::parse_version(owner.version)?);
+    let compared = !theirs.local && !ours.local;
+    (compared && ours.is_newer_than(&theirs)).then(|| format!("update {} to v{}", them.name, owner.version))
 }
 
 impl RemoteInstance {
@@ -425,6 +447,28 @@ mod tests {
         assert!(text.ends_with("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"), "sha-256 of {{}}");
         let other = signed_text(&SignedRequest { project: "p2", ..r });
         assert_ne!(text, other);
+    }
+
+    #[test]
+    fn the_update_step_names_the_instance_to_update() {
+        let owner = Side { name: "studio", protocol: PROTOCOL, version: "0.7.3" };
+        let same = Side { name: "win-box", protocol: PROTOCOL, version: "0.7.3" };
+        assert_eq!(update_needed(same, owner), None);
+        let older = Side { version: "0.7.1", ..same };
+        assert_eq!(update_needed(older, owner).as_deref(), Some("update win-box to v0.7.3"));
+        assert_eq!(update_needed(owner, older), None, "a newer remote instance needs nothing from this step");
+        let old_protocol = Side { protocol: PROTOCOL - 1, version: "0.6.0", ..same };
+        assert_eq!(
+            update_needed(old_protocol, owner).as_deref(),
+            Some("update win-box to v0.7.3 to link it with studio")
+        );
+        let new_protocol = Side { protocol: PROTOCOL + 1, version: "0.8.0", ..same };
+        assert_eq!(
+            update_needed(new_protocol, owner).as_deref(),
+            Some("update studio to v0.8.0 to link it with win-box")
+        );
+        let local = Side { version: "0.1.0-local", ..same };
+        assert_eq!(update_needed(local, owner), None, "a local build isn't compared");
     }
 
     #[test]
@@ -475,6 +519,7 @@ mod tests {
             paused: false,
             last_seen_at: None,
             last_error: None,
+            secrets: vec![],
             cap: None,
             remote_cap: None,
             created_at: 0,

@@ -47,7 +47,8 @@ pub struct JoinRemoteProject {
     pub address: Option<String>,
 }
 
-/// Pause or resume a remote project here, or move where its checkout goes.
+/// Pause or resume a remote project here, move where its checkout goes, or pick whose update channel the owner's
+/// updates use.
 #[derive(Debug, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -60,6 +61,10 @@ pub struct RemoteProjectPatch {
     #[serde(default)]
     #[ts(optional)]
     pub checkout_path: Option<String>,
+    /// An update the owner asks for uses this instance's own update channel (false: the owner's).
+    #[serde(default)]
+    #[ts(optional)]
+    pub own_update_channel: Option<bool>,
     /// The most of the project's tickets this instance takes at once; 0: no cap of its own (the owner's decides).
     #[serde(default)]
     #[ts(optional)]
@@ -184,6 +189,7 @@ async fn join(
         repo_url: reply.project.repo_url.clone(),
         checkout_path: None,
         paused: false,
+        own_update_channel: false,
         cap: None,
         last_contact_at: Some(now_ms()),
         created_at: now_ms(),
@@ -273,6 +279,9 @@ async fn patch(
             return Err(ApiError::invalid("the checkout's folder must be a full path"));
         }
         st.store.set_remote_project_checkout(&id, Some(path).filter(|p| !p.is_empty())).await?;
+    }
+    if let Some(own) = body.own_update_channel {
+        st.store.set_remote_project_own_channel(&id, own).await?;
     }
     if let Some(cap) = body.cap {
         st.store.set_remote_project_cap(&id, Some(cap).filter(|c| *c > 0)).await?;

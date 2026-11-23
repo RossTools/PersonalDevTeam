@@ -97,6 +97,10 @@ pub struct SecretUse {
     pub how: String,
     pub session_id: Option<String>,
     pub run_id: Option<String>,
+    /// The remote instance the value was forwarded to, for one call of a session running there (PDT-637); None:
+    /// used on this instance.
+    #[serde(default)]
+    pub instance: Option<String>,
 }
 
 /// Who wants to use a secret.
@@ -505,10 +509,152 @@ fn url_encode(value: &str) -> String {
         .collect()
 }
 
+// ---- sessions on a remote instance (PDT-637) ----
+
+/// On the owner's Secrets page: the secrets a joined instance keeps for one of its projects, by name only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RemoteSecretSet {
+    pub instance_id: String,
+    pub instance_name: String,
+    pub project_id: String,
+    pub project_key: String,
+    pub project_name: String,
+    pub secrets: Vec<RemoteSecretName>,
+}
+
+/// A secret a joined instance keeps for a project, and its last use there as the instance reported it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RemoteSecretName {
+    pub name: String,
+    #[ts(type = "number | null")]
+    pub last_used_at: Option<i64>,
+    pub last_used_by: Option<String>,
+}
+
+/// Whether a secret kept on a remote instance is one of the remote project `project_id`'s own: only those named for
+/// it (never one any project may use) serve its owner's sessions there.
+pub fn for_remote_project(s: &Secret, project_id: &str) -> bool {
+    s.projects.iter().any(|p| p == project_id)
+}
+
+/// The names the owner forwards its own values for: those the remote instance doesn't keep itself (it said so with
+/// its last heartbeat), ignoring case as secret names do. The remote instance's own win on a name clash, so the
+/// owner's value never crosses the link for those.
+pub fn to_forward(names: &[String], kept_there: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for n in names {
+        let there = kept_there.iter().any(|k| k.eq_ignore_ascii_case(n));
+        if !there && !out.iter().any(|o| o.eq_ignore_ascii_case(n)) {
+            out.push(n.clone());
+        }
+    }
+    out
+}
+
+/// The values a call of a session on a remote instance uses, as the remote instance puts them together.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoteValues {
+    /// By name as the call wrote it.
+    pub values: HashMap<String, String>,
+    /// The names it took from its own secrets for the project.
+    pub local: Vec<String>,
+    /// The names it took from the owner's, forwarded for this call.
+    pub forwarded: Vec<String>,
+}
+
+/// The values for `names` on a remote instance: its own secret for the project when it keeps one by that name
+/// (`local`, by name ignoring case), else the owner's forwarded one (`forwarded`, by name as written). A name in
+/// neither fails with the owner's reason for not sending it (`refused`: unknown there, or not allowed for this
+/// session), else as unknown.
+pub fn remote_values(
+    names: &[String],
+    local: &HashMap<String, String>,
+    forwarded: &HashMap<String, String>,
+    refused: &HashMap<String, String>,
+) -> Result<RemoteValues, String> {
+    let mut out = RemoteValues::default();
+    for n in names {
+        if out.values.contains_key(n) {
+            continue;
+        }
+        if let Some(v) = local.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v) {
+            out.values.insert(n.clone(), v.clone());
+            out.local.push(n.clone());
+        } else if let Some(v) = forwarded.get(n) {
+            out.values.insert(n.clone(), v.clone());
+            out.forwarded.push(n.clone());
+        } else {
+            return Err(refused.get(n).cloned().unwrap_or_else(|| {
+                format!(
+                    "no secret is called {n}: the user adds it in Settings → Secrets (agents ask with request_secret), \
+                     or to the project on the instance it runs on"
+                )
+            }));
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn names(l: &[&str]) -> Vec<String> {
+        l.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn map(l: &[(&str, &str)]) -> HashMap<String, String> {
+        l.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn only_secrets_named_for_the_remote_project_serve_it() {
+        let mut s = Secret {
+            id: "1".into(),
+            name: "CERT".into(),
+            description: String::new(),
+            projects: vec![],
+            personas: vec![],
+            created_at: 0,
+            updated_at: 0,
+            last_used_at: None,
+            last_used_by: None,
+        };
+        assert!(!for_remote_project(&s, "val"), "one any project may use stays this instance's");
+        s.projects = vec!["other".into(), "val".into()];
+        assert!(for_remote_project(&s, "val"));
+        assert!(!for_remote_project(&s, "va"));
+    }
+
+    #[test]
+    fn the_owner_forwards_only_what_the_remote_instance_doesnt_keep() {
+        let got = to_forward(&names(&["NPM_TOKEN", "CERT", "npm_token", "API"]), &names(&["cert"]));
+        assert_eq!(got, names(&["NPM_TOKEN", "API"]));
+        assert_eq!(to_forward(&names(&["A"]), &[]), names(&["A"]));
+    }
+
+    #[test]
+    fn the_remote_instances_own_secret_wins_a_name_clash() {
+        let local = map(&[("cert", "local-cert-value")]);
+        let forwarded = map(&[("CERT", "owner-cert-value"), ("NPM_TOKEN", "owner-npm-value")]);
+        let got = remote_values(&names(&["CERT", "NPM_TOKEN", "CERT"]), &local, &forwarded, &HashMap::new()).unwrap();
+        assert_eq!(got.values, map(&[("CERT", "local-cert-value"), ("NPM_TOKEN", "owner-npm-value")]));
+        assert_eq!((got.local, got.forwarded), (names(&["CERT"]), names(&["NPM_TOKEN"])));
+    }
+
+    #[test]
+    fn a_name_neither_end_has_fails_with_the_owners_reason() {
+        let refused = map(&[("API", "the secret API may not be used here")]);
+        let err = remote_values(&names(&["API"]), &HashMap::new(), &HashMap::new(), &refused).unwrap_err();
+        assert_eq!(err, "the secret API may not be used here");
+        let err = remote_values(&names(&["NOPE"]), &HashMap::new(), &HashMap::new(), &refused).unwrap_err();
+        assert!(err.starts_with("no secret is called NOPE"), "{err}");
+    }
 
     #[test]
     fn secret_tools_stay_in_the_checkout() {
