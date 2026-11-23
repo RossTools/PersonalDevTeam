@@ -72,7 +72,7 @@ export function FilterBar({
       data-slot="filter-bar"
       className={cn('flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1.5 px-3 py-1.5', className)}
     >
-      <InputGroup className="w-full shrink-0 md:w-56">
+      <InputGroup className="w-full shrink-0 md:w-auto md:max-w-56 md:min-w-32 md:shrink md:grow md:basis-32">
         <InputGroupAddon>
           <Search aria-hidden />
         </InputGroupAddon>

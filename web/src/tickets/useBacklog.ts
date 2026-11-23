@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import {
-  DEFAULT_FILTERS, loadSavedFilters, READY_TO_START, storeSavedFilters, type BacklogFilters, type SavedFilter,
+  DEFAULT_FILTERS, loadSavedFilters, normaliseFilters, READY_TO_START, storeSavedFilters, type BacklogFilters, type SavedFilter,
 } from './model';
 
 export type TicketsMode = 'backlog' | 'board';
@@ -20,7 +20,7 @@ function load(): Stored {
       return {
         projectId: typeof v.projectId === 'string' ? v.projectId : null,
         mode: v.mode === 'board' ? 'board' : 'backlog',
-        filters: { ...DEFAULT_FILTERS, ...(v.filters ?? {}), q: '' },
+        filters: { ...normaliseFilters(v.filters ?? {}), q: '' },
       };
     }
   } catch {
@@ -78,7 +78,7 @@ export function useBacklog() {
   }, []);
   const applyFilter = useCallback(
     (f: SavedFilter) =>
-      update((s) => ({ ...s, projectId: f.builtin ? s.projectId : f.projectId, filters: { ...DEFAULT_FILTERS, ...f.filters } })),
+      update((s) => ({ ...s, projectId: f.builtin ? s.projectId : f.projectId, filters: normaliseFilters(f.filters) })),
     [update],
   );
 
