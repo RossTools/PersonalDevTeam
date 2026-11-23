@@ -44,8 +44,14 @@ Each remote instance shows:
 - when it was last seen;
 - **At most … tickets in flight on it at once**: its cap for this project (below).
 
-**Check now** asks each one again, and has it check its agents again first. **Remove…** stops it working on the project and revokes the link at both ends;
-pairing again needs a new code.
+**Check now** asks each one again, and has it check its agents again first. **Remove…** stops it working on the
+project and revokes the link at both ends; pairing again needs a new code. If the instance can't be reached (asleep,
+or off the tailnet), it is removed here all the same and PDT says it couldn't be told: once it is back and asks, its
+remote project shows **removed by its owner**, and you leave it there to finish. Removing the project revokes each of
+its remote instances the same way; one that can't be reached shows **removed by its owner** once it is back.
+
+An instance that left the project while the owner couldn't be reached says so when it is checked: "win-box left the
+project; remove it here too".
 
 **Needs an update** means the two instances speak different versions of the link. The message says which one to
 update, and to which version, for example "update win-box to v0.7.2". You can update it from the owner: see
@@ -169,7 +175,10 @@ last heard from.
 
 - **Open on <owner>** opens the project's board on the owner.
 - **Pause** stops this instance taking work for the project; **Resume** starts it again.
-- **Leave…** stops working on the project and revokes the link; the owner keeps the project.
+- **Leave…** stops working on the project and revokes the link; the owner keeps the project. If the owner can't be
+  reached, PDT says so: remove this instance from the project on the owner too.
+- **Removed by its owner** means the owner removed this instance, or the project, while the two couldn't reach each
+  other. Nothing more comes from the owner; **Leave…** to finish.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
 - **Secrets** kept here for the project: the owner's agents here use them, and they never leave this machine. Add one

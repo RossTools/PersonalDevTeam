@@ -1,5 +1,6 @@
 import { enc, request } from './core';
 import type { JoinRemoteProject } from './gen/JoinRemoteProject';
+import type { LinkEnded } from './gen/LinkEnded';
 import type { PlacementSettings } from './gen/PlacementSettings';
 import type { RemoteInstancePatch } from './gen/RemoteInstancePatch';
 import type { RemoteInstancesView } from './gen/RemoteInstancesView';
@@ -24,7 +25,7 @@ export const remoteProjectsApi = {
       body: JSON.stringify(p),
     }),
   removeRemoteInstance: (projectId: string, linkId: string) =>
-    request<void>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}`, { method: 'DELETE' }),
+    request<LinkEnded>(`/api/projects/${enc(projectId)}/remote-instances/${enc(linkId)}`, { method: 'DELETE' }),
   placement: (projectId: string) => request<PlacementSettings>(`/api/projects/${enc(projectId)}/placement`),
   putPlacement: (projectId: string, s: PlacementSettings) =>
     request<PlacementSettings>(`/api/projects/${enc(projectId)}/placement`, { method: 'PUT', body: JSON.stringify(s) }),
@@ -33,5 +34,5 @@ export const remoteProjectsApi = {
     request<RemoteProjectView>('/api/remote-projects', { method: 'POST', body: JSON.stringify(j) }),
   patchRemoteProject: (id: string, p: RemoteProjectPatch) =>
     request<RemoteProjectView>(`/api/remote-projects/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
-  leaveRemoteProject: (id: string) => request<void>(`/api/remote-projects/${enc(id)}`, { method: 'DELETE' }),
+  leaveRemoteProject: (id: string) => request<LinkEnded>(`/api/remote-projects/${enc(id)}`, { method: 'DELETE' }),
 };

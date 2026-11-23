@@ -35,4 +35,8 @@ cap: number | null,
 /**
  * When the owner last reached this instance, in ms.
  */
-lastContactAt: number | null, createdAt: number, };
+lastContactAt: number | null, 
+/**
+ * When the owner was found to have removed this instance from the project (it couldn't tell it then), in ms.
+ */
+removedAt: number | null, createdAt: number, };

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
-import { Badge, Button, EmptyState, Input, Page, Section, Skeleton, Switch, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Page, Section, Skeleton, Switch, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import type { Secret } from '../api/gen/Secret';
@@ -162,7 +162,8 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
       danger: true,
     });
     if (!ok) return;
-    await api.leaveRemoteProject(r.project.id);
+    const { told } = await api.leaveRemoteProject(r.project.id);
+    if (!told) toast.info(`${owner} couldn't be told; remove this instance from ${r.project.name} there too.`);
     await refresh();
   });
   return (
@@ -178,6 +179,9 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         </Button>
         <Button size="sm" variant="ghost" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Leave…</Button>
       </div>
+      {r.state === 'removed' && (
+        <Alert tone="warning">{owner} removed this instance from {r.project.name}, or removed the project. Leave it to finish here.</Alert>
+      )}
       <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
         <span className="font-mono">{r.link.ownerUrl}</span>
         <span>{owner} v{r.link.ownerVersion}</span>
