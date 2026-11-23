@@ -4,7 +4,7 @@ import { Check, ChevronDown, Plus } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
   Badge, BulkActionBar, Button, Checkbox, DataList, DataListRow, EmptyState, FilterBar, Input, MenuButton, Popover,
-  RelativeTime, SegmentedControl, Select, Sheet, Skeleton, Switch, useConfirm, useMenuAt, ViewHeader, type MenuEntry,
+  RelativeTime, SegmentedControl, Sheet, Skeleton, useConfirm, useMenuAt, ViewHeader, type MenuEntry,
 } from '@ui';
 import { api } from '../api/client';
 import type { Priority } from '../api/gen/Priority';
@@ -38,8 +38,11 @@ import { ExternalKeys } from './ExternalKeys';
 import { TicketBadges } from './TicketBadges';
 import { ImportByKeyDialog, useIssueImports, type IssueImport } from './ImportByKeyDialog';
 import {
-  BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, STAGES, toQuery, type GroupBy,
+  BACKLOG_STAGES, canRank, groupTickets, isClosed, isDefaultFilter, normaliseLabel, sameStages, STAGES, stagesText, toQuery,
+  type GroupBy,
 } from './model';
+import { StagePresets } from './StagePresets';
+import { SaveFilterDialog } from './TicketsList';
 import { invalidateTickets, ticketKeys, useCheckMerge, useScopeLabels, useTicket, useTicketId, useTicketPages, useTicketWorkspaceName } from './queries';
 import { LabelChips } from '../common/LabelChips';
 import { TicketDescription, TicketDetails, TicketLinks, TicketOverlaps, TicketTimeline, TicketTitle } from './TicketParts';
@@ -56,23 +59,28 @@ import { invalidateWorkspaces } from '../workspaces/queries';
 interface Option<V extends string> { value: V; label: string }
 
 /** A filter chip that opens a checkbox list (several can be picked without reopening it). */
-function MultiChip<V extends string>({ label, options, selected, onChange, none }: {
+function MultiChip<V extends string>({ label, options, selected, onChange, text: own, set, footer }: {
   label: string;
-  /** What an empty selection means, shown on the chip ("Draft, Ready"). */
-  none?: string;
   options: Option<V>[];
   selected: V[];
   onChange: (v: V[]) => void;
+  /** The chip's own wording of the selection ("Draft, Ready"). */
+  text?: string;
+  /** The selection differs from the default (default: anything picked). */
+  set?: boolean;
+  /** In place of Clear, under the list (the stage presets). */
+  footer?: ReactNode;
 }) {
   const names = options.filter((o) => selected.includes(o.value)).map((o) => o.label);
-  const text = names.length === 0 ? (none ? `${label}: ${none}` : label) : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
+  const text = own !== undefined ? `${label}: ${own}` : names.length === 0 ? label : names.length <= 2 ? `${label}: ${names.join(', ')}` : `${label}: ${names.length}`;
+  const isSet = set ?? selected.length > 0;
   return (
     <Popover
       label={label}
       placement="bottom start"
       className="w-56 p-1"
       trigger={
-        <Button variant={selected.length > 0 ? 'secondary' : 'ghost'} size="sm" compact aria-label={`${label} filter`}>
+        <Button variant={isSet ? 'secondary' : 'ghost'} size="sm" compact aria-label={`${label} filter`}>
           {text} <ChevronDown aria-hidden />
         </Button>
       }
@@ -88,7 +96,7 @@ function MultiChip<V extends string>({ label, options, selected, onChange, none 
             {o.label}
           </Checkbox>
         ))}
-        {selected.length > 0 && (
+        {footer ? <div className="mt-1 border-t border-border pt-1">{footer}</div> : selected.length > 0 && (
           <Button variant="ghost" size="sm" compact className="mt-1 self-start" onClick={() => onChange([])}>Clear</Button>
         )}
       </div>
@@ -120,17 +128,38 @@ function ChoiceChip({ label, value, onChange, yes, no }: {
   );
 }
 
+/** A view option as a menu, styled like the filter chips ("Group: none", "Sort: rank"). */
+function PickChip<V extends string>({ label, options, value, onChange }: {
+  label: string;
+  options: Option<V>[];
+  value: V;
+  onChange: (v: V) => void;
+}) {
+  const name = options.find((o) => o.value === value)?.label ?? value;
+  return (
+    <MenuButton
+      label={`${label} by`}
+      placement="bottom end"
+      entries={() => options.map((o): MenuEntry => ({ label: o.label, checked: o.value === value, onSelect: () => onChange(o.value) }))}
+    >
+      <Button variant="ghost" size="sm" compact aria-label={`${label} by`}>
+        {label}: {name.toLowerCase()} <ChevronDown aria-hidden />
+      </Button>
+    </MenuButton>
+  );
+}
+
 const GROUPS: Option<GroupBy>[] = [
-  { value: 'none', label: 'No grouping' },
-  { value: 'stage', label: 'Group: stage' },
-  { value: 'priority', label: 'Group: priority' },
-  { value: 'label', label: 'Group: label' },
+  { value: 'none', label: 'None' },
+  { value: 'stage', label: 'Stage' },
+  { value: 'priority', label: 'Priority' },
+  { value: 'label', label: 'Label' },
 ];
 const SORTS: Option<TicketSort>[] = [
-  { value: 'rank', label: 'Sort: rank' },
-  { value: 'priority', label: 'Sort: priority' },
-  { value: 'updated', label: 'Sort: updated' },
-  { value: 'created', label: 'Sort: created' },
+  { value: 'rank', label: 'Rank' },
+  { value: 'priority', label: 'Priority' },
+  { value: 'updated', label: 'Updated' },
+  { value: 'created', label: 'Created' },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -203,7 +232,7 @@ function TicketRowContent({ t, phone }: { t: TicketSummary; phone: boolean }) {
   }
   return (
     <>
-      <TicketKey ticketKey={t.key} className="w-20 justify-start" />
+      <span className="flex w-20 shrink-0"><TicketKey ticketKey={t.key} /></span>
       <span className={cn('min-w-0 flex-1 truncate', isClosed(t.stage) && 'text-muted-foreground line-through')}>{t.title}</span>
       <ExternalKeys links={t.external} />
       {badges}
@@ -401,6 +430,7 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
   });
   const imports = useIssueImports(project ? settings.data : undefined);
   const [importing, setImporting] = useState<IssueImport | null>(null);
+  const [saving, setSaving] = useState(false);
   const query = useMemo(() => toQuery(project?.id ?? null, filters), [project?.id, filters]);
   const pages = useTicketPages(query, mode === 'backlog');
   const items = useMemo(() => pages.data?.pages.flatMap((p) => p.items) ?? [], [pages.data]);
@@ -557,11 +587,8 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
 
   const viewOptions = (
     <>
-      <Switch size="sm" checked={filters.showClosed} onChange={(showClosed) => backlog.setFilters({ showClosed })} className="text-xs">
-        Show closed
-      </Switch>
-      <Select aria-label="Group by" size="sm" options={GROUPS} value={filters.group} onChange={(group) => backlog.setFilters({ group })} className="w-36" />
-      <Select aria-label="Sort by" size="sm" options={SORTS} value={filters.sort} onChange={(sort) => backlog.setFilters({ sort })} className="w-36" />
+      <PickChip<GroupBy> label="Group" options={GROUPS} value={filters.group} onChange={(group) => backlog.setFilters({ group })} />
+      <PickChip<TicketSort> label="Sort" options={SORTS} value={filters.sort} onChange={(sort) => backlog.setFilters({ sort })} />
     </>
   );
 
@@ -674,7 +701,7 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
   if (phone) {
     return (
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {projects.length > 0 && <PhoneToolbar backlog={backlog} labels={allLabels} />}
+        {projects.length > 0 && <PhoneToolbar backlog={backlog} labels={allLabels} total={total} />}
         <div className="flex min-h-0 flex-1 flex-col">{body}</div>
         {mode === 'backlog' && selected.length > 0 ? (
           bulkBar
@@ -704,6 +731,13 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
               {scopeName}
               {mode === 'backlog' && total !== undefined && ` · ${plural(total, 'ticket')}`}
             </span>
+            {/* Beside the count the filters change, so the filter row keeps to one line (PDT-672). */}
+            {mode === 'backlog' && !isDefaultFilter(filters) && (
+              <span className="flex shrink-0 items-center">
+                <Button variant="ghost" size="sm" compact onClick={backlog.resetFilters}>Clear</Button>
+                <Button variant="ghost" size="sm" compact onClick={() => setSaving(true)}>Save…</Button>
+              </span>
+            )}
           </>
         }
         actions={
@@ -733,14 +767,17 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
                 {mode === 'backlog' && (
                   <MultiChip<TicketStage>
                     label="Stage"
-                    none={filters.showClosed ? undefined : BACKLOG_STAGES.map((s) => STAGE_LABEL[s]).join(', ')}
+                    text={stagesText(filters.stages)}
+                    set={!sameStages(filters.stages, BACKLOG_STAGES)}
                     options={stageOptions}
-                    selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />
+                    selected={filters.stages} onChange={(stages) => backlog.setFilters({ stages })}
+                    footer={<StagePresets stages={filters.stages} onChange={(stages) => backlog.setFilters({ stages })} />} />
                 )}
                 <MultiChip<Priority> label="Priority" options={priorityOptions} selected={filters.priorities} onChange={(priorities) => backlog.setFilters({ priorities })} />
                 <MultiChip<string> label="Label" options={labelOptions} selected={filters.labels} onChange={(l) => backlog.setFilters({ labels: l })} />
                 <ChoiceChip label="Blocked" yes="Blocked" no="Unblocked" value={filters.blocked} onChange={(blocked) => backlog.setFilters({ blocked })} />
                 <ChoiceChip label="Overlap" yes="With overlap" no="No overlap" value={filters.conflicts} onChange={(conflicts) => backlog.setFilters({ conflicts })} />
+                {mode === 'backlog' && <span aria-hidden className="h-4 w-px bg-border" />}
               </FilterBar>
             )}
           </div>
@@ -750,6 +787,7 @@ export function TicketsView({ backlog, projects, projectsLoaded = true, onNewTic
       <div className="flex min-h-0 flex-1 flex-col">{body}</div>
       {menu}
       {ticketPeek}
+      {saving && <SaveFilterDialog onSave={backlog.saveFilter} onClose={() => setSaving(false)} />}
     </div>
   );
 }

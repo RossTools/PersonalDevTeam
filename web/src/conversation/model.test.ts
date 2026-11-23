@@ -43,7 +43,7 @@ describe('conversation reducer', () => {
     ]);
     expect(sortedRows(m).map((r) => r.itemId)).toEqual(['e', 'f']);
     expect([m.from, m.earlier, m.maxSeq]).toEqual([5, true, 11]);
-    m = reduce(m, { type: 'earlier', events: [ev(4, 3, say(3), 'c'), ev(11, 2, say(22), 'b'), ev(7, 4, say(4), 'd')], more: true });
+    m = reduce(m, { type: 'earlier', before: 5, events: [ev(4, 3, say(3), 'c'), ev(11, 2, say(22), 'b'), ev(7, 4, say(4), 'd')], more: true });
     expect(sortedRows(m).map((r) => r.itemId)).toEqual(['b', 'c', 'd', 'e', 'f']);
     expect([m.from, m.earlier, m.maxSeq]).toEqual([2, true, 11]);
     // The same in one batch (a replay).
@@ -54,8 +54,19 @@ describe('conversation reducer', () => {
     expect(sortedRows(batched).map((r) => r.itemId)).toEqual(['e']);
     expect(batched.maxSeq).toBe(11);
     // The first page: nothing before it.
-    expect(reduce(m, { type: 'earlier', events: [ev(1, 1, say(1), 'a')], more: false }).earlier).toBe(false);
-    expect(reduce(m, { type: 'earlier', events: [], more: true }).earlier).toBe(false);
+    expect(reduce(m, { type: 'earlier', before: 2, events: [ev(1, 1, say(1), 'a')], more: false }).earlier).toBe(false);
+    expect(reduce(m, { type: 'earlier', before: 2, events: [], more: true }).earlier).toBe(false);
+  });
+
+  it('a page read before a tail frame moved `from` on is dropped: no gap between it and the tail (PDT-666)', () => {
+    const say = (n: number) => ({ kind: 'notice', level: 'info', text: `n${n}` }) as const;
+    // Held from place 5; a page before 5 is being read when a reconnect's tail starts the rows at place 9.
+    let m = run([{ type: 'tail', from: 5, earlier: true }, { type: 'event', event: ev(5, 5, say(5), 'e') }]);
+    m = reduce(m, { type: 'message', msg: { type: 'tail', from: 9, earlier: true } });
+    m = reduce(m, { type: 'message', msg: { type: 'event', event: ev(9, 9, say(9), 'i') } });
+    const after = reduce(m, { type: 'earlier', before: 5, events: [ev(4, 4, say(4), 'd')], more: true });
+    expect(after).toBe(m);
+    expect([after.from, sortedRows(after).map((r) => r.itemId)]).toEqual([9, ['i']]);
   });
 
   it('a gap filled in moves the rows after it: each place shows its newest row once', () => {

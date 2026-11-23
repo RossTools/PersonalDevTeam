@@ -103,7 +103,7 @@ export function useConversation(sessionId: string, factory?: (url: string) => Ev
     setLoadingEarlier(true);
     const before = from.current;
     api.sessionEventsBefore(sessionId, before, EARLIER_PAGE)
-      .then((events) => dispatch({ type: 'earlier', events, more: events.length === EARLIER_PAGE }))
+      .then((events) => dispatch({ type: 'earlier', before, events, more: events.length === EARLIER_PAGE }))
       .catch(() => {})
       .finally(() => {
         loading.current = false;

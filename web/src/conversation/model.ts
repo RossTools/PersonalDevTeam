@@ -35,8 +35,11 @@ export type ConversationAction =
   | { type: 'message'; msg: ConversationServerMessage }
   /** Many messages at once (a connection's replay): one new model, not one per message. */
   | { type: 'batch'; msgs: ConversationServerMessage[] }
-  /** A page of the rows before `from`, oldest first; `more`: there are rows before it too. */
-  | { type: 'earlier'; events: ConversationEvent[]; more: boolean };
+  /**
+   * A page of the rows before `before` (the `from` it was asked for), oldest first; `more`: there are rows before it
+   * too.
+   */
+  | { type: 'earlier'; before: number; events: ConversationEvent[]; more: boolean };
 
 export const emptyModel = (): ConversationModel => ({
   rows: {}, maxSeq: 0, streams: {}, replayed: null, state: null, ready: false, from: 0, earlier: false,
@@ -65,7 +68,7 @@ function withoutMessageStreams(streams: Streams): Streams {
 export function reduce(m: ConversationModel, a: ConversationAction): ConversationModel {
   if (a.type === 'open') return { ...m, replayed: {}, ready: false };
   if (a.type === 'batch') return reduceBatch(m, a.msgs);
-  if (a.type === 'earlier') return reduceEarlier(m, a.events, a.more);
+  if (a.type === 'earlier') return reduceEarlier(m, a.before, a.events, a.more);
   const msg = a.msg;
   switch (msg.type) {
     case 'tail': {
@@ -160,9 +163,12 @@ function reduceBatch(m: ConversationModel, msgs: ConversationServerMessage[]): C
 
 /**
  * A page of rows before `from` added (the newer version of a row kept), and `from` moved back to the page's first.
- * `maxSeq` stays: it says how far the socket got, which a page read from the store says nothing about.
+ * `maxSeq` stays: it says how far the socket got, which a page read from the store says nothing about. A page asked
+ * for before another `from` (a tail frame moved it on while it was read) is dropped: the rows between it and what is
+ * held now would be missing (PDT-666).
  */
-function reduceEarlier(m: ConversationModel, events: ConversationEvent[], more: boolean): ConversationModel {
+function reduceEarlier(m: ConversationModel, before: number, events: ConversationEvent[], more: boolean): ConversationModel {
+  if (before !== m.from) return m;
   const rows = { ...m.rows };
   let from = m.from;
   for (const e of events) {

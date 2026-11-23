@@ -70,7 +70,7 @@ export function TicketsList({ backlog, projects, onChoose }: { backlog: BacklogS
         as="h3"
         className="px-2"
         trailing={
-          <IconButton label="Save filter…" size="sm" noTooltip className="size-5" onClick={() => setSaving(true)}>
+          <IconButton label="Save the current filters" size="sm" className="size-5" onClick={() => setSaving(true)}>
             <Plus aria-hidden />
           </IconButton>
         }

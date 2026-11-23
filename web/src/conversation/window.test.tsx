@@ -73,6 +73,21 @@ describe('a long conversation opens on its latest messages', () => {
     expect(screen.queryByRole('button', { name: 'Show earlier messages' })).not.toBeInTheDocument();
   });
 
+  it('after a tail frame drops the earlier rows, still shows the latest ones (PDT-666)', () => {
+    layout();
+    const { rerender } = render(<MessageList {...props(messages(300))} />);
+    expect(screen.getByText('row 300')).toBeInTheDocument();
+    // A reconnect after a long gap: only the latest 30 rows are held now, and more follow.
+    rerender(<MessageList {...props(messages(330).slice(300), { hasEarlier: true, onLoadEarlier: () => {} })} />);
+    expect(screen.getByText('row 301')).toBeInTheDocument();
+    expect(screen.getByText('row 330')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show earlier messages' })).toBeInTheDocument();
+    // New rows at the end don't push the earliest shown out.
+    rerender(<MessageList {...props(messages(400).slice(300), { hasEarlier: true, onLoadEarlier: () => {} })} />);
+    expect(screen.getByText('row 301')).toBeInTheDocument();
+    expect(screen.getByText('row 400')).toBeInTheDocument();
+  });
+
   it('once every block held is shown, reads the page before them from the server (PDT-630)', async () => {
     layout();
     const onLoadEarlier = vi.fn();

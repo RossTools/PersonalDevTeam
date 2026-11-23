@@ -392,6 +392,53 @@ impl StartTicket {
     }
 }
 
+/// `POST /api/attempts/{id}/session`: an agent for an active attempt with none at work (its branch made by hand, or
+/// its agent ended): a new session in the attempt's worktree whose first prompt is the ticket, as Start's.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AttemptAgent {
+    pub agent: AgentKind,
+    /// A conversation (the default) or the agent's terminal.
+    #[serde(default)]
+    #[ts(optional)]
+    pub session_mode: Option<SessionMode>,
+    /// Absent: the agent's default.
+    #[serde(default)]
+    #[ts(optional)]
+    pub permission_mode: Option<PermissionMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub cols: Option<u16>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub rows: Option<u16>,
+}
+
+impl AttemptAgent {
+    /// Checked as Start checks its session's choices; the branch, base and placement don't apply.
+    pub fn validate(&self) -> Result<ValidStart, TicketValidationError> {
+        StartTicket {
+            agent: self.agent,
+            branch: None,
+            base: None,
+            bypass_permissions: None,
+            permission_mode: self.permission_mode,
+            tab: None,
+            new_workspace: None,
+            mode: None,
+            session_mode: self.session_mode,
+            from_session: None,
+            no_session: None,
+            next: None,
+            runs_on: None,
+            cols: self.cols,
+            rows: self.rows,
+        }
+        .validate()
+    }
+}
+
 /// The overlaps Start refuses for (unless forced). A pickup that checked its own overlap rule (`pickup_checked`) has
 /// already kept the ticket apart from work in flight as that rule says (by default only in hot areas), so Start refuses
 /// it only for a conflict, which pickup's candidates leave out too; anyone else's Start refuses for any overlap.
@@ -426,6 +473,20 @@ pub fn started_session_title(ticket_title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_attempt_agent_is_a_conversation_unless_asked_and_checks_its_size() {
+        let a = |v: serde_json::Value| serde_json::from_value::<AttemptAgent>(v).unwrap().validate();
+        let v = a(serde_json::json!({"agent": "codex"})).unwrap();
+        assert_eq!(
+            (v.agent, v.session_mode, v.bypass_permissions),
+            (AgentKind::Codex, SessionMode::Conversation, false)
+        );
+        let v =
+            a(serde_json::json!({"agent": "claude", "sessionMode": "terminal", "permissionMode": "bypass"})).unwrap();
+        assert_eq!((v.session_mode, v.bypass_permissions), (SessionMode::Terminal, true));
+        assert!(a(serde_json::json!({"agent": "claude", "cols": 1})).is_err());
+    }
 
     #[test]
     fn attempt_branches_are_known_by_their_ticket_key_whatever_the_title() {

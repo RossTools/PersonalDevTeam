@@ -379,13 +379,13 @@ Opening a conversation: the events socket (`conversations/routes.rs` `replay`) s
 connection that drops part way asks for the rest by seq. Every event frame cuts a tool call's output to
 `OUTPUT_PREVIEW` (`outputBytes` says how long the whole is; `GET …/events?item=` reads it whole). The client's model
 drops rows before `from` and ignores events before it; `useConversation.loadEarlier` reads the page before it
-(`GET …/events?before=<pos>`). `useConversation` holds a replay until `ready` and applies it as one action, showing a
+(`GET …/events?before=<pos>`), and drops a page asked for before a `from` that a `tail` has since moved on (it would leave a gap). `useConversation` holds a replay until `ready` and applies it as one action, showing a
 skeleton until then; `EventsSocket` drops a connection that sends nothing for `stallMs` before `ready` (opening or
 replaying) and makes a new one, and after `readyMs` the hook applies what came so far and the view offers Retry. The
 last few conversations' models stay in memory, so one opened again shows what it had at once and asks only for what
 came after. `MessageList` renders the latest `WINDOW` blocks, and earlier ones a window at a time as the reader
 scrolls near the top (or clicks Show earlier messages), then the server's earlier pages, keeping the block that was
-first in place on screen; the first block shown stays fixed as new ones arrive. Each block re-renders only when
+first in place on screen; the first block shown stays fixed as new ones arrive, and goes back to the latest `WINDOW` when a `tail` leaves fewer blocks than it. Each block re-renders only when
 its rows or streamed text change (`BlockView`, `reuseBlocks`). A scrolled-up position is kept as the distance from
 the bottom, and enough windows are shown to get back there.
 
@@ -676,7 +676,11 @@ the server marks `outward` (`InboxChoice::outward`: a gate's choice that leads t
 Allow on a tool `ToolTable::outward` names), and on a gate
 with `recommend` (the outside-PR review's decision) every choice but the `recommended` one; `ApprovalCard` does the same for Always allow. An Inbox
 answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and only then sent, so nothing it causes
-(a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. On `pagehide`
+(a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. The window
+pauses while the pointer or focus is inside the toaster (`[data-sonner-toaster]`), and its Undo toast has no timeout
+of its own: `held.ts` dismisses it when the answer goes out or is undone, so Undo is never offered too late. A new
+item's `ItemHeader` takes focus on its title when focus was lost with the last item (on `<body>` or in a toast), and
+again when the item is snoozed or unsnoozed in place (its Snooze button, focused, gives way to Unsnooze). On `pagehide`
 the held answers go out at once, with `keepalive` (`setLeaving` in `web/src/api/core.ts`), and `useReloadOnNewBuild`
 doesn't reload for a new build while any answer is held. The client says
 how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,

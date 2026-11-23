@@ -43,6 +43,11 @@ export function SnoozeMenu({ item }: { item: InboxItem }) {
   const refresh = useRefreshInbox();
   const snooze = useMutation({
     mutationFn: (s: SnoozeRequest) => api.snoozeInbox(item.id, s),
+    // The item leaves the screen: say where it went (PDT-667).
+    onSuccess: (_, s) => void toast.success(
+      s.ticket ? `Snoozed until ${s.ticket} is done` : s.until != null ? `Snoozed until ${clockTime(s.until, { weekday: true })}` : 'Snoozed',
+      { description: item.title },
+    ),
     onError: (err) => toast.error(actionError(err)),
     onSettled: () => void refresh(),
   });

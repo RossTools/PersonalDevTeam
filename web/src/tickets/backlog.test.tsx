@@ -74,11 +74,22 @@ describe('backlog', () => {
     renderWithQuery(<Harness />);
     await pickProject();
     await waitFor(() => expect(lastList(calls).project).toBe(project.id));
-    await userEvent.click(screen.getByRole('switch', { name: 'Show closed' }));
+    // The default stages are ticked, and ticking another adds it to them.
+    const chip = screen.getByRole('button', { name: 'Stage filter' });
+    expect(chip).toHaveTextContent('Stage: Draft, Ready');
+    await userEvent.click(chip);
+    expect(await screen.findByRole('checkbox', { name: 'Draft' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Ready' })).toBeChecked();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'In progress' }));
+    await waitFor(() => expect(lastList(calls).stage).toBe('draft,ready,in_progress'));
+    expect(chip).toHaveTextContent('Stage: 3 stages');
+    await userEvent.click(screen.getByRole('button', { name: 'All open' }));
+    await waitFor(() => expect(lastList(calls).stage).toBe('draft,ready,todo,in_progress'));
+    await userEvent.click(screen.getByRole('button', { name: 'Show closed' }));
     await waitFor(() => expect(lastList(calls).stage).toBeUndefined());
-    await userEvent.click(screen.getByRole('button', { name: 'Stage filter' }));
-    await userEvent.click(await screen.findByRole('checkbox', { name: 'Done' }));
-    await waitFor(() => expect(lastList(calls).stage).toBe('done'));
+    expect(chip).toHaveTextContent('Stage: All');
+    await userEvent.click(screen.getByRole('button', { name: 'Backlog (Draft, Ready)' }));
+    await waitFor(() => expect(lastList(calls).stage).toBe('draft,ready'));
     await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search tickets' }), 'login');
     await waitFor(() => expect(lastList(calls).q).toBe('login'));
@@ -387,10 +398,13 @@ describe('backlog', () => {
       await userEvent.type(screen.getByRole('searchbox', { name: 'Search tickets' }), 'cache');
       await waitFor(() => expect(lastList(calls).q).toBe('cache'));
 
-      await userEvent.click(screen.getByRole('button', { name: 'Filters' }));
+      // A line under the toggle says what the backlog shows, and opens the filters.
+      expect(screen.getByRole('button', { name: 'Showing Draft, Ready · 3 tickets. Edit filters' })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: /^Showing .* Edit filters$/ }));
       const sheet = await screen.findByRole('dialog', { name: 'Filters' });
+      expect(within(sheet).getByRole('checkbox', { name: 'Draft' })).toBeChecked();
       await userEvent.click(within(sheet).getByRole('checkbox', { name: 'High' }));
-      await userEvent.click(within(sheet).getByRole('checkbox', { name: 'Ready' }));
+      await userEvent.click(within(sheet).getByRole('checkbox', { name: 'Draft' }));
       await waitFor(() => expect(lastList(calls)).toMatchObject({ priority: 'high', stage: 'ready' }));
       await userEvent.click(within(sheet).getByRole('button', { name: 'Save filter…' }));
       const save = await screen.findByRole('dialog', { name: 'Save filter' });
@@ -408,15 +422,20 @@ describe('backlog', () => {
     const calls = stub();
     renderWithQuery(<Harness />);
     await pickProject();
-    await userEvent.click(screen.getByRole('switch', { name: 'Show closed' }));
-    await userEvent.click(screen.getAllByRole('button', { name: 'Save filter…' })[0]);
+    // Save and Clear show once the filters differ from the default.
+    expect(screen.queryByRole('button', { name: 'Save…' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Stage filter' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Show closed' }));
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getByRole('button', { name: 'Save…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Save filter' });
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Name' }), 'Everything{Enter}');
     const saved = await screen.findByRole('grid', { name: 'Saved filters' });
     expect(JSON.parse(localStorage.getItem('pdt.tickets.savedFilters')!)[0]).toMatchObject({ name: 'Everything', projectId: project.id });
     await userEvent.click(screen.getByRole('row', { name: /All projects/ }));
-    await userEvent.click(screen.getByRole('switch', { name: 'Show closed' }));
-    await waitFor(() => expect(lastList(calls).project).toBeUndefined());
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(lastList(calls)).toEqual({ limit: '100', stage: 'draft,ready' }));
+    expect(screen.queryByRole('button', { name: 'Save…' })).not.toBeInTheDocument();
     await userEvent.click(within(saved).getByRole('row', { name: /Everything/ }));
     await waitFor(() => expect(lastList(calls)).toEqual({ limit: '100', project: project.id }));
   });
