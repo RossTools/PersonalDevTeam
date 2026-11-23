@@ -663,6 +663,8 @@ export function AppShell() {
         touch={phone}
         adding={addingWorkspace}
         onAddingChange={setAddingWorkspace}
+        // The chooser opens under the tab strip's "+", which a phone's list screen doesn't show.
+        {...(phone ? {} : { onNewTab: openChooser })}
       />
     </>
   ) : view === 'inbox' ? (
@@ -866,6 +868,7 @@ export function AppShell() {
             counts={{ inbox: inbox.data?.total ?? 0 }}
             dots={{ inbox: unreadUpdates, pm: pmDot }}
             theme={{ value: theme, onChange: setTheme }}
+            onSearch={() => setPaletteOpen(true)}
           />
           <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', (view === 'notes' || view === 'documents') && 'w-80')}>
             <div className="flex-1 overflow-auto px-1">{list}</div>
