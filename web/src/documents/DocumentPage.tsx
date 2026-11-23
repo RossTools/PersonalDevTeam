@@ -143,8 +143,8 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
                 <Link external href={d.url} className="inline-flex items-center gap-1">Open in {provider?.label ?? d.provider} <ExternalLink aria-hidden className="size-3" /></Link>
               </>
             )}
+            <Watchers inline of={{ document: id }} />
           </p>
-          <Watchers of={{ document: id }} />
         </header>
 
         <section aria-label="Links" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">

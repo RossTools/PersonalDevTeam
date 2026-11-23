@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Download, File, FilePlus, FileQuestion, Folder, FolderOpen } from 'lucide-react';
 import {
-  Alert, Banner, Button, Chip, Dialog, EmptyState, IconButton, List, ListRow, MenuButton, SegmentedControl, Skeleton, toast, TreeView,
+  Alert, Banner, Button, Chip, Dialog, EmptyState, IconButton, List, ListRow, MenuButton, Skeleton, toast, TreeView,
   useConfirm, useMenuAt, ViewHeader, type MenuEntry, type TreeChildren, type TreeNode,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
@@ -14,6 +14,7 @@ import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
 import { download } from '../common/download';
 import { useRememberedScroll, useViewState } from '../common/viewState';
+import { PreviewEdit, type PreviewEditMode } from '../common/PreviewEdit';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
@@ -403,6 +404,10 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
 
   const readable = !f.tooLarge && !f.binary && f.text !== null;
   const editable = readable && !readOnly;
+  const startEdit = () => {
+    setEditView('edit');
+    setEdit(editOf(f));
+  };
   const markdown = isMarkdownPath(f.path) && readable;
   const name = f.path.split('/').pop() ?? f.path;
   const downloadButton = <Button size="sm" variant="secondary" onClick={() => void ops.save(f.path)}><Download aria-hidden /> Download</Button>;
@@ -422,23 +427,18 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
         }
         actions={
           <>
-            {markdown && !edit && (
-              <SegmentedControl<'rendered' | 'source'>
-                aria-label="Show"
-                size="sm"
-                options={[{ value: 'rendered', label: 'Rendered' }, { value: 'source', label: 'Source' }]}
-                value={markdownView}
-                onChange={setMarkdownView}
-              />
-            )}
-            {markdown && edit && (
-              <SegmentedControl<'edit' | 'preview'>
-                aria-label="Editor"
-                size="sm"
-                options={[{ value: 'edit', label: 'Edit' }, { value: 'preview', label: 'Preview' }]}
-                value={editView}
-                onChange={setEditView}
-              />
+            {/* Markdown: Preview | Edit | Source in one control (Source, the text read-only, only while not editing). */}
+            {markdown && (
+              edit ? (
+                <PreviewEdit value={editView} onChange={setEditView} />
+              ) : (
+                <PreviewEdit<PreviewEditMode>
+                  noEdit={!editable}
+                  source
+                  value={markdownView === 'rendered' ? 'preview' : 'source'}
+                  onChange={(v) => (v === 'edit' ? startEdit() : setMarkdownView(v === 'preview' ? 'rendered' : 'source'))}
+                />
+              )
             )}
             {edit ? (
               <>
@@ -446,7 +446,7 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
                 <Button size="sm" title="Save (⌘S)" disabled={!dirty} pending={save.isPending} onClick={doSave}>Save</Button>
               </>
             ) : (
-              editable && <Button size="sm" variant="secondary" onClick={() => { setEditView('edit'); setEdit(editOf(f)); }}>Edit</Button>
+              editable && !markdown && <Button size="sm" variant="secondary" onClick={startEdit}>Edit</Button>
             )}
             <IconButton label={`Download ${name}`} size="sm" variant="ghost" onClick={() => void ops.save(f.path)}>
               <Download aria-hidden />

@@ -16,7 +16,7 @@ const watch = (over: Partial<WatchInfo>): WatchInfo => ({
 });
 
 describe('watches', () => {
-  it('the eye starts and stops the user’s watch', async () => {
+  it('Watch starts and stops the user’s watch, and reads Watching while on', async () => {
     let watches: WatchInfo[] = [];
     const calls = stubApi({
       'GET /api/watches': () => watches,
@@ -24,13 +24,13 @@ describe('watches', () => {
       'DELETE /api/watches/w1': () => { watches = []; return undefined; },
     });
     renderWithQuery(<WatchButton of={{ ticket: 't1' }} />);
-    const eye = await screen.findByRole('button', { name: /^Watch/ });
+    const eye = await screen.findByRole('button', { name: 'Watch' });
     expect(eye).toHaveAttribute('aria-pressed', 'false');
     await userEvent.click(eye);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop watching' })).toHaveAttribute('aria-pressed', 'true'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Watching' })).toHaveAttribute('aria-pressed', 'true'));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ ticket: 't1' });
-    await userEvent.click(screen.getByRole('button', { name: 'Stop watching' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: /^Watch/ })).toHaveAttribute('aria-pressed', 'false'));
+    await userEvent.click(screen.getByRole('button', { name: 'Watching' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Watch' })).toHaveAttribute('aria-pressed', 'false'));
   });
 
   it('watches a document', async () => {
@@ -39,7 +39,7 @@ describe('watches', () => {
       'POST /api/watches': () => watch({ target: 'document', targetId: 'd1', targetLabel: 'Plan', events: ['changed', 'comment'], once: false }),
     });
     renderWithQuery(<WatchButton of={{ document: 'd1' }} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Watch: hear when it changes or someone comments' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Watch' }));
     await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ document: 'd1' }));
     expect(calls[0].path).toBe('/api/watches?document=d1');
   });
