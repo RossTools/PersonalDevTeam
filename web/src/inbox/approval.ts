@@ -1,8 +1,11 @@
 import type { ApprovalAnswer } from '@ui';
+import { toast } from '@ui';
+import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { answerRequest } from '../common/answerRequest';
 import { beginAnswer, endAnswer } from '../common/answerGuard';
 import { answerSource } from '../common/answerSource';
+import { actionError } from '../common/useAction';
 import { holdAnswer, undoToast } from './held';
 
 /** What an approval's answer says in its Undo toast. */
@@ -35,6 +38,35 @@ export function answerApproval(item: InboxItem, a: ApprovalAnswer, onAnswered: (
       itemId: item.id, title: item.title, label: said,
       send: async () => {
         await answerRequest(item.sessionId!, requestId, a, opts.rows, source);
+        await opts.then?.();
+      },
+    });
+    undoToast(item.id, item.title, said, opts.onUndo);
+    onAnswered();
+  } finally {
+    endAnswer();
+  }
+}
+
+/**
+ * Approves the run-config command a notice waits on (PDT-611) as an Inbox answer (PDT-705): held for Undo, and nothing
+ * happens right after another answer. `then` once it went out (refresh), `onUndo` when it is undone.
+ */
+export function approveCommand(item: InboxItem, projectId: string, fingerprint: string, onAnswered: () => void, opts: {
+  then?: () => Promise<unknown>;
+  onUndo?: () => void;
+} = {}) {
+  if (!beginAnswer()) return;
+  try {
+    const said = 'Approve command';
+    holdAnswer({
+      itemId: item.id, title: item.title, label: said,
+      send: async () => {
+        try {
+          await api.trustCommands(projectId, [fingerprint]);
+        } catch (err) {
+          toast.error(actionError(err));
+        }
         await opts.then?.();
       },
     });

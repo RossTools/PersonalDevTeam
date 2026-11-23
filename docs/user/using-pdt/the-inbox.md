@@ -36,6 +36,9 @@ PDT), **Always allow**, and **Allow** on a call that changes something outside P
 issue, a Jira comment, a chat message). The first press turns the button red and reads
 **Confirm …**; press it again within a few seconds to go ahead. Keys work the same way: press the key twice.
 
+**Approve** on a command waiting for your approval asks twice too, naming the command, since it then runs in every
+branch of the project. Enter doesn't take it: press the button.
+
 When a workflow's earlier step recommends one of the choices (a pull request's reviewer suggesting **Close**, say),
 the item leads with it, as **Reviewer recommends: Close**, and Enter takes it. Any other choice asks for a second
 press, saying what was recommended.

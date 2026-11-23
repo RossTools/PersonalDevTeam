@@ -305,11 +305,13 @@ export function merges(item: InboxItem, choice: string): boolean {
 /**
  * Whether the action `action` of `item` asks again before it acts (PDT-623): Always allow (a grant for the rest of the
  * session, which can't be taken back), and a choice the server marks as acting outside PDT (PDT-625): a gate's choice
- * that leads to a step posting a review or closing a pull request, Allow on a tool that posts on a forge or a tracker.
- * Plain Allow and Deny stay one press.
+ * that leads to a step posting a review or closing a pull request, Allow on a tool that posts on a forge or a tracker,
+ * and Approve on a command waiting on the user's approval. Plain Allow and Deny stay one press.
  */
 export function needsConfirm(item: InboxItem, action: string): boolean {
   if (action === 'always' || action === 'allow_always') return true;
+  // Approving a run-config command trusts it for every branch of the project (PDT-705).
+  if (action === 'approve' && commandNoticeOf(item)) return true;
   if (againstRecommendation(item, action)) return true;
   return item.choices.some((c) => c.id === action && c.outward === true);
 }
