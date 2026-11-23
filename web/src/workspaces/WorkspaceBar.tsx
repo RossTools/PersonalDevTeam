@@ -139,8 +139,10 @@ export const WorkspaceBar = memo(function WorkspaceBar({ ws, renamingTabId, setR
     const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
     measure();
     el.addEventListener('scroll', measure, { passive: true });
+    // The strip's box and each tab's: a tab widens when its title loads, which leaves the strip's own box alone.
     const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
     ro?.observe(el);
+    for (const child of Array.from(el.children)) ro?.observe(child);
     return () => { el.removeEventListener('scroll', measure); ro?.disconnect(); };
   }, [tabCount]);
   const touch = useRef<{ x: number; y: number } | null>(null);

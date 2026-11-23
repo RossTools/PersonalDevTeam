@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithQuery, Reply, type Call } from '../test-utils';
@@ -83,6 +83,30 @@ describe('workspaces', () => {
       Element.prototype.scrollIntoView = original;
     }
   });
+  it('fades the tab strip\'s edge once a tab widens past it, with no scroll or window resize', async () => {
+    // Tabs reach their full width after the first measure (titles load): the strip's own box stays the same.
+    const observed: { cb: ResizeObserverCallback; targets: Element[] }[] = [];
+    vi.stubGlobal('ResizeObserver', class {
+      entry: { cb: ResizeObserverCallback; targets: Element[] };
+      constructor(cb: ResizeObserverCallback) { this.entry = { cb, targets: [] }; observed.push(this.entry); }
+      observe(t: Element) { this.entry.targets.push(t); }
+      unobserve() {}
+      disconnect() { this.entry.targets = []; }
+    });
+    stubWorkspaces();
+    renderWithQuery(<AppShell />);
+    const tabs = await screen.findByRole('tablist', { name: 'Tabs' });
+    const button = await within(tabs).findByRole('tab', { name: /Claude A/ });
+    const tab = Array.from(tabs.children).find((c) => c.contains(button))!;
+    expect(tabs).not.toHaveAttribute('data-more');
+    Object.defineProperty(tabs, 'clientWidth', { configurable: true, value: 700 });
+    Object.defineProperty(tabs, 'scrollWidth', { configurable: true, value: 850 });
+    const watcher = observed.find((o) => o.targets.includes(tab));
+    expect(watcher).toBeDefined();
+    act(() => watcher!.cb([], {} as ResizeObserver));
+    expect(tabs).toHaveAttribute('data-more', 'true');
+  });
+
   it('lists agents in the sidebar; clicking one focuses its tab, or opens one when it has none', async () => {
     const calls = stubWorkspaces({ 'POST /api/workspaces/wa/tabs': tabOf('td', 'wa', 'd', 2) });
     renderWithQuery(<AppShell />);
