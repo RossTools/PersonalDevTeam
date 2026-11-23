@@ -288,6 +288,8 @@ async fn the_remote_instances_pm_never_sees_the_remote_project() {
     assert_eq!(s, StatusCode::CREATED, "{v}");
 
     let pm = common::pm::start_pm(&env, "hello").await;
+    // Its answer to the first message, before asking anything else.
+    common::pm::wait_said(&env, &pm, 1).await;
     let said = common::pm::ask(&env, &pm, "mcp: get_overview {}").await;
     assert!(said.contains("PX") && !said.contains("Valley"), "{said}");
     let said = common::pm::ask(&env, &pm, "mcp: get_overview {\"project\": \"Valley\"}").await;
