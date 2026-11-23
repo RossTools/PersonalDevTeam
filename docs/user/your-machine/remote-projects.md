@@ -46,7 +46,8 @@ Each remote instance shows:
 **Check now** asks each one again. **Remove…** stops it working on the project and revokes the link at both ends;
 pairing again needs a new code. If the instance can't be reached (asleep, or off the tailnet), it is removed here all
 the same and PDT says it couldn't be told: once it is back and asks, its remote project shows **removed by its owner**,
-and you leave it there to finish. Removing the project itself does the same for each of its remote instances.
+and you leave it there to finish. Removing the project revokes each of its remote instances the same way; one that
+can't be reached shows **removed by its owner** once it is back.
 
 An instance that left the project while the owner couldn't be reached says so when it is checked: "win-box left the
 project; remove it here too".

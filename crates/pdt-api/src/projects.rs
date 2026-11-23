@@ -265,7 +265,7 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
         crate::sessions::discard(&st, &s.id).await;
     }
     // Its remote instances are told (best effort: one that can't be reached finds out when it next asks), and this
-    // end's keys for their links go; their rows go with the project.
+    // end's keys for their links go; their rows go with the project. The reply doesn't say which weren't told.
     let instances = st.store.list_remote_instances(Some(&id)).await?;
     futures_util::future::join_all(instances.iter().map(|i| crate::link::revoke(&st, i, &id))).await;
     st.store.delete_project(&id).await?;
