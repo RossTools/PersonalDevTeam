@@ -1,24 +1,31 @@
-// The Tickets screen's phone parts (PDT-118): the toolbar under the top bar (Backlog | Board, ⌕ search, ⚲ filters),
-// the filters' bottom sheet with Save filter, and the floating ＋ for New ticket.
+// The Tickets screen's phone parts (PDT-118): the toolbar under the top bar (Backlog | Board, ⌕ search, ⚲ filters,
+// then a line saying what the backlog shows), the filters' bottom sheet with Save filter, and the floating ＋ for New
+// ticket.
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Filter, Plus, Search } from 'lucide-react';
+import { ChevronRight, Filter, Plus, Search } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Button, Checkbox, EmptyState, FilterBar, IconButton, SectionLabel, SegmentedControl, Select, Sheet, Switch } from '@ui';
+import { Button, Checkbox, EmptyState, FilterBar, IconButton, SectionLabel, SegmentedControl, Select, Sheet } from '@ui';
 import type { Priority } from '../api/gen/Priority';
 import type { TicketSort } from '../api/gen/TicketSort';
 import type { TicketStage } from '../api/gen/TicketStage';
 import { PRIORITIES, PRIORITY_LABEL } from '../common/PriorityIcon';
 import { STAGE_LABEL } from '../common/StageStepper';
-import { STAGES, type BacklogFilters, type GroupBy } from './model';
+import { filterCount, STAGES, stagesText, type BacklogFilters, type GroupBy } from './model';
+import { plural } from '../common/text';
+import { StagePresets } from './StagePresets';
 import { BoardViewMenu } from './BoardViewMenu';
 import { SaveFilterDialog } from './TicketsList';
 import type { BacklogState, TicketsMode } from './useBacklog';
 
-/** How many filters are set (the ⚲ count): search, grouping and sorting don't count, nor stage and closed on the Board. */
-function filterCount(f: BacklogFilters, mode: TicketsMode): number {
-  const backlog = mode === 'backlog';
-  return [backlog && f.stages.length > 0, f.priorities.length > 0, f.labels.length > 0, backlog && f.showClosed, f.blocked !== null, f.conflicts !== null]
-    .filter(Boolean).length;
+/** What the backlog shows, in a line: "Draft, Ready · 6 tickets", "All open · 1 more filter · 2 tickets". */
+function summary(f: BacklogFilters, total: number | undefined): string {
+  // Every filter but the stages.
+  const others = filterCount(f, true);
+  return [
+    stagesText(f.stages),
+    others > 0 && `${plural(others, 'more filter')}`,
+    total !== undefined && plural(total, 'ticket'),
+  ].filter(Boolean).join(' · ');
 }
 
 type Tri = 'any' | 'yes' | 'no';
@@ -96,7 +103,7 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
         className="max-h-[85dvh]"
         footer={
           <>
-            <Button onClick={backlog.resetFilters} disabled={filterCount(f, mode) === 0}>Clear</Button>
+            <Button onClick={backlog.resetFilters} disabled={filterCount(f, board) === 0}>Clear</Button>
             <Button onClick={() => { onOpenChange(false); setSaving(true); }}>Save filter…</Button>
             <Button variant="primary" onClick={() => onOpenChange(false)}>Done</Button>
           </>
@@ -104,12 +111,15 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
       >
         <div className="flex flex-col gap-4 pb-2">
           {!board && (
-            <Checks<TicketStage>
-              title="Stage"
-              options={STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))}
-              selected={f.stages}
-              onChange={(stages) => setFilters({ stages })}
-            />
+            <div className="flex flex-col gap-1">
+              <Checks<TicketStage>
+                title="Stage"
+                options={STAGES.map((s) => ({ value: s, label: STAGE_LABEL[s] }))}
+                selected={f.stages}
+                onChange={(stages) => setFilters({ stages })}
+              />
+              <StagePresets stages={f.stages} onChange={(stages) => setFilters({ stages })} />
+            </div>
           )}
           <Checks<Priority>
             title="Priority"
@@ -145,7 +155,6 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
                 <Row label="Sort by">
                   <Select<TicketSort> aria-label="Sort by" className="w-40" options={SORTS} value={f.sort} onChange={(sort) => setFilters({ sort })} />
                 </Row>
-                <Switch checked={f.showClosed} onChange={(showClosed) => setFilters({ showClosed })}>Show closed</Switch>
               </>
             )}
           </div>
@@ -156,8 +165,16 @@ function FilterSheet({ backlog, labels, open, onOpenChange }: {
   );
 }
 
-/** Under the top bar: Backlog | Board, (board) its View menu, then ⌕ to show the search box and ⚲ for the filters, with a count. */
-export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; labels: string[] }) {
+/**
+ * Under the top bar: Backlog | Board, (board) its View menu, then ⌕ to show the search box and ⚲ for the filters,
+ * with a count; on the backlog, below them a line saying what it shows, which opens the filters too.
+ */
+export function PhoneToolbar({ backlog, labels, total }: {
+  backlog: BacklogState;
+  labels: string[];
+  /** Tickets matching the filters, once loaded. */
+  total?: number | undefined;
+}) {
   const { mode, filters } = backlog;
   const [searching, setSearching] = useState(false);
   const [filtering, setFiltering] = useState(false);
@@ -166,7 +183,7 @@ export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; label
   useEffect(() => {
     if (searching) search.current?.focus();
   }, [searching]);
-  const n = filterCount(filters, mode);
+  const n = filterCount(filters, mode === 'board');
   return (
     <div className="shrink-0 border-b border-border">
       <div className="flex items-center gap-1 px-3 py-1.5">
@@ -199,6 +216,21 @@ export function PhoneToolbar({ backlog, labels }: { backlog: BacklogState; label
           {n > 0 && <span className="tabular-nums">{n}</span>}
         </Button>
       </div>
+      {mode === 'backlog' && (
+        <div className="px-1.5 pb-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-haspopup="dialog"
+            aria-label={`Showing ${summary(filters, total)}. Edit filters`}
+            onClick={() => setFiltering(true)}
+            className="w-full justify-between font-normal text-muted-foreground"
+          >
+            <span className="min-w-0 truncate">{summary(filters, total)}</span>
+            <span className="flex shrink-0 items-center text-foreground">Edit <ChevronRight aria-hidden /></span>
+          </Button>
+        </div>
+      )}
       {showSearch && (
         <FilterBar
           search={filters.q}

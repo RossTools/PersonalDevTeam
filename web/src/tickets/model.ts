@@ -15,7 +15,7 @@ import { plural } from '../common/text';
 
 export const STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress', 'done', 'wont_do'];
 export const OPEN_STAGES: TicketStage[] = ['draft', 'ready', 'todo', 'in_progress'];
-/** What the backlog shows with no stage filter: tickets not on the board yet. */
+/** What the backlog shows by default: tickets not on the board yet. */
 export const BACKLOG_STAGES: TicketStage[] = ['draft', 'ready'];
 export const isClosed = (s: TicketStage) => s === 'done' || s === 'wont_do';
 
@@ -64,12 +64,11 @@ export function scopeParts(markdown: string): string[] {
 export type GroupBy = 'none' | 'stage' | 'priority' | 'label';
 
 export interface BacklogFilters {
-  /** Empty: Draft and Ready, the tickets not on the board (every stage with `showClosed`). */
+  /** Empty: every stage. */
   stages: TicketStage[];
   priorities: Priority[];
   /** All of them must match. */
   labels: string[];
-  showClosed: boolean;
   /** true: only blocked tickets; false: only unblocked ones; null: either. */
   blocked: boolean | null;
   /** true: only tickets with an overlap or conflict; false: only those with none; null: either. */
@@ -81,24 +80,51 @@ export interface BacklogFilters {
 }
 
 export const DEFAULT_FILTERS: BacklogFilters = {
-  stages: [], priorities: [], labels: [], showClosed: false, blocked: null, conflicts: null, group: 'none', sort: 'rank', q: '',
+  stages: BACKLOG_STAGES, priorities: [], labels: [], blocked: null, conflicts: null, group: 'none', sort: 'rank', q: '',
 };
+
+/**
+ * Filters as stored, made whole. Before the default stages were explicit, no stages meant Draft and Ready, and
+ * `showClosed` with no stages meant every stage (PDT-672).
+ */
+export function normaliseFilters(raw: Partial<BacklogFilters> & { showClosed?: unknown }): BacklogFilters {
+  const { showClosed, ...rest } = raw;
+  const f = { ...DEFAULT_FILTERS, ...rest };
+  if (showClosed !== undefined && f.stages.length === 0 && !showClosed) f.stages = BACKLOG_STAGES;
+  return f;
+}
+
+/** The stages picked, in stage order. */
+const inOrder = (stages: TicketStage[]) => STAGES.filter((s) => stages.includes(s));
+
+/** The same stages, in any order. */
+export const sameStages = (a: TicketStage[], b: TicketStage[]) => inOrder(a).join() === inOrder(b).join();
+
+/** Every stage: none picked, or all of them. */
+export const allStages = (stages: TicketStage[]) => inOrder(stages).length === 0 || inOrder(stages).length === STAGES.length;
+
+/** The stage filter in words: "Draft, Ready", "All open", "All", "Ready", "3 stages". */
+export function stagesText(stages: TicketStage[]): string {
+  const picked = inOrder(stages);
+  if (allStages(picked)) return 'All';
+  if (sameStages(picked, OPEN_STAGES)) return 'All open';
+  return picked.length <= 2 ? picked.map((s) => STAGE_LABEL[s]).join(', ') : `${picked.length} stages`;
+}
 
 /** Rows per page of the backlog. */
 const PAGE_SIZE = 100;
 
 /** The `GET /api/tickets` query for a scope (one project, or every project with null) and filters. */
 export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAGE_SIZE): TicketQuery {
-  const stages = f.stages.length > 0 ? f.stages : f.showClosed ? [] : BACKLOG_STAGES;
   const q: TicketQuery = { limit };
   if (projectId) q.project = projectId;
-  if (stages.length > 0) q.stage = stages.join(',');
+  if (!allStages(f.stages)) q.stage = inOrder(f.stages).join(',');
   Object.assign(q, boardFilterQuery(f));
   if (f.sort !== 'rank') q.sort = f.sort;
   return q;
 }
 
-/** The filters the Board applies to its cards: the backlog's, without stage, closed, grouping and sorting (the columns are the stages). */
+/** The filters the Board applies to its cards: the backlog's, without stage, grouping and sorting (the columns are the stages). */
 export type BoardFilters = Pick<BacklogFilters, 'q' | 'priorities' | 'labels' | 'blocked' | 'conflicts'>;
 
 /** The query fields that narrow every Board column to `f`. */
@@ -115,10 +141,16 @@ export function boardFilterQuery(f: BoardFilters): Partial<TicketQuery> {
 /** Ranks are per project: drag and Alt+↑/↓ only make sense in one project's list, sorted by rank, not grouped. */
 export const canRank = (projectId: string | null, f: BacklogFilters) => !!projectId && f.sort === 'rank' && f.group === 'none';
 
-/** True when nothing narrows the list beyond the default (Draft and Ready tickets). */
-export const isDefaultFilter = (f: BacklogFilters) =>
-  f.stages.length === 0 && f.priorities.length === 0 && f.labels.length === 0 && !f.showClosed &&
-  f.blocked === null && f.conflicts === null && !f.q.trim();
+/**
+ * How many filters differ from the default (Draft and Ready): search, grouping and sorting don't count, nor the stages
+ * on the Board (its columns are the stages).
+ */
+export const filterCount = (f: BacklogFilters, board = false) =>
+  [!board && !sameStages(f.stages, BACKLOG_STAGES), f.priorities.length > 0, f.labels.length > 0, f.blocked !== null, f.conflicts !== null]
+    .filter(Boolean).length;
+
+/** True when nothing narrows or widens the list beyond the default (Draft and Ready tickets). */
+export const isDefaultFilter = (f: BacklogFilters) => filterCount(f) === 0 && !f.q.trim();
 
 // ---------------------------------------------------------------------------------------------------------------
 // Grouping
@@ -193,7 +225,7 @@ export function loadSavedFilters(): SavedFilter[] {
     if (!Array.isArray(v)) return [];
     return v
       .filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && x.filters && typeof x.filters === 'object' && !x.builtin)
-      .map((x) => ({ id: x.id, name: x.name, projectId: x.projectId ?? null, filters: { ...DEFAULT_FILTERS, ...x.filters } }));
+      .map((x) => ({ id: x.id, name: x.name, projectId: x.projectId ?? null, filters: normaliseFilters(x.filters) }));
   } catch {
     return [];
   }
