@@ -7,7 +7,8 @@
 //! retry it (PDT-609), and one set to merge is watched until it merges: a merge queue that drops it, failed CI or a
 //! long wait asks "Didn't merge". A pull request whose only failures are its base branch's waits for the base
 //! instead of asking (PDT-641), is brought up to date once the base is fixed, and keeps the user's approval across that
-//! update while its own diff is the same.
+//! update while its own diff is the same. A close on GitHub, the user's Request changes there, or 30 days end the
+//! approval (PDT-697).
 
 use super::doc_build::node;
 use super::templates::{doc as parse_doc, params as parse_params};
@@ -599,6 +600,15 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             json!({
             "ticket": "{{steps.find.ticketId}}", "stage": "wont_do"}),
         ),
+        // Closed on GitHub (or merged): an approval from before doesn't outlast it, not even a reopen (PDT-697).
+        node(
+            "forget_gone",
+            "github.pr.approval",
+            0,
+            1060,
+            "Forget the approval",
+            with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "forget"})),
+        ),
         end("synced", 1320, 900, "Ticket finished", false),
         end("no_ticket", 540, 1060, "No ticket", true),
     ];
@@ -702,7 +712,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "blocked_close", "to": "forget_close"}),
         json!({"from": "forget_close", "port": "out", "to": "wont_do"}),
         json!({"from": "wont_do", "to": "closed_pr"}),
-        json!({"from": "closed", "to": "find"}),
+        json!({"from": "closed", "to": "forget_gone"}),
+        json!({"from": "forget_gone", "port": "out", "to": "find"}),
         json!({"from": "find", "port": "created", "to": "open_ticket"}),
         json!({"from": "find", "port": "exists", "to": "open_ticket"}),
         json!({"from": "find", "port": "none", "to": "no_ticket"}),
@@ -725,7 +736,9 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
             json!({"from": "review", "port": "changes", "to": "ci_now"}),
             json!({"from": "review", "port": "close", "to": "ci_now"}),
             json!({"from": "forget_close", "port": "out", "to": "closed_pr"}),
+            json!({"from": "forget_gone", "port": "out", "to": "forgotten"}),
         ]);
+        nodes.push(end("forgotten", 280, 1060, "Approval forgotten", true));
         // The ticket steps' columns go: everything after them moves left.
         for n in &mut nodes {
             if let Some(x) = n["position"]["x"].as_i64().filter(|x| *x >= 800) {
@@ -758,7 +771,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
          hours, your Inbox asks again. One whose only failures fail on its base branch too waits for the base, with \
          nothing in your Inbox; once the base is fixed it is brought up to date, and your approval holds while its own \
          changes are the same (Dependabot's is asked to rebase; any other gets its base merged in, where GitHub allows \
-         it). One merged or closed on GitHub finishes its ticket to match."
+         it), for up to 30 days, until it is closed or you request changes on it. One merged or closed on GitHub \
+         finishes its ticket to match."
     } else {
         "For each pull request PDT didn't open (an outsider's or a bot's): Dependabot's patch and minor updates merge \
          once CI passes, with nothing in your Inbox unless it fails. Every other one is reviewed by the locked-down PR \
@@ -769,7 +783,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
          merge queue drops it, CI fails or it hasn't merged in 12 hours, your Inbox asks again. One whose only \
          failures fail on its base branch too waits for the base, with nothing in your Inbox; once the base is fixed \
          it is brought up to date, and your approval holds while its own changes are the same (Dependabot's is asked \
-         to rebase; any other gets its base merged in, where GitHub allows it)."
+         to rebase; any other gets its base merged in, where GitHub allows it), for up to 30 days, until it is closed \
+         or you request changes on it."
     };
     parse_doc(json!({
         "name": "Review outside pull requests",
@@ -782,9 +797,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
 }
 
 /// The nodes only a ticket for each pull request needs: making and checking it, the review on it, Won't do on Close,
-/// and following the pull request once it is closed or merged.
+/// and following the pull request once it is closed or merged (its approval is forgotten either way).
 const TICKET_ONLY: &[&str] = &[
-    "closed",
     "ticket",
     "finished",
     "already_done",
@@ -868,7 +882,9 @@ mod tests {
         let off = fill(&values(false)).unwrap();
         let ticket_kinds = ["github.pr.ticket", "ticket.comment", "ticket.move", "ticket.finish"];
         assert!(!off.nodes.iter().any(|n| ticket_kinds.contains(&n.kind.as_str())), "{:?}", off.nodes);
-        assert!(!off.nodes.iter().any(|n| n.kind == "github.pull_request.closed"), "a closed PR needs no syncing");
+        // A close on GitHub forgets the approval, with or without tickets (PDT-697).
+        assert_eq!(off.next("closed", "out"), ["forget_gone"]);
+        assert_eq!(off.next("forget_gone", "out"), ["forgotten"]);
         let text = serde_json::to_string(&off).unwrap().replace(r#""ticket":"""#, "");
         assert!(!text.contains("steps.ticket") && !text.contains("steps.find"), "{text}");
         assert!(!text.to_lowercase().contains("ticket"), "no ticket in its config or prompt: {text}");
@@ -881,9 +897,11 @@ mod tests {
         assert_eq!(off.next("forget_close", "out"), ["closed_pr"], "Close just closes it");
 
         let on = fill(&values(true)).unwrap();
-        for k in ticket_kinds.iter().chain(&["github.pull_request.closed"]) {
-            assert!(on.nodes.iter().any(|n| n.kind == *k), "{k}");
+        for k in ticket_kinds {
+            assert!(on.nodes.iter().any(|n| n.kind == k), "{k}");
         }
+        assert_eq!(on.next("closed", "out"), ["forget_gone"]);
+        assert_eq!(on.next("forget_gone", "out"), ["find"]);
         let prompt = on.node("review").unwrap().config["prompt"].as_str().unwrap().to_string();
         assert!(prompt.contains("+{{trigger.additions}} -{{trigger.deletions}}. Its ticket is "), "{prompt}");
         assert!(prompt.contains("{{steps.ticket.ticketKey}}. Its title:"), "{prompt}");

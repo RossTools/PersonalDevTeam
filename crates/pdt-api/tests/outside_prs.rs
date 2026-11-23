@@ -671,10 +671,14 @@ async fn the_template_reviews_straight_to_the_inbox_with_no_ticket() {
     let r = run(&env, &run_id).await;
     assert_eq!(r["status"], "succeeded", "{r}");
     assert_eq!(*env.gh.closed_changes.lock().unwrap(), [(RELEASE_REPO.to_string(), 30)]);
-    // GitHub reports it closed: no run follows it.
+    // GitHub reports it closed: its run only forgets any approval, quietly (PDT-697).
     let before = runs(&env).await.len();
     look(&env, vec![RepoChangeRequest { state: PrState::Closed, updated_at: at(5), ..pr }]).await;
-    assert_eq!(runs(&env).await.len(), before, "a closed pull request needs no syncing");
+    assert_eq!(runs(&env).await.len(), before + 1);
+    let r = run(&env, &newest_run(&env).await).await;
+    assert_eq!(r["status"], "quiet", "{r}");
+    let nodes: Vec<_> = r["steps"].as_array().unwrap().iter().map(|s| s["nodeId"].as_str().unwrap()).collect();
+    assert_eq!(nodes, ["closed", "forget_gone", "forgotten"]);
     assert_eq!(ticket_count(&env).await, 0);
 }
 
@@ -1369,5 +1373,106 @@ async fn an_approval_of_a_file_list_cut_off_is_not_kept() {
     let r = run(&env, &newest_run(&env).await).await;
     let approval = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approval").cloned().unwrap();
     assert_eq!(approval["port"], "changed", "{approval}");
+    assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")));
+}
+
+// ---- PDT-697: what else takes an approval back ----
+
+/// The port the run's `approval` step left by.
+async fn approval_port(env: &Env, id: &str) -> String {
+    let r = run(env, id).await;
+    let step = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approval").cloned();
+    step.unwrap_or_else(|| panic!("no approval step: {r}"))["port"].as_str().unwrap().to_string()
+}
+
+/// #`n` reviewed and approved, waiting for CI.
+async fn approved(env: &Env, n: u32, seen: &mut HashSet<String>) -> RepoChangeRequest {
+    the_files(env, n, "new");
+    let pr = outside(n, "al", "Fix the board", &format!("patch-{n}"), 1);
+    look(env, vec![pr.clone()]).await;
+    let session = reviewer(env, seen).await;
+    let (run_id, step) = review(env, &session, "merge", "").await;
+    answer(env, &run_id, &step, "approve_merge", None).await;
+    assert_eq!(waiting(env, &run_id).await.0, "wait_ci");
+    pr
+}
+
+/// A pull request closed on GitHub after the approval, then reopened and rebased (the same own diff), is never merged on
+/// the old approval: the close forgets it, with tickets and without; without, the rebase is reviewed and asked about
+/// again.
+#[tokio::test]
+async fn a_close_on_github_forgets_the_approval_through_a_reopen() {
+    for tickets in [false, true] {
+        let env = setup_with(Some(Some(tickets))).await;
+        let mut seen = HashSet::new();
+        let pr = approved(&env, 47, &mut seen).await;
+        look(&env, vec![RepoChangeRequest { state: PrState::Closed, updated_at: at(3), ..pr.clone() }]).await;
+        let closed = newest_run(&env).await;
+        let r = run(&env, &closed).await;
+        assert!(r["steps"].as_array().unwrap().iter().any(|s| s["nodeId"] == "forget_gone"), "{r}");
+
+        // Reopened, then rebased: a new head with the same own diff.
+        look(&env, vec![RepoChangeRequest { updated_at: at(4), ..pr.clone() }]).await;
+        look(&env, vec![RepoChangeRequest { head_sha: "sha-47b".into(), updated_at: at(5), ..pr }]).await;
+        let key = format!("_pdt.approval.{}#47", RELEASE_REPO.to_lowercase());
+        let state = env.state.store.workflow_state(&env.wf).await.unwrap();
+        assert!(state.get(&key).is_none_or(Value::is_null), "tickets {tickets}: {state:?}");
+        if !tickets {
+            let again = reviewer(&env, &mut seen).await;
+            assert!(first_prompt(&env, &again).await.contains("sha-47b"));
+            assert_eq!(approval_port(&env, &newest_run(&env).await).await, "none");
+        }
+        // With tickets, its ticket went to Won't do with the close, and its runs end there.
+        assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")), "tickets {tickets}");
+    }
+}
+
+/// The user's own Request changes on GitHub after the approval takes it back; one from before it, or someone else's,
+/// doesn't.
+#[tokio::test]
+async fn changes_requested_on_github_after_the_approval_forget_it() {
+    let env = setup_with(Some(None)).await;
+    let review = |id: u64, author: &str| pdt_forge::ChangeReview {
+        id,
+        author: author.into(),
+        is_bot: false,
+        state: "changes_requested".into(),
+        body: "No.".into(),
+        url: String::new(),
+        collaborator: true,
+    };
+    env.gh.set_reviews(48, vec![review(1, "me")]);
+    let mut seen = HashSet::new();
+    let pr = approved(&env, 48, &mut seen).await;
+    env.gh.set_reviews(48, vec![review(1, "me"), review(2, "someone")]);
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-48b".into(), updated_at: at(4), ..pr.clone() }]).await;
+    let kept = newest_run(&env).await;
+    assert_eq!(approval_port(&env, &kept).await, "kept", "an older review and someone else's don't count");
+    assert_eq!(reviewer_sessions(&env).await, 1);
+
+    env.gh.set_reviews(48, vec![review(1, "me"), review(2, "someone"), review(3, "me")]);
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-48c".into(), updated_at: at(6), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-48c"));
+    assert_eq!(approval_port(&env, &newest_run(&env).await).await, "none");
+}
+
+/// An approval older than 30 days is forgotten: a rebase after that is reviewed and asked about again.
+#[tokio::test]
+async fn an_approval_expires_after_30_days() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    let pr = approved(&env, 49, &mut seen).await;
+    let key = format!("_pdt.approval.{}#49", RELEASE_REPO.to_lowercase());
+    let state = env.state.store.workflow_state(&env.wf).await.unwrap();
+    let mut a = state[&key].clone();
+    let month = 31 * 24 * 60 * 60 * 1000_i64;
+    a["at"] = json!(a["at"].as_i64().unwrap() - month);
+    env.state.store.set_workflow_state(&env.wf, &key, &a, false, 1).await.unwrap();
+
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-49b".into(), updated_at: at(4), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-49b"));
+    assert_eq!(approval_port(&env, &newest_run(&env).await).await, "none");
     assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")));
 }
