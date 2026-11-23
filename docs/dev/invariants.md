@@ -51,7 +51,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   background tasks, so their agents aren't told.
 - **Text from outside is fenced.** Issue and PR text (titles too, a linked issue's on any ticket: `get_ticket`,
   `link_issue`; an external ticket's title wherever an agent reads it, through `untrusted::Outside`: searches, the
-  overview, the PM's briefing and daily update, watch messages, and the Inbox items about it; a PR's title and its
+  overview, the PM's briefing and daily update, watch messages and the watch tools, the edit tools' answers, and the
+  Inbox items about it; a PR's title and its
   files' names in the forge tools), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
   payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). A session that
