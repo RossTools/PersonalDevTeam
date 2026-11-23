@@ -126,16 +126,10 @@ impl StepCx<'_> {
         if self.node.title.is_empty() { &self.node.id } else { &self.node.title }
     }
 
-    /// Whether leaving the node by `port` acts outside PDT: a node it leads to does ([`NodeKind::outward`]). A gate's
-    /// choice that leads to one is marked, so the Inbox asks again before it acts (PDT-625).
+    /// Whether leaving the node by `port` acts outside PDT ([`Catalog::leads_outward`]). A gate's choice that leads to
+    /// one is marked, so the Inbox asks again before it acts (PDT-625).
     pub fn port_outward(&self, port: &str) -> bool {
-        let reg = self.st.registry();
-        let catalog = reg.catalog();
-        self.doc
-            .next(&self.node.id, port)
-            .into_iter()
-            .filter_map(|id| self.doc.node(id))
-            .any(|n| catalog.get(&n.kind).is_some_and(|k| catalog.current_config(n).is_ok_and(|c| k.outward(&c))))
+        self.st.registry().catalog().leads_outward(self.doc, &self.node.id, port)
     }
 
     /// Records what the step has done so far (as its output), so running it again after a restart or a retry picks up
@@ -245,8 +239,10 @@ pub trait NodeKind: Send + Sync {
     }
 
     /// Whether a node with this (unresolved) config acts outside PDT as the user, where it can't be taken back: posts
-    /// where others read it (a review, a comment, a message), or closes something on a forge. A gate's choice that
-    /// leads to one asks twice in the Inbox (PDT-625). Merging is not one: merging is what an Accept gate is for.
+    /// where others read it (a review, a comment, a message), closes or changes something on a forge or another
+    /// service (a Jira issue), or starts something there (a workflow, an HTTP request that may change something). A
+    /// gate's choice that leads to one asks twice in the Inbox (PDT-625). Merging is not one: merging is what an
+    /// Accept gate is for. An action's kind says what its tool does ([`pdt_core::integration::ToolDecl::outward`]).
     fn outward(&self, _config: &Value) -> bool {
         false
     }
@@ -405,6 +401,25 @@ impl Catalog {
         )
     }
 
+    /// Whether leaving node `from` by `port` reaches a node that acts outside PDT ([`NodeKind::outward`]): one it leads
+    /// to, or one after the conditions, waits and `state.set` steps in between, which decide or wait but do nothing
+    /// outside (PDT-706). Any of their ports counts, since which one they take isn't known yet.
+    pub fn leads_outward(&self, doc: &WorkflowDoc, from: &str, port: &str) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut todo: Vec<&str> = doc.next(from, port);
+        while let Some(id) = todo.pop() {
+            let Some(n) = doc.node(id).filter(|_| seen.insert(id)) else { continue };
+            let Some((kind, spec)) = self.get(&n.kind).zip(self.spec(&n.kind)) else { continue };
+            if self.current_config(n).is_ok_and(|c| kind.outward(&c)) {
+                return true;
+            }
+            if matches!(spec.category, Category::Condition | Category::Wait) || n.kind == "state.set" {
+                todo.extend(doc.edges.iter().filter(|e| e.from == id).map(|e| e.to.as_str()));
+            }
+        }
+        false
+    }
+
     /// A node's config at the kind's current version.
     pub fn current_config(&self, node: &Node) -> Result<Value, String> {
         let (kind, spec) = self.get(&node.kind).zip(self.spec(&node.kind)).ok_or_else(|| self.missing(&node.kind).1)?;
@@ -464,6 +479,61 @@ mod tests {
 
     fn catalog() -> &'static Catalog {
         crate::integrations::test_registry().catalog()
+    }
+
+    /// PDT-706: the kinds that act outside PDT as the user, so a gate's choice that leads to one asks twice. A new kind
+    /// lands here or says why not.
+    #[test]
+    fn the_kinds_that_act_outside_pdt() {
+        let outward: Vec<String> = catalog()
+            .specs()
+            .into_iter()
+            .filter(|s| catalog().get(&s.id).unwrap().outward(&json!({})))
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(
+            outward,
+            [
+                "ci.rerun_head",
+                "github.comment",
+                "github.close",
+                "github.pr.review",
+                "github.pr.close",
+                "github.pr.update",
+                "github.workflow.run",
+                "github.homebrew_cask",
+                "github.workflow.rerun",
+                "github.create_issue",
+            ],
+            "http.request is outward by its method (below)"
+        );
+        let http = catalog().get("http.request").unwrap();
+        assert!(!http.outward(&json!({"method": "get"})) && !http.outward(&json!({"method": "HEAD"})));
+        assert!(http.outward(&json!({"method": "POST"})) && http.outward(&json!({"method": "{{trigger.method}}"})));
+    }
+
+    /// PDT-706: a choice reaches an outward step through conditions, switches, waits and `state.set`, by any of their
+    /// ports; not through a step that acts itself (another gate asks on its own).
+    #[test]
+    fn a_choice_leads_outward_through_steps_that_only_decide_or_wait() {
+        let doc: WorkflowDoc = serde_json::from_value(json!({"name": "w", "nodes": [
+            {"id": "g", "kind": "gate", "version": 1, "config": {"question": "?", "choices": ["a", "b", "c", "d"]}},
+            {"id": "s", "kind": "state.set", "version": 1, "config": {"key": "k"}},
+            {"id": "w", "kind": "wait", "version": 1, "config": {"ms": 1000}},
+            {"id": "if", "kind": "condition", "version": 1, "config": {"conditions": []}},
+            {"id": "close", "kind": "github.pr.close", "version": 1, "config": {"repo": "o/r", "number": 1}},
+            {"id": "g2", "kind": "gate", "version": 1, "config": {"question": "?", "choices": ["x"]}},
+            {"id": "loop", "kind": "condition", "version": 1, "config": {"conditions": []}},
+            {"id": "end", "kind": "end", "version": 1}],
+            "edges": [{"from": "g", "port": "a", "to": "s"}, {"from": "s", "to": "w"}, {"from": "w", "to": "if"},
+                      {"from": "if", "port": "true", "to": "end"}, {"from": "if", "port": "false", "to": "close"},
+                      {"from": "g", "port": "b", "to": "g2"}, {"from": "g2", "port": "x", "to": "close"},
+                      {"from": "g", "port": "c", "to": "loop"}, {"from": "loop", "port": "true", "to": "loop"},
+                      {"from": "loop", "port": "false", "to": "end"},
+                      {"from": "g", "port": "d", "to": "close"}]}))
+        .unwrap();
+        let got: Vec<bool> = ["a", "b", "c", "d"].iter().map(|p| catalog().leads_outward(&doc, "g", p)).collect();
+        assert_eq!(got, [true, false, false, true]);
     }
 
     /// PDT-251: a missing `github.*` kind is GitHub turned off only when the catalog has none of GitHub's.

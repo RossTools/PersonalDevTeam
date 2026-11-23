@@ -382,6 +382,11 @@ impl NodeKind for GithubWorkflowRerun {
         )
     }
 
+    /// It runs jobs on GitHub again as the user.
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// Asked twice, GitHub re-runs twice (or refuses while the first is going).
     fn rerun_safe(&self, _input: &Value) -> bool {
         false

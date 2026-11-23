@@ -248,6 +248,12 @@ impl<A: Action> NodeKind for ActionNode<A> {
         self.0.rerun_safe()
     }
 
+    /// As its tool says (PDT-706): a Jira comment or a Discord message acts outside PDT whether an agent or a step
+    /// sends it.
+    fn outward(&self, _config: &Value) -> bool {
+        self.0.tool().decl.outward()
+    }
+
     fn run<'a>(&'a self, cx: &'a StepCx<'a>, input: Value) -> BoxFut<'a, Result<Outcome, String>> {
         Box::pin(async move {
             let a = &self.0;

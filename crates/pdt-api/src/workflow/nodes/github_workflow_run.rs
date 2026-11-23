@@ -92,6 +92,11 @@ impl NodeKind for GithubWorkflowRun {
         )
     }
 
+    /// It starts a workflow on GitHub as the user (a release, a deploy).
+    fn outward(&self, _config: &Value) -> bool {
+        true
+    }
+
     /// Started twice, the workflow runs twice.
     fn rerun_safe(&self, _input: &Value) -> bool {
         false

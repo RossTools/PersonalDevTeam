@@ -68,6 +68,13 @@ impl ToolDecl {
     pub const fn public(self) -> Self {
         Self { public: true, ..self }
     }
+
+    /// Whether a call acts outside PDT: it posts publicly, or it changes something it reaches outside PDT (an issue, a
+    /// Jira ticket, a Discord channel). Allow on it, and a workflow's choice that leads to its node, ask twice in the
+    /// Inbox (PDT-625, PDT-706).
+    pub const fn outward(&self) -> bool {
+        self.public || (self.open_world && !self.read_only)
+    }
 }
 
 /// Every pdt-mcp tool PDT has, in the order `tools/list` gives them: the registered integrations' tools, in turn.
@@ -120,11 +127,10 @@ impl ToolTable {
         self.get(tool).is_some_and(|t| t.public)
     }
 
-    /// Whether a call to `tool` (by the agent's name for it, `mcp__pdt__<tool>`, or bare) acts outside PDT: it posts
-    /// publicly, or it changes something it reaches outside PDT (an issue, a Jira ticket, a Discord channel). Allow on
-    /// it asks twice in the Inbox (PDT-625).
+    /// Whether a call to `tool` (by the agent's name for it, `mcp__pdt__<tool>`, or bare) acts outside PDT
+    /// ([`ToolDecl::outward`]).
     pub fn outward(&self, tool: &str) -> bool {
-        self.get(crate::mcp::pdt_tool(tool)).is_some_and(|t| t.public || (t.open_world && !t.read_only))
+        self.get(crate::mcp::pdt_tool(tool)).is_some_and(ToolDecl::outward)
     }
 
     /// Whether Claude asks before a call to `tool` (its permission prompt): an asking tool that doesn't ask in PDT's
