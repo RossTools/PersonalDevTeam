@@ -34,8 +34,8 @@ impl Placer {
                 vec![]
             }
         };
-        // This instance's facts count for the repository's needs only.
-        let own = if repo.is_empty() { None } else { Some(crate::link::facts(st).await) };
+        // This instance's facts count for the repository's needs only, which apply once instances have joined.
+        let own = if repo.is_empty() || instances.is_empty() { None } else { Some(crate::link::facts(st).await) };
         Ok(Placer { instances, rules, repo, own, now: now_ms() })
     }
 
@@ -43,7 +43,8 @@ impl Placer {
     /// repository's `[[placement]]` needs.
     pub(crate) fn place(&self, labels: &[String], runs_on: Option<&str>) -> Result<Placed, PlacementError> {
         let home = runs_on.is_none_or(|r| r.eq_ignore_ascii_case(pdt_core::placement::OWNER));
-        if self.instances.is_empty() && self.repo.is_empty() && home {
+        // No remote instances: everything runs here, whatever the repository's needs say.
+        if self.instances.is_empty() && home {
             return Ok(Placed::Owner);
         }
         let candidates: Vec<Candidate<'_>> = self
@@ -126,4 +127,22 @@ async fn put_settings(
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::get;
     axum::Router::new().route("/projects/{id}/placement", get(get_settings).put(put_settings))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdt_core::placement::RepoRule;
+
+    #[test]
+    fn without_remote_instances_everything_runs_here_whatever_the_repository_needs() {
+        let repo = vec![RepoRule { labels: vec!["windows".into()], os: Some("windows".into()), tools: vec![] }];
+        let mac = InstanceFacts { os: "macos".into(), ..Default::default() };
+        let placer = Placer { instances: vec![], rules: vec![], repo, own: Some(mac), now: 0 };
+        let labels = vec!["windows".to_string()];
+        assert_eq!(placer.place(&labels, None), Ok(Placed::Owner));
+        assert_eq!(placer.place(&labels, Some("owner")), Ok(Placed::Owner));
+        assert_eq!(placer.pickup_place(&labels), Place::Owner);
+        assert!(placer.place(&labels, Some("win-box")).is_err(), "naming an instance that never joined");
+    }
 }
