@@ -173,6 +173,7 @@ pub async fn seed_demo(store: &Store, data_dir: &Path, now: i64) -> anyhow::Resu
         error: None,
         detached: false,
         process: None,
+        instance: None,
         created_at: now - ago,
         updated_at: now - ago + 2 * MINUTE,
     };

@@ -113,7 +113,7 @@ async fn start(env: &Env, body: Value) -> (StatusCode, Value) {
     call(&env.app, "POST", &format!("/api/projects/{}/runs", env.pid), Some(body)).await
 }
 
-async fn wait_state(app: &axum::Router, id: &str, want: &[&str]) -> Value {
+pub(crate) async fn wait_state(app: &axum::Router, id: &str, want: &[&str]) -> Value {
     wait_until(&format!("run {id} to be {want:?}"), async || {
         let (_, r) = call(app, "GET", &format!("/api/runs/{id}"), None).await;
         if want.contains(&r["state"].as_str().unwrap_or("")) { Ok(r) } else { Err(r) }
@@ -130,7 +130,7 @@ async fn http_get(port: u16) -> String {
 }
 
 /// A GET as `tailscale serve` sends it for the tailnet user `login`.
-async fn http_get_as(port: u16, login: &str) -> String {
+pub(crate) async fn http_get_as(port: u16, login: &str) -> String {
     http_get_with(port, &format!("Tailscale-User-Login: {login}\r\nX-Forwarded-For: 100.64.0.2\r\n")).await
 }
 
@@ -292,7 +292,7 @@ async fn restarting_a_run_counts_toward_the_limit() {
 }
 
 /// The proxy port a run's `port` is mapped to on the tailnet: never the run's own port, so the owner check applies.
-fn proxied(calls: &[String], port: u16) -> u16 {
+pub(crate) fn proxied(calls: &[String], port: u16) -> u16 {
     let prefix = format!("serve --bg --https={port} http://127.0.0.1:");
     let target = calls
         .iter()
@@ -364,6 +364,7 @@ async fn a_resumed_run_that_moves_port_maps_only_its_new_port() {
         error: None,
         detached: false,
         process: None,
+        instance: None,
         created_at: now,
         updated_at: now,
     };
@@ -849,6 +850,7 @@ async fn an_attempts_runs_open_in_its_workspace_and_go_when_it_finishes() {
         error: None,
         detached: false,
         process: None,
+        instance: None,
         created_at: 1,
         updated_at: 1,
     };
@@ -931,6 +933,7 @@ async fn the_sweep_needs_no_worktree_record() {
         error: None,
         detached: false,
         process: None,
+        instance: None,
         created_at: 1,
         updated_at: 1,
     };
@@ -1099,6 +1102,7 @@ async fn a_detached_run_that_ended_while_pdtd_was_down_is_stopped() {
         error: None,
         detached: true,
         process: Some(gone.into()),
+        instance: None,
         created_at: 1,
         updated_at: 1,
     };
