@@ -465,7 +465,9 @@ their steps; node kinds live in `workflow/nodes/` (one kind per file, the forge 
 `forge_call.rs`, whose errors name the forge) or in an integration's crate. While writes fail (a full disk), the
 engine's tick waits, writing a probe row (`Store::probe_writes`) after a backoff of 2 s doubling to 30 s; once one
 works, events that could not be logged (kept in memory by `emit_event`) are logged, and unprocessed events start their
-runs, each once by its run key. Agent steps start a session with a
+runs, each once by its run key. A node's loop limit (`maxVisits`) counts its finished steps in the run since the run
+last passed a node marked `resetsVisits` (`WorkflowDoc::loop_visits`; the outside-PR template's recorded approval, so
+each Approve & merge gets the whole CI wait and merge watch again). Agent steps start a session with a
 persona and wait for its `submit_outcome`; messages to agents go through the outbox (`workflow/outbox.rs`), which
 waits for the agent to be idle. Built-in workflows (`workflow/builtins/`) and templates (the Pipeline:
 `workflow/pipeline.rs`) are installed by PDT and follow newer versions until the user edits them. A template fills

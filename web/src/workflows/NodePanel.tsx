@@ -2,7 +2,7 @@
 // settings every node has, where its errors go, and its issues.
 import { useEffect, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
-import { Alert, Button, Field, IconButton, Input, SectionLabel, Select } from '@ui';
+import { Alert, Button, Checkbox, Field, IconButton, Input, SectionLabel, Select } from '@ui';
 import type { Node } from '../api/gen/Node';
 import type { WorkflowCheck } from '../api/gen/WorkflowCheck';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
@@ -101,6 +101,10 @@ export function NodePanel({ doc, node, catalog, check, onChange, onSelect, onClo
               <NumberField label="Visits per run" readOnly={readOnly} value={node.maxVisits ?? null} hint="Loop limit; default 25."
                 onChange={(v) => set((n) => ({ ...n, maxVisits: v }))} />
             </div>
+            <Field label="Loop limits" hint="Visits after this node count anew: a path taken again after a go-ahead gets its whole limit again.">
+              <Checkbox label="Start them over here" disabled={readOnly} checked={node.resetsVisits ?? false}
+                onChange={(v) => set((n) => ({ ...n, resetsVisits: v || undefined }))} />
+            </Field>
             <Field label="On error, go to" hint="Without one, an error fails the run once its retries are spent.">
               <Select
                 disabled={readOnly}
