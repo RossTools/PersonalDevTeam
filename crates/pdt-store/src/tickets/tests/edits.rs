@@ -78,6 +78,7 @@ async fn a_triaged_tickets_inbox_item_closes_once_it_moves_past_ready() {
         created_at: 1,
         resolved_at: None,
         snooze: None,
+        ticket_waits: false,
     };
     let open = |store: &Store| {
         let store = store.clone();
