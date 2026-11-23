@@ -28,6 +28,7 @@ fn agent_session(id: &str, attempt: Option<&str>, created_at: i64) -> pdt_core::
         permission_mode: None,
         persona: None,
         background: vec![],
+        instance: None,
     }
 }
 

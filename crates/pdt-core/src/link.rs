@@ -327,6 +327,9 @@ pub struct OwnerLink {
     /// The owner's Ed25519 public key for this link (base64), which its commands must be signed with.
     pub owner_public_key: String,
     pub repo_url: Option<String>,
+    /// Where this instance keeps the project's checkout (and its worktrees); None: the default folder.
+    #[serde(default)]
+    pub checkout_path: Option<String>,
     /// Paused here: the project takes no work on this instance.
     pub paused: bool,
     /// When the owner last reached this instance, in ms.

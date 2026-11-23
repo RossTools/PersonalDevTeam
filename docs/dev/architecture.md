@@ -116,7 +116,31 @@ it is a `projects` row of kind `remote` (no workspace; `repo_path` is `remote:<l
 `remote_instances` row with its last heartbeat (pdt-api `remote_instances.rs`: Project Settings → Remote instances,
 pairing codes, Remove). Each end's private key for a link is in the keychain (`project-link:<link id>`); the rows hold
 only the other end's public key. Pairing codes live in memory (`AppState::link`), one per project, for 10 minutes.
-Nothing is placed on a remote instance yet.
+
+**Remote attempts** (pdt-api `exec/`, `placement.rs`; rules in pdt-core `placement.rs`). Start places a ticket
+(`placement::place`): Start's `runsOn`, then the project's label rules (`project_settings.placement`, `GET`/`PUT
+/api/projects/{id}/placement`), then the repository's `[[placement]]` needs against the joined instances' facts (the
+owner's own facts first), then the owner. A remote attempt's worktree is a `worktrees` row with `instance_id` (its
+path is on the remote instance), made by `exec::make_worktree`; every session in it gets the same `instance_id`
+(`Session::instance`, with the joined instance's name), and only conversations run there. The owner keeps all the
+conversation logic: `conversations::ensure_live` opens a remote session with `exec::open_remote`, whose
+`RemoteLive` is the `LiveConversation` (send, answer, interrupt, set, close are signed calls under
+`/api/link/exec/*`), and the adapter's outputs come back through the same `EventSink`, so storing, activity, cards,
+approvals and workflows don't know the difference. On the remote instance (`exec/remote.rs`) the open runs the agent's
+own adapter in the remote project's checkout (`remote_projects.checkout_path`, default `<data dir>/checkouts/<link
+id>`, cloned from the owner's `origin` on first use), writes the session's instructions and pdt-mcp config (its own
+address, the owner's token and tools, none of its own MCP servers), records an `exec_sessions` row, and numbers each
+output in an in-memory outbox per link. The owner reads it with a long poll per joined instance (`owner::poll_loop`,
+`/link/exec/events`, cursor `remote_instances.events_boot/events_after`): what it took is forgotten there, a new
+remote boot starts the numbering again, and a process the remote no longer lists ends as exited. Events for a session
+the owner has no process for (it restarted) attach to the running process first (`conversations::attach`); pdtd's
+startup resumes the pollers (`exec::resume_pollers`), and `Store::mark_running_interrupted` leaves remote sessions
+running. An agent's pdt-mcp call to the remote instance (`mcp::post`, `exec::relay_mcp`) goes to the owner's
+`/link/exec/mcp` with its token, retried while the owner can't be reached; the owner answers it as its own. Git for a
+remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (`/link/exec/git`, the base merged
+in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
+worktree until Clean up, since the owner can't see what it holds. Terminals, runs, Files and Changes of a remote
+attempt are not remote yet.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.
@@ -776,7 +800,7 @@ shell. `AppShell`'s tests are split by area (`AppShell.<area>.test.tsx`), with s
 
 | Area | Rust | Web |
 | --- | --- | --- |
-| Remote projects and the project link | pdt-api `link.rs`, `remote_instances.rs`, `remote_projects.rs`; pdt-core `link.rs`; pdt-store `links.rs` | `web/src/projects/RemoteInstances.tsx`, `RemoteProjectsPage.tsx` |
+| Remote projects, the project link and remote attempts | pdt-api `link.rs`, `remote_instances.rs`, `remote_projects.rs`, `exec/`, `placement.rs`; pdt-core `link.rs`, `placement.rs`; pdt-store `links.rs`, `exec.rs` | `web/src/projects/RemoteInstances.tsx`, `RemoteProjectsPage.tsx`, `web/src/common/InstanceChip.tsx` |
 | Host, settings, updates, remote access | pdt-api `host.rs`, `update.rs`, `remote.rs`, guards (`host_guard.rs`, `identity_guard.rs`, `untrusted.rs`); `crates/pdt-host`; `crates/pdt-update` | `web/src/host`, `web/src/setup` |
 | Projects, worktrees, runs | pdt-api `projects.rs`, `worktrees.rs`, `runs.rs`, `run_manager.rs`, `runconfig.rs`; pdt-core `runconfig.rs` | `web/src/projects`, `web/src/runs` |
 | Storage and disk space | pdt-api `storage.rs`; pdt-core `storage.rs`; pdt-git `is_disposable` | `web/src/host/StorageSettings.tsx`, `web/src/projects/worktreeStorage.tsx` |

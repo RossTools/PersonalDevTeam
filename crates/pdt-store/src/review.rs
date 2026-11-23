@@ -148,6 +148,7 @@ mod tests {
             base_commit: "abc".into(),
             created_at: 1,
             missing: false,
+            instance: None,
         };
         store.insert_worktree(&w).await.unwrap();
         store

@@ -306,6 +306,21 @@ Examples:
 - **GitHub issues**: `fix/123-login-crash` from `template = "{type}/{issue|key}-{slug}"`.
 - **Jira**: `feature/ABC-123-login-crash` from `template = "feature/{jira|key}-{slug}"`.
 
+## Placement
+
+A project with remote instances (other PDTs that work on it; see Remote projects in the docs)
+can say what a kind of ticket needs, by label, without naming an instance:
+
+```toml
+[[placement]]
+when  = { labels = ["windows"] }
+needs = { os = "windows", tools = ["godot"] }
+```
+
+A ticket with one of `labels` runs on an instance that has `os` (`windows`, `macos` or `linux`) and every one of
+`tools` (as its **Remote instances** row lists them), or on the owner when it has them itself. The project's own label
+rules (in its settings) and Start's **Runs on** win over the file. The host overrides' list replaces the file's.
+
 ## Pitfalls
 
 - **Use `$PORT`.** A web server on a fixed port never shows as ready, and two branches would clash. Pass the port by

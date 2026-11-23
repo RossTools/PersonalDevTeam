@@ -48,6 +48,7 @@ async fn setup(tmp: &Path) -> (axum::Router, pdt_api::AppState) {
                 permission_mode: None,
                 persona: None,
                 background: vec![],
+                instance: None,
             })
             .await
             .unwrap();

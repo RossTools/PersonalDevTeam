@@ -271,6 +271,8 @@ pub struct AppState {
     pub(crate) toolchain_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     /// The project link to other instances (PDT-631): pairing codes on show, nonces seen, its HTTP client.
     pub link: std::sync::Arc<crate::link::LinkRuntime>,
+    /// Remote attempts' sessions and git, on both ends of a project link (PDT-632).
+    pub exec: std::sync::Arc<crate::exec::ExecRuntime>,
 }
 
 impl AppState {
@@ -394,6 +396,7 @@ impl AppState {
             toolchains: std::sync::Arc::new(crate::toolchains::Offline),
             toolchain_lock: Default::default(),
             link: Default::default(),
+            exec: Default::default(),
             builtins_installed: Default::default(),
             mcp_key: Default::default(),
             mcp_tools: Default::default(),
@@ -529,6 +532,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::activity::router())
         .merge(crate::attachments::router())
         .merge(crate::board::router())
+        .merge(crate::placement::router())
         .merge(crate::branch_names::router())
         .merge(crate::bug_reports::router())
         .merge(crate::checks::router())

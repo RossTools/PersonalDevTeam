@@ -12,7 +12,7 @@ const session = (id: string, more: Partial<Session> = {}): Session => ({
   id, projectId: 'p1', worktreeId: null, kind: 'agent_tui', agent: 'claude', bypassPermissions: false, title: id,
   cwd: '/x', status: 'running', exitCode: null, createdAt: 1, endedAt: null, externalSessionId: null, freshStartedAt: null,
   activity: 'working', attentionAt: null, lastViewedAt: null, unseen: false, attemptId: null, ticket: null, mode: 'conversation',
-  model: null, permissionMode: 'ask', persona: null, background: [], ...more,
+  model: null, permissionMode: 'ask', persona: null, background: [], instance: null, ...more,
 });
 
 const item = (id: string, kind: InboxItem['kind'], more: Partial<InboxItem> = {}): InboxItem => ({

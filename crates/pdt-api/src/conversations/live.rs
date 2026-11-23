@@ -166,10 +166,48 @@ pub(super) async fn ensure_live(
     if let Some((l, _)) = slot.as_ref().filter(|(l, _)| l.is_alive()) {
         return Ok(l.clone());
     }
-    let adapter = adapter_for(st, session.agent).await?;
     let creds = crate::sessions::credentials_for(st, &session.project_id).await?;
-    let has_history = c.state().has_history;
     let row = st.store.get_session(&session.id).await?.unwrap_or_else(|| session.clone());
+    // On a remote instance: the process runs there, and its outputs come back over the link.
+    let (live, rx, import_after) = if row.instance.is_some() {
+        let (live, rx) = crate::exec::open_remote(st, session, &row).await?;
+        (live, rx, None)
+    } else {
+        let (live, rx, import_after) = open_local(st, c, session, &row, creds).await?;
+        (live, rx, import_after)
+    };
+    if import_after.is_some() {
+        st.store.switch_session_mode(&session.id, SessionMode::Conversation, None).await?;
+    }
+    let generation = st.conversations.generation.fetch_add(1, Ordering::SeqCst);
+    *slot = Some((live.clone(), generation));
+    {
+        let mut s = c.state();
+        s.live = true;
+        s.generation = generation;
+        s.stopped = None;
+        s.last_active = Instant::now();
+    }
+    if session.status != SessionStatus::Running || row.status != SessionStatus::Running {
+        st.store.set_session_running(&session.id).await?;
+    }
+    let agent = session.agent.unwrap_or(AgentKind::Claude);
+    tokio::spawn(pump(st.clone(), c.clone(), rx, generation, creds, agent));
+    drop(slot);
+    c.push_state();
+    Ok(live)
+}
+
+/// The agent's process here: the live conversation, its outputs, and (Devin) when the turns to import start.
+async fn open_local(
+    st: &AppState,
+    c: &Arc<Conv>,
+    session: &Session,
+    row: &Session,
+    creds: CredentialPolicy,
+) -> Result<(Arc<dyn LiveConversation>, EventStream, Option<i64>), ApiError> {
+    let adapter = adapter_for(st, session.agent).await?;
+    let has_history = c.state().has_history;
     let (program, resume) = match session.agent {
         // Codex resumes its thread whenever it has one; Devin its session (it starts a new one when that was never
         // saved).
@@ -201,7 +239,7 @@ pub(super) async fn ensure_live(
         },
         _ => None,
     };
-    let instructions = crate::sessions::agent_instructions(st, &row).await?;
+    let instructions = crate::sessions::agent_instructions(st, row).await?;
     let config_file = match session.agent {
         Some(AgentKind::Devin) => {
             crate::sessions::devin_config(st, &session.id, instructions.as_ref().map(|i| i.file.as_path()))
@@ -224,31 +262,12 @@ pub(super) async fn ensure_live(
         instructions,
         config_file,
         import_after,
-        mcp: crate::mcp::server_for(st, &row).await,
+        mcp: crate::mcp::server_for(st, row).await,
     };
     // Bounded: a store that lags pauses reading the agent's output (PDT-441).
     let (tx, rx) = pdt_agents::adapter::event_channel(pdt_agents::adapter::EVENT_QUEUE);
     let live: Arc<dyn LiveConversation> = Arc::from(adapter.open(spec, tx).await.map_err(adapter_error)?);
-    if import_after.is_some() {
-        st.store.switch_session_mode(&session.id, SessionMode::Conversation, None).await?;
-    }
-    let generation = st.conversations.generation.fetch_add(1, Ordering::SeqCst);
-    *slot = Some((live.clone(), generation));
-    {
-        let mut s = c.state();
-        s.live = true;
-        s.generation = generation;
-        s.stopped = None;
-        s.last_active = Instant::now();
-    }
-    if session.status != SessionStatus::Running || row.status != SessionStatus::Running {
-        st.store.set_session_running(&session.id).await?;
-    }
-    let agent = session.agent.unwrap_or(AgentKind::Claude);
-    tokio::spawn(pump(st.clone(), c.clone(), rx, generation, creds, agent));
-    drop(slot);
-    c.push_state();
-    Ok(live)
+    Ok((live, rx, import_after))
 }
 
 /// Applies one live process's outputs, in order.

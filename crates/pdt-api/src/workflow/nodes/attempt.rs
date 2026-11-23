@@ -75,6 +75,14 @@ async fn has_changes(cx: &StepCx<'_>, attempt: &str) -> Result<bool, String> {
     if info.own_commits || crate::github::watched_pr(cx.st, attempt).is_some() {
         return Ok(true);
     }
+    // On a remote instance: it looks there.
+    if let Some(id) = info.attempt.worktree_id.as_deref()
+        && let Some(wt) = cx.st.store.get_worktree(id).await.map_err(crate::workflow::err)?
+        && let Some(i) = crate::exec::worktree_instance(cx.st, &wt).await.map_err(|e| e.message().to_string())?
+    {
+        let a = &info.attempt;
+        return crate::exec::has_changes(cx.st, &i, &a.branch, &a.base_branch, &info.base_commit).await;
+    }
     let repo = PathBuf::from(&info.repo_path);
     let worktree = info.worktree_path.map(PathBuf::from);
     let (branch, base, base_commit) = (info.attempt.branch, info.attempt.base_branch, info.base_commit);

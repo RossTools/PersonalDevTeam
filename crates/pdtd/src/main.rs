@@ -226,6 +226,8 @@ async fn run() -> anyhow::Result<()> {
     let plan = plan_resume_interrupted(&state).await;
     // Conversations need no restart: a turn the previous run left running ends as interrupted, open requests expire.
     pdt_api::recover_conversations(&state).await;
+    // Sessions on remote instances ran on there: their events waited for this owner.
+    pdt_api::exec::resume_pollers(&state).await;
     let app = with_host_guard(router(state.clone(), cfg.web_dir.clone()), state.allowed_hosts.clone());
     tracing::info!(
         profile = ?cfg.profile, port = cfg.port, data_dir = %cfg.data_dir.display(),

@@ -120,7 +120,8 @@ struct Listening {
 /// `GET /api/mcp`: the session's stream of server messages, `notifications/tools/list_changed` alone. It ends with the
 /// session, or when pdtd stops.
 pub(crate) async fn get(State(st): State<AppState>, headers: HeaderMap) -> Response {
-    if !accepts_stream(&headers) {
+    // An owner's session's: its calls go to the owner one by one, with no stream to hold open.
+    if !accepts_stream(&headers) || crate::exec::is_relayed(&st, &headers).await {
         return super::not_allowed().await;
     }
     let session = match authorize(&st, &headers).await {

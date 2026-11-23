@@ -10,8 +10,9 @@ use pdt_core::worktree::{NewWorktree, WORKTREES_DIR, Worktree, worktree_path};
 use serde::Deserialize;
 use std::path::{Path as FsPath, PathBuf};
 
+/// A remote instance's worktree is never missing here: its folder is on that instance.
 fn mark_missing(mut w: Worktree) -> Worktree {
-    w.missing = !FsPath::new(&w.path).is_dir();
+    w.missing = w.instance.is_none() && !FsPath::new(&w.path).is_dir();
     w
 }
 
@@ -61,19 +62,7 @@ pub(crate) async fn make_worktree(
     let (b, target, base) = (branch.to_string(), path.clone(), base.to_string());
     let (base_commit, made) = tokio::task::spawn_blocking(move || -> Result<(String, Made), ApiError> {
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
-        if target.exists() {
-            let head = adoptable(&repo, &target, &b).ok_or_else(|| {
-                ApiError::conflict(
-                    codes::WORKTREE_PATH_TAKEN,
-                    format!("the worktree folder {} is already in use (by another branch?)", target.display()),
-                )
-            })?;
-            return Ok((head, Made::Adopted));
-        }
-        if existing_branch && pdt_git::branch_exists(&repo, &b) {
-            return Ok((pdt_git::add_worktree_for_branch(&repo, &target, &b)?, Made::Worktree));
-        }
-        Ok((pdt_git::add_worktree(&repo, &target, &b, &base)?, Made::WorktreeAndBranch))
+        add_on_disk(&repo, &target, &b, &base, existing_branch)
     })
     .await
     .map_err(ApiError::internal)??;
@@ -85,6 +74,7 @@ pub(crate) async fn make_worktree(
         base_commit,
         created_at: now_ms(),
         missing: false,
+        instance: None,
     };
     if let Err(e) = st.store.insert_worktree(&wt).await {
         if made != Made::Adopted {
@@ -106,9 +96,33 @@ pub(crate) async fn make_worktree(
     Ok(wt)
 }
 
+/// Makes the worktree `target` of `repo` on `branch` (see [`make_worktree`]): its head, and what it did. Blocking; also
+/// a remote instance's, in a remote project's checkout.
+pub(crate) fn add_on_disk(
+    repo: &FsPath,
+    target: &FsPath,
+    branch: &str,
+    base: &str,
+    existing_branch: bool,
+) -> Result<(String, Made), ApiError> {
+    if target.exists() {
+        let head = adoptable(repo, target, branch).ok_or_else(|| {
+            ApiError::conflict(
+                codes::WORKTREE_PATH_TAKEN,
+                format!("the worktree folder {} is already in use (by another branch?)", target.display()),
+            )
+        })?;
+        return Ok((head, Made::Adopted));
+    }
+    if existing_branch && pdt_git::branch_exists(repo, branch) {
+        return Ok((pdt_git::add_worktree_for_branch(repo, target, branch)?, Made::Worktree));
+    }
+    Ok((pdt_git::add_worktree(repo, target, branch, base)?, Made::WorktreeAndBranch))
+}
+
 /// What `make_worktree` did on disk, so a failure to record it undoes only that.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Made {
+pub(crate) enum Made {
     /// A worktree git already had, left as it was.
     Adopted,
     /// A new worktree on a branch that already existed.
@@ -163,24 +177,15 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
     if active_run {
         return Err(ApiError::conflict(codes::WORKTREE_BUSY, "stop this branch's runs first"));
     }
-    let (repo, path, branch) = (PathBuf::from(&project.repo_path), PathBuf::from(&wt.path), wt.branch.clone());
-    let branch_error = tokio::task::spawn_blocking(move || -> Result<Option<String>, ApiError> {
-        if path.is_dir() {
-            if !force && pdt_git::is_dirty(&path)? {
-                return Err(ApiError::conflict(
-                    codes::WORKTREE_DIRTY,
-                    "this worktree has uncommitted changes; remove it anyway to discard them",
-                ));
-            }
-            pdt_git::remove_worktree(&repo, &path, force)?;
-        } else {
-            pdt_git::prune_worktrees(&repo)?;
+    let branch_error = match crate::exec::worktree_instance(st, &wt).await? {
+        Some(i) => crate::exec::remove_worktree(st, &i, &wt.branch, force, delete_branch).await?,
+        None => {
+            let (repo, path, branch) = (PathBuf::from(&project.repo_path), PathBuf::from(&wt.path), wt.branch.clone());
+            tokio::task::spawn_blocking(move || remove_on_disk(&repo, &path, &branch, force, delete_branch))
+                .await
+                .map_err(ApiError::internal)??
         }
-        // The folder is gone either way; a branch that won't delete is reported, not fatal.
-        Ok(if delete_branch { pdt_git::delete_branch(&repo, &branch).err().map(|e| e.to_string()) } else { None })
-    })
-    .await
-    .map_err(ApiError::internal)??;
+    };
     for s in sessions {
         crate::sessions::discard(st, &s.id).await;
     }
@@ -192,6 +197,30 @@ pub(crate) async fn remove_worktree(st: &AppState, id: &str, force: bool, delete
             format!("the worktree was removed, but its branch was not deleted: {msg}"),
         )),
     }
+}
+
+/// Removes the worktree `path` of `repo` (and with `delete_branch` its branch): why the branch stayed, if it did.
+/// Blocking; also a remote instance's.
+pub(crate) fn remove_on_disk(
+    repo: &FsPath,
+    path: &FsPath,
+    branch: &str,
+    force: bool,
+    delete_branch: bool,
+) -> Result<Option<String>, ApiError> {
+    if path.is_dir() {
+        if !force && pdt_git::is_dirty(path)? {
+            return Err(ApiError::conflict(
+                codes::WORKTREE_DIRTY,
+                "this worktree has uncommitted changes; remove it anyway to discard them",
+            ));
+        }
+        pdt_git::remove_worktree(repo, path, force)?;
+    } else {
+        pdt_git::prune_worktrees(repo)?;
+    }
+    // The folder is gone either way; a branch that won't delete is reported, not fatal.
+    Ok(if delete_branch { pdt_git::delete_branch(repo, branch).err().map(|e| e.to_string()) } else { None })
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

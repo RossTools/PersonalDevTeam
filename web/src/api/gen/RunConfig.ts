@@ -5,6 +5,7 @@ import type { CiDef } from "./CiDef";
 import type { ForgeKind } from "./ForgeKind";
 import type { PushDef } from "./PushDef";
 import type { RegenerateDef } from "./RegenerateDef";
+import type { RepoRule } from "./RepoRule";
 import type { RunDef } from "./RunDef";
 
 export type RunConfig = { runs: Array<RunDef>, tests: Array<RunDef>, areas: Array<AreaDef>, 
@@ -40,6 +41,10 @@ regenerate: Array<RegenerateDef>,
  * meanwhile, while runs keep working.
  */
 branch: BranchSettings | null, branchError: string | null, 
+/**
+ * `[[placement]]`: what instance each kind of ticket needs (the overrides' list wins when they give one).
+ */
+placement: Array<RepoRule>, 
 /**
  * Top-level sections of the file or the overrides that this PDT skipped because it does not know them.
  */
