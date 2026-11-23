@@ -456,6 +456,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
   checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
   is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **What the other end of a link sends is checked before it is stored.** An instance's name and version go through
+  `pdt_core::instance::valid_name` and `pdt_core::link::valid_version` (pairing; `link::checked_hello` on joining and
+  every heartbeat); a joined project's name, base branch
+  and key through `pdt_core::link::joined_project` (a key that isn't valid or is taken here is suggested from the
+  name). Answers are read with a byte cap (`link::read_capped`), never `Response::text`.
 - **A remote run's process isn't the owner's.** Its row on the owner has `instance_id`, no `port` (the port is the
   remote's: the owner's unique active-port index must never see it) and, in `process`, the id of its current start:
   reports carrying another start's id are dropped, and a run the remote no longer lists ends as stopped. Everything
