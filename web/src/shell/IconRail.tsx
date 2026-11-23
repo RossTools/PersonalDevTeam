@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Badge, Button, IconButton, type ThemePref } from '@ui';
+import { Badge, Button, IconButton, Kbd, type ThemePref } from '@ui';
+import { isMac } from '../palette/useMetaK';
 import { ThemeSwitch } from './ThemeSwitch';
 import { VIEWS, type ViewId } from './views';
 
@@ -29,10 +30,10 @@ function writeExpanded(expanded: boolean) {
 
 /**
  * The views in a column on the left (desktop; phones have the drawer, PDT-112). `top` sits above the views (the DEV
- * badge). At the bottom, the theme switch (with `theme`), and a toggle that expands the column to show each view's name
+ * badge), then Search (with `onSearch`: the command palette, as the phone's top bar has it). At the bottom, the theme switch (with `theme`), and a toggle that expands the column to show each view's name
  * beside its icon.
  */
-export function IconRail({ active, onSelect, top, counts, dots, theme }: {
+export function IconRail({ active, onSelect, top, counts, dots, theme, onSearch }: {
   active: ViewId;
   onSelect: (v: ViewId) => void;
   top?: ReactNode;
@@ -42,6 +43,8 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
   dots?: Partial<Record<ViewId, boolean>>;
   /** The theme choice and its setter (AppShell's `useThemePref`, shared with the command palette). */
   theme?: { value: ThemePref; onChange: (pref: ThemePref) => void };
+  /** Opens the command palette. */
+  onSearch?: () => void;
 }) {
   const [expandedPref, setExpandedPref] = useState(readExpanded);
   const expanded = expandedPref;
@@ -82,6 +85,8 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
       </IconButton>
     );
   };
+  // ⌘K on a Mac; elsewhere Ctrl+K is the terminal's kill-line, so the palette is Ctrl+] k.
+  const searchKeys = isMac() ? <Kbd>⌘K</Kbd> : <Kbd keys={['Ctrl', ']', 'k']} />;
   const settings = VIEWS.find((v) => v.id === 'settings')!;
   return (
     <nav
@@ -92,6 +97,17 @@ export function IconRail({ active, onSelect, top, counts, dots, theme }: {
       )}
     >
       {top && <div className="flex justify-center pb-1">{top}</div>}
+      {onSearch && (expanded ? (
+        <Button variant="ghost" aria-label="Search" onClick={onSearch} className={cn(wide, 'text-muted-foreground')}>
+          <Search aria-hidden />
+          <span className="min-w-0 flex-1 truncate text-left">Search</span>
+          {searchKeys}
+        </Button>
+      ) : (
+        <IconButton label="Search" shortcut={searchKeys} tooltipPlacement={tooltipPlacement} onClick={onSearch} className={cn(item, 'text-muted-foreground')}>
+          <Search aria-hidden />
+        </IconButton>
+      ))}
       {VIEWS.filter((v) => v !== settings).map(view)}
       {view(settings)}
       <div className="mt-auto flex flex-col items-stretch gap-1 pt-1">
