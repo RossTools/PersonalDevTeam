@@ -666,7 +666,9 @@ the server marks `outward` (`InboxChoice::outward`: a gate's choice that leads t
 `NodeKind::outward`, found by `StepCx::port_outward`, or Allow on a tool `ToolTable::outward` names), and on a gate
 with `recommend` (the outside-PR review's decision) every choice but the `recommended` one; `ApprovalCard` does the same for Always allow. An Inbox
 answer is held in the browser for its Undo window (`web/src/inbox/held.ts`) and only then sent, so nothing it causes
-(a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. The client says
+(a review posted by the gate's next step) happens before; `useInbox` leaves held items out of the list. On `pagehide`
+the held answers go out at once, with `keepalive` (`setLeaving` in `web/src/api/core.ts`), and `useReloadOnNewBuild`
+doesn't reload for a new build while any answer is held. The client says
 how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,
 `inbox::AnswerSource`), which `inbox.answered` carries as `source`; Recently answered reads those events.
 

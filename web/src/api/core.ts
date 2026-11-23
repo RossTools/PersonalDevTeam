@@ -21,10 +21,21 @@ export async function requestText(path: string): Promise<string> {
   return (await send(path)).text();
 }
 
+/**
+ * Set while the page is going away (`pagehide`, a reload or a closed tab): requests made meanwhile go out with
+ * `keepalive`, so they reach pdtd after the page is gone (the Inbox's held answers, PDT-707).
+ */
+let leaving = false;
+
+export function setLeaving(on: boolean) {
+  leaving = on;
+}
+
 export async function send(path: string, init?: RequestInit): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(path, { ...init, headers: { 'content-type': 'application/json', ...init?.headers } });
+    const keep = leaving ? { keepalive: true } : {};
+    res = await fetch(path, { ...init, ...keep, headers: { 'content-type': 'application/json', ...init?.headers } });
   } catch (e) {
     // fetch rejects with a TypeError ("Failed to fetch", "Load failed") when pdtd doesn't answer: word it for the user
     // (PDT-583). An abort is a DOMException and goes through as is, so cancelled queries stay cancelled.
@@ -47,6 +58,14 @@ async function errorOf(res: Response): Promise<ApiError> {
 
 /** This pdtd's UI token (PDT-204), fetched once; it changes when pdtd restarts. */
 let uiToken: Promise<string> | null = null;
+
+/**
+ * Fetches the UI token ahead of a change that may have to go out as the page closes, when there is no time left to ask
+ * for it first.
+ */
+export function primeUiToken() {
+  fetchUiToken().catch(() => undefined);
+}
 
 function fetchUiToken(): Promise<string> {
   uiToken ??= send('/api/ui/token')

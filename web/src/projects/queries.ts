@@ -17,6 +17,8 @@ export const projectKeys = {
   /** On the owner: a project's remote instances and the pairing code on show. */
   remoteInstances: (projectId: string) => ['remote-instances', projectId] as const,
   placement: (projectId: string) => ['placement', projectId] as const,
+  /** The clones Add project by URL has under way. */
+  clones: ['project-clones'] as const,
   /** On a remote instance: the projects it joined. */
   remote: ['remote-projects'] as const,
 };
@@ -33,6 +35,11 @@ export function useRemoteInstances(projectId: string, { enabled = true }: { enab
 
 export function usePlacement(projectId: string) {
   return useQuery({ queryKey: projectKeys.placement(projectId), queryFn: () => api.placement(projectId) });
+}
+
+/** The clones under way, polled for git's progress while they're shown. */
+export function useClones({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({ queryKey: projectKeys.clones, queryFn: api.listClones, refetchInterval: POLL.live, enabled });
 }
 
 /** Every project. They change through this UI (which invalidates them), so a mount within 30 s doesn't refetch. */

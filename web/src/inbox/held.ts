@@ -1,8 +1,10 @@
 // Answers held for Undo (PDT-623): an Inbox answer goes out only once its few seconds pass, so Undo cancels it before
 // anything happens, inside PDT or out (a review posted on a pull request, a ticket made). Until it has gone, the item
-// is out of the Inbox's list; Undo puts it back. Closing PDT within the window drops the answer: the item still waits.
+// is out of the Inbox's list; Undo puts it back. The page going away (closed, reloaded) ends the window: what is held
+// goes out at once, with `keepalive` so it outlives the page (PDT-707), and a reload for a new build waits for it.
 import { useSyncExternalStore } from 'react';
 import { toast } from '@ui';
+import { setLeaving } from '../api/core';
 
 /** How long an answer waits for Undo (ms). Tests set it to 0 (test-setup.ts). */
 export const holdTiming = { undoMs: 5000 };
@@ -22,6 +24,7 @@ export interface HeldAnswer {
 
 interface Entry extends HeldAnswer {
   timer: ReturnType<typeof setTimeout>;
+  send: () => Promise<unknown>;
 }
 
 const entries = new Map<string, Entry>();
@@ -30,7 +33,7 @@ let snapshot: readonly HeldAnswer[] = [];
 let ids: ReadonlySet<string> = new Set();
 
 function changed() {
-  snapshot = [...entries.values()].map(({ timer: _, ...h }) => h);
+  snapshot = [...entries.values()].map(({ timer: _, send: __, ...h }) => h);
   ids = new Set(entries.keys());
   listeners.forEach((l) => l());
 }
@@ -42,18 +45,38 @@ function changed() {
 export function holdAnswer(h: { itemId: string; title: string; label: string; send: () => Promise<unknown> }) {
   const old = entries.get(h.itemId);
   if (old) clearTimeout(old.timer);
-  const timer = setTimeout(() => {
-    const e = entries.get(h.itemId);
-    if (!e || e.timer !== timer) return;
-    entries.set(h.itemId, { ...e, sending: true });
-    changed();
-    void h.send().catch(() => undefined).finally(() => {
-      if (entries.get(h.itemId)?.timer === timer) entries.delete(h.itemId);
-      changed();
-    });
-  }, holdTiming.undoMs);
-  entries.set(h.itemId, { itemId: h.itemId, title: h.title, label: h.label, sendsAt: Date.now() + holdTiming.undoMs, sending: false, timer });
+  const timer = setTimeout(() => sendNow(h.itemId, timer), holdTiming.undoMs);
+  entries.set(h.itemId, { itemId: h.itemId, title: h.title, label: h.label, sendsAt: Date.now() + holdTiming.undoMs, sending: false, timer, send: h.send });
   changed();
+}
+
+/** Sends the held answer `timer` was set for, unless it was undone or answered again since. */
+function sendNow(itemId: string, timer: Entry['timer']) {
+  const e = entries.get(itemId);
+  if (!e || e.timer !== timer || e.sending) return;
+  clearTimeout(timer);
+  entries.set(itemId, { ...e, sending: true });
+  changed();
+  void e.send().catch(() => undefined).finally(() => {
+    if (entries.get(itemId)?.timer === timer) entries.delete(itemId);
+    changed();
+  });
+}
+
+/** Sends every held answer now, without waiting out its Undo window (the page is going away). */
+function sendHeldAnswers() {
+  [...entries.values()].forEach((e) => sendNow(e.itemId, e.timer));
+}
+
+// Closing the tab or reloading ends the Undo window: the answers go out as the page goes, with `keepalive`. A page
+// kept in the back/forward cache and shown again sends normally from then on.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', () => {
+    if (entries.size === 0) return;
+    setLeaving(true);
+    sendHeldAnswers();
+  });
+  window.addEventListener('pageshow', () => setLeaving(false));
 }
 
 /** Cancels a held answer that hasn't gone out: true when it did, and the item is back. */
@@ -94,5 +117,6 @@ export function useHeldIds(): ReadonlySet<string> {
 export function resetHeldAnswers() {
   entries.forEach((e) => clearTimeout(e.timer));
   entries.clear();
+  setLeaving(false);
   changed();
 }

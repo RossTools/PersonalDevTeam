@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod changes;
+mod cloning;
 mod grep;
 mod manage;
 mod merge;
@@ -13,6 +14,7 @@ mod remote;
 mod review;
 mod update;
 pub use changes::*;
+pub use cloning::*;
 pub use grep::*;
 pub use manage::*;
 pub use merge::*;
@@ -37,6 +39,9 @@ pub enum GitError {
     GitMissing,
     #[error("git command failed: {0}")]
     Command(String),
+    /// The user stopped it (a clone's Cancel).
+    #[error("cancelled")]
+    Cancelled,
     #[error("invalid branch name: {0}")]
     InvalidBranch(String),
     #[error("a branch named {0} already exists")]

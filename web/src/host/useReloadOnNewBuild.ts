@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { hostKeys } from './queries';
 import { POLL } from '../common/poll';
+import { useHeldIds } from '../inbox/held';
 
 /** How often /api/health is asked for the web build; a restarted dev instance is picked up within this. */
 const WEB_BUILD_POLL_MS = POLL.steady;
@@ -22,8 +23,9 @@ export function servedBuild(doc: Document = document): string | null {
  * reports the same version, so a dev instance restarted with a rebuilt web/dist is only seen here (version changes
  * are `useReloadOnNewVersion`'s, and a release changes the build too). The page compares against [servedBuild]; a page
  * without one (the Vite dev server) takes the first answer it sees. Health is asked again as soon as the page comes
- * back (a phone restoring a frozen or cached tab), not on the next poll. Waits while [hasUnsavedInput] says reloading
- * would lose something and tries again on the next poll; `held` is true meanwhile, for a banner offering the reload.
+ * back (a phone restoring a frozen or cached tab), not on the next poll. Waits while an Inbox answer is held for Undo
+ * (it goes once sent) or [hasUnsavedInput] says reloading would lose something, and tries again on the next poll;
+ * `held` is true meanwhile, for a banner offering the reload (which sends held answers as the page goes).
  */
 export function useReloadOnNewBuild(reload: () => void = reloadPage, own: string | null = servedBuild()) {
   // Shares the ['health'] query with useInstance, so the page asks once at load and this observer keeps it fresh.
@@ -31,6 +33,7 @@ export function useReloadOnNewBuild(reload: () => void = reloadPage, own: string
   const build = health.data?.webBuild;
   const loaded = useRef<string | null>(own);
   const [held, setHeld] = useState(false);
+  const answering = useHeldIds().size > 0;
   const { refetch } = health;
   useEffect(() => {
     const check = () => void refetch();
@@ -48,14 +51,14 @@ export function useReloadOnNewBuild(reload: () => void = reloadPage, own: string
     };
   }, [refetch]);
   // Every poll checks again (dataUpdatedAt changes even when the answer does not), so a held-back reload happens soon
-  // after the field is cleared or the dialog closes.
+  // after the field is cleared or the dialog closes, and at once when the last held answer has gone.
   useEffect(() => {
     if (!build) return;
     if (!loaded.current) loaded.current = build;
     if (build === loaded.current) setHeld(false);
-    else if (hasUnsavedInput()) setHeld(true);
+    else if (answering || hasUnsavedInput()) setHeld(true);
     else reload();
-  }, [build, health.dataUpdatedAt, reload]);
+  }, [build, health.dataUpdatedAt, reload, answering]);
   return { held, reload };
 }
 

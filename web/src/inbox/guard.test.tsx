@@ -6,6 +6,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ApprovalCard, approvalTiming, toast } from '@ui';
+import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { answerTiming, guardedAnswer } from '../common/answerGuard';
 import { renderWithQuery, stubApi, type Call } from '../test-utils';
@@ -13,6 +14,7 @@ import { holdAnswer, holdTiming, useHeldIds } from './held';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
 import { needsConfirm, recommendationTone } from './model';
+import { useAnswer } from './useAnswer';
 import { useInbox } from './useInbox';
 
 const item = (id: string, over: Partial<InboxItem> = {}): InboxItem => ({
@@ -283,6 +285,23 @@ describe('Undo', () => {
     expect(await screen.findByText('b of 1')).toBeInTheDocument();
     await act(async () => fail());
     expect(await screen.findByText('a,b of 2')).toBeInTheDocument();
+  });
+
+  it('sends held answers at once, with keepalive, when the page goes away', async () => {
+    const a = item('a');
+    const calls = stubApi({ 'POST /api/inbox/a/answer': {} });
+    holdTiming.undoMs = 60_000;
+    function Answer() {
+      const { answer } = useAnswer(a, () => {});
+      return <button onClick={() => void answer({ choice: 'ship' } satisfies InboxAnswer)}>Ship</button>;
+    }
+    renderWithQuery(<Answer />);
+    await userEvent.click(screen.getByRole('button', { name: 'Ship' }));
+    expect(calls.some((c) => c.path === '/api/inbox/a/answer')).toBe(false);
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/inbox/a/answer')).toBe(true));
+    const init = vi.mocked(fetch).mock.calls.find(([path]) => path === '/api/inbox/a/answer')?.[1];
+    expect(init?.keepalive).toBe(true);
   });
 });
 
