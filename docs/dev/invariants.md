@@ -363,7 +363,8 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `bug_reports::redactions` gathers the token, the owner's login, the home folder, the machine's names and each
   project's name, key, folder, origin `owner/repo` and worktree branches and folders (not the release repository's
   project), this instance's name, each remote instance's name and host, and each remote project's name, key, owner
-  name and owner host; the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
+  name and owner host, its checkout's folder (when the user picked it), its `owner/repo` and its checkout's worktree
+  branches and folders; the log tail and the update error always get it, and an agent's `report_bug` fields do on the GitHub
   route. A new place that logs a user's name for something is covered only if it is one of these.
 - **A Codex terminal's secrets stay out of its shell commands**: each name `codex_tui_env` passes a secret in is in
   the `shell_environment_policy.exclude` it gets (pdt-agents `mcp.rs`), after the user's own patterns.
