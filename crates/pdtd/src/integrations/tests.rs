@@ -218,9 +218,7 @@ fn the_connection_kinds_are_the_pages_kinds_in_order() {
             "radarr",
             "sonarr",
             "scryer",
-            "plex",
-            "aws",
-            "azure"
+            "plex"
         ]
     );
 }

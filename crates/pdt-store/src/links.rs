@@ -568,4 +568,64 @@ pub(crate) mod tests {
         assert!(store.last_remote_secret_uses("l").await.unwrap().is_empty(), "its uses go with it");
         assert!(!store.delete_remote_instance("l").await.unwrap());
     }
+
+    /// A database that ran the cloud instances migration (PDT-638) upgrades: its tables go, joined instances stay.
+    #[tokio::test]
+    async fn a_database_with_cloud_instances_upgrades_and_keeps_its_joined_instances() {
+        let tmp = tempfile::tempdir().unwrap();
+        let old = tmp.path().join("m");
+        std::fs::create_dir_all(&old).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let e = e.unwrap();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.as_str() <= "20261123154821_cloud_instances.sql" {
+                std::fs::copy(e.path(), old.join(&name)).unwrap();
+            }
+        }
+        let db = tmp.path().join("pdt.db");
+        let backups = tmp.path().join("backups");
+        let migrator = sqlx::migrate::Migrator::new(old.as_path()).await.unwrap();
+        let store = Store::open_with(&db, &migrator, &backups).await.unwrap();
+        let p = Project {
+            id: "p".into(),
+            name: "Val".into(),
+            repo_path: tmp.path().to_string_lossy().into_owned(),
+            base_branch: "main".into(),
+            created_at: 1,
+            key: "VAL".into(),
+            forge: None,
+            kind: ProjectKind::Repo,
+        };
+        store.insert_project(&p).await.unwrap();
+        sqlx::query(
+            "INSERT INTO remote_instances (link_id, project_id, instance_id, name, url, public_key, version, protocol, \
+             created_at) VALUES ('l', 'p', 'win', 'win-box', 'https://win-box.example.ts.net', 'pk', '1.0.0', 1, 2)",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO cloud_instances (link_id, connection, machine, idle_minutes, created_at) \
+             VALUES ('l', 'c', 'vm', 30, 3)",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO cloud_usage (link_id, month, running_ms, cost) VALUES ('l', '2026-11', 60000, 0.5)")
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.close().await;
+
+        let store = Store::open(&db).await.unwrap();
+        let tables: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'cloud%'")
+                .fetch_all(&store.pool)
+                .await
+                .unwrap();
+        assert!(tables.is_empty(), "{tables:?}");
+        let i = store.get_remote_instance("l").await.unwrap().expect("the joined instance stays");
+        assert_eq!((i.name.as_str(), i.project_id.as_str()), ("win-box", "p"));
+    }
 }

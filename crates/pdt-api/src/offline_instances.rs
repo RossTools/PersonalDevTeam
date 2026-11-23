@@ -12,7 +12,7 @@ fn key(link_id: &str) -> String {
 }
 
 /// The tickets pickup holds for `i` lately (their ids), oldest hold first.
-pub(crate) fn waiting_for(st: &AppState, i: &RemoteInstance, now: i64) -> Vec<String> {
+fn waiting_for(st: &AppState, i: &RemoteInstance, now: i64) -> Vec<String> {
     let holds = st.pickup_holds.lock().unwrap_or_else(|e| e.into_inner());
     let mut out: Vec<(&String, i64)> = holds
         .iter()

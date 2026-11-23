@@ -39,17 +39,6 @@ pub(crate) async fn instance_with(
     tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
     update: Option<Arc<pdt_api::UpdateService>>,
 ) -> Instance {
-    instance_set(name, gh, tailscale, update, |_| {}).await
-}
-
-/// [`instance_with`], with `set` applied to its state before it serves.
-async fn instance_set(
-    name: &str,
-    gh: Option<&Arc<FakeForge>>,
-    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
-    update: Option<Arc<pdt_api::UpdateService>>,
-    set: impl FnOnce(&mut AppState),
-) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
@@ -69,7 +58,6 @@ async fn instance_set(
     if let Some(gh) = gh {
         state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(gh))]);
     }
-    set(&mut state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{}", state.listen_port);
@@ -114,17 +102,8 @@ pub(crate) async fn paired_with(
     tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
     update: Option<Arc<pdt_api::UpdateService>>,
 ) -> Pair {
-    paired_set(tailscale, update, |_| {}).await
-}
-
-/// [`paired_with`], with `owner` applied to the owner's state before it serves.
-pub(crate) async fn paired_set(
-    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
-    update: Option<Arc<pdt_api::UpdateService>>,
-    owner: impl FnOnce(&mut AppState),
-) -> Pair {
     let gh = Arc::new(FakeForge::default());
-    let owner = instance_set("studio", Some(&gh), None, None, owner).await;
+    let owner = instance("studio", Some(&gh)).await;
     // The tests heartbeat themselves: one sent a while after joining could land after a test took win-box offline
     // and mark it connected again (PDT-731).
     owner.state.link.set_no_join_heartbeat(true);
