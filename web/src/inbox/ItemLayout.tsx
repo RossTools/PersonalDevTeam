@@ -10,6 +10,7 @@ import { ItemLinks } from './ItemLinks';
 import type { ItemAction, ItemSpec } from './itemView';
 import { KindChip } from './kinds';
 import { longTitle } from './model';
+import { SnoozeMenu } from './snooze';
 
 /** The kind, the ticket's key and title, the persona and the age; then the title and the links row. */
 export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: ItemSpec; className?: string }) {
@@ -35,6 +36,7 @@ export function ItemHeader({ item, spec, className }: { item: InboxItem; spec: I
             {p}
           </Fragment>
         ))}
+        <span className="ml-auto"><SnoozeMenu item={item} /></span>
       </div>
       {/* A long old-style question (the card below has it whole) is clamped, so it shows once. */}
       <h2 className={cn('text-base leading-snug font-semibold break-words', longTitle(item) && 'line-clamp-2')} title={longTitle(item) ? item.title : undefined}>

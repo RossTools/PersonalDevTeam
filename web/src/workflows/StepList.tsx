@@ -51,6 +51,9 @@ export function StepList({ steps, doc, catalog, expandable = false }: { steps: S
       {steps.map((s, i) => {
         const node = doc.nodes.find((n) => n.id === s.nodeId);
         const would = s.output && typeof s.output === 'object' && 'would' in s.output ? String((s.output as { would: unknown }).would) : null;
+        // What a step says it waits on or did ("Waiting on main", "Approval kept: only the base changed").
+        const note = s.output && typeof s.output === 'object' && typeof (s.output as { note?: unknown }).note === 'string'
+          ? (s.output as { note: string }).note : null;
         const head = (
           <span className="flex flex-wrap items-center gap-2 font-normal">
             <span className="text-meta text-muted-foreground tabular-nums">{i + 1}</span>
@@ -61,9 +64,10 @@ export function StepList({ steps, doc, catalog, expandable = false }: { steps: S
             {s.attempts !== undefined && s.attempts > 1 && <span className="text-meta text-muted-foreground">{s.attempts} attempts</span>}
           </span>
         );
-        const notes = (would || s.error || s.actions) && (
+        const notes = (would || note || s.error || s.actions) && (
           <>
             {would && <p className="text-sm">Would {would}</p>}
+            {note && <p className="text-sm text-muted-foreground">{note}</p>}
             {s.error && <p className="text-sm break-words text-destructive">{s.error}</p>}
             {s.actions}
           </>

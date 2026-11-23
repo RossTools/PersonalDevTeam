@@ -10,7 +10,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use pdt_core::conversation::{AgentEvent, RequestKind, RequestState};
 use pdt_core::inbox::{
-    self, ChangeRequestLink, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxStatus,
+    self, ChangeRequestLink, InboxAnswer, InboxChoice, InboxGroup, InboxItem, InboxKind, InboxList, InboxSnooze,
+    InboxStatus, SnoozeRequest,
 };
 use pdt_core::pr::NoticeKind;
 use pdt_core::ticket::AttemptState;
@@ -38,8 +39,95 @@ pub(crate) async fn list(
     items.extend(proposals(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
+    let snoozed = snoozed(&st, &mut items).await?;
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
-    Ok(Json(InboxList { items, total }))
+    Ok(Json(InboxList { items, snoozed, total }))
+}
+
+/// Takes the snoozed items out of `items` (PDT-641), each with its snooze; the snoozes that have run out (their time
+/// came, their ticket closed or went) are deleted, so their items are back.
+async fn snoozed(st: &AppState, items: &mut Vec<InboxItem>) -> Result<Vec<InboxItem>, ApiError> {
+    let snoozes = st.store.inbox_snoozes().await?;
+    if snoozes.is_empty() {
+        return Ok(vec![]);
+    }
+    let now = now_ms();
+    let mut hiding: HashMap<String, InboxSnooze> = HashMap::new();
+    let mut over = vec![];
+    for mut s in snoozes {
+        let ticket = match &s.ticket_id {
+            Some(t) => st.store.get_ticket_summary(t).await?,
+            None => None,
+        };
+        s.ticket_key = ticket.as_ref().map(|t| t.key.clone());
+        let closed = ticket.is_none_or(|t| t.stage.is_closed());
+        if s.hides(now, closed) {
+            hiding.insert(s.item_id.clone(), s);
+        } else {
+            over.push(s.item_id);
+        }
+    }
+    st.store.unsnooze_inbox_items(&over).await?;
+    let (out, kept): (Vec<_>, Vec<_>) = std::mem::take(items).into_iter().partition(|i| hiding.contains_key(&i.id));
+    *items = kept;
+    Ok(out
+        .into_iter()
+        .map(|mut i| {
+            i.snooze = hiding.remove(&i.id);
+            i
+        })
+        .collect())
+}
+
+/// `POST /api/inbox/{id}/snooze {until?, ticket?}` (PDT-641): hides the item until a time (ms), or until a ticket (its
+/// id or key) is Done or Won't do, whichever comes first. Any item, stored or listed.
+pub(crate) async fn snooze(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    payload: Result<Json<SnoozeRequest>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let Json(r) = payload?;
+    let now = now_ms();
+    if let Some(item) = st.store.get_inbox_item(&id).await?
+        && item.status != InboxStatus::Open
+    {
+        return Err(ApiError::conflict(codes::CANNOT_ANSWER, "this item was already answered"));
+    }
+    if r.until.is_some_and(|u| u <= now) {
+        return Err(ApiError::invalid("until is not in the future"));
+    }
+    let ticket_id = match r.ticket.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(given) => {
+            let found = match st.store.get_ticket_summary(given).await? {
+                Some(t) => Some(t),
+                None => match st.store.ticket_id_by_key(given).await? {
+                    Some(id) => st.store.get_ticket_summary(&id).await?,
+                    None => None,
+                },
+            };
+            let t = found.ok_or_else(|| ApiError::invalid(format!("there is no ticket {given}")))?;
+            if t.stage.is_closed() {
+                return Err(ApiError::invalid(format!("{} is already closed", t.key)));
+            }
+            Some(t.id)
+        }
+    };
+    if r.until.is_none() && ticket_id.is_none() {
+        return Err(ApiError::invalid("say until when (until) or until which ticket is done (ticket)"));
+    }
+    st.store
+        .snooze_inbox_item(&InboxSnooze { item_id: id, until: r.until, ticket_id, ticket_key: None, created_at: now })
+        .await?;
+    crate::notifications::kick(&st);
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/inbox/{id}/snooze`: the item is back now.
+pub(crate) async fn unsnooze(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
+    st.store.unsnooze_inbox_items(&[id]).await?;
+    crate::notifications::kick(&st);
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// What [`decorate`] reads of an item's ticket.
@@ -541,4 +629,5 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/inbox", get(list))
         .route("/inbox/{id}/answer", post(answer))
         .route("/inbox/{id}/dismiss", post(dismiss))
+        .route("/inbox/{id}/snooze", post(snooze).delete(unsnooze))
 }

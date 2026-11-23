@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod agent_stuck;
 pub mod attempt;
+pub mod base_ci;
 pub mod brief;
 pub mod call;
 pub mod ci_cancelled;
@@ -31,6 +32,7 @@ pub mod parent;
 pub mod pickup;
 pub mod pickup_pause;
 pub mod pm;
+pub mod pr_update;
 pub mod release;
 pub mod repo_of;
 pub mod schedule;

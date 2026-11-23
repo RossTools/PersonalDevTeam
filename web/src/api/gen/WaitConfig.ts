@@ -18,4 +18,9 @@ event: EventWait | null, timeoutMs: number | null,
 /**
  * The ticket's pipeline stage while it waits (the Board's column).
  */
-pipelineStage?: PipelineStage, };
+pipelineStage?: PipelineStage, 
+/**
+ * What the run waits on, in a few words (`Waiting on {{steps.base.base}}`): shown on the run's row in Runs while
+ * it waits here.
+ */
+note?: string, };

@@ -1074,3 +1074,184 @@ async fn the_question_after_a_review_shows_the_reviewers_recommendation() {
     let approve = gate["choices"].as_array().unwrap().iter().find(|c| c["id"] == "approve_merge").cloned().unwrap();
     assert_eq!(approve["primary"], true, "{gate}");
 }
+
+// ---- PDT-641: failures from the base branch ----
+
+/// A CI run `id` of workflow `CI` on `branch` at `sha`, started at `minute`, with its failed `jobs` (each failed job's
+/// log says `log`).
+fn ci_run(env: &Env, branch: &str, sha: &str, id: &str, state: CiState, jobs: &[&str], minute: u32) -> CiRun {
+    env.gh.set_jobs(id, jobs);
+    CiRun {
+        provider: "github_actions".into(),
+        id: id.into(),
+        attempt: 1,
+        name: "CI".into(),
+        state,
+        url: format!("https://github.com/{RELEASE_REPO}/actions/runs/{id}"),
+        head_sha: sha.into(),
+        branch: branch.into(),
+        created_at: at(minute),
+        failed_jobs: jobs.iter().map(|j| j.to_string()).collect(),
+    }
+}
+
+const AUDIT: &str = "audit (cargo deny)";
+
+/// `main`'s CI fails the audit (RUSTSEC-2026-0592 in its log), at commit `m1`.
+fn main_fails_the_audit(env: &Env) -> CiRun {
+    let r = ci_run(env, "main", "m1", "20", CiState::Failed, &[AUDIT], 1);
+    env.gh.ci.logs.lock().unwrap().insert("20-0".into(), "error[vulnerability]: url\n  ID: RUSTSEC-2026-0592".into());
+    r
+}
+
+fn the_files(env: &Env, n: u32, line: &str) {
+    let patch = format!("@@ -1 +1 @@\n-old\n+{line}");
+    let file = ChangeFile {
+        path: "src/a.rs".into(),
+        status: "modified".into(),
+        additions: 1,
+        deletions: 1,
+        patch: Some(patch),
+        previous_path: None,
+    };
+    env.gh.files.lock().unwrap().insert(n, vec![file]);
+}
+
+/// The run's waiting note (`output.note`) as Runs shows it.
+async fn note(env: &Env, id: &str) -> String {
+    run(env, id).await["output"]["note"].as_str().unwrap_or_default().to_string()
+}
+
+/// An approved pull request failing only what main fails waits (nothing in the Inbox, the fix's ticket named); once
+/// main is fixed it is brought up to date, and the update's run merges it with the approval, its own diff unchanged. A
+/// later push that changes its diff is reviewed again.
+#[tokio::test]
+async fn a_pr_failing_only_what_main_fails_waits_then_merges_with_its_approval() {
+    let env = setup_with(Some(None)).await;
+    let (s, fix) = common::call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/projects/{}/tickets", env.project),
+        Some(json!({"title": "Bump url to 2.5.9 for RUSTSEC-2026-0592", "stage": "todo"})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{fix}");
+    let fix_key = fix["key"].as_str().unwrap().to_string();
+    let mut seen = HashSet::new();
+    the_files(&env, 41, "new");
+    let pr = outside(41, "al", "Fix the board", "patch-41", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_ci");
+
+    let failing = main_fails_the_audit(&env);
+    env.gh.set_runs("main", vec![failing.clone()]);
+    env.gh.set_runs("patch-41", vec![ci_run(&env, "patch-41", "sha-41", "10", CiState::Failed, &[AUDIT], 2)]);
+    time_passes(&env, &run_id).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_base");
+    assert!(gates(&env).await.is_empty(), "nothing in the Inbox while main is broken");
+    assert_eq!(note(&env, &run_id).await, format!("Waiting on main · {fix_key}"));
+    // Still broken: it waits on.
+    time_passes(&env, &run_id).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_base");
+    untouched(&env.gh);
+
+    // Main is fixed: the pull request's branch is brought up to date (not a Dependabot one: update-branch).
+    env.gh.set_runs("main", vec![failing, ci_run(&env, "main", "m2", "21", CiState::Passed, &[], 3)]);
+    time_passes(&env, &run_id).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_update");
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.contains(&format!("update-branch {RELEASE_REPO} 41 sha-41")), "{calls:?}");
+
+    // GitHub merges main in: a new head, the same own diff. The update's run keeps the approval and merges on green.
+    let updated = RepoChangeRequest { head_sha: "sha-41b".into(), updated_at: at(4), ..pr.clone() };
+    look(&env, vec![updated.clone()]).await;
+    assert_eq!(run(&env, &run_id).await["status"], "quiet", "handed to the push's run");
+    let next = newest_run(&env).await;
+    assert_ne!(next, run_id);
+    assert_eq!(waiting(&env, &next).await.0, "wait_ci");
+    assert_eq!(note(&env, &next).await, "Approval kept: only the base changed");
+    env.gh.set_runs("patch-41", vec![ci_run(&env, "patch-41", "sha-41b", "11", CiState::Passed, &[], 5)]);
+    time_passes(&env, &next).await;
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 41 squash")), "{calls:?}");
+    assert!(gates(&env).await.is_empty(), "never asked again");
+    assert_eq!(reviewer_sessions(&env).await, 1, "not reviewed again");
+    assert!(
+        env.gh.reviews_submitted.lock().unwrap().is_empty() && env.gh.change_comments_added.lock().unwrap().is_empty()
+    );
+
+    // A push that changes its own diff is reviewed and asked about again.
+    the_files(&env, 41, "newer");
+    env.gh.set_pr("patch-41", Some(change(&updated)));
+    look(&env, vec![RepoChangeRequest { head_sha: "sha-41c".into(), updated_at: at(6), ..pr }]).await;
+    let again = reviewer(&env, &mut seen).await;
+    assert!(first_prompt(&env, &again).await.contains("sha-41c"));
+}
+
+/// Dependabot's pull request is asked to rebase once main is fixed, and only once per fix: CI failing the same way on
+/// the same main commit later doesn't ask it again. A failure main doesn't have still asks the user.
+#[tokio::test]
+async fn dependabot_is_asked_to_rebase_once_per_fix_of_main() {
+    let env = setup_with(Some(None)).await;
+    let branch = "dependabot/cargo/serde";
+    let bump = outside(42, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", branch, 1);
+    look(&env, vec![bump]).await;
+    let id = newest_run(&env).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_ci");
+    let failing = main_fails_the_audit(&env);
+    env.gh.set_runs("main", vec![failing.clone()]);
+    env.gh.set_runs(branch, vec![ci_run(&env, branch, "sha-42", "10", CiState::Failed, &[AUDIT], 2)]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_base");
+    assert_eq!(note(&env, &id).await, "Waiting on main", "no ticket looks like the fix");
+    assert!(gates(&env).await.is_empty());
+
+    let fixed = ci_run(&env, "main", "m2", "21", CiState::Passed, &[], 3);
+    env.gh.set_runs("main", vec![failing.clone(), fixed.clone()]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_update");
+    let rebases = || -> Vec<String> {
+        env.gh.change_comments_added.lock().unwrap().iter().filter(|c| c.0 == 42).map(|c| c.2.clone()).collect()
+    };
+    assert_eq!(rebases(), ["@dependabot rebase"]);
+
+    // No push came. A new advisory fails main's audit again on the same commit, then that passes again.
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_ci");
+    let again = ci_run(&env, "main", "m2", "22", CiState::Failed, &[AUDIT], 4);
+    env.gh.set_runs("main", vec![failing.clone(), fixed.clone(), again.clone()]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_base");
+    let passes = ci_run(&env, "main", "m2", "23", CiState::Passed, &[], 5);
+    env.gh.set_runs("main", vec![failing, fixed, again, passes]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_update");
+    assert_eq!(rebases(), ["@dependabot rebase"], "once for main's fix at m2");
+
+    // Still failing after the wait, with main green: its own failure, so the user is asked.
+    time_passes(&env, &id).await;
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "blocked");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "Didn't merge: ask me", "{gate}");
+}
+
+/// A failure main passes is the pull request's own: "Didn't merge" asks at once, with the failed jobs.
+#[tokio::test]
+async fn a_failure_main_passes_still_asks() {
+    let env = setup_with(Some(None)).await;
+    let branch = "dependabot/cargo/serde";
+    let bump = outside(43, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", branch, 1);
+    look(&env, vec![bump]).await;
+    let id = newest_run(&env).await;
+    env.gh.set_runs("main", vec![main_fails_the_audit(&env)]);
+    env.gh.set_runs(branch, vec![ci_run(&env, branch, "sha-43", "10", CiState::Failed, &[AUDIT, "test (linux)"], 2)]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "blocked");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert!(gate["body"]["question"].as_str().unwrap().contains("CI: test (linux)"), "{gate}");
+    assert!(env.gh.change_comments_added.lock().unwrap().is_empty(), "not asked to rebase");
+}

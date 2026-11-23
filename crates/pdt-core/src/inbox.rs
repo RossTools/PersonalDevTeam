@@ -530,6 +530,56 @@ pub struct InboxItem {
     pub created_at: i64,
     #[ts(type = "number | null")]
     pub resolved_at: Option<i64>,
+    /// Snoozed until a time or a ticket is closed: left out of the Inbox until then. Filled in by the API, never
+    /// stored with the item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub snooze: Option<InboxSnooze>,
+}
+
+/// An item put out of sight until a time, or until a ticket is Done or Won't do, whichever comes first (`POST
+/// /api/inbox/{id}/snooze`). Any item can be: stored or listed, of every kind. It comes back by itself; one resolved
+/// meanwhile stays gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InboxSnooze {
+    pub item_id: String,
+    /// Back at this time (ms).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub until: Option<i64>,
+    /// Back once this ticket is closed (or gone).
+    #[serde(default)]
+    pub ticket_id: Option<String>,
+    /// Filled in by the API.
+    #[serde(default)]
+    pub ticket_key: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+}
+
+impl InboxSnooze {
+    /// Whether it still hides its item at `now`, its ticket closed (or gone) or not: until its time comes or its
+    /// ticket closes, whichever is first.
+    pub fn hides(&self, now: i64, ticket_closed: bool) -> bool {
+        let time_left = self.until.is_none_or(|u| now < u);
+        let ticket_open = self.ticket_id.is_none() || !ticket_closed;
+        (self.until.is_some() || self.ticket_id.is_some()) && time_left && ticket_open
+    }
+}
+
+/// `POST /api/inbox/{id}/snooze`: until a time (ms), or until a ticket (its id or key) is closed; at least one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SnoozeRequest {
+    #[serde(default)]
+    #[ts(type = "number | null", optional)]
+    pub until: Option<i64>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub ticket: Option<String>,
 }
 
 impl InboxItem {
@@ -565,6 +615,7 @@ impl InboxItem {
             resolution: Value::Null,
             created_at,
             resolved_at: None,
+            snooze: None,
         }
     }
     pub fn project(mut self, id: impl Into<Option<String>>) -> Self {
@@ -690,6 +741,9 @@ pub fn cut(text: &str, max: usize) -> String {
 #[ts(export)]
 pub struct InboxList {
     pub items: Vec<InboxItem>,
+    /// Snoozed items (each with its `snooze`), left out of `items` and `total` until they come back.
+    #[serde(default)]
+    pub snoozed: Vec<InboxItem>,
     /// Open items, sessions waiting included: the Needs-you count the rail badge and the page title show.
     pub total: u32,
 }
@@ -865,6 +919,28 @@ pub fn valid_questions(questions: Vec<Question>) -> Result<Vec<Question>, String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_snooze_hides_until_its_time_or_its_ticket_closes() {
+        let snooze = |until: Option<i64>, ticket: Option<&str>| InboxSnooze {
+            item_id: "i".into(),
+            until,
+            ticket_id: ticket.map(String::from),
+            ticket_key: None,
+            created_at: 0,
+        };
+        let timed = snooze(Some(100), None);
+        assert!(timed.hides(99, false));
+        assert!(!timed.hides(100, false), "back at its time");
+        assert!(timed.hides(99, true), "no ticket to wait for");
+        let ticket = snooze(None, Some("t"));
+        assert!(ticket.hides(i64::MAX, false));
+        assert!(!ticket.hides(0, true), "back once the ticket is closed");
+        let both = snooze(Some(100), Some("t"));
+        assert!(both.hides(50, false));
+        assert!(!both.hides(50, true) && !both.hides(100, false), "whichever comes first");
+        assert!(!snooze(None, None).hides(0, false), "a snooze with nothing to wait for hides nothing");
+    }
+
     use super::*;
     use serde_json::json;
 

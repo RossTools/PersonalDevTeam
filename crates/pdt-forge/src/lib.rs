@@ -459,6 +459,12 @@ pub trait Forge: Send + Sync {
     ) -> Result<String, ForgeError> {
         unsupported(self.name(), "reviews")
     }
+    /// Brings change request `number`'s branch up to date with its base (GitHub's update-branch: it merges the base
+    /// in), only while its head is `head` when given (PDT-641). Refused when the forge can't (a fork that doesn't allow
+    /// it, a conflict).
+    fn update_change_request_branch(&self, _repo: &str, _number: u32, _head: Option<&str>) -> Result<(), ForgeError> {
+        unsupported(self.name(), "change request branches to update")
+    }
     /// Closes change request `number` without merging it.
     fn close_change_request(&self, _repo: &str, _number: u32) -> Result<(), ForgeError> {
         unsupported(self.name(), "change requests to close")

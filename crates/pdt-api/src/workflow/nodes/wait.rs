@@ -88,6 +88,10 @@ pub struct WaitConfig {
     /// The ticket's pipeline stage while it waits (the Board's column).
     #[ts(optional)]
     pub pipeline_stage: Option<pdt_core::ticket::PipelineStage>,
+    /// What the run waits on, in a few words (`Waiting on {{steps.base.base}}`): shown on the run's row in Runs while
+    /// it waits here.
+    #[ts(optional)]
+    pub note: Option<String>,
 }
 
 pub struct Wait;
@@ -99,7 +103,8 @@ impl NodeKind for Wait {
             1,
             Category::Wait,
             "Wait",
-            "Waits for a while, until a time, or for an event (then `event`, or `timeout`).",
+            "Waits for a while, until a time, or for an event (then `event`, or `timeout`). Its `note` says on the \
+             run's row in Runs what it waits on.",
             &[("done", "Time is up"), ("event", "The event came"), ("timeout", "No event in time")],
             false,
         )
@@ -122,6 +127,10 @@ impl NodeKind for Wait {
                 return Ok(Outcome::would(port, "wait"));
             }
             crate::workflow::nodes::set_stage(cx, c.pipeline_stage).await;
+            let output = match c.note.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+                Some(n) => json!({"note": n}),
+                None => Value::Null,
+            };
             let now = now_ms();
             if let Some(e) = c.event {
                 let until = c.timeout_ms.map(|ms| now + i64::try_from(ms).unwrap_or(i64::MAX / 2));
@@ -129,7 +138,7 @@ impl NodeKind for Wait {
                     wait: json!({"event": e.wait()}),
                     until,
                     timeout_port: Some("timeout".into()),
-                    output: Value::Null,
+                    output,
                 });
             }
             let until = match (
@@ -144,7 +153,7 @@ impl NodeKind for Wait {
                 wait: json!({"timer": true}),
                 until: Some(until),
                 timeout_port: Some("done".into()),
-                output: Value::Null,
+                output,
             })
         })
     }

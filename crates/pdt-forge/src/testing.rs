@@ -61,6 +61,8 @@ pub struct FakeForge {
     pub reviews_submitted: Mutex<Vec<(String, u32, ReviewVerdict, String)>>,
     /// Change requests closed: repo and number.
     pub closed_changes: Mutex<Vec<(String, u32)>>,
+    /// [`Forge::update_change_request_branch`] fails with this.
+    pub update_branch_error: Mutex<Option<String>>,
     /// Files by (repo, branch, path) ([`Forge::file`]); [`Forge::write_file`] writes here too.
     pub repo_files: Mutex<HashMap<(String, String, String), String>>,
     /// Branches made by [`Forge::create_branch`] (a branch with files counts too): repo and branch.
@@ -103,6 +105,7 @@ impl Default for FakeForge {
             files: Default::default(),
             reviews_submitted: Default::default(),
             closed_changes: Default::default(),
+            update_branch_error: Default::default(),
             repo_files: Default::default(),
             branches: Default::default(),
             default_branches: Default::default(),
@@ -390,6 +393,14 @@ impl Forge for FakeForge {
         Ok(format!("https://github.com/{repo}/pull/{number}#pullrequestreview-{}", all.len()))
     }
     /// Closes it in [`FakeForge::prs`] too.
+    fn update_change_request_branch(&self, repo: &str, number: u32, head: Option<&str>) -> Result<(), ForgeError> {
+        self.call(format!("update-branch {repo} {number} {}", head.unwrap_or("-")));
+        self.failing()?;
+        if let Some(e) = self.update_branch_error.lock().unwrap().clone() {
+            return Err(ForgeError::Failed(e));
+        }
+        Ok(())
+    }
     fn close_change_request(&self, repo: &str, number: u32) -> Result<(), ForgeError> {
         self.call(format!("close-pr {repo} {number}"));
         self.failing()?;

@@ -5,6 +5,7 @@ pub mod acp_registry;
 pub mod activity;
 pub mod agent_context;
 pub mod agent_login;
+pub mod base_ci;
 pub mod board;
 pub mod branch_name;
 pub mod brand;

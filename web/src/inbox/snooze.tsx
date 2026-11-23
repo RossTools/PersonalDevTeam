@@ -1,0 +1,101 @@
+// Snooze (PDT-641): any item can be put out of sight until tomorrow morning, for a week, or until a ticket is done.
+// It comes back by itself; Snoozed lists the ones away, with Unsnooze.
+import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
+import { AlarmClock } from 'lucide-react';
+import { Button, List, ListHeading, ListRow, MenuButton, clockTime } from '@ui';
+import { api } from '../api/client';
+import type { InboxItem } from '../api/gen/InboxItem';
+import type { InboxSnooze } from '../api/gen/InboxSnooze';
+import type { SnoozeRequest } from '../api/gen/SnoozeRequest';
+import { TicketKey } from '../common/TicketKey';
+import { useInbox, useRefreshInbox } from './useInbox';
+
+const WEEK = 7 * 24 * 60 * 60 * 1000;
+/** Tomorrow's snooze ends at this local hour. */
+const MORNING = 9;
+
+/** 9:00 tomorrow, local time. */
+export function tomorrowMorning(now: number = Date.now()): number {
+  const d = new Date(now);
+  d.setDate(d.getDate() + 1);
+  d.setHours(MORNING, 0, 0, 0);
+  return d.getTime();
+}
+
+/** Until when it is away, in words: "until Tue 9:00 AM", "until PDT-639 is done", or both. */
+function snoozeText(s: InboxSnooze, now: number = Date.now()): string {
+  const parts = [
+    s.ticketId ? `${s.ticketKey ?? 'its ticket'} is done` : null,
+    s.until !== null ? clockTime(s.until, { weekday: true, now }) : null,
+  ].filter(Boolean);
+  return `until ${parts.join(' or ')}`;
+}
+
+/** The item's Snooze menu: Until tomorrow, For 1 week, Until a ticket is done… (its own ticket filled in). */
+export function SnoozeMenu({ item }: { item: InboxItem }) {
+  const refresh = useRefreshInbox();
+  const snooze = useMutation({
+    mutationFn: (s: SnoozeRequest) => api.snoozeInbox(item.id, s),
+    onSettled: () => void refresh(),
+  });
+  return (
+    <MenuButton
+      label="Snooze"
+      placement="bottom end"
+      entries={() => [
+        { label: 'Until tomorrow', detail: clockTime(tomorrowMorning(), { weekday: true }), onSelect: () => snooze.mutate({ until: tomorrowMorning() }) },
+        { label: 'For 1 week', onSelect: () => snooze.mutate({ until: Date.now() + WEEK }) },
+        {
+          input: 'Until a ticket is done…',
+          defaultValue: item.ticketKey ?? '',
+          onSubmit: (v) => { if (v.trim()) snooze.mutate({ ticket: v.trim() }); },
+        },
+      ]}
+    >
+      <Button variant="ghost" size="sm" pending={snooze.isPending}><AlarmClock aria-hidden />Snooze</Button>
+    </MenuButton>
+  );
+}
+
+/** Rows Snoozed shows before Show all. */
+const SHOWN = 3;
+
+/** The Inbox list's Snoozed section: what is away and until when, with Unsnooze. */
+export function Snoozed() {
+  const items = useInbox().data?.snoozed ?? [];
+  const refresh = useRefreshInbox();
+  const unsnooze = useMutation({ mutationFn: (id: string) => api.unsnoozeInbox(id), onSettled: () => void refresh() });
+  const [all, setAll] = useState(false);
+  if (items.length === 0) return null;
+  const shown = all ? items : items.slice(0, SHOWN);
+  return (
+    <section aria-label="Snoozed">
+      <ListHeading as="h3">Snoozed</ListHeading>
+      <List aria-label="Snoozed">
+        {shown.map((i) => (
+          <ListRow
+            key={i.id}
+            id={i.id}
+            title={i.title}
+            textValue={i.title}
+            className="py-1.5"
+            secondary={
+              <span className="flex min-w-0 items-center gap-1.5">
+                {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
+                <span className="truncate">{i.snooze ? snoozeText(i.snooze) : 'snoozed'}</span>
+              </span>
+            }
+            trailing={
+              <Button size="sm" variant="ghost" className="h-5 px-1.5 text-2xs" pending={unsnooze.isPending && unsnooze.variables === i.id}
+                onClick={() => unsnooze.mutate(i.id)}>Unsnooze</Button>
+            }
+          />
+        ))}
+      </List>
+      {!all && shown.length < items.length && (
+        <Button variant="ghost" size="sm" className="mx-2 mt-1" onClick={() => setAll(true)}>Show all {items.length}</Button>
+      )}
+    </section>
+  );
+}
