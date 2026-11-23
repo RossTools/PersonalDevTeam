@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { toast } from '@ui';
 import { api, ApiError } from '../api/client';
+import { primeUiToken } from '../api/core';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { beginAnswer, endAnswer } from '../common/answerGuard';
@@ -25,6 +26,8 @@ export function useAnswer(item: InboxItem | null, onDone: (item: InboxItem) => v
       const it = item;
       const source = answerSource(opts.phone);
       const label = answerLabel(it, a);
+      // An answer goes as the user's, with the UI token: have it already, should the page close and send it at once.
+      primeUiToken();
       holdAnswer({
         itemId: it.id, title: it.title, label,
         send: async () => {

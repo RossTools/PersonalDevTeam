@@ -42,7 +42,8 @@ press, saying what was recommended.
 
 Each answer waits five seconds before it goes out, with **Undo** on the notice that pops up. Undo puts the item back
 as it was, and nothing it would have done happens: no review is posted, no pull request closed, no ticket made. If
-you close PDT within those seconds, the answer isn't sent and the item still waits for you.
+you close or reload PDT within those seconds, the answer goes out at once. When PDT is updated, the page waits for
+your answers to go out before it reloads.
 
 ## Recently answered
 
