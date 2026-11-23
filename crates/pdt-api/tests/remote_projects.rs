@@ -211,7 +211,8 @@ async fn a_wrong_key_the_wrong_project_or_an_unpaired_caller_is_refused() {
     let stranger = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
     assert!(refused(signed_heartbeat(&remote, &stranger, &link, &p, &[]).await).contains("signature"));
     assert!(refused(signed_heartbeat(&remote, &key, &link, "another-project", &[]).await).contains("isn't for"));
-    assert!(refused(signed_heartbeat(&remote, &key, "no-such-link", &p, &[]).await).contains("isn't paired"));
+    let (s, v) = signed_heartbeat(&remote, &key, "no-such-link", &p, &[]).await;
+    assert_eq!((s, v["code"].as_str()), (StatusCode::FORBIDDEN, Some("link_revoked")), "{v}");
 
     // The same signed request twice: the second is a replay.
     let body = json!({});
@@ -332,8 +333,8 @@ async fn an_instance_has_a_project_local_or_remote_never_both() {
 async fn removing_at_either_end_revokes_the_link_at_both() {
     let (owner, remote, p, rp) = paired().await;
     let link = instances(&owner, &p).await["instances"][0]["linkId"].as_str().unwrap().to_string();
-    let (s, _) = call(&owner.app, "DELETE", &format!("/api/projects/{p}/remote-instances/{link}"), None).await;
-    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, v) = call(&owner.app, "DELETE", &format!("/api/projects/{p}/remote-instances/{link}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": true})));
     let (_, listed) = call(&remote.app, "GET", "/api/remote-projects", None).await;
     assert_eq!(listed, json!([]), "the remote instance was told");
     assert!(remote.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "its key is gone");
@@ -345,9 +346,104 @@ async fn removing_at_either_end_revokes_the_link_at_both() {
     let (s, v) = join(&remote, &owner, &c).await;
     assert_eq!(s, StatusCode::CREATED);
     let rp = v["project"]["id"].as_str().unwrap();
-    let (s, _) = call(&remote.app, "DELETE", &format!("/api/remote-projects/{rp}"), None).await;
-    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, v) = call(&remote.app, "DELETE", &format!("/api/remote-projects/{rp}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": true})));
     assert!(instances(&owner, &p).await["instances"].as_array().unwrap().is_empty(), "the owner was told");
+}
+
+/// The remote instance's link to the owner, made quiet: the owner last reached it long enough ago to count as offline.
+async fn gone_quiet(remote: &Instance, rp: &str) -> String {
+    let (_, l) =
+        remote.state.store.list_remote_projects().await.unwrap().into_iter().find(|(p, _)| p.id == rp).unwrap();
+    remote.state.store.owner_contact(&l.link_id, now_ms() - pdt_core::link::OFFLINE_AFTER_MS - 1, None).await.unwrap();
+    l.link_id
+}
+
+async fn remote_projects(remote: &Instance) -> Value {
+    let (s, v) = call(&remote.app, "GET", "/api/remote-projects", None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    v
+}
+
+#[tokio::test]
+async fn removing_an_instance_that_is_offline_says_so_and_it_finds_out_later() {
+    let (owner, remote, p, rp) = paired().await;
+    let link = instances(&owner, &p).await["instances"][0]["linkId"].as_str().unwrap().to_string();
+    owner.state.link.set_offline(true);
+    let (s, v) = call(&owner.app, "DELETE", &format!("/api/projects/{p}/remote-instances/{link}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": false})), "win-box couldn't be told");
+    assert!(instances(&owner, &p).await["instances"].as_array().unwrap().is_empty());
+    assert!(owner.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "the owner's key is gone");
+    owner.state.link.set_offline(false);
+
+    // win-box still lists the project; once the owner's heartbeats stop, it asks, and learns it was removed.
+    assert_eq!(remote_projects(&remote).await[0]["state"], "connected");
+    pdt_api::link::check_owners(&remote.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "connected", "a link heard from lately isn't asked about");
+    gone_quiet(&remote, &rp).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "offline");
+    pdt_api::link::check_owners(&remote.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "removed", "{}", remote_projects(&remote).await);
+
+    // Leaving it then has nothing left to tell the owner.
+    let (s, v) = call(&remote.app, "DELETE", &format!("/api/remote-projects/{rp}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": true})));
+    assert_eq!(remote_projects(&remote).await, json!([]));
+    assert!(remote.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "win-box's key is gone");
+}
+
+#[tokio::test]
+async fn an_owner_still_linked_but_unreachable_is_only_offline() {
+    let (_owner, remote, _p, rp) = paired().await;
+    gone_quiet(&remote, &rp).await;
+    remote.state.link.set_offline(true);
+    pdt_api::link::check_owners(&remote.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "offline");
+    remote.state.link.set_offline(false);
+    pdt_api::link::check_owners(&remote.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "offline", "studio still has the link");
+}
+
+#[tokio::test]
+async fn leaving_while_the_owner_is_offline_says_so_and_its_heartbeats_say_it_left() {
+    let (owner, remote, p, rp) = paired().await;
+    let link = instances(&owner, &p).await["instances"][0]["linkId"].as_str().unwrap().to_string();
+    remote.state.link.set_offline(true);
+    let (s, v) = call(&remote.app, "DELETE", &format!("/api/remote-projects/{rp}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": false})), "studio couldn't be told");
+    assert_eq!(remote_projects(&remote).await, json!([]));
+    assert!(remote.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "win-box's key is gone");
+
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let i = &instances(&owner, &p).await["instances"][0];
+    assert_eq!(i["lastError"], "win-box left the project; remove it here too", "{i}");
+    let (s, v) = call(&owner.app, "DELETE", &format!("/api/projects/{p}/remote-instances/{link}"), None).await;
+    assert_eq!((s, &v), (StatusCode::OK, &json!({"told": true})), "win-box no longer has it: nothing to tell");
+}
+
+#[tokio::test]
+async fn deleting_a_project_revokes_its_links() {
+    let (owner, remote, p, _) = paired().await;
+    let link = instances(&owner, &p).await["instances"][0]["linkId"].as_str().unwrap().to_string();
+    let (s, v) = call(&owner.app, "DELETE", &format!("/api/projects/{p}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert_eq!(remote_projects(&remote).await, json!([]), "win-box was told");
+    assert!(owner.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "the owner's key is gone");
+    assert!(remote.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "and win-box's");
+}
+
+#[tokio::test]
+async fn deleting_a_project_while_its_instance_is_offline_still_drops_the_key() {
+    let (owner, remote, p, rp) = paired().await;
+    let link = instances(&owner, &p).await["instances"][0]["linkId"].as_str().unwrap().to_string();
+    owner.state.link.set_offline(true);
+    let (s, v) = call(&owner.app, "DELETE", &format!("/api/projects/{p}"), None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert!(owner.state.secrets.get(&format!("project-link:{link}")).unwrap().is_none(), "the owner's key is gone");
+    owner.state.link.set_offline(false);
+    gone_quiet(&remote, &rp).await;
+    pdt_api::link::check_owners(&remote.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["state"], "removed");
 }
 
 #[tokio::test]

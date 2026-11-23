@@ -264,6 +264,10 @@ pub(crate) async fn remove(State(st): State<AppState>, Path(id): Path<String>) -
     for s in st.store.list_sessions(&id).await? {
         crate::sessions::discard(&st, &s.id).await;
     }
+    // Its remote instances are told (best effort: one that can't be reached finds out when it next asks), and this
+    // end's keys for their links go; their rows go with the project.
+    let instances = st.store.list_remote_instances(Some(&id)).await?;
+    futures_util::future::join_all(instances.iter().map(|i| crate::link::revoke(&st, i, &id))).await;
     st.store.delete_project(&id).await?;
     // Its tickets' attachments are PDT's own files, not the project's.
     crate::ticket_attachments::prune(&st).await;

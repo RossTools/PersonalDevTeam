@@ -6,6 +6,7 @@
 use crate::error::{ApiError, codes};
 use crate::extract::{ApiJson, ApiPath};
 use crate::link;
+use crate::remote_instances::LinkEnded;
 use crate::routes::{AppState, now_ms};
 use axum::Json;
 use axum::extract::State;
@@ -72,7 +73,10 @@ pub struct RemoteProjectPatch {
 }
 
 async fn view_of(st: &AppState, project: Project, link: OwnerLink, now: i64) -> RemoteProjectView {
-    let state = pdt_core::link::state(link.last_contact_at, true, link.paused, now);
+    let state = match link.removed_at {
+        Some(_) => LinkState::Removed,
+        None => pdt_core::link::state(link.last_contact_at, true, link.paused, now),
+    };
     let open_url = format!("{}/tickets?view=board", link.owner_url);
     let checkout_path = crate::exec::checkout_dir(st, &link).to_string_lossy().into_owned();
     let running = crate::exec::running_view(st, &link.link_id).await;
@@ -132,14 +136,14 @@ pub(crate) async fn refuse_if_remote(st: &AppState, repo: &std::path::Path) -> R
     Ok(())
 }
 
-/// Tells the owner this instance left the link (best effort: a link the owner can't be told about stays listed
-/// there until it is removed, and its heartbeats are refused).
-async fn tell_owner_left(st: &AppState, l: &OwnerLink, key: Option<&ed25519_dalek::SigningKey>) {
+/// Tells the owner this instance left the link; true when it was told (best effort: a link the owner can't be told
+/// about stays listed there until it is removed, and its heartbeats are refused).
+async fn tell_owner_left(st: &AppState, l: &OwnerLink, key: Option<&ed25519_dalek::SigningKey>) -> bool {
     let key = match key {
         Some(k) => k.clone(),
         None => match link::load_key_for_revoke(st, &l.link_id).await {
             Some(k) => k,
-            None => return,
+            None => return false,
         },
     };
     let told: Result<serde_json::Value, _> = link::post(
@@ -150,9 +154,7 @@ async fn tell_owner_left(st: &AppState, l: &OwnerLink, key: Option<&ed25519_dale
         &serde_json::json!({}),
     )
     .await;
-    if let Err(e) = told {
-        tracing::warn!(owner = %l.owner_name, error = %e.text(), "could not tell the owner this instance left");
-    }
+    link::got_through(&told, &l.owner_name, "could not tell the owner this instance left")
 }
 
 /// Joins a project of another instance: pairs with the owner on the code it shows, then adds the remote project.
@@ -192,6 +194,7 @@ async fn join(
         own_update_channel: false,
         cap: None,
         last_contact_at: Some(now_ms()),
+        removed_at: None,
         created_at: now_ms(),
     };
     // Whatever goes wrong from here, the owner is told this instance left, so its link isn't left half made.
@@ -290,15 +293,17 @@ async fn patch(
     Ok(Json(view_of(&st, p, l, now_ms()).await))
 }
 
-/// Leaves a remote project: the owner is told, and the project and this end's key go.
-async fn remove(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<StatusCode, ApiError> {
+/// Leaves a remote project: the owner is told, and the project and this end's key go. An owner that can't be reached
+/// is left all the same, and the reply says it wasn't told.
+async fn remove(State(st): State<AppState>, ApiPath(id): ApiPath<String>) -> Result<Json<LinkEnded>, ApiError> {
     let (p, l) = one(&st, &id).await?;
-    tell_owner_left(&st, &l, None).await;
+    // An owner that removed this instance already has nothing to be told.
+    let told = l.removed_at.is_some() || tell_owner_left(&st, &l, None).await;
     crate::exec::close_link(&st, &l.link_id).await;
     st.store.delete_project(&p.id).await?;
     link::delete_key(&st, &l.link_id).await;
-    tracing::info!(project = %p.name, owner = %l.owner_name, "left a remote project");
-    Ok(StatusCode::NO_CONTENT)
+    tracing::info!(project = %p.name, owner = %l.owner_name, told, "left a remote project");
+    Ok(Json(LinkEnded { told }))
 }
 
 /// This module's API routes; `routes::router` merges them under `/api`.

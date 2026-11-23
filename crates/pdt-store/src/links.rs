@@ -10,7 +10,7 @@ use sqlx::sqlite::SqliteRow;
 
 const OWNER_LINK_COLUMNS: &str = "project_id, link_id, owner_project_id, owner_instance_id, owner_name, owner_url, \
                                   owner_version, owner_public_key, repo_url, paused, last_contact_at, created_at, \
-                                  checkout_path, own_update_channel, cap";
+                                  checkout_path, own_update_channel, cap, removed_at";
 
 fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
     Ok(OwnerLink {
@@ -28,6 +28,7 @@ fn to_owner_link(r: &SqliteRow) -> Result<OwnerLink, StoreError> {
         own_update_channel: r.try_get::<i64, _>("own_update_channel")? != 0,
         cap: cap(r, "cap")?,
         last_contact_at: r.try_get("last_contact_at")?,
+        removed_at: r.try_get("removed_at")?,
         created_at: r.try_get("created_at")?,
     })
 }
@@ -113,7 +114,7 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         let sql = format!(
-            "INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO remote_projects ({OWNER_LINK_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&p.id)
@@ -131,6 +132,7 @@ impl Store {
             .bind(&link.checkout_path)
             .bind(link.own_update_channel)
             .bind(link.cap.map(i64::from))
+            .bind(link.removed_at)
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -195,6 +197,17 @@ impl Store {
         .bind(link_id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    /// The owner said it no longer has the link `link_id` (it removed this instance, or the project, while it couldn't
+    /// tell this one): kept from `at` until the remote project is left.
+    pub async fn set_owner_link_removed(&self, link_id: &str, at: i64) -> Result<(), StoreError> {
+        sqlx::query("UPDATE remote_projects SET removed_at = COALESCE(removed_at, ?) WHERE link_id = ?")
+            .bind(at)
+            .bind(link_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -430,6 +443,7 @@ pub(crate) mod tests {
             own_update_channel: false,
             cap: None,
             last_contact_at: None,
+            removed_at: None,
             created_at: 1,
         };
         (p, link)

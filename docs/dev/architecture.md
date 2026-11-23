@@ -58,8 +58,11 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   method, path, link, project, time, nonce and body) and still passes the identity guard. The owner sends heartbeats
   (`/link/heartbeat`, the `project links` loop every 30 s) and the remote instance answers with its name, version,
   protocol and facts (OS, CPUs, free disk, agents from the host checks, tools on the PATH). `/link/revoke` (owner →
-  remote) and `/link/leave` (remote → owner) end a link at the other end. `link::PROTOCOL` is the link's version:
-  ends that differ refuse each other with a message naming the one to update, except `/link/update`
+  remote) and `/link/leave` (remote → owner) end a link at the other end; deleting a project revokes each of its
+  links. An end that can't be reached is ended here anyway (the reply says `told: false`); a request on a link an end
+  no longer has is refused with `link_revoked`. A remote instance asks owners it hasn't heard from for 90 s whether they
+  still have its link (`/link/status`, the same loop), and marks one refused that way removed (`removed_at`).
+  `link::PROTOCOL` is the link's version: ends that differ refuse each other with a message naming the one to update, except `/link/update`
   (`link::from_owner_any_protocol`), so the owner can always fix a mismatch.
 
 **Instances.** Each instance has a name (host setting `instance_name`, Settings → This host → Name and Get started;
