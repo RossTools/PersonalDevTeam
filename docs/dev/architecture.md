@@ -380,7 +380,10 @@ most 10: the sensor looks once a minute) and keeps the content as last told (`wa
 one diff (pdt-core `document_diff`, about 4 KB, "N more changes") from that snapshot to the sensor's latest read
 (`sensor.document_text.<id>`), and the snapshot moves on. The title, editors, comments and diff go to a conversation in
 a fence; the user gets a `watch.event` notification targeting the document. It ends, saying why, when the document is
-removed from PDT or its provider answers "not found" (`sensor.document_missing.<id>`).
+removed from PDT or its provider answers "not found" (`sensor.document_missing.<id>`). The watch lists (and the engine's
+tick) never read `snapshot`: only telling a change loads it, and the diff runs on a blocking thread, as the sensor's
+does. A document too large to keep has no snapshot (its changes come without a diff). An ended watch drops its
+snapshot, and ended watches are deleted after the event log's 30 days (`maintain_workflows`).
 
 **Workflows.** Everything that happens is an event in the event log (`events`, keyed so a duplicate is dropped). A
 workflow is a versioned graph of nodes (pdt-core `workflow/`): a trigger, conditions, actions, waits, agent steps,
@@ -697,7 +700,8 @@ first look), and logs one event per linked project. For a change it also reads t
 `modifiedBy` from the provider's file (Google's `lastModifyingUser`); both are outside fields. Each trigger takes one copy of an event (pdt-core
 `document_watch::accepts_copy`), so a document linked to two projects starts a host workflow once. Comments an agent or
 a workflow wrote never count: the provider's `actor` on a comment says so where it knows, and the ids of replies PDT
-posted are kept (`sensor.document_ours.<id>`) for providers that write them as the user (Google). A comment's text is
+posted are kept (`sensor.document_ours.<id>`, forgotten with the seen comments once nothing watches its comments) for
+providers that write them as the user (Google). A comment's text is
 an outside field of its event, fenced for agents unless `byUser` (the user wrote it). The sheet steps write text that came from a
 reference with a leading `'` when it would read as a formula (pdt-core `document_watch::text_from_refs`); every
 provider takes that as text (IronCalc's quote prefix, Google's `USER_ENTERED`, `document_ops`), so only formulas
