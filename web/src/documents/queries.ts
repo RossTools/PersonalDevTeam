@@ -92,9 +92,19 @@ export function openDocument(id: string) {
   navigate(routePath({ view: 'documents', doc: id }));
 }
 
-/** A document's comments (refetched when its event stream says they changed, and with the rest of the UI). */
-export function useDocumentComments(id: string, enabled: boolean) {
-  return useQuery({ queryKey: documentKeys.comments(id), queryFn: () => api.documentComments(id), enabled, refetchInterval: POLL.live, retry: false });
+/**
+ * A document's comments (refetched when its event stream says they changed). A `live` provider's (PDT's own) poll with
+ * the rest of the UI; another's are read from the provider each time (Google Drive), so they poll as slowly as its
+ * version does (PDT-665).
+ */
+export function useDocumentComments(id: string, enabled: boolean, live: boolean) {
+  return useQuery({
+    queryKey: documentKeys.comments(id),
+    queryFn: () => api.documentComments(id),
+    enabled,
+    refetchInterval: live ? POLL.live : POLL.paged,
+    retry: false,
+  });
 }
 
 /** A local sheet's charts with their numbers (refetched after every change). */
