@@ -76,7 +76,7 @@ export function agentsSummary(checks: HostChecks | undefined, off: readonly Agen
 }
 
 export interface SetupPageProps {
-  /** Opens the Add project dialog (`clone`: on Clone URL). */
+  /** Opens the Add project dialog (`clone`: on Clone a URL). */
   onAddProject: (mode?: AddProjectMode) => void;
   onBoard: () => void;
   onPm: () => void;

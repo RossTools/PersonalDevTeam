@@ -188,10 +188,10 @@ describe('settings page', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     const nav = await screen.findByRole('navigation', { name: 'Settings sections' });
     expect(within(nav).getByRole('button', { name: /This host/ })).toBeInTheDocument();
-    expect(screen.queryByRole('radio', { name: 'Clone URL' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'Clone a URL' })).not.toBeInTheDocument();
     await userEvent.click(within(nav).getByRole('button', { name: 'Add project' }));
     const dialog = screen.getByRole('dialog', { name: 'Add project' });
-    expect(within(dialog).getByRole('radio', { name: 'Clone URL' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: 'Clone a URL' })).toBeInTheDocument();
   });
 
   it('has Plugins and All connections beside This host, and a plugin opens its page (PDT-228)', async () => {

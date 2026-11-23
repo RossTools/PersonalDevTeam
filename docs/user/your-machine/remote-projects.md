@@ -21,7 +21,7 @@ ticket, marked **on win-box**.
 
 1. **On the owner**, open the project's settings, then **Remote instances**, and click **Add**. PDT shows a pairing
    code and this instance's address. The code works once, for 10 minutes.
-2. **On the other instance**, click **Add project**, choose **Remote project**, and enter the owner's address and the
+2. **On the other instance**, click **Add project**, choose **Join a remote**, and enter the owner's address and the
    code. Click **Join project**.
 
 The project then shows on the other instance under **Settings › Remote projects**, as
