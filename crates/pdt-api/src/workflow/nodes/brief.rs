@@ -232,7 +232,7 @@ impl NodeKind for Archive {
         Box::pin(async move {
             let c: BriefArchiveConfig = parse(&input)?;
             valid_brief(&c.brief)?;
-            let now = jiff::Zoned::now();
+            let now = jiff::ZonedDateTime::now();
             let date = match c.date.as_deref().filter(|d| !d.is_empty()) {
                 Some(d) => {
                     valid_date(d)?;

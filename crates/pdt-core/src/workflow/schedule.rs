@@ -1,10 +1,10 @@
 //! Schedules: `every` intervals aligned to the Unix epoch and 5-field cron expressions in a zone,
 //! the latest slot at or before a time, and the scheduler's rule for when a slot fires (no backlog).
 
-use chrono::{DateTime, Local, TimeZone, Utc};
-use chrono_tz::Tz;
 use croner::Cron;
 use croner::parser::{CronParser, Seconds};
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, ZonedDateTime};
 use serde::{Deserialize, Serialize};
 
 /// The shortest interval a schedule may have.
@@ -16,7 +16,7 @@ pub const MISSED_AFTER_MS: i64 = 2 * 60_000;
 #[derive(Debug, Clone)]
 pub enum Schedule {
     Every(u64),
-    Cron { cron: Box<Cron>, zone: Option<Tz> },
+    Cron { cron: Box<Cron>, zone: Option<TimeZone> },
 }
 
 /// `"90s"`, `"15m"`, `"1h"`, `"1d"` in ms.
@@ -43,7 +43,7 @@ impl Schedule {
     /// Exactly one of `every` and `cron`; `timezone` (IANA) only with `cron`.
     pub fn parse(every: Option<&str>, cron: Option<&str>, timezone: Option<&str>) -> Result<Self, String> {
         let zone = match timezone.map(str::trim).filter(|z| !z.is_empty()) {
-            Some(z) => Some(z.parse::<Tz>().map_err(|_| format!("{z:?} is not a time zone"))?),
+            Some(z) => Some(TimeZone::get(z).map_err(|_| format!("{z:?} is not a time zone"))?),
             None => None,
         };
         match (every.map(str::trim).filter(|s| !s.is_empty()), cron.map(str::trim).filter(|s| !s.is_empty())) {
@@ -77,37 +77,30 @@ impl Schedule {
                 Some(now - now.rem_euclid(ms))
             }
             Schedule::Cron { cron, zone } => {
-                let at = Utc.timestamp_millis_opt(now).single()?;
-                match zone {
-                    Some(z) => previous(cron, &at.with_timezone(z)),
-                    None => previous(cron, &at.with_timezone(&Local)),
-                }
+                let at = Timestamp::from_millisecond(now).ok()?.to_zoned_datetime(in_zone(zone.as_ref()));
+                cron.find_previous_occurrence(&at, true).ok().map(|t| t.timestamp().as_millisecond())
             }
         }
     }
 
     /// A slot's date (`YYYY-MM-DD`) and RFC 3339 time in the schedule's zone (the host's for `every`).
     pub fn describe_slot(&self, slot: i64) -> (String, String) {
-        let at = Utc.timestamp_millis_opt(slot).single().unwrap_or_default();
-        match self {
-            Schedule::Cron { zone: Some(z), .. } => fmt(&at.with_timezone(z)),
-            _ => fmt(&at.with_timezone(&Local)),
-        }
+        let zone = match self {
+            Schedule::Cron { zone, .. } => in_zone(zone.as_ref()),
+            Schedule::Every(_) => TimeZone::system(),
+        };
+        let at = Timestamp::from_millisecond(slot).unwrap_or_default().to_zoned_datetime(zone);
+        fmt(&at)
     }
 }
 
-fn previous<T: TimeZone>(cron: &Cron, at: &DateTime<T>) -> Option<i64>
-where
-    DateTime<T>: croner::time::CronDateTime,
-{
-    cron.find_previous_occurrence(at, true).ok().map(|t| t.timestamp_millis())
+/// The schedule's zone, or the host's.
+fn in_zone(zone: Option<&TimeZone>) -> TimeZone {
+    zone.cloned().unwrap_or_else(TimeZone::system)
 }
 
-fn fmt<T: TimeZone>(t: &DateTime<T>) -> (String, String)
-where
-    T::Offset: std::fmt::Display,
-{
-    (t.format("%Y-%m-%d").to_string(), t.to_rfc3339())
+fn fmt(t: &ZonedDateTime) -> (String, String) {
+    (t.strftime("%Y-%m-%d").to_string(), t.timestamp().display_with_offset(t.offset()).to_string())
 }
 
 /// What the scheduler last did for a schedule node (kept in workflow state).
@@ -147,6 +140,16 @@ mod tests {
 
     const MIN: i64 = 60_000;
 
+    /// A UTC time in ms.
+    fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8) -> i64 {
+        jiff::civil::date(y, mo, d)
+            .at(h, mi, 0, 0)
+            .to_zoned_datetime(TimeZone::UTC)
+            .unwrap()
+            .timestamp()
+            .as_millisecond()
+    }
+
     #[test]
     fn intervals_parse_with_units_and_a_minimum() {
         assert_eq!(parse_every("15m"), Ok(15 * 60_000));
@@ -182,15 +185,15 @@ mod tests {
     #[test]
     fn cron_slots_follow_the_zone() {
         // 2026-01-05 is a Monday. 07:00 in London (GMT in January) is 07:00 UTC; in New York 12:00 UTC.
-        let monday_noon_utc = Utc.with_ymd_and_hms(2026, 1, 5, 12, 30, 0).unwrap().timestamp_millis();
+        let monday_noon_utc = utc(2026, 1, 5, 12, 30);
         let london = Schedule::parse(None, Some("0 7 * * 1-5"), Some("Europe/London")).unwrap();
-        let seven_utc = Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap().timestamp_millis();
+        let seven_utc = utc(2026, 1, 5, 7, 0);
         assert_eq!(london.latest_slot(monday_noon_utc), Some(seven_utc));
         let ny = Schedule::parse(None, Some("0 7 * * 1-5"), Some("America/New_York")).unwrap();
-        let twelve_utc = Utc.with_ymd_and_hms(2026, 1, 5, 12, 0, 0).unwrap().timestamp_millis();
+        let twelve_utc = utc(2026, 1, 5, 12, 0);
         assert_eq!(ny.latest_slot(monday_noon_utc), Some(twelve_utc));
         // Before Monday's slot in New York, the latest is Friday's.
-        let friday = Utc.with_ymd_and_hms(2026, 1, 2, 12, 0, 0).unwrap().timestamp_millis();
+        let friday = utc(2026, 1, 2, 12, 0);
         assert_eq!(ny.latest_slot(twelve_utc - 1), Some(friday));
         assert_eq!(ny.describe_slot(twelve_utc).0, "2026-01-05");
         assert!(ny.describe_slot(twelve_utc).1.starts_with("2026-01-05T07:00:00-05:00"));
@@ -200,8 +203,8 @@ mod tests {
     fn cron_across_a_dst_change() {
         // London springs forward on 2026-03-29: 07:00 is 06:00 UTC that day, 07:00 UTC the day before.
         let s = Schedule::parse(None, Some("0 7 * * *"), Some("Europe/London")).unwrap();
-        let after = Utc.with_ymd_and_hms(2026, 3, 29, 9, 0, 0).unwrap().timestamp_millis();
-        let slot = Utc.with_ymd_and_hms(2026, 3, 29, 6, 0, 0).unwrap().timestamp_millis();
+        let after = utc(2026, 3, 29, 9, 0);
+        let slot = utc(2026, 3, 29, 6, 0);
         assert_eq!(s.latest_slot(after), Some(slot));
     }
 
