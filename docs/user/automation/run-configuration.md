@@ -192,6 +192,8 @@ command = "cargo test"  # optional
   hasn't moved, else a merge commit). A conflict goes back to the agent. Approval and review rules apply as usual.
 - There is no merge queue, issues or forge reviews (PDT's own review still works), and agents are told to commit but
   not push.
+- **A ticket on a remote instance:** PDT brings its branch over from there and merges it here, and its CI runs in its
+  worktree on that instance. The remote instance gets the repository from this one, so it needs no remote either.
 
 To push each merge to a remote too (any git server, a bare repository on a share):
 

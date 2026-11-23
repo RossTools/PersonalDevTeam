@@ -32,8 +32,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const START_PATH: &str = "/api/link/exec/run/start";
-const STOP_PATH: &str = "/api/link/exec/run/stop";
+pub(super) const START_PATH: &str = "/api/link/exec/run/start";
+pub(super) const STOP_PATH: &str = "/api/link/exec/run/stop";
 const CONFIG_PATH: &str = "/api/link/exec/run/config";
 
 /// How long a start or a stop there may take (a stop waits for the run's processes to end).
@@ -392,7 +392,7 @@ pub(super) async fn apply(st: &AppState, i: &RemoteInstance, events: Vec<WireRun
     last
 }
 
-async fn append(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(super) async fn append(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use tokio::io::AsyncWriteExt;
     if let Some(dir) = path.parent() {
         tokio::fs::create_dir_all(dir).await?;

@@ -549,18 +549,21 @@ pub(crate) async fn events_route(
     Ok(Json(Batch { boot: side.boot.clone(), events, alive, runs, runs_alive }))
 }
 
-/// The remote project's checkout, cloned from the owner's `origin` on first use, else fetched (best effort).
+/// The remote project's checkout, cloned from the owner's `origin` on first use, else fetched (best effort). With no
+/// `origin` (the owner's repository has none) it is made from, and catches up with, the owner's `base` over the link
+/// (PDT-730).
 pub(super) async fn ensure_checkout(st: &AppState, link: &OwnerLink, base: &str) -> Result<PathBuf, ApiError> {
     let dir = checkout_dir(st, link);
-    let (d, url, base) = (dir.clone(), link.repo_url.clone(), base.to_string());
-    tokio::task::spawn_blocking(move || -> Result<(), ApiError> {
+    let (d, url, b) = (dir.clone(), link.repo_url.clone(), base.to_string());
+    let from_owner = tokio::task::spawn_blocking(move || -> Result<Option<bool>, ApiError> {
         if d.join(".git").exists() {
-            if pdt_git::remote_url(&d, "origin").is_some()
-                && let Err(e) = pdt_git::fetch(&d, "origin", &base, pdt_git::QUICK_FETCH_TIMEOUT)
-            {
+            if pdt_git::remote_url(&d, "origin").is_none() {
+                return Ok(Some(true));
+            }
+            if let Err(e) = pdt_git::fetch(&d, "origin", &b, pdt_git::QUICK_FETCH_TIMEOUT) {
                 tracing::info!(error = %e, "could not fetch the base branch; using the checkout's refs");
             }
-            return Ok(());
+            return Ok(None);
         }
         if d.read_dir().is_ok_and(|mut r| r.next().is_some()) {
             return Err(ApiError::conflict(
@@ -569,14 +572,21 @@ pub(super) async fn ensure_checkout(st: &AppState, link: &OwnerLink, base: &str)
             ));
         }
         let _ = std::fs::remove_dir(&d);
-        let url = url.ok_or_else(|| {
-            ApiError::conflict(codes::REMOTE_PROJECT, "the owner's repository has no origin to clone from")
-        })?;
+        let Some(url) = url else { return Ok(Some(false)) };
         pdt_git::clone(&url, &d)?;
-        Ok(())
+        Ok(None)
     })
     .await
     .map_err(ApiError::internal)??;
+    match from_owner {
+        Some(true) => {
+            if let Err(e) = super::git_sync::sync_base(st, link, &dir, base).await {
+                tracing::info!(error = %e.message(), "could not catch up with the owner's base branch; using the checkout's refs");
+            }
+        }
+        Some(false) => super::git_sync::sync_base(st, link, &dir, base).await?,
+        None => {}
+    }
     Ok(dir)
 }
 
@@ -705,6 +715,14 @@ pub(crate) async fn git_route(
             serde_json::to_value(check).map_err(ApiError::internal)?
         }
         GitOp::UpdateBase { base, remote_pr } => {
+            // With no `origin` to fetch it from, the base the branch catches up with is the owner's.
+            let r = repo.clone();
+            let own = tokio::task::spawn_blocking(move || pdt_git::remote_url(&r, "origin").is_none())
+                .await
+                .map_err(ApiError::internal)?;
+            if own && let Err(e) = super::git_sync::sync_base(&st, &link, &repo, &base).await {
+                tracing::info!(error = %e.message(), "could not catch up with the owner's base branch");
+            }
             let (port, output) = crate::workflow::nodes::conflicts::update_without_rules(
                 &repo,
                 &worktree,

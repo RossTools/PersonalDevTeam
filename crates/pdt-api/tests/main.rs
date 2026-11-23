@@ -69,6 +69,7 @@ mod release;
 mod remote;
 mod remote_attempts;
 mod remote_files;
+mod remote_local_forge;
 mod remote_projects;
 mod remote_runs;
 mod remote_secrets;

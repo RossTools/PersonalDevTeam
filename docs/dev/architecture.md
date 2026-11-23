@@ -169,7 +169,20 @@ never a session's event, and a read carries at most a few MB of it); the owner's
 `runs/logs/<run>.<step>.log`, which the run's terminals follow read-only). A web run's port, link and `tailscale serve`
 mapping are the remote's; the owner's row has its `url` and no `port`. A start marks the row active (`exec::claim`)
 under `run_start_lock` and calls the remote (`exec::launch`) after letting it go. Runs count toward the remote's
-maximum of runs, not the owner's. The local forge's CI for a remote attempt is not remote yet.
+maximum of runs, not the owner's.
+
+**The local forge for remote attempts** (pdt-api `exec/git_sync.rs`, `exec/ci.rs`; `local_forge.rs`). Git moves
+between the two over the link as bundles (pdt-git `bundle.rs`), each asking for one branch and naming the commits it
+has. A remote checkout with no `origin` is made from the owner's base (`/link/exec/git/base`, remote → owner: the
+checkout detached, the base a branch) and fast-forwarded from it wherever it would have fetched `origin`
+(`ensure_checkout`, and `UpdateBase` before it merges). Each read of a remote attempt's change request first brings its
+branch into the owner's checkout (`exec::pull_branch`: its head there, then `/link/exec/git/branch`, owner → remote,
+forced), so opening, merging and pushing work on the owner's refs as for any branch. Its CI runs there as a test
+(`/link/exec/run/start` under the run id `local-ci-<id>`, no run row on the owner): `exec::ci` appends its output to the
+local CI log and hands its end to the local forge's `RemoteCi` task; the poller keeps reading while one runs, and
+one the remote no longer drives ends cancelled, which runs again (as one cut short by the owner's restart). A refused
+push's catch-up merges the base into the branch there (`exec::update_base`). While the instance can't be asked, the
+branch stays as last brought and CI waits.
 
 **Remote terminals** (pdt-api `exec/terminals.rs` on the owner, `exec/remote_pty.rs` on the remote). A terminal
 session (an agent's TUI or a shell) in a remote worktree, or made with `NewSession.instanceId` ("Shell on win-box" in

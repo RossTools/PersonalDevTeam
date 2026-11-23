@@ -4,6 +4,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod bundle;
 mod changes;
 mod cloning;
 mod grep;
@@ -13,6 +14,7 @@ mod pull;
 mod remote;
 mod review;
 mod update;
+pub use bundle::*;
 pub use changes::*;
 pub use cloning::*;
 pub use grep::*;

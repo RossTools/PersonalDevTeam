@@ -15,6 +15,11 @@
 //! the branch (whose new head CI runs on again), and merge once that passes. What can't be recovered is a notice in
 //! the Inbox, and the change request waits for the next Merge. With `branches`, each ticket branch is pushed too as it
 //! moves. Git uses the user's own credentials; PDT stores none.
+//!
+//! A remote attempt (PDT-730) has its branch and worktree on a remote instance: each read brings the branch's head
+//! from there into the project's checkout first (`exec::pull_branch`), so the change request, its merge and the push
+//! go on here as for any branch, and CI runs in its worktree there (`exec::start_remote_ci`), its output in the same
+//! log. A refused push's catching up merges the base into the branch there.
 
 use crate::error::{ApiError, OrNotFound};
 use crate::extract::ApiPath;
@@ -25,6 +30,7 @@ use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
 use pdt_core::forge::ForgeNotes;
 use pdt_core::inbox::{InboxGroup, InboxKind};
+use pdt_core::link::RemoteInstance;
 use pdt_core::pr::{CiJob, CiRun, CiState, LOCAL_CI, Mergeable, PrState};
 use pdt_core::runconfig::PushDef;
 use pdt_core::ticket::Actor;
@@ -110,6 +116,14 @@ fn failed(e: impl std::fmt::Display) -> ForgeError {
     ForgeError::Failed(e.to_string())
 }
 
+/// Where a change request's CI runs.
+enum CiAt {
+    /// The attempt's worktree here.
+    Local(PathBuf),
+    /// The attempt's worktree on a remote instance.
+    Remote(Box<RemoteInstance>),
+}
+
 /// A change request moved on: as stored, and whether it conflicts with its base.
 struct Stepped {
     change: LocalChange,
@@ -152,10 +166,22 @@ impl LocalForge {
         let change = self.store.local_change_for_branch(&self.project_id, branch).await.map_err(failed)?;
         let attempts = self.store.list_active_attempts().await.map_err(failed)?;
         let attempt = attempts.into_iter().find(|a| a.project_id == self.project_id && a.attempt.branch == branch);
-        let (repo, b) = (self.repo.clone(), branch.to_string());
-        let head = tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &format!("refs/heads/{b}")))
-            .await
-            .map_err(failed)?;
+        // A remote attempt's branch is brought here first; Err: its instance can't be asked now (it has left, or
+        // can't be reached), so the branch is as last seen and CI waits.
+        let remote = match &attempt {
+            Some(a) if a.instance_id.is_some() => Some(self.pull(a).await),
+            _ => None,
+        };
+        let head = match &remote {
+            Some(Ok((_, head))) => head.clone(),
+            _ => {
+                let (repo, b) = (self.repo.clone(), branch.to_string());
+                tokio::task::spawn_blocking(move || pdt_git::rev_parse(&repo, &format!("refs/heads/{b}")))
+                    .await
+                    .map_err(failed)?
+            }
+        };
+        let remote: Option<Option<RemoteInstance>> = remote.map(|r| r.ok().map(|(i, _)| i));
         // An ended attempt's (or a deleted branch's) change request stays as it was.
         let (Some(attempt), Some(head)) = (attempt, head) else {
             return Ok(match change {
@@ -208,25 +234,29 @@ impl LocalForge {
             }
         };
         let mergeable = if preview.conflicts.is_empty() { Mergeable::Mergeable } else { Mergeable::Conflicting };
-        let ci = match (&self.command, attempt.worktree_path.as_deref().map(PathBuf::from).filter(|w| w.is_dir())) {
+        let at = match &remote {
+            Some(i) => i.clone().map(|i| CiAt::Remote(Box::new(i))),
+            None => attempt.worktree_path.as_deref().map(PathBuf::from).filter(|w| w.is_dir()).map(CiAt::Local),
+        };
+        let ci = match (&self.command, at) {
             // A command the user hasn't approved waits for them (PDT-405).
             (Some(command), Some(_)) if !self.approved(&change, command).await? => None,
-            (Some(command), Some(worktree)) => self.run_ci(&change, command, &worktree).await?,
-            // No worktree to run in: CI waits for one.
+            (Some(command), Some(at)) => self.run_ci(&change, command, at).await?,
+            // No worktree to run in (or its instance can't be reached): CI waits for one.
             (Some(_), None) => None,
             (None, _) => Some(CiState::Passed),
         };
-        if change.auto_merge
-            && mergeable == Mergeable::Mergeable
-            && ci == Some(CiState::Passed)
-            && let Some(push) = &self.push
-        {
+        // A remote attempt merges only as it is there now: not while its instance can't be asked.
+        let reached = !matches!(remote, Some(None));
+        let remote = remote.flatten();
+        let ready = change.auto_merge && reached && mergeable == Mergeable::Mergeable && ci == Some(CiState::Passed);
+        if ready && let Some(push) = &self.push {
             let message = format!("Merge {branch}: {}", change.title);
             // Merged or not, the stored change request has the news (merged, or no longer set to merge).
-            self.merge_and_push(&attempt, &change, push, &message).await?;
+            self.merge_and_push(&attempt, &change, push, &message, remote.as_ref()).await?;
             return self.reread(branch, mergeable).await;
         }
-        if change.auto_merge && mergeable == Mergeable::Mergeable && ci == Some(CiState::Passed) {
+        if ready {
             let message = format!("Merge {branch}: {}", change.title);
             let (repo, b, base) = (self.repo.clone(), branch.to_string(), change.base_branch.clone());
             let merged = tokio::task::spawn_blocking(move || pdt_git::merge_fast_forward(&repo, &b, &base, &message))
@@ -248,6 +278,23 @@ impl LocalForge {
             change.auto_merge = true;
         }
         Ok(Some(self.stepped(change, mergeable).await))
+    }
+
+    /// Brings a remote attempt's branch from its instance into the project's checkout: the instance, and the branch's
+    /// head (None when it has none there).
+    async fn pull(&self, a: &AttemptInfo) -> Result<(RemoteInstance, Option<String>), String> {
+        let id = a.instance_id.as_deref().unwrap_or_default();
+        let i =
+            crate::exec::remote_instance(&self.st, &self.project_id, id).await.map_err(|e| e.message().to_string())?;
+        let (branch, base) = (&a.attempt.branch, &a.attempt.base_branch);
+        match crate::exec::pull_branch(&self.st, &i, &self.repo, branch, base).await {
+            Ok(head) => Ok((i, head)),
+            Err(e) => {
+                tracing::debug!(ticket = %a.ticket_key, instance = %i.name, error = %e,
+                    "could not bring a remote attempt's branch here");
+                Err(e)
+            }
+        }
     }
 
     async fn reread(&self, branch: &str, mergeable: Mergeable) -> Result<Option<Stepped>, ForgeError> {
@@ -277,6 +324,7 @@ impl LocalForge {
         change: &LocalChange,
         push: &PushDef,
         message: &str,
+        there: Option<&RemoteInstance>,
     ) -> Result<(), ForgeError> {
         let (repo, b, base, m) =
             (self.repo.clone(), change.branch.clone(), change.base_branch.clone(), message.to_string());
@@ -300,7 +348,7 @@ impl LocalForge {
         match pushed {
             Ok(pdt_git::PushOutcome::Pushed) => {}
             Ok(pdt_git::PushOutcome::Rejected(why)) => {
-                self.recover(attempt, change, push, &why).await?;
+                self.recover(attempt, change, push, &why, there).await?;
                 return Ok(());
             }
             Err(e) => {
@@ -344,6 +392,7 @@ impl LocalForge {
         change: &LocalChange,
         push: &PushDef,
         why: &str,
+        there: Option<&RemoteInstance>,
     ) -> Result<(), ForgeError> {
         let (base, branch, remote) = (&change.base_branch, &change.branch, &push.remote);
         let tries = {
@@ -377,12 +426,19 @@ impl LocalForge {
                 return Ok(());
             }
         };
-        let message = format!("Merge {base} into {branch}");
-        let (repo, b, br) = (self.repo.clone(), base.clone(), branch.clone());
-        // `base` into `branch`: in the attempt's worktree, which has the branch checked out (it must be clean).
-        let merged = tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &b, &br, &message, false))
-            .await
-            .map_err(failed)?;
+        let merged = match there {
+            // There, where the branch is: the next read brings its new head here.
+            Some(i) => merge_base_there(&self.st, i, branch, base).await,
+            None => {
+                let message = format!("Merge {base} into {branch}");
+                let (repo, b, br) = (self.repo.clone(), base.clone(), branch.clone());
+                // `base` into `branch`: in the attempt's worktree, which has the branch checked out (it must be clean).
+                tokio::task::spawn_blocking(move || pdt_git::merge_local(&repo, &b, &br, &message, false))
+                    .await
+                    .map_err(failed)?
+                    .map_err(|e| e.to_string())
+            }
+        };
         let note = match merged {
             Ok(pdt_git::MergeOutcome::Merged { .. }) => format!(
                 "`{base}` on the remote `{remote}` had moved on (to {}), so {SHORT_NAME} merged it into the branch; CI \
@@ -466,12 +522,7 @@ impl LocalForge {
 
     /// CI on the change request's head: stops runs of older heads, starts one on the head unless it has one (a run
     /// this pdtd isn't running any more was cut short by a restart: it is cancelled and run again). Its state.
-    async fn run_ci(
-        &self,
-        change: &LocalChange,
-        command: &str,
-        worktree: &std::path::Path,
-    ) -> Result<Option<CiState>, ForgeError> {
+    async fn run_ci(&self, change: &LocalChange, command: &str, at: CiAt) -> Result<Option<CiState>, ForgeError> {
         let runs = self.store.local_ci_runs(change.id).await.map_err(failed)?;
         let head = &change.head_sha;
         for r in runs.iter().filter(|r| r.state == CiState::Running) {
@@ -481,29 +532,54 @@ impl LocalForge {
                 Some(_) => {}
                 None => {
                     self.store.finish_local_ci_run(r.id, CiState::Cancelled, None, now_ms()).await.map_err(failed)?;
+                    // One a remote instance may still be running.
+                    if let CiAt::Remote(i) = &at {
+                        let (st, i, id) = (self.st.clone(), i.clone(), r.id);
+                        self.rt.spawn(async move { crate::exec::stop_remote_ci(&st, &i, id).await });
+                    }
                 }
             }
         }
         let on_head = runs.iter().rfind(|r| &r.head_sha == head);
+        // A run on the head that was cut short (a restart here or there, a remote start that failed) runs again.
         match on_head {
-            Some(r) if r.state != CiState::Running || self.ci.live().contains_key(&r.id) => return Ok(Some(r.state)),
+            Some(r) if self.ci.live().contains_key(&r.id) => return Ok(Some(r.state)),
+            Some(r) if r.state != CiState::Running && r.state != CiState::Cancelled => return Ok(Some(r.state)),
             _ => {}
         }
         let run = self.store.add_local_ci_run(change.id, head, command, now_ms()).await.map_err(failed)?;
         let stop = Arc::new(tokio::sync::Notify::new());
         self.ci.live().insert(run.id, stop.clone());
-        let job = CiProcess {
-            store: self.store.clone(),
-            ci: self.ci.clone(),
-            id: run.id,
-            command: command.to_string(),
-            dir: worktree.to_path_buf(),
-            log: log_path(&self.logs, run.id),
-            path: self.path.clone(),
-            branch: change.branch.clone(),
-            project_id: self.project_id.clone(),
-        };
-        self.rt.spawn(job.run(stop));
+        let log = log_path(&self.logs, run.id);
+        match at {
+            CiAt::Local(worktree) => {
+                let job = CiProcess {
+                    store: self.store.clone(),
+                    ci: self.ci.clone(),
+                    id: run.id,
+                    command: command.to_string(),
+                    dir: worktree,
+                    log,
+                    path: self.path.clone(),
+                    branch: change.branch.clone(),
+                    project_id: self.project_id.clone(),
+                };
+                self.rt.spawn(job.run(stop));
+            }
+            CiAt::Remote(instance) => {
+                let job = RemoteCi {
+                    st: self.st.clone(),
+                    ci: self.ci.clone(),
+                    instance: *instance,
+                    id: run.id,
+                    command: command.to_string(),
+                    log,
+                    branch: change.branch.clone(),
+                    project_id: self.project_id.clone(),
+                };
+                self.rt.spawn(job.run(stop));
+            }
+        }
         Ok(Some(CiState::Running))
     }
 }
@@ -530,6 +606,118 @@ fn catch_up(repo: &std::path::Path, remote: &str, base: &str) -> Result<String, 
     }
     pdt_git::advance_branch(repo, base, &old, &tip).map_err(|e| e.to_string())?;
     Ok(tip)
+}
+
+/// Merges `base` into `branch` in the remote attempt's worktree on `i` (`attempt.update_base` there).
+async fn merge_base_there(
+    st: &AppState,
+    i: &RemoteInstance,
+    branch: &str,
+    base: &str,
+) -> Result<pdt_git::MergeOutcome, String> {
+    let (port, output) = crate::exec::update_base(st, i, branch, base, false).await?;
+    Ok(match port.as_str() {
+        "updated" => pdt_git::MergeOutcome::Merged { commit: String::new() },
+        "current" => pdt_git::MergeOutcome::Nothing,
+        "conflict" => {
+            let files = output["files"].as_array().into_iter().flatten().filter_map(|f| f.as_str()).map(String::from);
+            pdt_git::MergeOutcome::Conflict { files: files.collect() }
+        }
+        _ => return Err(output["reason"].as_str().unwrap_or("the update was skipped").to_string()),
+    })
+}
+
+/// Appends `text` to a CI run's log.
+async fn note(log: &std::path::Path, text: &str) {
+    use tokio::io::AsyncWriteExt;
+    let file = tokio::fs::OpenOptions::new().create(true).append(true).open(log).await;
+    if let Err(e) = match file {
+        Ok(mut f) => f.write_all(text.as_bytes()).await,
+        Err(e) => Err(e),
+    } {
+        tracing::warn!(log = %log.display(), error = %e, "could not write to a local CI log");
+    }
+}
+
+/// One CI run going on in a remote attempt's worktree on its instance (PDT-730).
+struct RemoteCi {
+    st: AppState,
+    ci: Arc<LocalCiState>,
+    instance: RemoteInstance,
+    id: i64,
+    command: String,
+    log: PathBuf,
+    branch: String,
+    project_id: String,
+}
+
+impl RemoteCi {
+    async fn run(self, stop: Arc<tokio::sync::Notify>) {
+        let (state, code, ran) = self.execute(&stop).await;
+        if let Err(e) = self.st.store.finish_local_ci_run(self.id, state, code, now_ms()).await {
+            tracing::warn!(run = self.id, error = %e, "could not record the end of a local CI run");
+        }
+        self.ci.live().remove(&self.id);
+        // One that never started there runs again at the next read, not at once.
+        if ran {
+            let _ = self.ci.ended.send((self.project_id.clone(), self.branch.clone()));
+        }
+    }
+
+    /// Runs the command there, its output in the log: how it ended, and whether it started.
+    async fn execute(&self, stop: &tokio::sync::Notify) -> (CiState, Option<i64>, bool) {
+        let name = &self.instance.name;
+        if let Some(dir) = self.log.parent()
+            && let Err(e) = tokio::fs::create_dir_all(dir).await
+        {
+            tracing::warn!(run = self.id, error = %e, "could not create a local CI log");
+        }
+        let _ = tokio::fs::remove_file(&self.log).await;
+        note(&self.log, &format!("$ {}\n({SHORT_NAME} runs it on {name})\n\n", self.command)).await;
+        let started = crate::exec::start_remote_ci(
+            &self.st,
+            &self.instance,
+            self.id,
+            &self.branch,
+            &self.command,
+            self.log.clone(),
+        )
+        .await;
+        let ended = match started {
+            Ok(rx) => rx,
+            Err(why) => {
+                note(&self.log, &format!("\n{SHORT_NAME}: could not start it on {name}: {why}\n")).await;
+                return (CiState::Cancelled, None, false);
+            }
+        };
+        tokio::select! {
+            e = ended => match e {
+                Ok(e) => {
+                    if e.state != CiState::Passed {
+                        let why = match (e.code, e.why) {
+                            (Some(c), _) => format!("the command exited with {c}"),
+                            (None, Some(why)) => why,
+                            (None, None) => "it stopped".into(),
+                        };
+                        note(&self.log, &format!("\n{SHORT_NAME}: {why}\n")).await;
+                    }
+                    (e.state, e.code, true)
+                }
+                // Stopped from here meanwhile.
+                Err(_) => (CiState::Cancelled, None, true),
+            },
+            _ = stop.notified() => {
+                crate::exec::stop_remote_ci(&self.st, &self.instance, self.id).await;
+                note(&self.log, &format!("\n{SHORT_NAME}: stopped, the branch has a newer commit\n")).await;
+                (CiState::Cancelled, None, true)
+            }
+            _ = tokio::time::sleep(CI_LIMIT) => {
+                crate::exec::stop_remote_ci(&self.st, &self.instance, self.id).await;
+                note(&self.log, &format!("\n{SHORT_NAME}: stopped after {} minutes\n", CI_LIMIT.as_secs() / 60)).await;
+                (CiState::Failed, None, true)
+            }
+        }
+    }
 }
 
 /// One CI run going on.

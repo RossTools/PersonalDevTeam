@@ -21,13 +21,18 @@
 //! - **Files, Changes and overlaps** (PDT-635, [`files`], [`review`]): one call per request, each run there by the
 //!   functions a local one uses, in a folder the remote instance picks; Changes come whole and are kept on the owner
 //!   until the diff changes.
+//! - **The local forge** (PDT-730, [`git_sync`], [`ci`]): a project with no `origin` reaches the remote checkout as
+//!   bundles of the owner's base; a remote attempt's branch comes back to the owner's checkout the same way, where the
+//!   local forge opens its change request and merges it, and its CI runs there as a test does.
 //! - **Secrets** (PDT-637, [`secrets`]): a remote session's `run_with_secrets` and `write_secret_file` run there, with
 //!   the owner's values forwarded for that one call and the remote instance's own secrets for the project winning.
 //!
 //! Owner → remote calls are signed with the owner's key for the link and checked by `link::from_owner`; the remote's
 //! with its key, checked by `link::from_remote`.
 
+mod ci;
 mod files;
+mod git_sync;
 mod owner;
 mod remote;
 mod remote_pty;
@@ -36,7 +41,9 @@ mod runs;
 mod secrets;
 mod terminals;
 
+pub(crate) use ci::{start as start_remote_ci, stop as stop_remote_ci};
 pub(crate) use files::{FilesOp, download, files};
+pub(crate) use git_sync::pull_branch;
 pub use owner::resume_pollers;
 pub(crate) use owner::{
     attempt_instance, branch_head, has_changes, instance as remote_instance, is_routed, joined_instance, make_worktree,
@@ -94,6 +101,8 @@ pub struct ExecRuntime {
     owner: owner::OwnerSide,
     remote: remote::RemoteSide,
     runs: runs::RunsSide,
+    /// Remote attempts' local CI runs, on the owner.
+    ci: ci::CiSide,
     /// Remote worktrees' Changes, kept on the owner.
     changes: review::ChangesCache,
 }
@@ -469,6 +478,8 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/pty/ws/{ticket}", axum::routing::get(remote_pty::ws_route))
         .route("/link/exec/activity", post(terminals::activity_route))
         .route("/link/exec/secrets", post(secrets::secrets_route))
+        .route("/link/exec/git/base", post(git_sync::base_route))
+        .route("/link/exec/git/branch", post(git_sync::branch_route))
 }
 
 #[cfg(test)]
