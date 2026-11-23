@@ -28,9 +28,13 @@ async fn remote_attempt(p: &Pair, title: &str) -> (String, String, PathBuf) {
     (t, wt["id"].as_str().unwrap().to_string(), dir)
 }
 
-/// The owner's link calls since `from`.
-fn calls(p: &Pair, from: u64) -> u64 {
-    p.owner.state.link.calls() - from
+/// Files calls go here, Changes and overlaps to the git path.
+const FILES: &str = "/api/link/exec/files";
+const GIT: &str = "/api/link/exec/git";
+
+/// The owner's calls to `path` since `from` (heartbeats and the like aren't counted).
+fn calls(p: &Pair, path: &str, from: u64) -> u64 {
+    p.owner.state.link.calls_to(path) - from
 }
 
 #[tokio::test]
@@ -42,7 +46,7 @@ async fn the_files_view_reads_and_writes_a_remote_worktree_over_the_link() {
     std::fs::write(dir.join("notes.txt"), "hello\n").unwrap();
     let files = format!("/api/projects/{}/files", p.project);
     p.owner.state.link.set_latency(LATENCY);
-    let before = p.owner.state.link.calls();
+    let before = p.owner.state.link.calls_to(FILES);
 
     let t = Instant::now();
     let (s, v) = call(&p.owner.app, "GET", &format!("{files}?worktreeId={wt}"), None).await;
@@ -55,7 +59,7 @@ async fn the_files_view_reads_and_writes_a_remote_worktree_over_the_link() {
     let (s, f) = call(&p.owner.app, "GET", &format!("{files}/content?worktreeId={wt}&path=notes.txt"), None).await;
     let read_ms = t.elapsed().as_millis();
     assert_eq!((s, f["text"].as_str()), (StatusCode::OK, Some("hello\n")), "{f}");
-    assert_eq!(calls(&p, before), 2, "one call each");
+    assert_eq!(calls(&p, FILES, before), 2, "one call each");
 
     // Saving checks the hash there: a stale one is refused as it would be locally.
     let save = json!({"worktreeId": wt, "path": "notes.txt", "text": "hi there\n", "baseHash": f["hash"]});
@@ -172,7 +176,7 @@ async fn changes_of_a_remote_attempt_come_whole_and_are_kept_until_they_change()
     std::fs::write(dir.join("f0.txt"), "file 0, edited\n").unwrap();
     p.owner.state.link.set_latency(LATENCY);
     let changes = format!("/api/worktrees/{wt}/changes");
-    let before = p.owner.state.link.calls();
+    let before = p.owner.state.link.calls_to(GIT);
 
     // Opening Changes and reading every file: one round trip.
     let t0 = Instant::now();
@@ -190,14 +194,14 @@ async fn changes_of_a_remote_attempt_come_whole_and_are_kept_until_they_change()
         assert_eq!((v["old"].clone(), v["new"].as_str()), (Value::Null, Some(want.as_str())), "{v}");
     }
     let open_ms = t0.elapsed().as_millis();
-    assert_eq!(calls(&p, before), 1, "the diff and all its files in one call");
+    assert_eq!(calls(&p, GIT, before), 1, "the diff and all its files in one call");
 
     // A poll of an unchanged diff: one small call, nothing read again.
     let t0 = Instant::now();
     let (_, again) = call(&p.owner.app, "GET", &changes, None).await;
     let poll_ms = t0.elapsed().as_millis();
     assert_eq!(again["files"], c["files"]);
-    assert_eq!(calls(&p, before), 2);
+    assert_eq!(calls(&p, GIT, before), 2);
 
     // An edit there: a new version, and its new side.
     std::fs::write(dir.join("f1.txt"), "file 1, edited\n").unwrap();
@@ -207,7 +211,7 @@ async fn changes_of_a_remote_attempt_come_whole_and_are_kept_until_they_change()
     assert_ne!(f1["version"], was["version"]);
     let (_, v) = call(&p.owner.app, "GET", &format!("{changes}/file?path=f1.txt"), None).await;
     assert_eq!(v["new"], "file 1, edited\n");
-    assert_eq!(calls(&p, before), 3);
+    assert_eq!(calls(&p, GIT, before), 3);
 
     // For comparison: one call per file, as the view would make without the bundle.
     p.owner.state.exec.forget_changes();
@@ -257,9 +261,9 @@ async fn a_local_and_a_remote_attempt_that_change_the_same_file_overlap() {
     assert_eq!(get_ticket(&p, &local).await["overlap"], "none");
     std::fs::write(here.join("shared.txt"), "here\n").unwrap();
     std::fs::write(there.join("shared.txt"), "there\n").unwrap();
-    let before = p.owner.state.link.calls();
+    let before = p.owner.state.link.calls_to(GIT);
     pdt_api::refresh_overlaps(&p.owner.state).await;
-    assert!(calls(&p, before) >= 1, "the remote instance listed its files");
+    assert!(calls(&p, GIT, before) >= 1, "the remote instance listed its files");
     let t = get_ticket(&p, &local).await;
     assert_eq!(t["overlap"], "overlap", "{t}");
     assert_eq!(

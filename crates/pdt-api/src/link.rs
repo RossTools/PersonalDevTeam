@@ -65,8 +65,8 @@ pub struct LinkRuntime {
     offline: std::sync::atomic::AtomicBool,
     /// Added before each call to the other end, in ms (tests: a tailnet's round trip).
     latency_ms: AtomicU64,
-    /// Calls made to the other end since this process started (tests count round trips).
-    calls: AtomicU64,
+    /// Calls made to other instances since this process started, by path (tests count round trips).
+    calls: Mutex<HashMap<String, u64>>,
     client: reqwest::Client,
 }
 
@@ -85,7 +85,7 @@ impl Default for LinkRuntime {
             protocol: AtomicU32::new(link::PROTOCOL),
             offline: Default::default(),
             latency_ms: AtomicU64::new(0),
-            calls: AtomicU64::new(0),
+            calls: Default::default(),
             client,
         }
     }
@@ -112,9 +112,9 @@ impl LinkRuntime {
         self.latency_ms.store(latency.as_millis() as u64, Ordering::SeqCst);
     }
 
-    /// How many calls this instance has made to others.
-    pub fn calls(&self) -> u64 {
-        self.calls.load(Ordering::SeqCst)
+    /// How many calls this instance has made to others on `path` (`/api/link/…`).
+    pub fn calls_to(&self, path: &str) -> u64 {
+        self.calls.lock().unwrap_or_else(|e| e.into_inner()).get(path).copied().unwrap_or(0)
     }
 
     /// A new code for `project_id`, replacing the one it had.
@@ -436,7 +436,7 @@ pub(crate) async fn send(
     if st.link.offline.load(Ordering::SeqCst) {
         return Err(PeerError::Unreachable("the link is down".into()));
     }
-    st.link.calls.fetch_add(1, Ordering::SeqCst);
+    *st.link.calls.lock().unwrap_or_else(|e| e.into_inner()).entry(path.to_string()).or_default() += 1;
     let latency = st.link.latency_ms.load(Ordering::SeqCst);
     if latency > 0 {
         tokio::time::sleep(Duration::from_millis(latency)).await;
