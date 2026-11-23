@@ -14,7 +14,7 @@ import type { UpdatePolicy } from "./UpdatePolicy";
  */
 export type HostSettingsPatch = { 
 /**
- * This instance's name ([`crate::instance::valid_name`]).
+ * This instance's name ([`crate::instance::valid_name`]); blank clears it, back to the host name's.
  */
 instanceName?: string, remoteAccess?: boolean, ownerLogin?: string, updatePolicy?: UpdatePolicy, updateChannel?: UpdateChannel, runPorts?: PortRange, maxConcurrentRuns?: number, agentCredentials?: CredentialPolicy, 
 /**

@@ -117,7 +117,7 @@ async fn a_new_install_opens_on_get_started_and_steps_tick_off_from_real_state()
     assert_eq!(v["steps"]["permissions"], "done", "{v}");
     assert_eq!((v["done"].as_u64(), v["opensOnLaunch"].as_bool()), (Some(5), Some(true)), "the name to pick");
 
-    // Naming the instance (Settings → This host → Name, or the step).
+    // Naming the instance (Settings → This host → Remote access, or the step).
     let (s, h) = call(&app, "PUT", "/api/host/settings", Some(json!({"instanceName": "studio"}))).await;
     assert_eq!(s, StatusCode::OK, "{h}");
     let v = setup(&app).await;

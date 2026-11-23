@@ -10,7 +10,7 @@ export type SetupState = {
  */
 needed: boolean, 
 /**
- * Dismissed by the user: it no longer opens on launch (Settings › This host › Setup reopens it).
+ * Dismissed by the user: it no longer opens on launch (Open above Settings › This host › Checks reopens it).
  */
 dismissed: boolean, 
 /**

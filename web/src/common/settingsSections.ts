@@ -23,8 +23,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'PM', terms: ['Daily checkpoint', 'Daily update', 'Journal', 'At a set time', 'Days'] },
   { label: 'Network', terms: ['Port', 'Allowed hosts', 'Restart', 'PDT_PORT', 'PDT_ALLOWED_HOSTS'] },
   { label: 'Startup', terms: ['Start PDT at login', 'Login item', 'Background service', 'Stop PDT'] },
-  { label: 'Name', terms: ['Instance name', 'This instance', 'Remote projects'] },
-  { label: 'Remote access', terms: ['Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
+  { label: 'Remote access', terms: ['Instance name', 'Name', 'This instance', 'Remote projects', 'Serve on the tailnet', 'Tailscale', 'Owner', 'Status'] },
   { label: 'Runs', terms: ['Ports', 'Max concurrent runs'] },
   {
     label: 'Storage',
@@ -34,8 +33,7 @@ export const HOST_SECTIONS: readonly SectionInfo[] = [
   { label: 'Documents', terms: ['Default provider', 'Local documents folder', 'Docs', 'Sheets'] },
   { label: 'Appearance', terms: ['Theme', 'Dark', 'Light', 'System'] },
   { label: 'Bug reports', terms: ['Send reports to', 'Report a bug'] },
-  { label: 'Checks', terms: ['git', 'tailscale', 'claude', 'codex', 'devin', 'Run checks again'] },
-  { label: 'Setup', terms: ['Get started', 'First run', 'Checklist', 'Onboarding'] },
+  { label: 'Checks', terms: ['git', 'tailscale', 'claude', 'codex', 'devin', 'Run checks again', 'Get started', 'Setup', 'First run', 'Checklist', 'Onboarding'] },
   { label: 'Danger zone', terms: ['Remove the GitHub token'] },
 ];
 
