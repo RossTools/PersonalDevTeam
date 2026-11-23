@@ -50,7 +50,9 @@ pub mod codes {
     pub const CI_FAILED: &str = "ci_failed";
     pub const CI_PENDING: &str = "ci_pending";
     pub const CI_UNREADABLE: &str = "ci_unreadable";
+    pub const CLONE_CANCELLED: &str = "clone_cancelled";
     pub const CLONE_FAILED: &str = "clone_failed";
+    pub const CLONE_FINISHED: &str = "clone_finished";
     pub const COMMENT_SENT: &str = "comment_sent";
     pub const CONFLICT: &str = "conflict";
     pub const CONNECTION_EXISTS: &str = "connection_exists";
@@ -539,6 +541,7 @@ impl From<GitError> for ApiError {
             GitError::BranchExists(_) => Self::conflict(codes::BRANCH_EXISTS, e.to_string()),
             GitError::UnknownRef(_) => Self::bad_request(codes::UNKNOWN_REF, e.to_string()),
             GitError::BadPattern(_) => Self::bad_request(codes::BAD_PATTERN, e.to_string()),
+            GitError::Cancelled => Self::conflict(codes::CLONE_CANCELLED, "the clone was cancelled"),
             GitError::NoIdentity => Self::conflict(codes::GIT_IDENTITY_MISSING, e.to_string()),
             GitError::UnsafeWorktreePath(_) => Self::bad_request(codes::WORKTREE_PATH_UNSAFE, e.to_string()),
         }

@@ -133,6 +133,8 @@ pub struct AppState {
     pub(crate) remote_applied: std::sync::Arc<std::sync::Mutex<crate::remote::Applied>>,
     /// How often `run_remote_watch` retries remote access that is not active, and checks it while it is.
     pub remote_watch: crate::remote::RemoteWatch,
+    /// The clones Add project by URL has under way.
+    pub(crate) clone_jobs: std::sync::Arc<crate::project_clones::CloneJobs>,
     /// The driver of each active run in this daemon run (stop requests, completion).
     pub(crate) run_controls: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
@@ -350,6 +352,7 @@ impl AppState {
             remote: Default::default(),
             remote_applied: Default::default(),
             remote_watch: Default::default(),
+            clone_jobs: Default::default(),
             run_controls: Default::default(),
             run_stops: Default::default(),
             run_start_lock: Default::default(),
@@ -572,6 +575,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::pickup_pause::router())
         .merge(crate::pm::router())
         .merge(crate::pm_checkpoint::router())
+        .merge(crate::project_clones::router())
         .merge(crate::project_settings::router())
         .merge(crate::projects::router())
         .merge(crate::pty_ws::router())
@@ -593,6 +597,7 @@ pub fn router(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::toolchains::router())
         .merge(crate::untrusted::router())
         .merge(crate::update::router())
+        .merge(crate::update_instances::router())
         .merge(crate::vault::router())
         .merge(crate::watches::router())
         .merge(crate::workflow::routes::router())

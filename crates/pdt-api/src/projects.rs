@@ -6,9 +6,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::project::{
-    CloneProject, NewProject, Project, ProjectPatch, PullBranch, PullOutcome, PullResult, valid_key,
-};
+use pdt_core::project::{NewProject, Project, ProjectPatch, PullBranch, PullOutcome, PullResult, valid_key};
 use pdt_git::FastForward;
 use std::path::PathBuf;
 
@@ -53,7 +51,7 @@ pub(crate) async fn get_one(State(st): State<AppState>, Path(id): Path<String>) 
 }
 
 /// Registers the repository at `path` (any folder inside it) as a project.
-async fn add(
+pub(crate) async fn add(
     st: &AppState,
     path: PathBuf,
     name: String,
@@ -184,7 +182,7 @@ pub(crate) fn projects_dir(st: &AppState, setting: Option<&str>) -> Option<PathB
 
 /// Makes sure the folder a clone goes in exists. A missing folder is created only when its own parent exists, so a
 /// mistyped path (`/User/me/work`) is reported instead of attempted.
-fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
+pub(crate) fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
     if dir.is_dir() {
         return Ok(());
     }
@@ -199,56 +197,6 @@ fn ensure_parent(dir: &std::path::Path) -> Result<(), ApiError> {
         ));
     }
     std::fs::create_dir(dir).map_err(|e| ApiError::io(&format!("creating {}", dir.display()), e))
-}
-
-pub(crate) async fn clone(
-    State(st): State<AppState>,
-    payload: Result<Json<CloneProject>, JsonRejection>,
-) -> Result<(StatusCode, Json<Project>), ApiError> {
-    let Json(input) = payload?;
-    let url = input.url.trim().to_string();
-    let bad = |m: &str| ApiError::invalid(m.to_string());
-    if url.is_empty() || url.starts_with('-') {
-        return Err(bad("enter the repository's URL"));
-    }
-    let repo = pdt_core::git_url::repo_name(&url).ok_or_else(|| bad("the URL does not name a repository"))?;
-    let key = input.key.as_deref().filter(|k| !k.trim().is_empty()).map(valid_key).transpose()?;
-    let name = input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(&repo).to_string();
-    let parent = match input.parent_dir.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-        Some(d) => pdt_core::project::resolve_folder(d, st.home_dir.get().as_deref())
-            .map_err(|e| ApiError::bad_request(codes::INVALID_FOLDER, e.to_string()))?,
-        None => {
-            let setting = st.store.get_host_settings().await?.projects_dir;
-            projects_dir(&st, setting.as_deref()).ok_or_else(|| bad("set a Projects folder in Host settings"))?
-        }
-    };
-    let check = parent.clone();
-    tokio::task::spawn_blocking(move || ensure_parent(&check)).await.map_err(ApiError::internal)??;
-    let dest = parent.join(&repo);
-    if dest.exists() {
-        return Err(ApiError::conflict(
-            codes::PATH_EXISTS,
-            format!("{} already exists; add it by path instead", dest.display()),
-        ));
-    }
-    let target = dest.clone();
-    tokio::task::spawn_blocking(move || pdt_git::clone(&url, &target)).await.map_err(ApiError::internal)?.map_err(
-        |e| match e {
-            pdt_git::GitError::Command(m) => {
-                tracing::warn!(error = %m, "git clone failed");
-                ApiError::upstream(codes::CLONE_FAILED, format!("git clone failed: {}", crate::error::short_text(&m)))
-            }
-            other => other.into(),
-        },
-    )?;
-    match add(&st, dest.clone(), name, None, key).await {
-        Ok(p) => Ok((StatusCode::CREATED, Json(p))),
-        Err(e) => {
-            // The clone is ours and unused: don't leave it behind.
-            let _ = std::fs::remove_dir_all(&dest);
-            Err(e)
-        }
-    }
 }
 
 pub(crate) async fn update(
@@ -375,7 +323,6 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::{get, post};
     axum::Router::new()
         .route("/projects", get(list).post(create))
-        .route("/projects/clone", post(clone))
         .route("/projects/{id}", get(get_one).patch(update).delete(remove))
         .route("/projects/{id}/pull", post(pull))
 }

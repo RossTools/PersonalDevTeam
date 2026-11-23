@@ -6,6 +6,7 @@ export const secretKeys = {
   /** The list, and under it where values are kept: a write refreshes both. */
   all: ['secrets'] as const,
   store: ['secrets', 'store'] as const,
+  remote: ['secrets', 'remote'] as const,
   uses: (id: string) => ['secret-uses', id] as const,
 };
 

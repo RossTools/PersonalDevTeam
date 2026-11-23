@@ -29,6 +29,7 @@ import { StartAtLogin } from './StartAtLogin';
 import { BugReportDialog } from './BugReportDialog';
 import { Storage } from './StorageSettings';
 import { InstallUpdates } from './InstallUpdates';
+import { InstanceUpdates } from './InstanceUpdates';
 import { StuckAgents } from './StuckAgents';
 import { PmCheckpointSettings } from '../pm/PmCheckpointSettings';
 import { documentKeys, useDocumentProviders } from '../documents/queries';
@@ -969,7 +970,7 @@ export function HostSettingsPage({ drill = false, section = null, onSection }: H
   const nodes: Record<string, ReactNode> = {
     'Name': <InstanceName v={v} />,
     'Setup': <Setup />,
-    'Updates': <><Updates v={v} /><InstallUpdates policy={v.settings.updatePolicy} /></>,
+    'Updates': <><Updates v={v} /><InstanceUpdates /><InstallUpdates policy={v.settings.updatePolicy} /></>,
     'Agents': <><Agents v={v} /><StuckAgents /><DefaultModels v={v} /><Programs v={v} /><AcpAgents v={v} /></>,
     'PM': <PmCheckpointSettings />,
     'Network': <Network v={v} />,

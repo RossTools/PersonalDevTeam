@@ -81,7 +81,14 @@ to the projects and agents that use it.
 ## Who used a secret
 
 Each secret shows when it was last used and by whom. **Uses** lists every use: which session or workflow, and how
-(which tool or step).
+(which tool or step), and the instance it was sent to for an agent on a remote instance.
+
+## Agents on another instance
+
+Agents working on your project on a remote instance use your secrets too: PDT sends a value for one command or file
+at a time, and the other instance never keeps it. A secret that instance keeps for the project itself is used instead
+of yours of the same name, and never leaves it; **On remote instances** lists those by name. See
+[Secrets on a remote instance](remote-projects.md#secrets-on-a-remote-instance).
 
 ## Where values are kept
 

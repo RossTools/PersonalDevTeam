@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubApi } from '../test-utils';
 import { hasUnsavedInput, servedBuild, useReloadOnNewBuild } from './useReloadOnNewBuild';
 import { NewBuildBanner } from './NewBuildBanner';
+import { holdAnswer, holdTiming } from '../inbox/held';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -86,6 +87,26 @@ describe('useReloadOnNewBuild', () => {
     expect(reload).not.toHaveBeenCalled();
     input.value = '';
     await act(() => qc.refetchQueries({ queryKey: ['health'] }));
+    await waitFor(() => expect(reload).toHaveBeenCalled());
+  });
+
+  it('waits while an Inbox answer is held for Undo, and reloads once it has gone', async () => {
+    let build = 'aaa';
+    stubApi({ 'GET /api/health': () => health(build) });
+    const reload = vi.fn();
+    const qc = mount(reload);
+    await poll(qc, 'aaa');
+    holdTiming.undoMs = 60_000;
+    let sent = () => {};
+    act(() => holdAnswer({ itemId: 'a', title: 'Review #1', label: 'Request changes', send: () => new Promise<void>((r) => { sent = r; }) }));
+    build = 'bbb';
+    await poll(qc, 'bbb');
+    expect(reload).not.toHaveBeenCalled();
+    // Going out (its window over), but not gone yet: still waits.
+    act(() => window.dispatchEvent(new Event('pagehide')));
+    await poll(qc, 'bbb');
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => sent());
     await waitFor(() => expect(reload).toHaveBeenCalled());
   });
 });

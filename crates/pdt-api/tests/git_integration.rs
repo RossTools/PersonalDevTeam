@@ -227,6 +227,10 @@ async fn clone_by_url_adds_the_project() {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "a missing folder whose parent exists is created: {v}");
+    let (s, v) = call(&env.app, "GET", "/api/projects/clones", None).await;
+    assert_eq!((s, v), (StatusCode::OK, json!([])), "a finished clone is off the list");
+    let (s, _) = call(&env.app, "DELETE", "/api/projects/clones/nope", None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, v) = call(&env.app, "POST", "/api/projects/clone", Some(json!({"url": "--upload-pack=x"}))).await;
     assert_eq!((s, v["code"].as_str()), (StatusCode::BAD_REQUEST, Some("invalid_input")));
 }
