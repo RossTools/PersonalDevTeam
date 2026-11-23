@@ -6,13 +6,17 @@ use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
 
 const COLUMNS: &str = "id, project_id, worktree_id, branch, name, kind, state, port, url, data_dir, cwd, exit_code, \
-                       error, detached, process, created_at, updated_at";
+                       error, detached, process, created_at, updated_at, instance_id, \
+                       (SELECT ri.name FROM remote_instances ri WHERE ri.project_id = runs.project_id \
+                       AND ri.instance_id = runs.instance_id) AS instance_name";
 const ACTIVE: &str = "('setting_up', 'starting', 'ready', 'running')";
 
 fn to_run(r: &SqliteRow) -> Result<Run, StoreError> {
     let kind: String = r.try_get("kind")?;
     let state: String = r.try_get("state")?;
     let port: Option<i64> = r.try_get("port")?;
+    let instance_id: Option<String> = r.try_get("instance_id")?;
+    let instance_name: Option<String> = r.try_get("instance_name")?;
     Ok(Run {
         id: r.try_get("id")?,
         project_id: r.try_get("project_id")?,
@@ -29,6 +33,8 @@ fn to_run(r: &SqliteRow) -> Result<Run, StoreError> {
         error: r.try_get("error")?,
         detached: r.try_get("detached")?,
         process: r.try_get("process")?,
+        instance: instance_id
+            .map(|id| pdt_core::placement::InstanceRef { name: instance_name.unwrap_or_else(|| id.clone()), id }),
         created_at: r.try_get("created_at")?,
         updated_at: r.try_get("updated_at")?,
     })
@@ -38,8 +44,8 @@ impl Store {
     pub async fn insert_run(&self, r: &Run) -> Result<(), StoreError> {
         sqlx::query(
             "INSERT INTO runs (id, project_id, worktree_id, branch, name, kind, state, port, url, data_dir, cwd, \
-             exit_code, error, detached, process, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             exit_code, error, detached, process, created_at, updated_at, instance_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&r.id)
         .bind(&r.project_id)
@@ -58,6 +64,7 @@ impl Store {
         .bind(&r.process)
         .bind(r.created_at)
         .bind(r.updated_at)
+        .bind(r.instance.as_ref().map(|i| i.id.clone()))
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -183,6 +190,7 @@ mod tests {
             error: None,
             detached: false,
             process: None,
+            instance: None,
             created_at: at,
             updated_at: at,
         }

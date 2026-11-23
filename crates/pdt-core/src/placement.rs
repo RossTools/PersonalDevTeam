@@ -71,13 +71,17 @@ impl RepoRule {
 }
 
 /// `windows`, `macos` (or `mac`, `darwin`) and `linux` name the same OS as Rust's `std::env::consts::OS`.
-fn same_os(wanted: &str, reported: &str) -> bool {
-    let norm = |s: &str| match s.trim().to_lowercase().as_str() {
+pub fn same_os(wanted: &str, reported: &str) -> bool {
+    normalize_os(wanted) == normalize_os(reported)
+}
+
+/// An OS's name as Rust's `std::env::consts::OS` gives it (`mac` and `darwin` are `macos`, `win` is `windows`).
+pub fn normalize_os(s: &str) -> String {
+    match s.trim().to_lowercase().as_str() {
         "mac" | "darwin" | "osx" => "macos".to_string(),
         "win" | "win32" => "windows".to_string(),
         o => o.to_string(),
-    };
-    norm(wanted) == norm(reported)
+    }
 }
 
 /// A joined instance as placement sees it.

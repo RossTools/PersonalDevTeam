@@ -44,7 +44,25 @@ struct Running {
 struct Outbox {
     next: i64,
     /// By link: the events, oldest first.
-    items: VecDeque<(String, WireEvent)>,
+    items: VecDeque<(String, Item)>,
+}
+
+/// One numbered report for an owner: a session's output, or a run's (`super::runs`).
+// Most are sessions' events: boxing them would only add an allocation each.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone)]
+enum Item {
+    Session(WireEvent),
+    Run(super::runs::WireRunEvent),
+}
+
+impl Item {
+    fn seq(&self) -> i64 {
+        match self {
+            Item::Session(e) => e.seq,
+            Item::Run(e) => e.seq,
+        }
+    }
 }
 
 pub(super) struct RemoteSide {
@@ -75,14 +93,22 @@ impl RemoteSide {
     }
 
     fn push(&self, link_id: &str, session_id: &str, proc: &str, out: WireOut) {
+        let (session_id, proc) = (session_id.to_string(), proc.to_string());
+        self.push_item(link_id, |seq| Item::Session(WireEvent { seq, session_id, proc, out }));
+    }
+
+    /// Numbers a run's report for the owner on `link_id`.
+    pub(super) fn push_run(&self, link_id: &str, run_id: &str, proc: &str, out: super::runs::RunOut) {
+        let (run_id, proc) = (run_id.to_string(), proc.to_string());
+        self.push_item(link_id, |seq| Item::Run(super::runs::WireRunEvent { seq, run_id, proc, out }));
+    }
+
+    fn push_item(&self, link_id: &str, item: impl FnOnce(i64) -> Item) {
         {
             let mut o = self.outbox.lock().unwrap_or_else(|e| e.into_inner());
             o.next += 1;
             let seq = o.next;
-            o.items.push_back((
-                link_id.to_string(),
-                WireEvent { seq, session_id: session_id.into(), proc: proc.into(), out },
-            ));
+            o.items.push_back((link_id.to_string(), item(seq)));
             if o.items.len() > OUTBOX_CAP {
                 o.items.pop_front();
                 tracing::warn!(link = link_id, "an owner hasn't read its sessions' events: the oldest are dropped");
@@ -93,7 +119,7 @@ impl RemoteSide {
 }
 
 /// A remote project's request from its owner, checked, with its body.
-async fn checked<T: serde::de::DeserializeOwned>(
+pub(super) async fn checked<T: serde::de::DeserializeOwned>(
     st: &AppState,
     method: &Method,
     uri: &OriginalUri,
@@ -383,6 +409,7 @@ pub(crate) async fn close_link(st: &AppState, link_id: &str) {
     let lives: Vec<Arc<dyn LiveConversation>> =
         st.exec.remote.running().values().filter(|r| r.link_id == link_id).map(|r| r.live.clone()).collect();
     futures_util::future::join_all(lives.iter().map(|l| l.close())).await;
+    super::runs::stop_link(st, link_id).await;
 }
 
 /// `/link/exec/events`: the owner's long poll.
@@ -400,34 +427,42 @@ pub(crate) async fn events_route(
     let after = if same_boot { req.after } else { 0 };
     if same_boot {
         let mut o = side.outbox.lock().unwrap_or_else(|e| e.into_inner());
-        o.items.retain(|(l, e)| !(l == &link.link_id && e.seq <= after));
+        o.items.retain(|(l, e)| !(l == &link.link_id && e.seq() <= after));
     }
     let deadline = tokio::time::Instant::now() + Duration::from_millis(req.wait_ms.min(MAX_WAIT_MS));
-    let events = loop {
+    let items = loop {
         let added = side.added.notified();
         tokio::pin!(added);
         added.as_mut().enable();
-        let events: Vec<WireEvent> = {
+        let items: Vec<Item> = {
             let o = side.outbox.lock().unwrap_or_else(|e| e.into_inner());
             o.items
                 .iter()
-                .filter(|(l, e)| l == &link.link_id && e.seq > after)
+                .filter(|(l, e)| l == &link.link_id && e.seq() > after)
                 .take(BATCH)
                 .map(|(_, e)| e.clone())
                 .collect()
         };
-        if !events.is_empty() || tokio::time::Instant::now() >= deadline {
-            break events;
+        if !items.is_empty() || tokio::time::Instant::now() >= deadline {
+            break items;
         }
         let _ = tokio::time::timeout_at(deadline, added).await;
     };
+    let (mut events, mut runs) = (vec![], vec![]);
+    for item in items {
+        match item {
+            Item::Session(e) => events.push(e),
+            Item::Run(e) => runs.push(e),
+        }
+    }
     let alive = side
         .running()
         .iter()
         .filter(|(_, r)| r.link_id == link.link_id && r.live.is_alive())
         .map(|(id, _)| id.clone())
         .collect();
-    Ok(Json(Batch { boot: side.boot.clone(), events, alive }))
+    let runs_alive = super::runs::alive(&st, &link.link_id);
+    Ok(Json(Batch { boot: side.boot.clone(), events, alive, runs, runs_alive }))
 }
 
 /// The remote project's checkout, cloned from the owner's `origin` on first use, else fetched (best effort).

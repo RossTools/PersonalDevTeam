@@ -117,6 +117,9 @@ pub struct Run {
     /// How to find a detached command's processes again (`pdt_agents::detached`): set while they may be alive.
     #[serde(skip)]
     pub process: Option<String>,
+    /// The remote instance it runs on (its attempt's worktree is there); None: this one.
+    #[serde(default)]
+    pub instance: Option<crate::placement::InstanceRef>,
     #[ts(type = "number")]
     pub created_at: i64,
     #[ts(type = "number")]

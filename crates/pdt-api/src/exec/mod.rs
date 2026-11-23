@@ -9,12 +9,16 @@
 //!   token, to the owner (`/link/exec/mcp`), retrying while the link is down: the owner answers it as its own.
 //! - **Git.** The remote instance keeps the project's checkout (cloned on first use) and its worktrees; the owner asks
 //!   it to make and remove worktrees and to look at or update a branch.
+//! - **Runs and tests** ([`runs`]). The owner keeps each run's row and decides (its configuration, approval, the
+//!   system it runs on); the remote instance drives the process with `run_manager` and reports its state and output
+//!   with the sessions' events. A web run's link is the remote instance's own (its `tailscale serve`, owner-checked).
 //!
 //! Owner → remote calls are signed with the owner's key for the link and checked by `link::from_owner`; the remote's
 //! with its key, checked by `link::from_remote`.
 
 mod owner;
 mod remote;
+mod runs;
 
 pub use owner::resume_pollers;
 pub(crate) use owner::{
@@ -23,6 +27,12 @@ pub(crate) use owner::{
 };
 pub use remote::RunningView;
 pub(crate) use remote::{checkout_dir, close_link, is_relayed, relay_mcp, running_view};
+pub(crate) use runs::RemoteConfig;
+pub(crate) use runs::{
+    config_file as remote_run_config, config_of as remote_run_config_of, mirror_logs as remote_run_logs,
+    relaunch as relaunch_remote_run, resume as resume_remote_run, run_ports as remote_run_ports,
+    stop as stop_remote_run,
+};
 
 use pdt_agents::adapter::{AdapterOutput, AgentInfo};
 use pdt_core::conversation::{
@@ -51,6 +61,7 @@ pub(crate) const MCP_PATH: &str = "/api/link/exec/mcp";
 pub struct ExecRuntime {
     owner: owner::OwnerSide,
     remote: remote::RemoteSide,
+    runs: runs::RunsSide,
 }
 
 impl ExecRuntime {
@@ -168,6 +179,12 @@ pub(crate) struct Batch {
     pub events: Vec<WireEvent>,
     /// The sessions whose process runs there now.
     pub alive: Vec<String>,
+    /// Runs' reports, numbered with the sessions' events.
+    #[serde(default)]
+    pub runs: Vec<runs::WireRunEvent>,
+    /// The runs driven there now.
+    #[serde(default)]
+    pub runs_alive: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +358,9 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
         .route("/link/exec/remove-worktree", post(remote::remove_worktree_route))
         .route("/link/exec/git", post(remote::git_route))
         .route("/link/exec/mcp", post(owner::mcp_route))
+        .route("/link/exec/run/start", post(runs::start_route))
+        .route("/link/exec/run/stop", post(runs::stop_route))
+        .route("/link/exec/run/config", post(runs::config_route))
 }
 
 #[cfg(test)]

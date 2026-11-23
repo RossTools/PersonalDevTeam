@@ -883,7 +883,8 @@ pub async fn busy_reasons(st: &AppState) -> Vec<String> {
     match st.store.list_active_runs().await {
         Ok(runs) => out.extend(
             runs.into_iter()
-                .filter(|r| r.state == RunState::SettingUp)
+                // A remote run's setup is on its instance, which this update doesn't stop.
+                .filter(|r| r.state == RunState::SettingUp && r.instance.is_none())
                 .map(|r| format!("run {} · {} is setting up", r.name, r.branch)),
         ),
         Err(e) => out.push(format!("runs could not be read ({e})")),

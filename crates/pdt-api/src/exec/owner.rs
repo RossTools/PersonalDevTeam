@@ -78,7 +78,7 @@ pub(crate) fn is_routed(st: &AppState, session: &str) -> bool {
 }
 
 /// The joined instance `instance_id` of `project_id`, or why there is none.
-async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
+pub(super) async fn instance(st: &AppState, project_id: &str, instance_id: &str) -> Result<RemoteInstance, ApiError> {
     st.store
         .list_remote_instances(Some(project_id))
         .await?
@@ -96,7 +96,7 @@ pub(crate) async fn worktree_instance(st: &AppState, wt: &Worktree) -> Result<Op
 }
 
 /// A signed call to the remote instance `i`.
-async fn call<T: serde::de::DeserializeOwned>(
+pub(super) async fn call<T: serde::de::DeserializeOwned>(
     st: &AppState,
     i: &RemoteInstance,
     path: &str,
@@ -258,7 +258,7 @@ fn st_remove(st: &AppState, session: &str) -> Option<Route> {
 }
 
 /// Makes sure a poller reads `link_id`'s events.
-fn ensure_poller(st: &AppState, link_id: &str) {
+pub(super) fn ensure_poller(st: &AppState, link_id: &str) {
     if !st.exec.owner.pollers.lock().unwrap_or_else(|e| e.into_inner()).insert(link_id.to_string()) {
         return;
     }
@@ -287,9 +287,9 @@ pub async fn resume_pollers(st: &AppState) {
     }
 }
 
-/// How many sessions run on the instance, as the owner's store says.
+/// How many sessions and active runs are on the instance, as the owner's store says.
 async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
-    match st.store.list_sessions(&i.project_id).await {
+    let sessions = match st.store.list_sessions(&i.project_id).await {
         Ok(list) => list
             .iter()
             .filter(|s| {
@@ -297,7 +297,8 @@ async fn running_on(st: &AppState, i: &RemoteInstance) -> usize {
             })
             .count(),
         Err(_) => 1,
-    }
+    };
+    sessions + super::runs::active_on(st, i).await.len()
 }
 
 /// Reads a joined instance's events into their conversations until nothing on it is followed any more.
@@ -327,14 +328,17 @@ async fn poll_loop(st: &AppState, link_id: &str) {
 }
 
 async fn apply(st: &AppState, i: &RemoteInstance, batch: Batch, boot: Option<&str>, after: i64, sent_at: i64) {
-    let mut last = if boot == Some(batch.boot.as_str()) { after } else { 0 };
+    let start = if boot == Some(batch.boot.as_str()) { after } else { 0 };
+    let mut last = start;
     for e in batch.events {
-        if e.seq <= last {
+        if e.seq <= start {
             continue;
         }
-        last = e.seq;
+        last = last.max(e.seq);
         route(st, i, e).await;
     }
+    last = last.max(super::runs::apply(st, i, batch.runs, start).await);
+    super::runs::reconcile(st, i, &batch.runs_alive, sent_at).await;
     if let Err(e) = st.store.set_events_cursor(&i.link_id, &batch.boot, last).await {
         tracing::warn!(instance = %i.name, error = %e, "could not record how far a remote instance's events were read");
     }

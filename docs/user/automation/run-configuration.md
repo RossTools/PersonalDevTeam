@@ -73,6 +73,8 @@ env     = { DATABASE_URL = "sqlite://$PDT_RUN_DATA/app.db" }
   run empties it.
 - **`env`**: environment variables for the run.
 - **`detach = true`**: keeps it running when PDT restarts or updates (below).
+- **`os`**: the systems it runs on, `"windows"`, `"macos"` or `"linux"`, or a list (`os = ["macos", "linux"]`). It is
+  offered, and starts, only where the checkout it would run in is on one of them. Leave it out to run everywhere.
 
 A project can have as many runs as it needs: a web app and its API, say, each with its own port.
 
@@ -118,8 +120,16 @@ name    = "unit"
 command = "pnpm test"
 ```
 
-A test passes when its command exits with 0. Tests take `setup` and `env` like runs, but not `web` or `detach`. Start
-one from **+** in the tab bar, or **Run…** on a ticket's Inbox item.
+A test passes when its command exits with 0. Tests take `setup`, `env` and `os` like runs, but not `web` or `detach`.
+Start one from **+** in the tab bar, or **Run…** on a ticket's Inbox item.
+
+### On another instance
+
+A ticket placed on a remote instance (see Remote projects in the docs) has its runs and tests there, in its
+worktree on that instance: the **+** menu offers those for that instance's system, read from the worktree's file there.
+They show on this instance like any other, marked **on win-box**, with their output read-only. A web run's link is
+the remote instance's own, through its remote access, so **Open** reaches it from here; only you can open it. Its data
+folder stays on that instance, and a run there never detaches: it stops if that instance restarts.
 
 ## Areas
 

@@ -437,6 +437,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   it runs are `exec_sessions` rows (link, folder, token), never `sessions` rows; every `/link/exec/*` command is
   checked with `link::from_owner`, and every report or relayed call with `link::from_remote`. A relayed pdt-mcp call
   is the owner's to answer: the remote instance passes on the token only for a session it runs for that link.
+- **A remote run's process isn't the owner's.** Its row on the owner has `instance_id`, no `port` (the port is the
+  remote's: the owner's unique active-port index must never see it) and, in `process`, the id of its current start:
+  reports carrying another start's id are dropped, and a run the remote no longer lists ends as stopped. Everything
+  that treats a run as local (`resume_runs`, `sweep_gone_runs`, the run limit, ports, reset data) skips one with an
+  instance; `run_manager::relaunch` and `stop` hand it to `exec`. The remote instance keeps no `runs` row for it.
 - **A remote session's process isn't the owner's.** `RemoteLive` is its live process: closing it asks the remote
   instance, and the owner's shutdown leaves it running there (`exec::is_routed`). Events reach a conversation only
   through its route (session and process); an exit removes the route, and events of another process are dropped.

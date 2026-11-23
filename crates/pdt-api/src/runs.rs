@@ -32,16 +32,51 @@ async fn load(st: &AppState, id: &str) -> Result<Run, ApiError> {
     st.store.get_run(id).await?.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, "run not found"))
 }
 
-/// The definition named by `run` in the configuration of its own checkout. Err is a message for the run's error.
+/// The definition named by `run` in the configuration of its own checkout (on its instance, for a remote run), when it
+/// runs on that checkout's system. Err is a message for the run's error.
 pub(crate) async fn definition_for(st: &AppState, run: &Run) -> Result<RunDef, String> {
-    let cfg = crate::runconfig::load_effective(st, &run.project_id, std::path::Path::new(&run.cwd))
-        .await
-        .map_err(|e| format!("the run configuration is invalid: {}", e.message()))?;
+    let invalid = |e: ApiError| format!("the run configuration is invalid: {}", e.message());
+    let (cfg, os, place) = match &run.instance {
+        Some(on) => {
+            let remote = crate::exec::remote_run_config_of(st, run).await.map_err(|e| e.message().to_string())?;
+            let cfg = crate::runconfig::effective_for_file(st, &run.project_id, remote.file.as_deref())
+                .await
+                .map_err(invalid)?;
+            (cfg, remote.os, on.name.clone())
+        }
+        None => {
+            let cfg = crate::runconfig::load_effective(st, &run.project_id, std::path::Path::new(&run.cwd))
+                .await
+                .map_err(invalid)?;
+            (cfg, std::env::consts::OS.to_string(), this_instance(st).await)
+        }
+    };
     if !cfg.ignored.is_empty() {
         tracing::info!(run = %run.name, cwd = %run.cwd, sections = ?cfg.ignored, "skipped run configuration sections this version does not know");
     }
     let list = if run.kind == RunKind::Test { cfg.tests } else { cfg.runs };
-    list.into_iter().find(|d| d.name == run.name).ok_or_else(|| format!("the configuration has no \"{}\"", run.name))
+    let def = list
+        .into_iter()
+        .find(|d| d.name == run.name)
+        .ok_or_else(|| format!("the configuration has no \"{}\"", run.name))?;
+    check_os(&def, &os, &place).map_err(|e| e.message().to_string())?;
+    Ok(def)
+}
+
+/// This instance's name, for messages.
+async fn this_instance(st: &AppState) -> String {
+    crate::link::instance_name(st).await.unwrap_or_else(|_| "this machine".into())
+}
+
+/// Refuses a run or test whose `os` leaves out the system of the checkout it would run in (`place`'s).
+fn check_os(def: &RunDef, os: &str, place: &str) -> Result<(), ApiError> {
+    if def.runs_on(os) {
+        return Ok(());
+    }
+    Err(ApiError::conflict(
+        codes::INVALID_RUN_CONFIG,
+        format!("\"{}\" runs only on {}, and {place} is {os}", def.name, def.os.join(" or ")),
+    ))
 }
 
 /// `GET /api/projects/{id}/runs?ended=` (`ended` as for sessions, [`crate::sessions::RecentQuery`]).
@@ -200,7 +235,14 @@ fn still_stopping() -> ApiError {
 /// Callers hold `run_start_lock`.
 async fn check_run_limit(st: &AppState, stop_run_id: Option<&str>) -> Result<(), ApiError> {
     let settings = st.store.get_host_settings().await?;
-    let active: Vec<Run> = st.store.list_active_runs().await?.into_iter().filter(|r| r.kind == RunKind::Run).collect();
+    // Runs on a remote instance run on another machine.
+    let active: Vec<Run> = st
+        .store
+        .list_active_runs()
+        .await?
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Run && r.instance.is_none())
+        .collect();
     if (active.len() as u32) < settings.max_concurrent_runs {
         return Ok(());
     }
@@ -258,11 +300,15 @@ pub(crate) async fn create(
     // Everything that can refuse the start comes before anything is created.
     crate::workspaces::check_placement(&st, input.tab.as_ref()).await?;
     let place = place(&st, &project, &input).await?;
+    if let Place::Worktree(id) = &place
+        && let Some(wt) = st.store.get_worktree(id).await?.filter(|w| w.project_id == project.id)
+        && let Some(i) = crate::exec::worktree_instance(&st, &wt).await?
+    {
+        return create_remote(&st, &project, wt, i, input, &headers).await;
+    }
     let cfg = config_for(&st, &project, &place).await?;
-    let list = if input.kind == RunKind::Test { &cfg.tests } else { &cfg.runs };
-    let def = list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
-        ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, format!("the configuration has no \"{}\"", input.name))
-    })?;
+    let def = find_def(&cfg, &input)?;
+    check_os(&def, std::env::consts::OS, &this_instance(&st).await)?;
     // A command the user hasn't approved (a branch's or an agent-edited worktree's config, a new clone) waits for them;
     // an agent's start refused for one tells them in the Inbox (PDT-611).
     let test = input.kind == RunKind::Test;
@@ -327,6 +373,7 @@ pub(crate) async fn create(
         error: None,
         detached: def.detach,
         process: None,
+        instance: None,
         created_at: now,
         updated_at: now,
     };
@@ -335,6 +382,88 @@ pub(crate) async fn create(
     crate::workspaces::open_for_new(&st, &run.project_id, item, tab.as_ref()).await;
     run_manager::start(&st, run.clone(), def);
     Ok((StatusCode::CREATED, Json(run)))
+}
+
+/// The run or test `input` names in `cfg`.
+fn find_def(cfg: &RunConfig, input: &NewRun) -> Result<RunDef, ApiError> {
+    let list = if input.kind == RunKind::Test { &cfg.tests } else { &cfg.runs };
+    list.iter().find(|d| d.name == input.name).cloned().ok_or_else(|| {
+        ApiError::new(StatusCode::NOT_FOUND, codes::UNKNOWN_RUN, format!("the configuration has no \"{}\"", input.name))
+    })
+}
+
+/// Starts a run or test in a worktree on a remote instance (PDT-634): its configuration is the worktree's file there
+/// with this project's overrides, approved here; the instance drives it, and its link is the instance's own.
+async fn create_remote(
+    st: &AppState,
+    project: &Project,
+    wt: Worktree,
+    i: pdt_core::link::RemoteInstance,
+    input: NewRun,
+    headers: &HeaderMap,
+) -> Result<(StatusCode, Json<Run>), ApiError> {
+    let remote = crate::exec::remote_run_config(st, &i, Some(&wt.branch)).await?;
+    let cfg = crate::runconfig::effective_for_file(st, &project.id, remote.file.as_deref()).await?;
+    let def = find_def(&cfg, &input)?;
+    check_os(&def, &remote.os, &i.name)?;
+    let test = input.kind == RunKind::Test;
+    let what = match crate::untrusted::from_ui(st, headers)? {
+        true => None,
+        false => Some(crate::command_trust::run_what(&def.name, test, &wt.branch)),
+    };
+    let commands = vec![pdt_core::command_trust::of_run(&def, test)];
+    crate::command_trust::check_telling(st, &project.id, &project.repo_path, commands, what.as_deref()).await?;
+    let (run, again) = {
+        let _start = st.run_start_lock.lock().await;
+        let tab = match input.tab {
+            Some(t) => Some(t),
+            None => attempt_placement(st, &project.id, Some(&wt.id), &wt.branch).await?,
+        };
+        let again = st.store.list_runs(&project.id).await?.into_iter().find(|r| {
+            r.worktree_id.as_deref() == Some(wt.id.as_str())
+                && r.kind == input.kind
+                && r.name == def.name
+                && !r.state.is_active()
+        });
+        match again {
+            Some(run) => {
+                let item = pdt_core::workspace::TabItem::Run(run.id.clone());
+                if st.store.tab_for(&item).await?.is_none() {
+                    crate::workspaces::open_for_new(st, &run.project_id, item, tab.as_ref()).await;
+                }
+                (run, true)
+            }
+            None => {
+                let now = now_ms();
+                let run = Run {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    project_id: project.id.clone(),
+                    worktree_id: Some(wt.id.clone()),
+                    branch: wt.branch.clone(),
+                    name: def.name.clone(),
+                    kind: input.kind,
+                    state: if def.setup.is_some() { RunState::SettingUp } else { RunState::Starting },
+                    port: None,
+                    url: None,
+                    data_dir: None,
+                    cwd: wt.path.clone(),
+                    exit_code: None,
+                    error: None,
+                    detached: false,
+                    process: None,
+                    instance: wt.instance.clone(),
+                    created_at: now,
+                    updated_at: now,
+                };
+                st.store.insert_run(&run).await?;
+                let item = pdt_core::workspace::TabItem::Run(run.id.clone());
+                crate::workspaces::open_for_new(st, &run.project_id, item, tab.as_ref()).await;
+                (run, false)
+            }
+        }
+    };
+    let run = crate::exec::relaunch_remote_run(st, run, def).await?;
+    Ok((if again { StatusCode::OK } else { StatusCode::CREATED }, Json(run)))
 }
 
 pub(crate) async fn stop(State(st): State<AppState>, Path(id): Path<String>) -> Result<StatusCode, ApiError> {
@@ -372,8 +501,8 @@ pub(crate) async fn restart(
     if run.state.is_active() {
         return Err(ApiError::conflict(codes::RUN_ACTIVE, "the run was started again meanwhile"));
     }
-    // A restarted run counts toward the limit like a new one.
-    if run.kind == RunKind::Run {
+    // A restarted run counts toward the limit like a new one (on this machine).
+    if run.kind == RunKind::Run && run.instance.is_none() {
         check_run_limit(&st, input.stop_run_id.as_deref()).await?;
     }
     Ok(Json(run_manager::relaunch(&st, run, def).await?))
@@ -383,6 +512,9 @@ pub(crate) async fn reset_data(State(st): State<AppState>, Path(id): Path<String
     let run = load(&st, &id).await?;
     if run.state.is_active() {
         return Err(ApiError::conflict(codes::RUN_ACTIVE, "stop the run before resetting its data"));
+    }
+    if let Some(on) = &run.instance {
+        return Err(ApiError::conflict(codes::REMOTE_PROJECT, format!("its data is on {}: reset it there", on.name)));
     }
     if let Some(dir) = run.data_dir.map(PathBuf::from) {
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
@@ -416,9 +548,13 @@ pub(crate) async fn discard(st: &AppState, run: &Run) -> bool {
 /// Deletes a run's scripts and log, best-effort, on the blocking pool: removing a project discards many runs.
 async fn remove_files(st: &AppState, id: &str) {
     let (scripts, log) = (run_manager::scripts_dir(st, id), run_manager::log_path(st, id));
+    let mirrors = crate::exec::remote_run_logs(st, id);
     let _ = tokio::task::spawn_blocking(move || {
         let _ = std::fs::remove_dir_all(scripts);
         let _ = std::fs::remove_file(log);
+        for m in mirrors {
+            let _ = std::fs::remove_file(m);
+        }
     })
     .await;
 }

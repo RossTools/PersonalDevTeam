@@ -84,9 +84,14 @@ For a ticket placed there:
   confirmations and cards work as usual.
 - **Git.** Bringing the branch up to date with its base at merge time, and removing the worktree when the ticket
   finishes, happen there too.
+- **Runs and tests.** Those you start in the ticket's worktree run there, from its `.pdt/project.toml`, and only those
+  for its operating system are offered (`os` in Run configuration). You start, stop and restart them on the owner,
+  where they show marked **on win-box** with their state and output. A web run's link is the remote instance's own,
+  through its remote access, so **Open** works from the owner (and only for you). If the remote instance restarts,
+  its runs stop.
 
-Terminals, runs and tests, and the Files and Changes views of a remote ticket aren't available yet: such a ticket's
-agents run as conversations.
+Terminals, the local forge's CI, and the Files and Changes views of a remote ticket aren't available yet: such a
+ticket's agents run as conversations.
 
 If the link between the instances drops, the agents keep working. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said

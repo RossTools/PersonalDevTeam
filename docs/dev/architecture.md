@@ -139,8 +139,15 @@ running. An agent's pdt-mcp call to the remote instance (`mcp::post`, `exec::rel
 `/link/exec/mcp` with its token, retried while the owner can't be reached; the owner answers it as its own. Git for a
 remote attempt goes there too: `attempt.has_changes` and `attempt.update_base` (`/link/exec/git`, the base merged
 in without the regeneration rules) and removing the worktree (`/link/exec/remove-worktree`). Won't do keeps a remote
-worktree until Clean up, since the owner can't see what it holds. Terminals, runs, Files and Changes of a remote
-attempt are not remote yet.
+worktree until Clean up, since the owner can't see what it holds. Runs and tests in a remote worktree (`exec/runs.rs`)
+are `runs` rows on the owner with `instance_id`: the owner reads the worktree's `.pdt/project.toml` there
+(`/link/exec/run/config`, also its OS for `os`), merges its overrides, checks approval, and starts and stops it with
+`/link/exec/run/start` and `/run/stop` (`run_manager::relaunch` and `stop` route a remote run there). The remote
+instance drives it with `run_manager::start_for_owner`, whose `Progress` reports state, output (its PTYs' bytes) and
+the end into the same outbox as the sessions' events; the owner's poller applies them (state to the row, output to
+`runs/logs/<run>.<step>.log`, which the run's terminals follow read-only). A web run's port, link and `tailscale serve`
+mapping are the remote's; the owner's row has its `url` and no `port`. Terminals, Files and Changes of a remote
+attempt, and the local forge's CI for one, are not remote yet.
 
 **Workspaces and tabs.** A workspace is a strip of tabs. Each project has one; Start makes one per ticket; others are
 free-form. A tab holds exactly one session, run, ticket or worktree's changes, and each of those has at most one tab.

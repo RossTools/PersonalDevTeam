@@ -19,15 +19,24 @@ use std::time::Duration;
 const FAKE: &str = env!("CARGO_BIN_EXE_fake-agent");
 const ORIGIN: &str = "https://github.com/o/r.git";
 
-struct Instance {
-    app: axum::Router,
-    state: AppState,
-    url: String,
-    tmp: tempfile::TempDir,
+pub(crate) struct Instance {
+    pub(crate) app: axum::Router,
+    pub(crate) state: AppState,
+    pub(crate) url: String,
+    pub(crate) tmp: tempfile::TempDir,
 }
 
 /// An instance named `name` with `fake-agent` as Claude, served on a free loopback port; with a fake GitHub when `gh`.
-async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
+pub(crate) async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
+    instance_with(name, gh, None).await
+}
+
+/// [`instance`], with `tailscale` as its Tailscale when given.
+async fn instance_with(
+    name: &str,
+    gh: Option<&Arc<FakeForge>>,
+    tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>,
+) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
@@ -37,6 +46,9 @@ async fn instance(name: &str, gh: Option<&Arc<FakeForge>>) -> Instance {
     state.platform.codex_home = Some(tmp.path().join("codex-home"));
     state.conversations.notice_quiet = Duration::ZERO;
     state.exec.set_poll_timing(Duration::from_millis(500), Duration::from_millis(100));
+    if let Some(t) = tailscale {
+        state.tailscale = t;
+    }
     if let Some(gh) = gh {
         state.forges = pdt_forge::ForgeRegistry::new(vec![Arc::new(pdt_forge::testing::fake_github(gh))]);
     }
@@ -59,26 +71,31 @@ fn repo(dir: &Path) {
     git(dir, &["config", "http.proxy", "http://127.0.0.1:1"]);
 }
 
-struct Pair {
-    owner: Instance,
-    remote: Instance,
-    gh: Arc<FakeForge>,
+pub(crate) struct Pair {
+    pub(crate) owner: Instance,
+    pub(crate) remote: Instance,
+    pub(crate) gh: Arc<FakeForge>,
     /// The owner's project.
-    project: String,
+    pub(crate) project: String,
     /// The remote instance's id of it.
-    remote_project: String,
+    pub(crate) remote_project: String,
     /// The remote instance's id (as the owner names it).
-    instance_id: String,
+    pub(crate) instance_id: String,
     /// Where the remote instance keeps the project's checkout.
-    checkout: PathBuf,
+    pub(crate) checkout: PathBuf,
 }
 
 /// Owner and remote paired for the owner's project, with `windows` tickets placed on the remote instance. Its
 /// checkout is a clone of the owner's repository (a real one would be cloned from origin on first use).
-async fn paired() -> Pair {
+pub(crate) async fn paired() -> Pair {
+    paired_with(None).await
+}
+
+/// [`paired`], with `tailscale` as the remote instance's Tailscale when given.
+pub(crate) async fn paired_with(tailscale: Option<Arc<dyn pdt_tailscale::TailscaleApi>>) -> Pair {
     let gh = Arc::new(FakeForge::default());
     let owner = instance("studio", Some(&gh)).await;
-    let remote = instance("win-box", None).await;
+    let remote = instance_with("win-box", None, tailscale).await;
     let main = owner.tmp.path().join("valley");
     repo(&main);
     let (s, p) =
@@ -116,7 +133,7 @@ async fn paired() -> Pair {
     Pair { owner, remote, gh, project, remote_project, instance_id, checkout }
 }
 
-async fn ticket(p: &Pair, title: &str, labels: &[&str]) -> String {
+pub(crate) async fn ticket(p: &Pair, title: &str, labels: &[&str]) -> String {
     let body = json!({"title": title, "labels": labels});
     let (s, t) = call_as_ui(&p.owner.app, "POST", &format!("/api/projects/{}/tickets", p.project), Some(body)).await;
     assert_eq!(s, StatusCode::CREATED, "{t}");
