@@ -237,6 +237,44 @@ pub(crate) async fn track(st: &AppState, s: &Session) {
     });
 }
 
+/// Starts tracking an agent terminal that runs on a remote instance (PDT-633): idle, moved on by its hooks (passed on
+/// by the remote) and the input typed through the owner. Its output stays there, so nothing is read from it.
+pub(crate) async fn track_remote(st: &AppState, s: &Session) {
+    let Some(agent) = s.agent.filter(|_| s.kind == SessionKind::AgentTui) else { return };
+    let order = order_lock(st, &s.id);
+    let _in_order = order.lock().await;
+    let tracker = Tracker {
+        agent,
+        activity: Activity::Idle,
+        watch: Watch { last_output_ms: now_ms(), ..Default::default() },
+        clear_screen: false,
+        program_status_seen: false,
+        interrupt_pending: false,
+        interrupted: false,
+        generation: GENERATION.fetch_add(1, Ordering::SeqCst),
+        last_input_ms: now_ms(),
+    };
+    let fresh = {
+        let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = !map.contains_key(&s.id);
+        map.entry(s.id.clone()).or_insert(tracker);
+        fresh
+    };
+    // After an owner restart the row keeps what the hooks last said.
+    if fresh && s.activity.is_none() {
+        let _ = st.store.update_activity(&s.id, Some(Activity::Idle), None).await;
+    }
+}
+
+/// A remote agent terminal ended: no more activity.
+pub(crate) async fn untrack_remote(st: &AppState, id: &str) {
+    let order = order_lock(st, id);
+    let _in_order = order.lock().await;
+    if st.activity.lock().unwrap_or_else(|e| e.into_inner()).remove(id).is_some() {
+        let _ = st.store.update_activity(id, None, None).await;
+    }
+}
+
 async fn on_output(st: &AppState, id: &str, bytes: &[u8], screen: &mut Screen) {
     let (agent, activity, clear, interrupt_pending, program_status_seen) = {
         let mut map = st.activity.lock().unwrap_or_else(|e| e.into_inner());
@@ -353,11 +391,16 @@ pub(crate) fn working_ids(st: &AppState) -> Vec<String> {
 pub(crate) async fn type_message(st: &AppState, id: &str, text: &str) -> Result<(), pdt_agents::PtyError> {
     let body = text.replace('\x1b', "").replace("\r\n", "\r").replace('\n', "\r");
     let paste = format!("\x1b[200~{body}\x1b[201~");
-    st.ptys.write(id, paste.as_bytes())?;
+    let remote = crate::exec::is_remote_terminal(st, id);
+    if remote {
+        crate::exec::write_terminal(st, id, paste.as_bytes()).await?;
+    } else {
+        st.ptys.write(id, paste.as_bytes())?;
+    }
     // Some TUIs treat an Enter in the same chunk as part of the paste.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     on_input(st, id, b"\r");
-    st.ptys.write(id, b"\r")
+    if remote { crate::exec::write_terminal(st, id, b"\r").await } else { st.ptys.write(id, b"\r") }
 }
 
 /// Called with every chunk the user types into a terminal (no-op for terminals without a tracker).
@@ -451,7 +494,21 @@ pub(crate) async fn post_report(
     Path(id): Path<String>,
     payload: Result<Json<HookReport>, JsonRejection>,
 ) -> Result<StatusCode, ApiError> {
-    let Json(report) = payload?;
+    let Json(hook) = payload?;
+    // A terminal this instance runs for a remote project's owner: the owner's session takes it (PDT-633).
+    if st.store.get_session(&id).await?.is_none()
+        && let Some(relayed) = crate::exec::relay_activity(&st, &id, &hook).await
+    {
+        relayed?;
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    report(&st, &id, hook).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// A hook report for one of this instance's sessions (its own, or one on a remote instance passed on by it).
+pub(crate) async fn report(st: &AppState, id: &str, report: HookReport) -> Result<(), ApiError> {
+    let (st, id) = (st.clone(), id.to_string());
     let s = st.session(&id).await?;
     if s.kind != SessionKind::AgentTui {
         return Err(ApiError::conflict(codes::NOT_AN_AGENT, "only agent sessions report activity"));
@@ -486,7 +543,7 @@ pub(crate) async fn post_report(
         let trigger = start_source.as_deref().unwrap_or("clear");
         crate::conversations::terminal_conversation_moved(&st, &s, new_id, trigger).await?;
     }
-    Ok(StatusCode::NO_CONTENT)
+    Ok(())
 }
 
 /// Records the Devin conversation a session's terminal runs, as its `SessionStart` hook names it: a fresh launch

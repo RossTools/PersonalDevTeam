@@ -91,14 +91,28 @@ For a ticket placed there:
   merges through its pull request.
 - **Overlaps.** The files a remote ticket changes count in overlap checks with the project's other tickets, wherever
   those run.
+- **Terminals.** An agent started in its terminal, and any shell you open in the ticket's workspace, runs there too.
+  You type, resize and scroll back on the owner as in a local terminal; the remote instance keeps the output while
+  nobody watches, so reconnecting shows it.
 
 Over a slower link, opening a ticket's Changes fetches the whole diff at once, so moving between its files doesn't
 wait on the remote instance again, and a diff that hasn't changed isn't fetched again.
 
-Terminals, and runs and tests, of a remote ticket aren't available yet: such a ticket's agents run as conversations.
+Runs and tests of a remote ticket aren't available yet. A remote session keeps the view it started in: it can't switch
+between conversation and terminal.
 
-If the link between the instances drops, the agents keep working. Files and Changes of their tickets say the remote
-instance can't be reached until it is back. Their PDT tool calls wait and go through once it is
+## Shells on a remote instance
+
+To work in the remote instance's checkout of the project yourself, open a new tab (**+**) with the project's
+repository as the place and choose **Shell on win-box**. A shell in a remote ticket's workspace opens in its worktree
+there by itself. Such a shell is a tab like any other, marked **on win-box**, and reopens when you restart it.
+
+A shell from the owner opens only in the remote project's checkout or its tickets' worktrees on that instance, never
+anywhere else on it. Shells you open in the remote instance's own window stay its own and never show on the owner.
+
+If the link between the instances drops, the agents keep working, and so do terminals: the terminal on the owner
+reconnects once the link is back. Files and Changes of their tickets say the remote instance can't be reached until it
+is back. Their PDT tool calls wait and go through once it is
 back, and everything they said meanwhile arrives then. If the owner restarts, the remote instance keeps what they said
 until it is back. If the remote instance restarts, its agents stop; sending one a message starts it again where it
 left off.
@@ -114,7 +128,8 @@ last heard from.
 - **Checkout** is the folder the project's checkout and worktrees go in. Change it before the first ticket runs here;
   a checkout already made stays where it is.
 
-It also lists what runs here for the owner now, read-only: each agent's ticket, title and how long it has run.
+It also lists what runs here for the owner now, read-only: each agent's or shell's ticket, title and how long it has
+run.
 
 A remote project has no board, tickets or settings here, and this instance's own PM, workflows, pickup and Inbox
 never see it.

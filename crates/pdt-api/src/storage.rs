@@ -263,7 +263,7 @@ async fn busy(st: &AppState, project_id: &str, worktree_id: &str) -> Result<Opti
     let running = sessions
         .iter()
         .filter(|s| s.worktree_id.as_deref() == Some(worktree_id))
-        .any(|s| st.ptys.is_running(&s.id) || s.status == pdt_core::session::SessionStatus::Running);
+        .any(|s| st.terminal_running(&s.id) || s.status == pdt_core::session::SessionStatus::Running);
     if running {
         return Ok(Some("a session is running in this worktree"));
     }

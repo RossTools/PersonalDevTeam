@@ -32,9 +32,14 @@ function Places({ projects, place, onPick }: { projects: Project[]; place: Place
         .filter((w) => !w.missing)
         .map((w) => {
           const id = idOf({ projectId: p.id, worktreeId: w.id });
-          // A remote attempt's worktree: its files are read on that instance.
-          const detail = w.instance ? `on ${w.instance.name}` : undefined;
-          return { id, label: w.branch, detail, group: p.name, keywords: [p.name, p.key], icon: icon(id, <GitBranch aria-hidden />) };
+          return {
+            id,
+            label: w.branch,
+            ...(w.instance ? { detail: `on ${w.instance.name}` } : {}),
+            group: p.name,
+            keywords: [p.name, p.key],
+            icon: icon(id, <GitBranch aria-hidden />),
+          };
         }),
     ];
   });

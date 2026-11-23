@@ -197,7 +197,7 @@ pub(crate) async fn resolve(st: &AppState, project_id: &str, q: &FilesQuery) -> 
         return Ok((at, rel));
     }
     if let Some(iid) = q.instance_id.as_deref().filter(|i| !i.is_empty()) {
-        let instance = Box::new(crate::exec::joined_instance(st, &project.id, iid).await?);
+        let instance = Box::new(crate::exec::remote_instance(st, &project.id, iid).await?);
         return Ok((Checkout::Remote { instance, branch: None }, rel));
     }
     Ok((Checkout::Here { path: PathBuf::from(&project.repo_path), plain: !project.has_repo() }, rel))

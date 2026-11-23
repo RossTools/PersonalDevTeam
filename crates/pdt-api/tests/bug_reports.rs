@@ -111,6 +111,80 @@ async fn another_instance_files_an_issue_with_labels_and_redacted_diagnostics() 
 }
 
 #[tokio::test]
+async fn the_names_of_linked_instances_and_remote_projects_are_redacted() {
+    use pdt_core::link::{OwnerLink, RemoteInstance};
+    use pdt_core::project::{Project, ProjectKind};
+    let env = setup().await;
+    let (s, v) = call(&env.app, "PUT", "/api/host/settings", Some(json!({"instanceName": "kitchen-laptop"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let own = add_project(&env, "Mine", "MN", "https://github.com/me/mine.git").await;
+    let joined = RemoteInstance {
+        link_id: "l-in".into(),
+        project_id: own["id"].as_str().unwrap().into(),
+        instance_id: "i-in".into(),
+        name: "garage-box".into(),
+        url: "https://garage-box.tail1234.ts.net".into(),
+        public_key: "pk".into(),
+        version: "1.0.0".into(),
+        protocol: 1,
+        facts: None,
+        paused: false,
+        last_seen_at: None,
+        last_error: None,
+        created_at: 1,
+    };
+    env.state.store.insert_remote_instance(&joined).await.unwrap();
+    let remote = Project {
+        id: "rp".into(),
+        name: "Valhalla".into(),
+        repo_path: "remote:rp".into(),
+        base_branch: "main".into(),
+        created_at: 1,
+        key: "VALH".into(),
+        forge: None,
+        kind: ProjectKind::Remote,
+    };
+    let link = OwnerLink {
+        project_id: "rp".into(),
+        link_id: "l-out".into(),
+        owner_project_id: "op".into(),
+        owner_instance_id: "oi".into(),
+        owner_name: "studio-mac".into(),
+        owner_url: "https://studio-mac.tail1234.ts.net:7420".into(),
+        owner_version: "1.0.0".into(),
+        owner_public_key: "pk".into(),
+        repo_url: None,
+        checkout_path: None,
+        paused: false,
+        last_contact_at: None,
+        created_at: 1,
+    };
+    env.state.store.insert_remote_project(&remote, &link).await.unwrap();
+    let logs = env.state.data_dir.join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::write(
+        logs.join("pdtd.2026-11-22.log"),
+        "INFO instance=kitchen-laptop started\n\
+         INFO project=MN instance=garage-box a remote instance joined\n\
+         WARN error=error sending request for url (https://garage-box.tail1234.ts.net/api/link) instance=garage-box\n\
+         INFO project=Valhalla owner=studio-mac joined a remote project\n\
+         WARN owner=studio-mac error=https://studio-mac.tail1234.ts.net:7420 refused VALH-3\n",
+    )
+    .unwrap();
+
+    let (s, p) = call(&env.app, "GET", "/api/bug-reports/preview", None).await;
+    assert_eq!(s, StatusCode::OK, "{p}");
+    let preview = p["diagnostics"].as_str().unwrap();
+    for name in ["kitchen", "garage", "Valhalla", "studio", "VALH", "tail1234"] {
+        assert!(!preview.contains(name), "{name} in {preview}");
+    }
+    // A name that is also a linked host's short form goes as `[host]`.
+    assert!(preview.contains("INFO instance=[name] started"), "{preview}");
+    assert!(preview.contains("INFO project=[name] owner=[host] joined a remote project"), "{preview}");
+    assert!(preview.contains("url (https://[host]/api/link) instance=[host]"), "{preview}");
+}
+
+#[tokio::test]
 async fn the_instance_with_the_release_project_files_a_draft_ticket_and_never_calls_github() {
     let env = setup().await;
     store_token(&env, TOKEN);
