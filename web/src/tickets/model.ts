@@ -119,21 +119,34 @@ export function toQuery(projectId: string | null, f: BacklogFilters, limit = PAG
   const q: TicketQuery = { limit };
   if (projectId) q.project = projectId;
   if (!allStages(f.stages)) q.stage = inOrder(f.stages).join(',');
+  Object.assign(q, boardFilterQuery(f));
+  if (f.sort !== 'rank') q.sort = f.sort;
+  return q;
+}
+
+/** The filters the Board applies to its cards: the backlog's, without stage, grouping and sorting (the columns are the stages). */
+export type BoardFilters = Pick<BacklogFilters, 'q' | 'priorities' | 'labels' | 'blocked' | 'conflicts'>;
+
+/** The query fields that narrow every Board column to `f`. */
+export function boardFilterQuery(f: BoardFilters): Partial<TicketQuery> {
+  const q: Partial<TicketQuery> = {};
   if (f.priorities.length > 0) q.priority = f.priorities.join(',');
   if (f.labels.length > 0) q.label = f.labels.join(',');
   if (f.blocked !== null) q.blocked = f.blocked;
   if (f.conflicts !== null) q.conflicts = f.conflicts;
   if (f.q.trim()) q.q = f.q.trim();
-  if (f.sort !== 'rank') q.sort = f.sort;
   return q;
 }
 
 /** Ranks are per project: drag and Alt+↑/↓ only make sense in one project's list, sorted by rank, not grouped. */
 export const canRank = (projectId: string | null, f: BacklogFilters) => !!projectId && f.sort === 'rank' && f.group === 'none';
 
-/** How many filters differ from the default (Draft and Ready): search, grouping and sorting don't count. */
-export const filterCount = (f: BacklogFilters) =>
-  [!sameStages(f.stages, BACKLOG_STAGES), f.priorities.length > 0, f.labels.length > 0, f.blocked !== null, f.conflicts !== null]
+/**
+ * How many filters differ from the default (Draft and Ready): search, grouping and sorting don't count, nor the stages
+ * on the Board (its columns are the stages).
+ */
+export const filterCount = (f: BacklogFilters, board = false) =>
+  [!board && !sameStages(f.stages, BACKLOG_STAGES), f.priorities.length > 0, f.labels.length > 0, f.blocked !== null, f.conflicts !== null]
     .filter(Boolean).length;
 
 /** True when nothing narrows or widens the list beyond the default (Draft and Ready tickets). */
