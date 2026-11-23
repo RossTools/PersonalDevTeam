@@ -175,6 +175,8 @@ pub struct AppState {
     pub update_token_account: String,
     /// The last host checks (tool and login checks); the first `GET /host/checks` runs them.
     pub(crate) checks: std::sync::Arc<std::sync::Mutex<Option<crate::checks::HostChecks>>>,
+    /// The host checks' one background run (see `checks::refresh_in_background`).
+    pub(crate) checks_refresh: std::sync::Arc<crate::checks::ChecksRefresh>,
     /// Which instance this is (profile, port, dev), reported by `/api/health`. `new` makes it a dev instance on port
     /// 0; pdtd sets the real one.
     pub instance: pdt_core::instance::InstanceInfo,
@@ -377,6 +379,7 @@ impl AppState {
             ),
             update_token_account,
             checks: Default::default(),
+            checks_refresh: Default::default(),
             instance: pdt_core::instance::InstanceInfo::new(pdt_core::brand::Profile::Dev, 0),
             home_dir,
             conversations: Default::default(),

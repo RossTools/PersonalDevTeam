@@ -39,14 +39,16 @@ pub(crate) async fn list(
     items.extend(proposals(&st, q.project.as_deref()).await?);
     decorate(&st, &mut items).await?;
     inbox::sort(&mut items);
-    let snoozed = snoozed(&st, &mut items).await?;
+    let snoozed = snoozed(&st, &mut items, q.project.is_none()).await?;
     let total = u32::try_from(items.len()).unwrap_or(u32::MAX);
     Ok(Json(InboxList { items, snoozed, total }))
 }
 
 /// Takes the snoozed items out of `items` (PDT-641), each with its snooze; the snoozes that have run out (their time
-/// came, their ticket closed or went) are deleted, so their items are back.
-async fn snoozed(st: &AppState, items: &mut Vec<InboxItem>) -> Result<Vec<InboxItem>, ApiError> {
+/// came, their ticket closed or went) are deleted, so their items are back. With `all` (the list unfiltered), so are
+/// the snoozes of items no longer listed (PDT-699): a listed item's id is fixed (`session:{id}`, `connect:{forge}`),
+/// so a snooze kept once its item went would hide the item's next, unrelated occurrence.
+async fn snoozed(st: &AppState, items: &mut Vec<InboxItem>, all: bool) -> Result<Vec<InboxItem>, ApiError> {
     let snoozes = st.store.inbox_snoozes().await?;
     if snoozes.is_empty() {
         return Ok(vec![]);
@@ -61,7 +63,8 @@ async fn snoozed(st: &AppState, items: &mut Vec<InboxItem>) -> Result<Vec<InboxI
         };
         s.ticket_key = ticket.as_ref().map(|t| t.key.clone());
         let closed = ticket.is_none_or(|t| t.stage.is_closed());
-        if s.hides(now, closed) {
+        let gone = all && !items.iter().any(|i| i.id == s.item_id);
+        if s.hides(now, closed) && !gone {
             hiding.insert(s.item_id.clone(), s);
         } else {
             over.push(s.item_id);
