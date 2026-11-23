@@ -167,7 +167,7 @@ describe('answers that act outside PDT ask for a second press', () => {
     });
     renderWithQuery(<Inbox items={[approval]} />);
     fireEvent.keyDown(window, { key: 'y' });
-    expect(screen.getByRole('button', { name: /^Confirm allow once/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Confirm allow/ })).toBeInTheDocument();
     expect(calls.filter((c) => c.path.startsWith('/api/sessions'))).toEqual([]);
     fireEvent.keyDown(window, { key: 'y' });
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s/requests/r')?.body).toEqual({ answer: { type: 'approve', always: false } }));
@@ -180,9 +180,9 @@ describe('answers that act outside PDT ask for a second press', () => {
       choices: [{ id: 'allow', title: 'Allow', primary: true }, { id: 'allow_always', title: 'Always allow in this session', primary: false }, { id: 'deny', title: 'Deny', primary: false }],
     });
     renderWithQuery(<Inbox items={[approval, review]} />);
-    await userEvent.click(screen.getByRole('button', { name: 'Always allow' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Always allow in this session' }));
     expect(calls.filter((c) => c.path.startsWith('/api/sessions'))).toEqual([]);
-    await userEvent.click(screen.getByRole('button', { name: 'Confirm always allow' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm always allow in this session' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s/requests/r')?.body).toEqual({ answer: { type: 'approve', always: true } }));
     await userEvent.click(await screen.findByRole('button', { name: 'Close' }));
     expect(answers(calls)).toEqual([]);
@@ -195,10 +195,10 @@ describe('answers that act outside PDT ask for a second press', () => {
     const onAnswer = vi.fn();
     renderWithQuery(<ApprovalCard title="Edit this file?" subject="a.ts" canAlways onAnswer={onAnswer} />);
     fireEvent.click(screen.getByRole('button', { name: 'Always allow in this session' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm: always allow in this session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm always allow in this session' }));
     expect(onAnswer).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 350));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm: always allow in this session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm always allow in this session' }));
     expect(onAnswer).toHaveBeenCalledWith({ type: 'approve', always: true });
   });
 });

@@ -8,6 +8,8 @@ import { cn } from '@ui/lib/utils';
 import type { Place } from '../common/PlacePicker';
 import { runAction } from '../common/useAction';
 import { useAgentAvailability } from '../common/useAgentAvailability';
+import { EmptyPane } from '../common/EmptyPane';
+import { ListColumnHeader } from '../common/ListColumnHeader';
 import { isAcp, useAcpAgents, type AcpKind } from '../common/agents';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
@@ -690,7 +692,7 @@ export function AppShell() {
   ) : view === 'files' ? (
     phone ? <ScreenSuspense><FolderList state={folder} dir="" /></ScreenSuspense> : (
       <>
-        <ListHeading>{label}</ListHeading>
+        <ListColumnHeader title={label} />
         <ScreenSuspense><FolderTree state={folder} /></ScreenSuspense>
       </>
     )
@@ -870,7 +872,7 @@ export function AppShell() {
             theme={{ value: theme, onChange: setTheme }}
             onSearch={() => setPaletteOpen(true)}
           />
-          <aside aria-label={`${label} list`} className={cn('flex min-h-0 w-72 flex-col border-r border-border', (view === 'notes' || view === 'documents') && 'w-80')}>
+          <aside aria-label={`${label} list`} className="flex min-h-0 w-80 flex-col border-r border-border">
             <div className="flex-1 overflow-auto px-1">{list}</div>
           </aside>
         </>
@@ -1006,9 +1008,9 @@ export function AppShell() {
                   onKind={setNotesWhose}
                 /></ScreenSuspense>
               ) : (
-                <EmptyState icon={<NotebookPen />} className="mt-16 border-0" action={<Button size="sm" onClick={newNote}>New note</Button>}>
+                <EmptyPane icon={<NotebookPen />} newLabel="New note" onNew={newNote}>
                   {notes.whose === 'note' ? 'Pick a note from the PM’s memory, or add one.' : 'Pick a note, or start a new one.'}
-                </EmptyState>
+                </EmptyPane>
               )
             ) : view === 'documents' ? (
               docId ? (
@@ -1019,9 +1021,9 @@ export function AppShell() {
                   onGone={() => (phone ? goBack(routePath(viewRoute('documents'))) : go(viewRoute('documents'), { replace: true }))}
                 /></ScreenSuspense>
               ) : (
-                <EmptyState icon={<FileText />} className="mt-16 border-0" action={<Button size="sm" onClick={() => setDocDialog('new')}>New document</Button>}>
+                <EmptyPane icon={<FileText />} newLabel="New document" onNew={() => setDocDialog('new')}>
                   Pick a document, or make one.
-                </EmptyState>
+                </EmptyPane>
               )
             ) : view === 'personas' ? (
               <ScreenSuspense><PersonaPage key={personaId ?? 'none'} personaId={personaId} onSelect={setPersonaId} /></ScreenSuspense>

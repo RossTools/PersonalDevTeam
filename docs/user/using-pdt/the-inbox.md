@@ -86,7 +86,9 @@ your own. **Send answers** says how many you've answered. A request for a secret
 token, a password) has a masked field, and the value goes straight to PDT's secret store, never the agent (see
 [Secrets](../your-machine/secrets.md)). A question an agent asks in its conversation is listed here too, titled with
 the question, and shows the same cards: answering it here or in the conversation answers both. Where the agent lets you
-pick several choices, they are tick boxes, and what you write under **Something else…** is added to them.
+pick several choices, they are tick boxes, and what you write under **Something else…** is added to them. Every
+question is answered the same way: the number keys pick a choice, **Send answers** sends them, and **Dismiss** (**e**)
+sets the question aside.
 
 An agent's question about a ticket holds that ticket: workflows don't merge it or move it to **Done** until you answer,
 and the item says so. An agent can mark a question as only nice to have; then the item says it doesn't hold the
@@ -96,8 +98,9 @@ releases the hold without answering.
 
 ### Approvals
 
-An agent wants to run a command or edit a file, shown as it would run: **Allow once**, **Always allow**, or **Deny**
-(with an optional reason). Answering here or in the agent's conversation answers both. A call to one of PDT's own tools
+An agent wants to run a command or edit a file, shown as it would run: **Allow** (**y**), **Always allow in this
+session**, or **Deny** (**n**, with an optional reason). The buttons have the same words and order here, in the agent's
+conversation and on a phone. Answering here or in the agent's conversation answers both. A call to one of PDT's own tools
 from an agent that can't ask in its own prompt shows here too, with what it would create or change: in a conversation it is also a card in
 the conversation. From a terminal session it is only here. Either way the agent waits for your answer and carries on
 once you give it, with your reason if you deny it. If you take a day or more, the agent stops waiting and the approval stays open: your answer then

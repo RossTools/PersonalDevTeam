@@ -12,7 +12,7 @@ import { CATALOG, DOC, detail } from './testData';
 import { TextView } from './TextView';
 import { VersionsView } from './VersionsView';
 import { WorkflowPage } from './WorkflowPage';
-import { groupWorkflows } from './WorkflowsList';
+import { groupWorkflows, WorkflowsList } from './WorkflowsList';
 import { fromText, toText } from './textFormat';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -38,6 +38,21 @@ function page(over = {}) {
   renderWithQuery(<WorkflowPage id="w1" catalog={CATALOG} projects={[]} onOpen={() => {}} />);
   return calls;
 }
+
+describe('workflows list', () => {
+  it('has New, with Import and Export under ⋯ (Export only once there is a workflow)', async () => {
+    stubApi({ 'GET /api/workflows': [] });
+    const onNew = vi.fn();
+    renderWithQuery(<WorkflowsList projects={[]} current={null} onOpen={() => {}} onNew={onNew} />);
+    expect(screen.getByRole('heading', { name: 'Workflows' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    expect(onNew).toHaveBeenCalled();
+    await screen.findByText('No workflows yet.');
+    await userEvent.click(screen.getByRole('button', { name: 'Import or export workflows' }));
+    expect(screen.getByRole('menuitem', { name: 'Import…' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: 'Export…' })).toHaveAttribute('aria-disabled', 'true');
+  });
+});
 
 describe('workflow page', () => {
   it('draws the graph, edits the draft and saves it as a version', async () => {
