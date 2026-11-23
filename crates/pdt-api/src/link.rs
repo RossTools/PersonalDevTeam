@@ -75,6 +75,9 @@ pub struct LinkRuntime {
     latency_ms: AtomicU64,
     /// Calls made to other instances since this process started, by path (tests count round trips).
     calls: Mutex<HashMap<String, u64>>,
+    /// Skips the heartbeat sent soon after an instance joins (tests that heartbeat themselves, so a late one can't
+    /// undo what they set up).
+    no_join_heartbeat: std::sync::atomic::AtomicBool,
     client: reqwest::Client,
 }
 
@@ -94,6 +97,7 @@ impl Default for LinkRuntime {
             offline: Default::default(),
             latency_ms: AtomicU64::new(0),
             calls: Default::default(),
+            no_join_heartbeat: Default::default(),
             client,
         }
     }
@@ -118,6 +122,12 @@ impl LinkRuntime {
     /// Adds `latency` before every call to another instance (tests: a link slower than loopback).
     pub fn set_latency(&self, latency: Duration) {
         self.latency_ms.store(latency.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    /// Stops (true) the heartbeat sent [`FIRST_HEARTBEAT_AFTER`] an instance joins (tests: one landing late would mark
+    /// an instance the test took offline as connected again).
+    pub fn set_no_join_heartbeat(&self, skip: bool) {
+        self.no_join_heartbeat.store(skip, Ordering::SeqCst);
     }
 
     /// How many calls this instance has made to others on `path` (`/api/link/…`).
@@ -631,12 +641,14 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     tracing::info!(project = %project.key, instance = %instance.name, link = %link_id, "a remote instance joined");
     // Heard from soon (once the remote instance has saved the link this answer gives it), so the list shows it
     // connected without waiting for the next heartbeat.
-    let bg = st.clone();
-    let joined = instance.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(FIRST_HEARTBEAT_AFTER).await;
-        heartbeat(&bg, &joined, false).await
-    });
+    if !st.link.no_join_heartbeat.load(Ordering::SeqCst) {
+        let bg = st.clone();
+        let joined = instance.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(FIRST_HEARTBEAT_AFTER).await;
+            heartbeat(&bg, &joined, false).await
+        });
+    }
     Ok(Json(PairReply {
         link_id,
         project: pdt_core::link::LinkedProject {
