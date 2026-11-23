@@ -348,6 +348,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **Every keychain value PDT reads or writes reaches the redactor.** `AppState::secrets` is wrapped in
   `secrets::Redacting` (pdtd's `main.rs`, `AppState::new`); a value kept outside the keychain (Google's access tokens,
   MCP sign-ins' refreshed tokens) is given to the redactor where it is made.
+- **The redactor's keys are namespaced, never a user secret's name.** The vault keys a secret by its keychain account
+  (`secret:<id>`) with its name as the label, and reads values back only under that key; PDT's own values use their
+  account (`update-token`, `mcp-oauth:<id>/…`, `google-access:<id>`), which `Redacting` never writes under `secret:`.
+  Keyed by name, a secret called `update-token` would be handed PDT's own token by `run_with_secrets`.
 - **Redact before cutting.** Output cut to a size is redacted first and then loses any end that could start a value
   (`Redactor::string_cut`), so a cut never leaves part of one.
 - **A bug report bound for GitHub goes through `bug_report::redact` with the user's own names.** pdt-api
@@ -383,6 +387,11 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   the check still can't lead out. The review diff reads the same way. Downloads (`files_download`) too: a `.zip`
   never holds a `.git` folder's files or follows a linked folder, and both stream (a file through a reader, a zip
   written on the blocking pool into a bounded channel), so neither ever sits whole in memory.
+- **A worktree never lands outside its repository.** A cloned repository can commit `.worktrees` (or a worktree's
+  folder) as a symlink, so `pdt_git::add_worktree` and `add_worktree_for_branch` check the path first and again once
+  its folder is made (`check_worktree_path`: no symlink or file on the way, and it resolves inside the repository),
+  and pdt-api checks it before adopting a folder already there. A new place that makes or adopts a worktree goes
+  through them.
 - **Nothing runs `gh` or `glab`.** Forges go through their crates over HTTP (`pdt_forge::transport`); agents use
   pdt-mcp's forge tools.
 

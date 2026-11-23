@@ -61,28 +61,39 @@ pub async fn load_known(st: &AppState) {
     };
     for s in list {
         match keychain_get(st, &s).await {
-            Ok(Some(v)) => st.store.redactor().set(&s.name, &v),
+            Ok(Some(v)) => know(st, &s, &v),
             Ok(None) => tracing::warn!(secret = %s.name, "a secret has no value in the keychain"),
             Err(e) => tracing::warn!(secret = %s.name, error = %e, "could not read a secret from the keychain"),
         }
     }
 }
 
+/// Gives the redactor `s`'s value, shown as `[secret:<name>]`. It is keyed by the keychain account (`secret:<id>`),
+/// never the name: PDT keeps its own values there too, under keys a user's secret could otherwise be named
+/// (`update-token`), and [`Redacting`](crate::secrets::Redacting) leaves `secret:` accounts to the vault (PDT-644).
+fn know(st: &AppState, s: &Secret, v: &str) {
+    st.store.redactor().set_labelled(&account(&s.id), v, &s.name);
+}
+
+fn forget(st: &AppState, s: &Secret) {
+    st.store.redactor().remove(&account(&s.id));
+}
+
 /// A secret's value: known already, else from the keychain (and known from then on).
 async fn value(st: &AppState, s: &Secret) -> Result<String, String> {
-    if let Some(v) = st.store.redactor().value(&s.name) {
+    if let Some(v) = st.store.redactor().value(&account(&s.id)) {
         return Ok(v);
     }
     let v = keychain_get(st, s)
         .await?
         .ok_or_else(|| format!("the secret {} has no value: set it in Settings → Secrets", s.name))?;
-    st.store.redactor().set(&s.name, &v);
+    know(st, s, &v);
     Ok(v)
 }
 
 async fn put_value(st: &AppState, s: &Secret, value: &str) -> Result<(), ApiError> {
     keychain_set(st, &s.id, value).await?;
-    st.store.redactor().set(&s.name, value);
+    know(st, s, value);
     Ok(())
 }
 
@@ -242,7 +253,7 @@ async fn new_secret(st: &AppState, n: NewSecret) -> Result<Secret, ApiError> {
         {
             tracing::warn!(secret = %s.name, error = %e, "could not remove a secret's value after its row failed; the keychain keeps it");
         }
-        st.store.redactor().remove(&s.name);
+        forget(st, &s);
         return Err(match e {
             pdt_store::StoreError::Conflict(_) => exists(&s.name),
             other => other.into(),
@@ -285,7 +296,7 @@ pub(crate) async fn delete(State(st): State<AppState>, Path(id): Path<String>) -
     let s = load(&st, &id).await?;
     keychain_delete(&st, &s.id).await?;
     st.store.delete_secret(&s.id).await?;
-    st.store.redactor().remove(&s.name);
+    forget(&st, &s);
     Ok(StatusCode::NO_CONTENT)
 }
 

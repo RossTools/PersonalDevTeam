@@ -221,6 +221,7 @@ pub mod codes {
     pub const WORKTREE_DIRTY: &str = "worktree_dirty";
     pub const WORKTREE_MISSING: &str = "worktree_missing";
     pub const WORKTREE_PATH_TAKEN: &str = "worktree_path_taken";
+    pub const WORKTREE_PATH_UNSAFE: &str = "worktree_path_unsafe";
     pub const WRITE_FAILED: &str = "write_failed";
     pub const WRONG_ANSWER: &str = "wrong_answer";
 }
@@ -536,6 +537,7 @@ impl From<GitError> for ApiError {
             GitError::UnknownRef(_) => Self::bad_request(codes::UNKNOWN_REF, e.to_string()),
             GitError::BadPattern(_) => Self::bad_request(codes::BAD_PATTERN, e.to_string()),
             GitError::NoIdentity => Self::conflict(codes::GIT_IDENTITY_MISSING, e.to_string()),
+            GitError::UnsafeWorktreePath(_) => Self::bad_request(codes::WORKTREE_PATH_UNSAFE, e.to_string()),
         }
     }
 }

@@ -142,9 +142,12 @@ async fn worktree_for(st: &AppState, project: &Project, branch: &str) -> Result<
     // A worktree made outside PDT (plain `git worktree add`) for this branch is registered as it is.
     let adopted = if path.exists() && !existing.iter().any(|w| w.path == path_str) {
         let (r, p, b) = (repo.clone(), path.clone(), branch.to_string());
-        tokio::task::spawn_blocking(move || crate::worktrees::adoptable(&r, &p, &b))
-            .await
-            .map_err(ApiError::internal)?
+        tokio::task::spawn_blocking(move || {
+            pdt_git::check_worktree_path(&r, &p)?;
+            Ok::<_, ApiError>(crate::worktrees::adoptable(&r, &p, &b))
+        })
+        .await
+        .map_err(ApiError::internal)??
     } else {
         None
     };

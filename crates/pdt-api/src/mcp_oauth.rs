@@ -84,10 +84,13 @@ async fn keychain_get(st: &AppState, id: &str) -> Result<Option<OAuthTokens>, St
     Ok(raw.and_then(|r| serde_json::from_str(&r).ok()))
 }
 
-fn redact(st: &AppState, name: &str, t: &OAuthTokens) {
-    st.store.redactor().set(&format!("mcp-{name}-access"), &t.access_token);
-    if let Some(r) = &t.refresh_token {
-        st.store.redactor().set(&format!("mcp-{name}-refresh"), r);
+/// Keyed under the account (`mcp-oauth:<id>/…`), which no user secret's name can be (PDT-644), shown as the
+/// connection's name.
+fn redact(st: &AppState, conn: &Connection, t: &OAuthTokens) {
+    let (acct, name, r) = (account(&conn.id), &conn.name, st.store.redactor());
+    r.set_labelled(&format!("{acct}/access"), &t.access_token, &format!("mcp-{name}-access"));
+    if let Some(t) = &t.refresh_token {
+        r.set_labelled(&format!("{acct}/refresh"), t, &format!("mcp-{name}-refresh"));
     }
 }
 
@@ -98,7 +101,7 @@ pub(crate) async fn tokens(st: &AppState, conn: &Connection) -> Result<Option<OA
     }
     let t = keychain_get(st, &conn.id).await?;
     if let Some(t) = &t {
-        redact(st, &conn.name, t);
+        redact(st, conn, t);
     }
     st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.id.clone(), t.clone());
     Ok(t)
@@ -110,7 +113,7 @@ async fn save(st: &AppState, conn: &Connection, t: &OAuthTokens) -> Result<(), S
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    redact(st, &conn.name, t);
+    redact(st, conn, t);
     st.mcp.oauth.tokens.lock().unwrap_or_else(|e| e.into_inner()).insert(conn.id.clone(), Some(t.clone()));
     Ok(())
 }

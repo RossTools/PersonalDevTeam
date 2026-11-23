@@ -60,6 +60,7 @@ pub(crate) async fn make_worktree(
     let path = worktree_path(&repo, branch);
     let (b, target, base) = (branch.to_string(), path.clone(), base.to_string());
     let (base_commit, made) = tokio::task::spawn_blocking(move || -> Result<(String, Made), ApiError> {
+        pdt_git::check_worktree_path(&repo, &target)?;
         pdt_git::ensure_excluded(&repo, &format!("/{WORKTREES_DIR}/"))?;
         if target.exists() {
             let head = adoptable(&repo, &target, &b).ok_or_else(|| {
