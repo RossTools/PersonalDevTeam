@@ -379,13 +379,13 @@ Opening a conversation: the events socket (`conversations/routes.rs` `replay`) s
 connection that drops part way asks for the rest by seq. Every event frame cuts a tool call's output to
 `OUTPUT_PREVIEW` (`outputBytes` says how long the whole is; `GET …/events?item=` reads it whole). The client's model
 drops rows before `from` and ignores events before it; `useConversation.loadEarlier` reads the page before it
-(`GET …/events?before=<pos>`). `useConversation` holds a replay until `ready` and applies it as one action, showing a
+(`GET …/events?before=<pos>`), and drops a page asked for before a `from` that a `tail` has since moved on (it would leave a gap). `useConversation` holds a replay until `ready` and applies it as one action, showing a
 skeleton until then; `EventsSocket` drops a connection that sends nothing for `stallMs` before `ready` (opening or
 replaying) and makes a new one, and after `readyMs` the hook applies what came so far and the view offers Retry. The
 last few conversations' models stay in memory, so one opened again shows what it had at once and asks only for what
 came after. `MessageList` renders the latest `WINDOW` blocks, and earlier ones a window at a time as the reader
 scrolls near the top (or clicks Show earlier messages), then the server's earlier pages, keeping the block that was
-first in place on screen; the first block shown stays fixed as new ones arrive. Each block re-renders only when
+first in place on screen; the first block shown stays fixed as new ones arrive, and goes back to the latest `WINDOW` when a `tail` leaves fewer blocks than it. Each block re-renders only when
 its rows or streamed text change (`BlockView`, `reuseBlocks`). A scrolled-up position is kept as the distance from
 the bottom, and enough windows are shown to get back there.
 
