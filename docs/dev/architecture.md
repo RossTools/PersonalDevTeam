@@ -57,7 +57,11 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   request is signed by its sender's key for the link (headers in pdt-core `link::headers`; the signature covers the
   method, path, link, project, time, nonce and body) and still passes the identity guard. The owner sends heartbeats
   (`/link/heartbeat`, the `project links` loop every 30 s) and the remote instance answers with its name, version,
-  protocol and facts (OS, CPUs, free disk, agents from the host checks, tools on the PATH). `/link/revoke` (owner →
+  protocol and facts (OS, CPUs, free disk, agents from the host checks, tools on the PATH). The heartbeat never runs
+  the host checks itself (they can take far longer than a link call may): it answers from the last ones (before the
+  first finish, no agents and `agentsCheckedAt` null, and the owner keeps the agents it heard before) and starts their
+  one background run when they are older than `AGENT_FACTS_TTL_MS`; the owner's Check now sends `refresh: true`, and
+  the remote waits a few seconds for a new run. `/link/revoke` (owner →
   remote) and `/link/leave` (remote → owner) end a link at the other end; deleting a project revokes each of its
   links. An end that can't be reached is ended here anyway (the reply says `told: false`); a request on a link an end
   no longer has is refused with `link_revoked`. A remote instance asks owners it hasn't heard from for 90 s whether they

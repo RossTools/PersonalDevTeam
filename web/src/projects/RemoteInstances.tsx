@@ -74,7 +74,9 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
         {f?.diskFreeBytes != null && <span>{formatBytes(f.diskFreeBytes)} free</span>}
         {f && (
           <span>
-            {agents.length === 0 ? 'no agents' : agents.map((a) => `${a.agent}${a.loggedIn ? '' : ' (not logged in)'}`).join(', ')}
+            {f.agentsCheckedAt == null && f.agents.length === 0
+              ? 'checking agents…'
+              : agents.length === 0 ? 'no agents' : agents.map((a) => `${a.agent}${a.loggedIn ? '' : ' (not logged in)'}`).join(', ')}
           </span>
         )}
         {!!f?.tools.length && <span>{f.tools.map((t) => t.name).join(', ')}</span>}

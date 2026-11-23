@@ -247,6 +247,57 @@ pub async fn run_host_checks(st: &AppState) -> HostChecks {
     c
 }
 
+/// The host checks' background run: at most one at a time, and a request while one runs makes it run once more
+/// after, so whoever asked sees checks started after they asked.
+#[derive(Default)]
+pub(crate) struct ChecksRefresh {
+    running: std::sync::atomic::AtomicBool,
+    again: std::sync::atomic::AtomicBool,
+    done: tokio::sync::Notify,
+}
+
+/// The last host checks, if they have run.
+pub(crate) fn cached(st: &AppState) -> Option<HostChecks> {
+    st.checks.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Runs the host checks in the background, unless they are running already (then they run again once they finish).
+pub(crate) fn refresh_in_background(st: &AppState) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let r = st.checks_refresh.clone();
+    if r.running.swap(true, SeqCst) {
+        r.again.store(true, SeqCst);
+        return;
+    }
+    let st = st.clone();
+    tokio::spawn(async move {
+        loop {
+            r.again.store(false, SeqCst);
+            run_host_checks(&st).await;
+            if !r.again.load(SeqCst) {
+                r.running.store(false, SeqCst);
+                // A request between the load and the store found it still running: run for it.
+                if !r.again.load(SeqCst) || r.running.swap(true, SeqCst) {
+                    break;
+                }
+            }
+        }
+        r.done.notify_waiters();
+    });
+}
+
+/// Runs the host checks again in the background and waits for them up to `wait`: the new checks, or the last ones
+/// when they take longer.
+pub(crate) async fn refreshed(st: &AppState, wait: std::time::Duration) -> Option<HostChecks> {
+    let r = st.checks_refresh.clone();
+    let done = r.done.notified();
+    tokio::pin!(done);
+    done.as_mut().enable();
+    refresh_in_background(st);
+    let _ = tokio::time::timeout(wait, done).await;
+    cached(st)
+}
+
 /// What to run when git has no identity.
 const SET_IDENTITY: &str =
     "git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\"";

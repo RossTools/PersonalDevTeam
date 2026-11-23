@@ -24,6 +24,7 @@ const winBox: RemoteInstanceView = {
   facts: {
     os: 'windows', arch: 'x86_64', cpus: 8, diskFreeBytes: 50 * 1024 ** 3,
     agents: [{ agent: 'claude', installed: true, loggedIn: true }, { agent: 'codex', installed: true, loggedIn: false }, { agent: 'devin', installed: false, loggedIn: false }],
+    agentsCheckedAt: 1,
     tools: [{ name: 'git', path: 'C:/git.exe' }, { name: 'godot', path: 'C:/godot.exe' }],
   },
 };
@@ -35,7 +36,7 @@ const view = (o: Partial<{ instances: RemoteInstanceView[]; pairing: { code: str
 describe('Remote instances (the owner)', () => {
   it('lists each instance with its state, version, OS, agents and disk, and removes one after asking', async () => {
     const calls = stubApi({
-      'GET /api/projects/p/remote-instances': view({ instances: [winBox, { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'old-box', state: 'incompatible', problem: 'update old-box to v0.7.0 to link it with studio' }] }),
+      'GET /api/projects/p/remote-instances': view({ instances: [winBox, { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'old-box', state: 'incompatible', problem: 'update old-box to v0.7.0 to link it with studio', facts: { ...winBox.facts!, agents: [], agentsCheckedAt: null } }] }),
       'DELETE /api/projects/p/remote-instances/l1': { told: true },
       'GET /api/projects/p/placement': { rules: [] },
     });
@@ -50,6 +51,8 @@ describe('Remote instances (the owner)', () => {
     expect(row).toHaveTextContent('free');
     expect(within(section).getByText('update old-box to v0.7.0 to link it with studio')).toBeInTheDocument();
     expect(within(section).getByText('needs an update')).toBeInTheDocument();
+    const oldBox = within(section).getByText('needs an update').closest('li')!;
+    expect(oldBox).toHaveTextContent('checking agents…');
 
     await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));

@@ -39,15 +39,16 @@ Each remote instance shows:
 - its **state**: **connected**, **paused** (paused on that instance), **offline** (not heard from for a minute and a
   half), or **needs an update**;
 - its version, operating system, CPUs and free disk space;
-- the agents it has, and whether each is logged in, and tools such as git, Godot and MSVC;
+- the agents it has, and whether each is logged in (checked again every few minutes; "checking agents" just after it
+  starts), and tools such as git, Godot and MSVC;
 - when it was last seen;
 - **At most … tickets in flight on it at once**: its cap for this project (below).
 
-**Check now** asks each one again. **Remove…** stops it working on the project and revokes the link at both ends;
-pairing again needs a new code. If the instance can't be reached (asleep, or off the tailnet), it is removed here all
-the same and PDT says it couldn't be told: once it is back and asks, its remote project shows **removed by its owner**,
-and you leave it there to finish. Removing the project revokes each of its remote instances the same way; one that
-can't be reached shows **removed by its owner** once it is back.
+**Check now** asks each one again, and has it check its agents again first. **Remove…** stops it working on the
+project and revokes the link at both ends; pairing again needs a new code. If the instance can't be reached (asleep,
+or off the tailnet), it is removed here all the same and PDT says it couldn't be told: once it is back and asks, its
+remote project shows **removed by its owner**, and you leave it there to finish. Removing the project revokes each of
+its remote instances the same way; one that can't be reached shows **removed by its owner** once it is back.
 
 An instance that left the project while the owner couldn't be reached says so when it is checked: "win-box left the
 project; remove it here too".

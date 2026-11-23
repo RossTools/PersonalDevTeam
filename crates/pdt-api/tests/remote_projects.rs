@@ -22,10 +22,16 @@ struct Instance {
 
 /// An instance named `name`, served on a free loopback port.
 async fn instance(name: &str) -> Instance {
+    instance_with(name, |_| {}).await
+}
+
+/// An instance named `name`, with `set` applied to its state before it serves.
+async fn instance_with(name: &str, set: impl FnOnce(&mut AppState)) -> Instance {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::open(&tmp.path().join("pdt.db")).await.unwrap();
     let mut state = common::app_state(store, tmp.path());
     state.platform.login_path = None;
+    set(&mut state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     state.listen_port = listener.local_addr().unwrap().port();
     let url = format!("http://127.0.0.1:{}", state.listen_port);
@@ -101,7 +107,6 @@ async fn two_instances_pair_for_one_project_and_heartbeats_carry_facts() {
     assert_eq!(i["version"], pdt_core::BUILD_VERSION);
     assert_eq!(i["facts"]["os"], std::env::consts::OS);
     assert!(i["facts"]["cpus"].as_u64().unwrap() >= 1, "{i}");
-    assert!(i["facts"]["agents"].as_array().unwrap().iter().any(|a| a["agent"] == "claude"), "{i}");
     assert!(i["lastSeenAt"].is_number());
 
     let (_, listed) = call(&remote.app, "GET", "/api/remote-projects", None).await;
@@ -113,6 +118,9 @@ async fn two_instances_pair_for_one_project_and_heartbeats_carry_facts() {
     let (s, v) = call(&owner.app, "POST", &format!("/api/projects/{p}/remote-instances/check"), None).await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(v["instances"][0]["state"], "paused", "{v}");
+    let facts = &v["instances"][0]["facts"];
+    assert!(facts["agents"].as_array().unwrap().iter().any(|a| a["agent"] == "claude"), "Check now checked: {v}");
+    assert!(facts["agentsCheckedAt"].is_number(), "{v}");
 
     // A code works once.
     let (s, v) = call(&owner.app, "POST", &format!("/api/projects/{p}/remote-instances/pairing"), None).await;
@@ -469,4 +477,73 @@ async fn the_instance_name_shows_in_health_and_settings() {
     assert_eq!(s["settings"]["instanceName"], "studio", "{s}");
     let (s, v) = call(&i.app, "PUT", "/api/host/settings", Some(json!({"instanceName": "two words"}))).await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{v}");
+}
+
+/// A fake `claude` whose login check takes `delay` seconds and answers `logged_in`; [`set_claude`] changes both.
+#[cfg(unix)]
+fn fake_claude(dir: &std::path::Path) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let p = dir.join("claude");
+    let d = dir.to_string_lossy();
+    std::fs::write(&p, format!("#!/bin/sh\nsleep \"$(cat '{d}/delay')\"\ncat '{d}/out'\n")).unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p.to_string_lossy().into()
+}
+
+#[cfg(unix)]
+fn set_claude(dir: &std::path::Path, delay: u32, logged_in: bool) {
+    std::fs::write(dir.join("delay"), delay.to_string()).unwrap();
+    std::fs::write(dir.join("out"), format!(r#"{{"loggedIn": {logged_in}}}"#)).unwrap();
+}
+
+/// The owner's view of win-box's claude: (installed, logged in), or None while win-box hasn't checked its agents.
+#[cfg(unix)]
+fn claude_fact(view: &Value) -> Option<(bool, bool)> {
+    let facts = &view["instances"][0]["facts"];
+    if facts["agentsCheckedAt"].is_null() {
+        assert_eq!(facts["agents"], json!([]), "unchecked agents are unknown: {view}");
+        return None;
+    }
+    let a = facts["agents"].as_array().unwrap().iter().find(|a| a["agent"] == "claude").unwrap();
+    Some((a["installed"].as_bool().unwrap(), a["loggedIn"].as_bool().unwrap()))
+}
+
+/// A heartbeat answers at once from the last agent checks (none yet, right after a start: they run in the
+/// background), so a slow agent CLI never makes the instance look offline; the checks run again once they are old,
+/// and Check now has them run again before it answers, so a login since shows.
+#[cfg(unix)]
+#[tokio::test]
+async fn heartbeats_answer_from_the_last_agent_checks_and_check_now_runs_them_again() {
+    let fake = tempfile::tempdir().unwrap();
+    set_claude(fake.path(), 3, false);
+    let claude = fake_claude(fake.path());
+    let owner = instance("studio").await;
+    let remote = instance_with("win-box", |st| st.platform.claude_program = claude).await;
+    let p = project(&owner, "valley", "Valley", ORIGIN).await;
+    let c = code(&owner, &p).await;
+    assert_eq!(join(&remote, &owner, &c).await.0, StatusCode::CREATED);
+
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let v = instances(&owner, &p).await;
+    assert_eq!(v["instances"][0]["state"], "connected", "{v}");
+    assert_eq!(claude_fact(&v), None, "the heartbeat didn't wait for the checks");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let first = loop {
+        pdt_api::link::heartbeat_all(&owner.state).await;
+        if let Some(f) = claude_fact(&instances(&owner, &p).await) {
+            break f;
+        }
+        assert!(std::time::Instant::now() < deadline, "the background checks never finished");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
+    assert_eq!(first, (true, false));
+
+    // Logged in since: a heartbeat still answers from the checks it made (they aren't old yet); Check now asks again.
+    set_claude(fake.path(), 0, true);
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    assert_eq!(claude_fact(&instances(&owner, &p).await), Some((true, false)));
+    let (s, v) = call(&owner.app, "POST", &format!("/api/projects/{p}/remote-instances/check"), None).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    assert_eq!(claude_fact(&v), Some((true, true)), "{v}");
 }

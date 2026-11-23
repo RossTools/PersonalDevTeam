@@ -127,14 +127,14 @@ async fn cancel_pairing(State(st): State<AppState>, ApiPath(id): ApiPath<String>
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Sends every joined instance a heartbeat now.
+/// Sends every joined instance a heartbeat now, asking each to check its agents again.
 async fn check(
     State(st): State<AppState>,
     ApiPath(id): ApiPath<String>,
 ) -> Result<Json<RemoteInstancesView>, ApiError> {
     let p = own_project(&st, &id).await?;
     let instances = st.store.list_remote_instances(Some(&p.id)).await?;
-    futures_util::future::join_all(instances.iter().map(|i| link::heartbeat(&st, i))).await;
+    futures_util::future::join_all(instances.iter().map(|i| link::heartbeat(&st, i, true))).await;
     Ok(Json(view(&st, &p).await?))
 }
 
