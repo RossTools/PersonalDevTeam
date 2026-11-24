@@ -56,8 +56,9 @@ top, open folders in the tree, and click a file to view it. Text files have **Ed
 - **A file**: the download button at the top of an open file, or **Download** in its menu (right-click it in the
   tree; on a phone, press and hold it). Binary files and files too large to show have a **Download** button too.
 - **A folder**: **Download as .zip** in its menu. The `.zip` holds what the tree shows, so files `.gitignore` leaves
-  out stay out; **Download as .zip, including ignored files** puts them in too (never the `.git` folder). A folder's
-  files may add up to at most 2 GB; past that PDT says so and downloads nothing.
+  out stay out; **Download as .zip, including ignored files** puts them in too (never the `.git` folder). PDT shows
+  "Preparing…" while it gathers the files. A `.zip` holds at most 2 GB and 200,000 files; past that PDT says so and
+  downloads nothing.
 
 Nothing outside the checkout downloads, including what a link inside it points to elsewhere. Downloads work from a
 phone over [remote access](../your-machine/remote-access.md) too.
