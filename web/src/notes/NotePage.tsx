@@ -283,7 +283,7 @@ function NotePage({ id, whose, scope, phone, onCreated, onGone, onKind }: NoteSc
                 {draft.body.trim() ? (
                   <Markdown variant="document" breaks>{draft.body}</Markdown>
                 ) : (
-                  <p className="text-muted-foreground">Nothing written yet.</p>
+                  <EmptyState size="inline">Nothing written yet.</EmptyState>
                 )}
               </div>
             </>

@@ -46,7 +46,7 @@ export function changedCells(before: Sheet[], after: Sheet[]): Set<string> {
 /** A sheet as a table: its rows from A1, with column letters and row numbers; a cell's formula shows on hover. */
 function SheetTable({ sheet, changed }: { sheet: Sheet; changed: Set<string> }) {
   const width = Math.max(0, ...sheet.rows.map((r) => r.length));
-  if (sheet.rows.length === 0 && sheet.charts.length === 0) return <p className="text-xs text-muted-foreground">This sheet is empty.</p>;
+  if (sheet.rows.length === 0 && sheet.charts.length === 0) return <EmptyState size="inline">This sheet is empty.</EmptyState>;
   return (
     <div className="flex flex-col gap-2">
       {sheet.rows.length > 0 && (
@@ -116,7 +116,7 @@ function LiveMarkdown({ markdown }: { markdown: string }) {
     const t = window.setTimeout(() => lit.forEach((b) => delete b.dataset.changed), HIGHLIGHT_MS);
     return () => window.clearTimeout(t);
   }, [markdown]);
-  if (!markdown.trim()) return <p className="text-xs text-muted-foreground">This document is empty.</p>;
+  if (!markdown.trim()) return <EmptyState size="inline">This document is empty.</EmptyState>;
   return (
     <div ref={box} className="[&_[data-changed]]:bg-accent [&>div>*]:rounded-sm [&>div>*]:transition-colors [&>div>*]:duration-700">
       <Markdown>{markdown}</Markdown>

@@ -10,7 +10,7 @@ import type { PermissionMode } from '../api/gen/PermissionMode';
 import type { SetupView } from '../api/gen/SetupView';
 import type { StepState } from '../api/gen/StepState';
 import type { AddProjectMode } from '../projects/AddProjectForm';
-import { useAction } from '../common/useAction';
+import { useAction, useFormAction } from '../common/useAction';
 import type { AcpAgentView } from '../api/gen/AcpAgentView';
 import { agentLabel, isAcp, useAcpAgents, useAgentsOff, type BuiltinAgent } from '../common/agents';
 import { checkOf } from '../common/useAgentAvailability';
@@ -402,31 +402,28 @@ function NameStep({ onDone, ...step }: StepProps & { onDone: () => void }) {
   const instance = useInstance();
   const current = host.data?.settings.instanceName ?? instance.data?.instanceName ?? '';
   const [name, setName] = useState<string | null>(null);
-  const save = useMutation({
-    meta: { errorShown: true },
-    mutationFn: () => api.saveHostSettings({ instanceName: name ?? current }),
-    onSuccess: (s) => {
-      setHostSettings(qc, s);
-      void qc.invalidateQueries({ queryKey: hostKeys.setup });
-      void qc.invalidateQueries({ queryKey: hostKeys.health });
-      setName(null);
-      onDone();
-    },
+  const save = useFormAction(async () => {
+    const s = await api.saveHostSettings({ instanceName: name ?? current });
+    setHostSettings(qc, s);
+    void qc.invalidateQueries({ queryKey: hostKeys.setup });
+    void qc.invalidateQueries({ queryKey: hostKeys.health });
+    setName(null);
+    onDone();
   });
   const summary = step.state === 'done' ? `This instance is ${current}.`
     : 'A short name for this instance of PDT, like studio or win-box. Other instances show it.';
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    save.mutate();
+    void save.run();
   };
   return (
     <Step {...step} title="Name this instance" summary={summary}>
       <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
         <Input aria-label="Instance name" mono className="w-56" maxLength={32} value={name ?? current} onChange={(e) => setName(e.target.value)} />
-        <Button size="sm" variant="primary" type="submit" pending={save.isPending}>Use this name</Button>
+        <Button size="sm" variant="primary" type="submit" pending={save.pending}>Use this name</Button>
       </form>
       <p className="text-xs text-muted-foreground">Letters, digits, - _ and . (no spaces). Settings › This host › Remote access changes it later.</p>
-      {save.error && <Alert tone="error">{save.error.message}</Alert>}
+      {save.error && <Alert tone="error">{save.error}</Alert>}
     </Step>
   );
 }

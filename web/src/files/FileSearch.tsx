@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { CaseSensitive, Regex, Search, WholeWord, X } from 'lucide-react';
-import { Alert, Badge, Disclosure, IconButton, Input, Spinner } from '@ui';
+import { Alert, Badge, Disclosure, EmptyState, IconButton, Input, Spinner } from '@ui';
 import { api } from '../api/client';
 import type { FileSearchQuery } from '../api/files';
 import type { SearchFile } from '../api/gen/SearchFile';
@@ -66,7 +66,7 @@ export function FileSearch({ state, place, children }: { state: FolderViewState;
 }
 
 function Results({ files, capped, timedOut, busy, state }: { files: SearchFile[]; capped: boolean; timedOut: boolean; busy: boolean; state: FolderViewState }) {
-  if (files.length === 0 && !timedOut) return <p className="px-2 text-xs text-muted-foreground">{busy ? 'Searching…' : 'No results.'}</p>;
+  if (files.length === 0 && !timedOut) return <EmptyState size="inline" className="px-2">{busy ? 'Searching…' : 'No results.'}</EmptyState>;
   const shown = files.reduce((n, f) => n + f.lines.length, 0);
   const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
   return (

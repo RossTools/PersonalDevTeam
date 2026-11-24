@@ -27,7 +27,6 @@ export const offNote = (v: HostSettingsView, agent: AgentKind): string | undefin
 export function AgentSwitch({ v, agent, label }: { v: HostSettingsView; agent: AgentKind; label: string }) {
   const qc = useQueryClient();
   const save = useMutation({
-    meta: { errorShown: true },
     mutationFn: (on: boolean) => api.saveHostSettings({ disabledAgents: switched(agentsOff(v), agent, on) }),
     onSuccess: (view) => {
       setHostSettings(qc, view);
@@ -36,15 +35,12 @@ export function AgentSwitch({ v, agent, label }: { v: HostSettingsView; agent: A
     },
   });
   return (
-    <>
-      {save.error && <span role="alert" className="text-xs text-destructive">{save.error.message}</span>}
-      <Switch
-        size="sm"
-        aria-label={`Use ${label}`}
-        checked={!agentsOff(v).includes(agent)}
-        disabled={!!switchBlocked(v, agent) || save.isPending}
-        onChange={(on) => save.mutate(on)}
-      />
-    </>
+    <Switch
+      size="sm"
+      aria-label={`Use ${label}`}
+      checked={!agentsOff(v).includes(agent)}
+      disabled={!!switchBlocked(v, agent) || save.isPending}
+      onChange={(on) => save.mutate(on)}
+    />
   );
 }

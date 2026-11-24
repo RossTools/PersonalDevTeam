@@ -2,7 +2,7 @@
 // (its triggers and actions) and offers a dry run first. Turning it off is immediate.
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Alert, Button, Dialog, Switch } from '@ui';
+import { Alert, Button, Dialog, Switch, toast } from '@ui';
 import { api } from '../api/client';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import { invalidateWorkflow } from './queries';
@@ -60,15 +60,14 @@ export function EnableSwitch({ w, catalog, blocked, onDryRun }: {
   onDryRun: () => void;
 }) {
   const enable = useEnable(w);
-  const { asking, setAsking, toggle } = enable;
+  const { setAsking, toggle } = enable;
   return (
     <>
       <Switch aria-label="Enabled" checked={w.enabled} disabled={!w.enabled && !!blocked}
-        onChange={(on) => (on ? setAsking(true) : toggle.mutate(false))}>
+        onChange={(on) => (on ? setAsking(true) : toggle.mutate(false, { onError: (e) => toast.error(e.message) }))}>
         <span className="text-sm">{w.enabled ? 'On' : 'Off'}</span>
       </Switch>
       <EnableDialog w={w} catalog={catalog} enable={enable} onDryRun={onDryRun} />
-      {!asking && toggle.error && <span className="text-meta text-destructive">{toggle.error.message}</span>}
     </>
   );
 }

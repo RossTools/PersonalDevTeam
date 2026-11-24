@@ -137,6 +137,31 @@ describe('design system rules', () => {
     expect(offenders(/<details[\s>]/, outsideUi)).toEqual([]);
   });
 
+  it('links with Link, never a raw <a>', () => {
+    // Markdown renders its own links (a document's, a file's); IssueLinks' row truncates the URL itself.
+    expectOnly(offenders(/<a[\s>]/, outsideUi), ['src/common/Markdown.tsx', 'src/tickets/IssueLinks.tsx']);
+  });
+
+  it('downloads with common/download.ts, never a hand-made <a download>', () => {
+    expectOnly(offenders(/\bcreateElement\(\s*['"]a['"]\s*\)/), ['src/common/download.ts']);
+  });
+
+  it("formats times and dates with ui/lib/time.ts, never the browser's own toLocale… or Intl.DateTimeFormat", () => {
+    // A number's toLocaleString (a byte count) is fine. A todo's due day ("Mon 2 Nov") is a date without a time.
+    expectOnly(offenders(/\btoLocale(Date|Time)String\(|\bDate\([^)]*\)\.toLocaleString\(|\bIntl\.DateTimeFormat\b/), [
+      'src/todos/model.ts',
+      'ui/lib/time.ts',
+    ]);
+  });
+
+  it("capitalizes with common/text.ts' capitalize", () => {
+    expectOnly(offenders(/(\.charAt\(0\)|\[0\]|\.slice\(0,\s*1\))\.toUpperCase\(\)/), ['src/common/text.ts']);
+  });
+
+  it('sizes a Button with its size and compact, not an h-5 or h-6 class', () => {
+    expect(offenders(/<Button\b[^>]*\bclassName=[^>]*(?<![\w-])(h|size)-[56](?![\w-])/)).toEqual([]);
+  });
+
   it('keeps React Aria, Base UI, React Flow and the primitives behind @ui', () => {
     expect(
       offenders(/from ['"](react-aria-components|react-aria|react-stately|@base-ui\/react[^'"]*|@xyflow\/react[^'"]*|@ui\/primitives[^'"]*)['"]/, (p) => !p.startsWith('ui/')),
@@ -145,9 +170,25 @@ describe('design system rules', () => {
 });
 
 describe('query rules', () => {
-  it('keys queries from their area\'s key factory (`<area>/queries.ts`), never an array literal elsewhere (inline or in a variable)', () => {
+  it('keys queries from their area\'s key factory (`<area>/queries.ts`), never an array literal elsewhere', () => {
     // A literal key in a screen drifts from the area's (another key, other options, a write that misses it):
     // docs/dev/architecture.md "Web queries".
-    expect(offenders(/\bqueryKey:\s*\[|QueryData\(\s*\[|\b(?:const|let)\s+\w*[kK]ey\s*(?::[^=]+)?=\s*\[/, (p) => p.startsWith('src/') && !p.endsWith('/queries.ts'))).toEqual([]);
+    expect(offenders(/\bqueryKey:\s*\[|QueryData\(\s*\[/, (p) => p.startsWith('src/') && !p.endsWith('/queries.ts'))).toEqual([]);
+  });
+
+  it('builds query keys in the key factories, not in a screen', () => {
+    // A key built beside its query (`const KEY = ['stuck-agents']`) is the same drift as a literal one. These files
+    // still keep their own and wait to move theirs into their area's queries.ts.
+    const built = /\b(const|let) \w*([kK]ey|KEY)\w*\s*=\s*(\[\s*(['"]|\.\.\.\w*([kK]ey|KEY))|\([^)]*\)\s*=>\s*\[)/;
+    expectOnly(offenders(built, (p) => p.startsWith('src/') && !p.endsWith('/queries.ts')), [
+      'src/host/InstallUpdates.tsx',
+      'src/host/StartAtLogin.tsx',
+      'src/host/StorageSettings.tsx',
+      'src/host/StuckAgents.tsx',
+      'src/plugins/AccountSignIn.tsx',
+      'src/pm/PmCheckpointSettings.tsx',
+      'src/tickets/BoardViewMenu.tsx',
+      'src/todos/useTodos.ts',
+    ]);
   });
 });

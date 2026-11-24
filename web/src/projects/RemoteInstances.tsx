@@ -1,7 +1,7 @@
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Copy, Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
+import { Alert, Badge, Button, clockTime, EmptyState, IconButton, Input, RelativeTime, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
 import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
@@ -36,17 +36,6 @@ export function capOf(text: string): number {
 /** "9 min" left until `at` (ms), at least 1 while it lasts. */
 export function minutesLeft(at: number, now = Date.now()): string {
   return `${Math.max(1, Math.ceil((at - now) / 60_000))} min`;
-}
-
-/** "3 min ago" for a time in ms. */
-export function ago(at: number, now = Date.now()): string {
-  const s = Math.max(0, Math.round((now - at) / 1000));
-  if (s < 60) return 'just now';
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h} h ago`;
-  return `${Math.round(h / 24)} days ago`;
 }
 
 /**
@@ -98,7 +87,7 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
           </span>
         )}
         {!!f?.tools.length && <span>{f.tools.map((t) => t.name).join(', ')}</span>}
-        <span>{i.lastSeenAt ? `last seen ${ago(i.lastSeenAt)}` : 'not heard from yet'}</span>
+        <span>{i.lastSeenAt ? <>last seen <RelativeTime time={i.lastSeenAt} /></> : 'not heard from yet'}</span>
         {i.lastError && i.state === 'offline' && <span>{i.lastError}</span>}
       </span>
       <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
@@ -218,7 +207,7 @@ export function RemoteInstances({ project }: { project: Project }) {
       actions={v && (
         <>
           {v.instances.length > 0 && (
-            <Button size="sm" variant="ghost" pending={checking} onClick={() => void check()}><RefreshCw aria-hidden /> Check now</Button>
+            <Button size="sm" pending={checking} onClick={() => void check()}><RefreshCw aria-hidden /> Check now</Button>
           )}
           {address && <Button size="sm" pending={adding} onClick={() => void add()}><Plus aria-hidden /> {pairing ? 'New code' : 'Add instance'}</Button>}
         </>
@@ -227,7 +216,7 @@ export function RemoteInstances({ project }: { project: Project }) {
     >
       {q.isPending && <Skeleton lines={2} label="Loading remote instances" />}
       <LoadError what="Remote instances" error={q.error} />
-      {v && v.instances.length === 0 && !pairing && <EmptyState>No remote instances yet.</EmptyState>}
+      {v && v.instances.length === 0 && !pairing && <EmptyState size="inline">No remote instances yet.</EmptyState>}
       {v && v.instances.length > 0 && (
         <ul data-flush className="flex flex-col divide-y divide-border">
           {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} />)}
@@ -245,9 +234,9 @@ export function RemoteInstances({ project }: { project: Project }) {
             <PairingValue label="Address" value={address} />
           </dl>
           <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-            <span title={new Date(pairing.expiresAt).toLocaleTimeString()}>Expires in {minutesLeft(pairing.expiresAt)}</span>
+            <span title={clockTime(pairing.expiresAt)}>Expires in {minutesLeft(pairing.expiresAt)}</span>
             <span className="flex-1" />
-            <Button size="sm" variant="ghost" pending={cancelling} onClick={() => void cancel()}>Cancel code</Button>
+            <Button size="sm" pending={cancelling} onClick={() => void cancel()}>Cancel code</Button>
           </div>
         </SettingsRow>
       )}

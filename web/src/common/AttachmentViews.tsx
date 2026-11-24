@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { Alert, Button, Dialog } from '@ui';
-import { downloadUrl } from './download';
+import { Alert, Button, Dialog, Link, Skeleton } from '@ui';
+import { download, downloadUrl } from './download';
 import { ticketKeys } from '../tickets/queries';
 
 /** A ticket attachment's URL (`/api/tickets/<ticket>/attachments/<id>`), as Markdown links to it: its ids, or null. */
@@ -26,14 +26,13 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
       </button>
       {open && (
         <Dialog
-          open
-          onOpenChange={setOpen}
+          onClose={() => setOpen(false)}
           title={alt || 'Image'}
           size="full"
           headerActions={
             <span className="ml-auto flex gap-3 text-xs">
-              <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
-              <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open in a new tab</a>
+              <Link onClick={() => download(downloadUrl(src))}>Download</Link>
+              <Link href={src} external>Open in a new tab</Link>
             </span>
           }
         >
@@ -55,7 +54,7 @@ function TextViewer({ src }: { src: string }) {
     },
     staleTime: Infinity,
   });
-  if (q.isPending) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  if (q.isPending) return <Skeleton lines={4} label="Loading the file" />;
   if (q.isError) return <Alert tone="error">{q.error.message}</Alert>;
   return (
     <pre className="overflow-auto rounded-md border border-border bg-surface-2 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground">
@@ -79,15 +78,14 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
       </button>
       {open && (
         <Dialog
-          open
-          onOpenChange={setOpen}
+          onClose={() => setOpen(false)}
           title={name}
           size="xl"
           footer={
             <>
               <span className="mr-auto flex gap-3 self-center text-xs">
-                <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
-                <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open raw</a>
+                <Link onClick={() => download(downloadUrl(src))}>Download</Link>
+                <Link href={src} external>Open raw</Link>
               </span>
               <Button onClick={() => setOpen(false)}>Close</Button>
             </>

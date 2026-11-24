@@ -19,7 +19,7 @@ const HOST = 'host';
  */
 export function ProjectDocuments({ project }: { project: Project }) {
   const qc = useQueryClient();
-  const key = documentKeys.settings(project.id);
+  const key = documentKeys.projectSettings(project.id);
   const settings = useQuery({ queryKey: key, queryFn: () => api.projectDocumentSettings(project.id) });
   const hostView = useDocumentProviders();
   const [state, track] = useSaveState();

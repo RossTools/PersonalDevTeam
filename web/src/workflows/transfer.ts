@@ -16,16 +16,6 @@ export function exportFileName(e: WorkflowExport) {
   return `${slug}.pdt-workflow.json`;
 }
 
-/** Saves `text` as a file through the browser's download. */
-export function downloadText(name: string, text: string) {
-  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 /** Copy export: the workflows' export on the clipboard, with a "Copied" toast. */
 export async function copyExport(ids: string[]) {
   const e = await runAction(() => fetchExport(ids));

@@ -12,8 +12,9 @@ export const useConnections = (enabled = true) => useQuery({ queryKey: connectio
 export const connectionKindsKey = ['connection-kinds'] as const;
 
 const statusKey = (id: string) => ['connection-status', id] as const;
+
 /** An MCP server connection's tools. */
-export const toolsKey = (id: string) => ['connection-tools', id] as const;
+export const connectionToolsKey = (id: string) => ['connection-tools', id] as const;
 
 /** How a connection is doing beyond OK or Failing, as its plugin tells it. */
 export const useConnectionStatus = (id: string) =>
