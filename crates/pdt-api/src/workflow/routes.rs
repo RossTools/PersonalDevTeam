@@ -251,7 +251,7 @@ pub(crate) async fn patch(
 ) -> Result<Json<Workflow>, ApiError> {
     let p = body(payload)?;
     let w = load(&st, &id).await?;
-    let install_updates = w.builtin.as_deref() == Some(super::builtins::INSTALL_UPDATES);
+    let install_updates = w.builtin.as_deref() == Some(super::builtins::install_updates::ID);
     if let Some(enabled) = p.enabled {
         if enabled {
             checked(&st, &detail(&st, w).await?.doc)?;

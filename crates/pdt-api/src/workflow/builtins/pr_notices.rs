@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "pr-notices";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::CiPr, doc: pr_notices };
+
 /// How many times PR notices puts an agent on one attempt's failed merge before it stops and comments (PDT-104).
 pub const FIX_TRIES: u32 = 3;
 

@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "comments-to-agent";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Tickets, doc: comments_to_agent };
+
 pub(super) fn comments_to_agent() -> WorkflowDoc {
     doc(json!({
         "name": "Ticket comments to the agent",

@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "close-parents";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::Tickets, doc: close_parents };
+
 /// A parent closes when its last open part does, with a comment and a notification; one with work of its own stays
 /// open with a notification instead; a part opening again moves a closed parent back to In progress.
 pub(super) fn close_parents() -> WorkflowDoc {

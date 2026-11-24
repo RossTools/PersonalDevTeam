@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "github-issue-done";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Issues, doc: github_issue_done };
+
 /// A ticket linked to a GitHub issue that finishes closes it (PDT-154): Done as completed, Won't do as not planned,
 /// each with a comment, once per ticket (the run key). Only an issue Done closes (`closing`, PDT-481): one PDT filed or
 /// imported, or one linked by hand with "Close it when this ticket is done" on.

@@ -53,6 +53,10 @@ pub(super) fn defs() -> Vec<Tool> {
 
 pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
     let st = cx.st;
+    // No secrets near untrusted input (PDT-201): only their names. A new tool here is refused there too.
+    if name != "list_secrets" {
+        crate::untrusted::refuse_secrets(st, cx.session).await?;
+    }
     match name {
         "list_secrets" => {
             let _: NoArgs = args(a)?;

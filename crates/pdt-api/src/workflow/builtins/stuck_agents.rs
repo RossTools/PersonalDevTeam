@@ -6,14 +6,12 @@ use super::*;
 use crate::workflow::templates::params;
 use pdt_core::workflow::template::TemplateParam;
 
-pub static SETTINGS: InputsBuiltin = InputsBuiltin {
-    id: STUCK_AGENTS,
-    params: stuck_params,
-    template: stuck_template,
-    finish: None,
-    read: None,
-    extra: None,
-};
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "stuck-agents";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::Tickets, doc: stuck_agents };
+
+pub static SETTINGS: InputsBuiltin =
+    InputsBuiltin { id: ID, params: stuck_params, template: stuck_template, finish: None, read: None, extra: None };
 
 /// The Idle tickets input's default, in minutes (PDT-510).
 pub const IDLE_MINUTES: u64 = 20;
