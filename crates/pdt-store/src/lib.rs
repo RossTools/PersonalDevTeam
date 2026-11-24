@@ -35,7 +35,7 @@ pub use events::{NewEvent, RAW_RETENTION_MS};
 pub use exec::ExecSession;
 pub use health::{WRITE_FAILED, WriteFailure, is_disk_full, is_write_failure, write_backoff_ms};
 pub use host::ProjectSettings;
-pub use links::{Heard, RemoteSecretUse};
+pub use links::{Heard, OwnerSeen, RemoteSecretUse};
 pub use local_forge::{LocalChange, LocalCiRun};
 pub use notifications::NotificationFilter;
 pub use pm::{NoteFilter, PmSessionRow};

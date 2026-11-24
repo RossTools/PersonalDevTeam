@@ -20,7 +20,8 @@ ticket, marked **on win-box**.
 ## Add a remote instance to a project
 
 1. **On the owner**, open the project's settings, then **Remote instances**, and click **Add instance**. PDT shows a
-   pairing code and this instance's address, each with **Copy**. The code works once, for 10 minutes.
+   pairing code and this instance's address, each with **Copy**. The code works once, for 10 minutes; a pairing it
+   refuses (an instance pairing with itself, say) doesn't use it up.
 2. **On the other instance**, click **Add project**, choose **Join a remote**, and enter the owner's address and the
    code. Click **Join project**.
 
@@ -31,6 +32,11 @@ The project then shows on the other instance under **Settings › Remote project
 "**Valley · remote project of studio**", and on the owner under **Remote instances**.
 
 Pairing is for one project. To let the same instance work on another project, pair it again from that project.
+
+If an instance is renamed, the other end shows the new name once they next talk. If its remote access address
+changes (a new Tailscale machine name, say), each end tells the other its new address and switches to it once it
+answers there. If both instances' addresses change while they can't reach each other, they stay **offline**: remove
+the remote instance on the owner, leave the project on the remote instance, and pair them again.
 
 An instance has a project either as its own or as a remote project, never both: joining a project whose repository
 it already has as its own is refused, and so is adding a remote project's repository as its own.

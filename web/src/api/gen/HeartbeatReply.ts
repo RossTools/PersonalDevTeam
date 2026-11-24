@@ -18,4 +18,8 @@ secrets: Array<string>,
 /**
  * The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
  */
-cap: number | null, };
+cap: number | null, 
+/**
+ * The remote instance's address now (its remote access): the owner moves to it once it answers there.
+ */
+url: string | null, };

@@ -340,6 +340,9 @@ pub struct HeartbeatReply {
     /// The most tickets of the project the remote instance takes at once (its own setting); None: no cap of its own.
     #[serde(default)]
     pub cap: Option<u32>,
+    /// The remote instance's address now (its remote access): the owner moves to it once it answers there.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// A link's state, as one end shows it.
