@@ -967,3 +967,28 @@ async fn a_retry_failing_partway_records_the_jobs_that_ran() {
         .collect();
     assert_eq!(retries, [("test (linux)".to_string(), 1), ("test (windows)".to_string(), 0)], "{said}");
 }
+
+/// PDT-701: a provider without single-job retries (GitLab) runs every failed job of the run again, so a retry of one
+/// job counts toward, and is checked against, the cap of each.
+#[tokio::test]
+async fn a_retry_that_reruns_every_failed_job_counts_each() {
+    use pdt_core::pr::CiState;
+    let gh = Arc::new(FakeForge::default());
+    gh.ci.capabilities.lock().unwrap().retry_jobs = false;
+    let env = setup(Some(gh.clone()), None).await;
+    let (s, branch) = session(&env).await;
+    wait_said(&env, &s, 1).await;
+    gh.set_pr(&branch, Some(pr(12)));
+    gh.set_runs(&branch, vec![run(9, &branch, CiState::Failed, "2026-10-27T10:00:00Z")]);
+    gh.set_jobs(9, &["a", "b"]);
+
+    let said = say(&env, &s, "mcp: ci_retry {\"jobs\": [\"a\"]}").await;
+    assert!(said.contains("Retried a, b on abc"), "b ran again too: {said}");
+    assert!(said.contains("runs every failed job of its run again"), "{said}");
+    assert_eq!(*gh.ci.retried.lock().unwrap(), [("9".to_string(), true)]);
+    let said = say(&env, &s, "mcp: ci_retry {\"jobs\": [\"a\"]}").await;
+    assert!(said.contains("Retried a, b"), "{said}");
+    let said = say(&env, &s, "mcp: ci_retry {\"jobs\": [\"b\"]}").await;
+    assert!(said.contains("b was retried 2 times on abc already"), "b's retries counted: {said}");
+    assert_eq!(gh.ci.retried.lock().unwrap().len(), 2);
+}

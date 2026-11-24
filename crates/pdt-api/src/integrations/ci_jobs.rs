@@ -346,7 +346,20 @@ impl Action for CiRetry {
             let all: Vec<(usize, CiJob)> =
                 runs.iter().enumerate().flat_map(|(r, run)| run.jobs.iter().map(move |j| (r, j.clone()))).collect();
             let jobs: Vec<CiJob> = all.iter().map(|(_, j)| j.clone()).collect();
-            let ci_retry::Picked { jobs: picked, skipped } = ci_retry::pick(&jobs, &i.jobs, i.failed)?;
+            let ci_retry::Picked { jobs: mut picked, skipped } = ci_retry::pick(&jobs, &i.jobs, i.failed)?;
+            // A provider without single-job retries (GitLab) runs every failed job of the run again: each is checked
+            // against the cap and recorded, not only those named (PDT-701).
+            for (k, (r, j)) in all.iter().enumerate() {
+                let whole_run = !runs[*r].provider.capabilities().retry_jobs;
+                if whole_run
+                    && j.state == CiState::Failed
+                    && j.retryable
+                    && !picked.contains(&k)
+                    && picked.iter().any(|&p| all[p].0 == *r)
+                {
+                    picked.push(k);
+                }
+            }
             let events = retry_events(cx, &info.ticket_id).await?;
             for &k in &picked {
                 let (r, j) = &all[k];
