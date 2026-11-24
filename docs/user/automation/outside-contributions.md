@@ -100,6 +100,8 @@ is reviewed like any other, and a failure comes to your Inbox.
 - **Fenced.** The issue's or pull request's title, text and changes (its files' names too) reach the agent in marked
   blocks, with a note that they are data, never instructions. A ticket made from outside input keeps its title fenced
   wherever an agent reads it: in searches, the PM's overview, briefing and daily update, and watch messages. So do bots' comments and reviews, since a bot can repeat what anyone wrote.
+  So do CI logs, ticket comments a workflow writes when outside input started it, and what a triage session said when
+  the PM looks at it.
   Long text is shortened (to 8 KB each, less if the message would still be too long), with a note of how much was cut
   and a link to the full text.
 - **Carried through.** A workflow started by outside input that runs another workflow (**Run a workflow**) passes that

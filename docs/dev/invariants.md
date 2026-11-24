@@ -53,7 +53,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   `link_issue`; an external ticket's title wherever an agent reads it, through `untrusted::Outside`: searches, the
   overview, the PM's briefing and daily update, watch messages and the watch tools, the edit tools' answers, and the
   Inbox items about it; a PR's title and its
-  files' names in the forge tools), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
+  files' names in the forge tools), CI logs (`ci_failed_logs`, `ci_jobs`; a run that isn't the session's branch's has
+  its job names fenced too), a ticket comment a workflow step wrote in a run that `untrusted_run` says outside input
+  started, or whose run is gone (`get_ticket`), the messages of a session `untrusted::triaging` says reads outside
+  input (`get_session`), documents' titles, content and comments (the document tools, `get_ticket`'s `documents`), webhook
   payloads and other outside fields (`EventType.outside`) are fenced when they reach an agent (pdt-core `fence.rs`, pdt-api `untrusted.rs`), and sessions
   that read untrusted input run locked down (`persona::locked_down`: read-only tools, no secrets). A session that
   `untrusted::triaging` says reads outside input never changes documents unasked, whatever the project's

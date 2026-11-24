@@ -189,19 +189,8 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     let st = cx.st;
     let Json(ticket) =
         crate::tickets::get_one(State(st.clone()), axum::extract::Path(id.to_string())).await.map_err(api)?;
-    let comments: Vec<Value> = st
-        .store
-        .events_of(id, &[EventKind::Comment], 1000)
-        .await
-        .map_err(store)?
-        .iter()
-        .filter(|e| e.body.is_some())
-        .map(|e| {
-            let mut v = who(e);
-            v["body"] = json!(e.body);
-            v
-        })
-        .collect();
+    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let (comments, fenced_comments) = comments_of(st, id, &fence).await?;
     let history: Vec<Value> = st
         .store
         .events_of(id, HISTORY, HISTORY_LEN)
@@ -240,7 +229,6 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     // An external ticket's title and description are what someone outside PDT wrote (an imported issue, PDT-202,
     // PDT-415): fenced. Linked issues' titles (PDT-536) and the documents' titles are outside text on any ticket.
     let external = ticket.summary.source == TicketSource::External;
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
     let outside = external.then(|| (fence.wrap(&ticket.summary.title), fence.wrap(&ticket.description)));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
     let ticket_project = ticket.summary.project_id.clone();
@@ -270,6 +258,12 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     }
     if issues {
         fenced.push("Its linked issues' titles are what their trackers say, so they are in such blocks.");
+    }
+    if fenced_comments {
+        fenced.push(
+            "Comments written by a workflow run that outside input started (an issue, a webhook) can quote it, so \
+             they are in such blocks.",
+        );
     }
     if !documents.is_empty() {
         fenced.push("Its documents' titles are written by whoever can edit them, so they are in such blocks.");
@@ -328,6 +322,38 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
         v["step"] = step;
     }
     Ok(v)
+}
+
+/// A ticket's comments for `get_ticket`, and whether any went in a block of `fence`: one a workflow step wrote in a run
+/// that outside input started (PDT-647: its body is templated, and can quote the issue or webhook that started it), or
+/// whose run is gone.
+async fn comments_of(st: &AppState, id: &str, fence: &pdt_core::fence::Fence) -> Result<(Vec<Value>, bool), String> {
+    let mut untrusted: std::collections::HashMap<String, bool> = Default::default();
+    let (mut out, mut fenced) = (vec![], false);
+    for e in st.store.events_of(id, &[EventKind::Comment], 1000).await.map_err(store)? {
+        let Some(body) = &e.body else { continue };
+        let run = e.data.as_ref().and_then(|d| d.get("runId")).and_then(Value::as_str);
+        let outside = match run {
+            Some(run) => match untrusted.get(run) {
+                Some(&u) => u,
+                None => {
+                    let u = match st.store.get_workflow_run(run).await.map_err(store)? {
+                        Some(r) => crate::untrusted::untrusted_run(st, &r).await,
+                        // A run since deleted can't say what started it.
+                        None => true,
+                    };
+                    untrusted.insert(run.to_string(), u);
+                    u
+                }
+            },
+            None => false,
+        };
+        fenced |= outside;
+        let mut v = who(&e);
+        v["body"] = json!(if outside { fence.wrap(body) } else { body.clone() });
+        out.push(v);
+    }
+    Ok((out, fenced))
 }
 
 /// A ticket's open agent questions for `get_ticket`: who asked, when, the questions and whether they hold it.

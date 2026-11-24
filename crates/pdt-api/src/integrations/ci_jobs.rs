@@ -128,7 +128,7 @@ pub struct JobOut {
     pub url: String,
     /// Times it was retried on this head (`ci_retry`), of `retryCap`.
     pub retries: usize,
-    /// The end of a failed job's log (`ci_failed_logs` gives more).
+    /// The end of a failed job's log (`ci_failed_logs` gives more), fenced: whatever the job ran printed it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub log_tail: Option<String>,
 }
@@ -160,6 +160,9 @@ pub struct JobsOutput {
     /// Providers whose runs couldn't be read, and why.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
+    /// How to read the fenced blocks (the logs), when there are any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outside_text: Option<String>,
 }
 
 pub struct CiJobs;
@@ -175,7 +178,7 @@ impl Action for CiJobs {
             "The jobs of the newest CI runs on your ticket attempt's head commit (its pull request's head, else the \
              pushed branch's), from each of the project's CI providers (or one, or one run): each job's id, name, \
              step key, state, whether `ci_retry` can run it again and how often it was, its URL, and the end of a \
-             failed job's log.",
+             failed job's log (fenced as outside input: whatever the job ran printed it).",
         )
     }
 
@@ -217,6 +220,8 @@ impl Action for CiJobs {
                 return Err(errors.join("; "));
             }
             let events = retry_events(cx, &info.ticket_id).await?;
+            // A log is what the job's commands printed: a test's output, a dependency's, a fetched page's (PDT-647).
+            let outside = crate::untrusted::Outside::new();
             let runs = runs
                 .into_iter()
                 .map(|(r, tails)| {
@@ -233,7 +238,7 @@ impl Action for CiJobs {
                             state: j.state,
                             retryable: j.retryable && r.provider.capabilities().retry,
                             url: j.url,
-                            log_tail,
+                            log_tail: log_tail.map(|l| outside.wrap(&l)),
                         })
                         .collect();
                     HeadRunOut {
@@ -247,7 +252,8 @@ impl Action for CiJobs {
                 })
                 .collect();
             let branch = info.attempt.branch;
-            Ok(JobsOutput { branch, head, pr, runs, retry_cap: ci_retry::RETRY_CAP, errors })
+            let outside_text = outside.note();
+            Ok(JobsOutput { branch, head, pr, runs, retry_cap: ci_retry::RETRY_CAP, errors, outside_text })
         })
     }
 }
@@ -588,9 +594,10 @@ pub struct LogsInput {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct JobLogOut {
+    /// Fenced for a run that isn't one of the session's branch's (its workflow names its jobs).
     pub name: String,
     pub url: String,
-    /// The end of its log.
+    /// The end of its log, fenced: whatever the job ran printed it.
     pub log: String,
 }
 
@@ -600,18 +607,21 @@ pub struct LogsOutput {
     pub provider: String,
     pub run_id: String,
     pub jobs: Vec<JobLogOut>,
+    /// How to read the fenced blocks.
+    pub outside_text: String,
 }
 
 pub struct CiFailedLogs;
 
 /// The failed run to read: `id` of `provider` (looked up on the branch, for its attempt), else the newest failed run
-/// on the branch of any of `providers`.
+/// on the branch of any of `providers`; and whether it is one of the branch's runs (else any run of the repository,
+/// a fork's pull request's included, whose workflow an outsider may have written).
 fn failed_run(
     providers: &[Arc<dyn CiProvider>],
     repo: &str,
     branch: Option<&str>,
     id: Option<&str>,
-) -> Result<(Arc<dyn CiProvider>, CiRun), String> {
+) -> Result<(Arc<dyn CiProvider>, CiRun, bool), String> {
     let read = |p: &Arc<dyn CiProvider>| match branch {
         Some(b) => p.runs(repo, b, None).map_err(|e| format!("{}: {e}", p.label())),
         None => Ok(vec![]),
@@ -626,7 +636,8 @@ fn failed_run(
                 .ok_or("name the run's provider (`ci_runs` gives it)")?,
         };
         let known = read(&p).unwrap_or_default().into_iter().find(|r| r.id == id);
-        // A run no longer among the branch's recent ones: its first attempt.
+        let own = known.is_some();
+        // A run no longer among the branch's recent ones (or another branch's): its first attempt.
         let run = known.unwrap_or_else(|| CiRun {
             provider: p.id().to_string(),
             id: id.to_string(),
@@ -639,7 +650,7 @@ fn failed_run(
             created_at: String::new(),
             failed_jobs: vec![],
         });
-        return Ok((p, run));
+        return Ok((p, run, own));
     }
     let b = branch.ok_or("this session has no branch: name a run")?;
     let mut newest: Option<(Arc<dyn CiProvider>, CiRun)> = None;
@@ -650,7 +661,7 @@ fn failed_run(
             }
         }
     }
-    newest.ok_or(format!("no CI run on {b} has failed"))
+    newest.map(|(p, r)| (p, r, true)).ok_or(format!("no CI run on {b} has failed"))
 }
 
 impl Action for CiFailedLogs {
@@ -662,7 +673,8 @@ impl Action for CiFailedLogs {
             ToolDecl::new("ci_failed_logs", "Read the logs of a CI run's failed jobs").read_only().open_world(),
             "Failed CI logs",
             "The failed jobs of a CI run (by provider and id, else the newest failed run on the session's branch), \
-             each with the end of its log: what to fix.",
+             each with the end of its log: what to fix. Logs are fenced as outside input, and so are the job names \
+             of a run that isn't one of the session's branch's.",
         )
     }
 
@@ -678,17 +690,22 @@ impl Action for CiFailedLogs {
             let providers = providers_of(&h, i.provider.as_deref())?;
             let (repo, branch, id) = (h.repo(), h.branch(None).ok(), i.run_id.map(|r| r.text()));
             tokio::task::spawn_blocking(move || {
-                let (p, run) = failed_run(&providers, &repo, branch.as_deref(), id.as_deref())?;
+                let (p, run, own) = failed_run(&providers, &repo, branch.as_deref(), id.as_deref())?;
                 if !p.capabilities().logs {
                     return Err(format!("{} has no logs to read: {}", p.label(), run.url));
                 }
                 let failed = p.jobs(&repo, &run).map_err(|e| e.to_string())?;
+                // Logs are outside text (PDT-647), and so are the job names of a run that isn't the branch's. The
+                // log tail is already cut to `LOG_CHARS`, keeping its end (where the error is), so the fence cuts none.
+                let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
                 let mut jobs = vec![];
                 for j in failed.into_iter().filter(|j| j.state == CiState::Failed) {
                     let log = p.job_log_tail(&repo, &run, &j, pdt_forge::ci::LOG_LINES).map_err(|e| e.to_string())?;
-                    jobs.push(JobLogOut { name: j.name, url: j.url, log });
+                    let name = if own { j.name } else { fence.wrap(&j.name) };
+                    jobs.push(JobLogOut { name, url: j.url, log: fence.wrap(&log) });
                 }
-                Ok(LogsOutput { provider: p.id().to_string(), run_id: run.id, jobs })
+                let outside_text = fence.note();
+                Ok(LogsOutput { provider: p.id().to_string(), run_id: run.id, jobs, outside_text })
             })
             .await
             .map_err(|e| e.to_string())?
