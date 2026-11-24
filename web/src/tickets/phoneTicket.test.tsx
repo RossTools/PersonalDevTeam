@@ -129,13 +129,14 @@ describe('phone ticket: the primary action by stage', () => {
 });
 
 describe('phone ticket screen', () => {
-  it("reads the state at the top: title, stage · priority · persona, the stepper, and folded summaries", async () => {
+  it("reads the state at the top: title, the stage pill · priority · persona (no stepper), and folded summaries", async () => {
     stub(inProgress);
     renderWithQuery(<Harness t={inProgress} />);
     const screenEl = screen.getByRole('region', { name: 'ALP-1 · Fix login' });
     expect(within(screenEl).getByRole('button', { name: 'Edit title: Fix login' })).toBeInTheDocument();
-    expect(screenEl).toHaveTextContent('In progress·Medium·Coder · working');
-    expect(within(screenEl).getByRole('list', { name: 'Stage' })).toBeInTheDocument();
+    expect(screenEl).toHaveTextContent('In progress Medium·Coder · working');
+    expect(within(screenEl).getByRole('button', { name: 'Stage: In progress' })).toBeInTheDocument();
+    expect(within(screenEl).queryByRole('list', { name: 'Stage' })).not.toBeInTheDocument();
     expect(within(screenEl).getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     const details = within(screenEl).getByRole('button', { name: /Details/ });
     expect(details).toHaveAttribute('aria-expanded', 'false');
@@ -146,6 +147,29 @@ describe('phone ticket screen', () => {
     await userEvent.click(details);
     expect(details).toHaveAttribute('aria-expanded', 'true');
     expect(within(screenEl).getByRole('region', { name: 'Details' })).toBeInTheDocument();
+  });
+
+  it('moves the stage from the pill: one tap opens the stages, one moves it', async () => {
+    const t = ticket(1, { title: 'Fix login', stage: 'ready' });
+    const calls = stub(t);
+    renderWithQuery(<Harness t={t} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Stage: Ready' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Move to' });
+    const rows = within(within(sheet).getByRole('group', { name: 'Stages' })).getAllByRole('button');
+    expect(rows.map((r) => r.textContent)).toEqual(['Draft', 'Ready', 'To do', 'In progress', 'Done', "Won't do"]);
+    expect(within(sheet).getByRole('button', { name: 'Ready' })).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(within(sheet).getByRole('button', { name: 'To do' }));
+    await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ stage: 'todo' }));
+  });
+
+  it('names labels and areas in the Details summary, and shows No priority without a dash', () => {
+    const t = ticket(1, { stage: 'ready', priority: 'none', labels: ['auth'], areas: ['auth', 'pages'] });
+    stub(t);
+    renderWithQuery(<Harness t={t} />);
+    expect(screen.getByRole('button', { name: /Details/ })).toHaveTextContent('Ready · No priority · Labels: auth · Areas: auth, pages');
+    const priority = screen.getByRole('region', { name: 'ALP-1 · ' + t.title }).querySelector('[data-priority="none"]');
+    expect(priority?.querySelector('svg')).toBeNull();
+    expect(priority).toHaveTextContent('No priority');
   });
 
   it('edits the title in place, with Cancel and Save in the top bar', async () => {
