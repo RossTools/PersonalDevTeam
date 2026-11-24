@@ -1,8 +1,8 @@
 # PDT website
 
 The project website: a landing page and the docs, built with [Astro](https://astro.build) and
-[Starlight](https://starlight.astro.build) and served by GitHub Pages (private for now: only members of the RossTools
-org can open it).
+[Starlight](https://starlight.astro.build) and served by GitHub Pages at [pdt.dev](https://pdt.dev). It builds on the Node version in the repository's `.nvmrc`
+(CI's; Astro needs at least the `engines.node` in `package.json`).
 
 - `src/pages/index.astro` is the landing page (its hero's screenshots are a carousel, `src/components/ShotCarousel.astro`:
   no library, no autoplay, and without JS the slides scroll sideways; on phones its frames are taller, each desktop shot

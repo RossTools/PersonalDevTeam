@@ -51,8 +51,10 @@ check_changelog() {
   step scripts/changelog.test.sh
   step scripts/version.test.sh
   step scripts/release-tag.test.sh
+  step scripts/nightly-tag.test.sh
   step scripts/scratch-daemon.test.sh
   step scripts/clean-targets.test.sh
+  step scripts/site-release-docs.test.sh
   step scripts/google-build-values.test.sh
   step scripts/release-sign.test.sh
   step scripts/notarize-macos.test.sh
