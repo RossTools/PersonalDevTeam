@@ -310,7 +310,7 @@ impl LocalForge {
         let Some(push) = self.push.clone().filter(|p| p.branches) else { return };
         let (repo, spec) = (self.repo.clone(), format!("+refs/heads/{branch}:refs/heads/{branch}"));
         self.rt.spawn_blocking(move || {
-            if let Err(e) = pdt_git::push(&repo, &push.remote, &[&spec], pdt_git::BACKGROUND_REMOTE_TIMEOUT) {
+            if let Err(e) = push_to(&repo, &push.remote, &spec) {
                 tracing::warn!(remote = %push.remote, %spec, error = %e, "could not push a ticket branch");
             }
         });
@@ -340,11 +340,7 @@ impl LocalForge {
         };
         let base = &change.base_branch;
         let (repo, remote, spec) = (self.repo.clone(), push.remote.clone(), format!("{commit}:refs/heads/{base}"));
-        let pushed = tokio::task::spawn_blocking(move || {
-            pdt_git::push(&repo, &remote, &[&spec], pdt_git::BACKGROUND_REMOTE_TIMEOUT)
-        })
-        .await
-        .map_err(failed)?;
+        let pushed = tokio::task::spawn_blocking(move || push_to(&repo, &remote, &spec)).await.map_err(failed)?;
         match pushed {
             Ok(pdt_git::PushOutcome::Pushed) => {}
             Ok(pdt_git::PushOutcome::Rejected(why)) => {
@@ -584,6 +580,23 @@ impl LocalForge {
     }
 }
 
+/// `[push] remote` is one of the checkout's own remotes (PDT-648). Git reads a name it doesn't know as a path, so a
+/// repository's config naming a folder (or a remote since removed) would push the user's work there.
+fn known_remote(repo: &std::path::Path, remote: &str) -> Result<(), pdt_git::GitError> {
+    match pdt_git::remote_url(repo, remote) {
+        Some(_) => Ok(()),
+        None => Err(pdt_git::GitError::Command(format!(
+            "`{remote}` is not one of this repository's remotes (`git remote` lists them)"
+        ))),
+    }
+}
+
+/// Pushes `spec` to `remote`, once it is known to be one of the checkout's remotes.
+fn push_to(repo: &std::path::Path, remote: &str, spec: &str) -> Result<pdt_git::PushOutcome, pdt_git::GitError> {
+    known_remote(repo, remote)?;
+    pdt_git::push(repo, remote, &[spec], pdt_git::BACKGROUND_REMOTE_TIMEOUT)
+}
+
 fn short(sha: &str) -> &str {
     sha.get(..8).unwrap_or(sha)
 }
@@ -591,6 +604,7 @@ fn short(sha: &str) -> &str {
 /// Fetches `remote`'s `base` and fast-forwards the local `base` to it; the remote's tip. Err when they diverged (the
 /// local base has commits the remote lacks) or the local base can't move.
 fn catch_up(repo: &std::path::Path, remote: &str, base: &str) -> Result<String, String> {
+    known_remote(repo, remote).map_err(|e| e.to_string())?;
     let tracking = format!("refs/remotes/{remote}/{base}");
     pdt_git::fetch(repo, remote, &format!("+refs/heads/{base}:{tracking}"), pdt_git::BACKGROUND_REMOTE_TIMEOUT)
         .map_err(|e| e.to_string())?;

@@ -304,7 +304,7 @@ pub enum RunConfigError {
     BadGlob { area: String, path: String, message: String },
     #[error("\"{0}\" in [ci] providers is not a CI provider id (letters, digits, _ and -)")]
     BadCiProvider(String),
-    #[error("\"{0}\" in [push] remote is not a git remote name")]
+    #[error("\"{0}\" in [push] remote is not a git remote name (a name from `git remote`, not a URL or a path)")]
     BadPushRemote(String),
     #[error("{0}")]
     BadBuildOutput(String),
@@ -550,11 +550,21 @@ fn merge_push(file: Option<PushFile>, over: Option<PushFile>) -> Result<Option<P
     let (file, over) = (file.unwrap_or_default(), over.unwrap_or_default());
     let remote = |r: Option<String>| r.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
     let Some(remote) = remote(over.remote).or(remote(file.remote)) else { return Ok(None) };
-    // A remote name is one argument to git: no spaces, and never an option.
-    if remote.starts_with('-') || remote.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    // A remote name is one argument to git: no spaces, and never an option. Git takes a URL or a path there too, which
+    // a repository's own config must not name (its branches would be pushed anywhere): only a plain name, which the
+    // local forge also checks is one of the checkout's remotes before each push.
+    if !is_remote_name(&remote) {
         return Err(RunConfigError::BadPushRemote(remote));
     }
     Ok(Some(PushDef { remote, branches: over.branches.or(file.branches).unwrap_or(false) }))
+}
+
+/// A plain git remote name (`origin`, `backup-1`): letters, digits, `_`, `-` and inner dots; never an option, a path or
+/// a URL (no `:`, `/` or `\`), and not `.` or `..`.
+fn is_remote_name(r: &str) -> bool {
+    !r.starts_with(['-', '.'])
+        && !r.contains("..")
+        && r.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }
 
 /// `[ci] providers` checked: ids (`[a-z0-9_-]+`), each once, in order.
@@ -901,7 +911,20 @@ command = "cargo run"
         assert_eq!(merge(None, None).unwrap().push, None, "no [push]: it pushes nowhere");
         let branches_only = parse("[push]\nbranches = true\n", Source::File).unwrap();
         assert_eq!(merge(Some(branches_only), None).unwrap().push, None, "no remote, nowhere to push");
-        for bad in ["--upload-pack=x", "my remote"] {
+        let bad = [
+            "--upload-pack=x",
+            "my remote",
+            "https://attacker.example/x.git",
+            "ssh://host/x",
+            "git@host:x.git",
+            "../other-repo",
+            "/tmp/other",
+            "C:repo",
+            "other/repo",
+            ".",
+            "..",
+        ];
+        for bad in bad {
             let b = parse(&format!("[push]\nremote = \"{bad}\"\n"), Source::File).unwrap();
             assert!(matches!(merge(Some(b), None), Err(RunConfigError::BadPushRemote(_))), "{bad}");
         }

@@ -203,6 +203,8 @@ remote   = "origin"
 branches = true        # optional: push ticket branches as they move, as a backup
 ```
 
+- `remote` is the name of one of the repository's remotes (`git remote` lists them), never a URL or a path. PDT
+  pushes nothing when no remote has that name.
 - PDT merges, pushes the merge to the remote's base, and moves the local base only once the remote has taken it.
 - When the remote has moved on, PDT brings its base into the ticket's branch, runs CI again and retries the merge. A
   conflict goes back to the agent.

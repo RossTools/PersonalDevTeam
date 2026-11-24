@@ -369,3 +369,26 @@ async fn a_push_with_no_access_is_a_notice() {
     let n = notices(&env).await;
     assert!(n[0].body["text"].as_str().unwrap().contains("could not push `main` to the remote `origin`"), "{n:#?}");
 }
+
+#[tokio::test]
+async fn a_push_remote_that_is_not_one_of_the_repositorys_remotes_pushes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = setup(tmp.path(), &PUSH.replace("\"origin\"", "\"elsewhere\"")).await;
+    // No remote is called `elsewhere`, but git would read the name as the path of this bare repository.
+    let elsewhere = env.repo.join("elsewhere");
+    git(&env.repo, &["init", "-q", "--bare", "-b", "main", elsewhere.to_str().unwrap()]);
+    let exclude = env.repo.join(".git/info/exclude");
+    let kept = std::fs::read_to_string(&exclude).unwrap_or_default();
+    std::fs::write(&exclude, format!("{kept}\nelsewhere/\n")).unwrap();
+    commit(&env.worktree, "ok.txt", "work");
+    pdt_api::refresh_prs(&env.state).await;
+    wait_for(&env, |t| t["attempt"]["pr"]["ci"]["state"] == "passed").await;
+    let main = rev(&env.repo, "main");
+    merge(&env).await;
+    let t = wait_for(&env, |t| t["attempt"]["pr"]["autoMerge"] == false).await;
+    assert_eq!((t["attempt"]["state"].as_str(), rev(&env.repo, "main")), (Some("active"), main), "not merged");
+    let n = notices(&env).await;
+    assert!(n[0].body["text"].as_str().unwrap().contains("not one of this repository's remotes"), "{n:#?}");
+    let refs = std::process::Command::new("git").current_dir(&elsewhere).args(["for-each-ref"]).output().unwrap();
+    assert!(refs.stdout.is_empty(), "nothing was pushed there: {}", String::from_utf8_lossy(&refs.stdout));
+}
