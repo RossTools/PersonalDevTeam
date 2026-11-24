@@ -1,4 +1,4 @@
-import { Button } from '@ui';
+import { Button, RelativeTime } from '@ui';
 import { cn } from '@ui/lib/utils';
 
 export interface EndedBarProps {
@@ -6,6 +6,9 @@ export interface EndedBarProps {
   status: 'finished' | 'interrupted';
   /** An agent session: resuming continues its last conversation. */
   agent?: boolean;
+  /** When it ended (ms), and its exit code (finished only; null when it was stopped or the code is unknown). */
+  endedAt?: number | null;
+  exitCode?: number | null;
   /** Restart (finished) or Resume (interrupted). */
   onRestart: () => void;
   /** Remove… (finished only); asks first, in the caller. */
@@ -19,11 +22,12 @@ export interface EndedBarProps {
 
 /**
  * The fixed-height bar floated over the bottom edge of an ended session's (dimmed) terminal, so the terminal keeps its
- * size: "Session ended · Restart · Remove…" or "Interrupted when the daemon stopped · Resume".
+ * size: "Ended 2h ago · exit 0 · Restart · Remove…" or "Interrupted when the daemon stopped · Resume".
  */
-export function EndedBar({ status, agent = false, onRestart, onRemove, restarting, removing, disabled, className }: EndedBarProps) {
+export function EndedBar({ status, agent = false, endedAt = null, exitCode = null, onRestart, onRemove, restarting, removing, disabled, className }: EndedBarProps) {
   const interrupted = status === 'interrupted';
   const message = interrupted ? 'Interrupted when the daemon stopped' : 'Session ended';
+  const exit = !interrupted && exitCode !== null && exitCode >= 0 ? `exit ${exitCode}` : null;
   return (
     <div
       role="group"
@@ -34,7 +38,12 @@ export function EndedBar({ status, agent = false, onRestart, onRemove, restartin
       )}
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="shrink-0 font-medium">{message}</span>
+        {!interrupted && endedAt !== null ? (
+          <span className="shrink-0 font-medium">Ended <RelativeTime time={endedAt} /></span>
+        ) : (
+          <span className="shrink-0 font-medium">{message}</span>
+        )}
+        {exit && <span className="shrink-0 text-meta text-muted-foreground">· {exit}</span>}
         {interrupted && agent && (
           <span className="min-w-0 truncate text-meta text-muted-foreground">the agent resumes its last conversation</span>
         )}

@@ -44,7 +44,8 @@ Keep one conversation per topic (a release, a feature, a clean-up). Several can 
 history. The list shows the open ones, most recently active first; an unread reply is in bold with a dot, and a
 working one shows a spinner.
 
-- **New conversation** starts one; its first message names it. **Rename** (in a conversation's menu) changes the name.
+- **+** above the list starts one; its first message names it. **Rename**, **Close…** and **Reset…** are in the
+  conversation's **⋯** menu (in its header, or right-click it in the list).
 - **Close…** when the topic is done: the PM writes a short journal entry (what was done, what's still open) and the
   conversation becomes read-only. The newest ended ones are listed under **Ended**, the rest under **All ended
   conversations**.
