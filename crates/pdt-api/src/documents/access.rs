@@ -5,7 +5,9 @@
 //! user can review it and roll it back.
 
 use crate::routes::{AppState, now_ms};
-use pdt_core::document::{Document, DocumentBackup, DocumentChange};
+use pdt_core::document::{
+    CHANGE_DIFF_MAX, CHANGES_PAGE, CHANGES_PAGE_MAX, Document, DocumentBackup, DocumentChange, cap_diff,
+};
 use pdt_core::document_access::{Caller, DocumentCall, allows};
 use pdt_core::policy::AgentDocuments;
 use pdt_core::session::Session;
@@ -139,7 +141,8 @@ pub(crate) async fn backup(st: &AppState, d: &Document) -> Option<DocumentBackup
 }
 
 /// Keeps a change an agent made without asking: on the document's changes, and in the history of the ticket the agent
-/// works on, with the diff, so the user can review it and roll it back.
+/// works on, with the diff (cut to [`CHANGE_DIFF_MAX`]: the version or the kept copy has the rest), so the user can
+/// review it and roll it back.
 pub(crate) async fn record(st: &AppState, s: &Session, d: &Document, c: Change) {
     let agent = crate::mcp::tools::agent_of(st, s).await;
     let at = now_ms();
@@ -150,7 +153,7 @@ pub(crate) async fn record(st: &AppState, s: &Session, d: &Document, c: Change) 
         tool: c.tool.into(),
         summary: c.summary,
         version: c.version,
-        diff: c.diff.filter(|d| !d.trim().is_empty()),
+        diff: c.diff.filter(|d| !d.trim().is_empty()).map(|d| cap_diff(&d, CHANGE_DIFF_MAX)),
         agent: agent.clone(),
         restorable: c.backup.is_some(),
     };
@@ -169,13 +172,24 @@ pub(crate) async fn record(st: &AppState, s: &Session, d: &Document, c: Change) 
     }
 }
 
-/// `GET /api/documents/{id}/changes`: the changes agents made to it without asking, newest first.
+/// One page of `GET /api/documents/{id}/changes`: `limit` changes (20, at most 100), those before the change `before`.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct ChangesQuery {
+    limit: Option<u32>,
+    before: Option<String>,
+}
+
+/// `GET /api/documents/{id}/changes?limit=&before=`: the changes agents made to it without asking, newest first, a
+/// page at a time (PDT-710).
 pub(crate) async fn changes(
     axum::extract::State(st): axum::extract::State<AppState>,
     axum::extract::Path(id): axum::extract::Path<String>,
+    crate::extract::ApiQuery(q): crate::extract::ApiQuery<ChangesQuery>,
 ) -> Result<axum::Json<Vec<DocumentChange>>, crate::error::ApiError> {
     let d = super::routes::document(&st, &id).await?;
-    Ok(axum::Json(st.store.document_changes(&d.id).await?))
+    let limit = q.limit.unwrap_or(CHANGES_PAGE).clamp(1, CHANGES_PAGE_MAX);
+    let before = q.before.as_deref().map(str::trim).filter(|b| !b.is_empty());
+    Ok(axum::Json(st.store.document_changes(&d.id, before, limit).await?))
 }
 
 /// `POST /api/documents/{id}/changes/{change}/restore`: puts a local document back as it was before an agent's

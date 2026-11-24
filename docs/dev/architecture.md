@@ -767,7 +767,8 @@ the document is linked to lets the PM act) or the project or ticket they name. T
 from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
 outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
-`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. Before an
+`document_changes` (`GET /api/documents/{id}/changes?limit=&before=`, newest first, 20 a page, at most 100) and as a
+`document` event on the agent's ticket, both with the diff cut to `CHANGE_DIFF_MAX` (16 KB, `document::cap_diff`). Before an
 unasked `doc_edit` or `sheet_edit` of a local document, `access::backup` keeps its bytes (a sheet's from the live model,
 up to 10 MB) and its charts in the change's `backup` columns; the store clears all but the newest `KEPT_BACKUPS` per
 document, and `POST /api/documents/{id}/changes/{change}/restore` writes one back (`LocalProvider::restore`: open
