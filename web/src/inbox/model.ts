@@ -7,6 +7,7 @@ import type { InboxSection } from '../api/gen/InboxSection';
 import type { Priority } from '../api/gen/Priority';
 import { routePath } from '../shell/route';
 import { nonBlank } from '../common/guards';
+import { capitalize } from '../common/text';
 
 /** Where each group is listed (PDT-361): a few sections, as the API sorts them. */
 export const SECTION_OF: Record<InboxGroup, InboxSection> = {
@@ -341,7 +342,7 @@ export function recommendationTone(choice: string): 'error' | 'warning' | 'succe
 /** What an answer says in its Undo toast and Recently answered: the choice's title, else what kind of answer it is. */
 export function answerLabel(item: InboxItem, a: { choice?: string; answers?: string[]; secret?: string }): string {
   const choice = a.choice ? item.choices.find((c) => c.id === a.choice)?.title ?? a.choice.replace(/^outcome:/, '').replace(/_/g, ' ') : null;
-  if (choice) return choice.charAt(0).toUpperCase() + choice.slice(1);
+  if (choice) return capitalize(choice);
   if (a.secret !== undefined) return 'Secret stored';
   return 'Answered';
 }

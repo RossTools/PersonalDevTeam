@@ -1,5 +1,5 @@
 import type { ApprovalQuestion } from '@ui';
-import { plural } from '../common/text';
+import { capitalize, plural } from '../common/text';
 import { isRecord } from '../common/guards';
 
 /** The verb a tool call row starts with ("Run `cargo test`"), by the agent's tool name. */
@@ -98,7 +98,7 @@ export function summarizeTools(calls: { tool: string; title: string }[]): string
     counts.other && `used ${plural(counts.other, 'tool')}`,
   ].filter(Boolean) as string[];
   const text = parts.join(', ');
-  return text ? text[0].toUpperCase() + text.slice(1) : 'No tools';
+  return text ? capitalize(text) : 'No tools';
 }
 
 /** "run", "edit": what an agent wants to do with a built-in tool ("Claude wants to run `npm test`"); null for others. */

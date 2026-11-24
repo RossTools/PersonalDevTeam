@@ -162,7 +162,6 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
   // Settings shows a built-in as customized once it is saved here.
   const saved = (d: WorkflowDetail) => savedWorkflow(qc, d);
   const save = useMutation({
-    meta: { errorShown: true },
     mutationFn: () => api.saveWorkflow(w.id, { doc: draft.doc, note: note.trim(), propose: false }),
     onSuccess: (d) => { setNote(''); saved(d); toast.success(`Saved version ${d.version}`); },
   });
@@ -281,7 +280,6 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
             <Button size="sm" variant="secondary" onClick={draft.discard}>Discard</Button>
             <Button size="sm" variant="primary" disabled={errors} title={errors ? 'Fix the errors first' : undefined} pending={save.isPending} onClick={() => save.mutate()}>Save</Button>
           </span>
-          {save.error && <span className="basis-full text-destructive">{save.error.message}</span>}
         </div>
       )}
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 overflow-x-auto">

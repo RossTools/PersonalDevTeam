@@ -3,6 +3,7 @@
 // An instance updates on this one's channel unless its remote project there says to use its own.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, Section, toast, useConfirm } from '@ui';
+import { capitalize } from '../common/text';
 import { api } from '../api/client';
 import { ApiError } from '../api/core';
 import type { InstanceUpdateReply } from '../api/gen/InstanceUpdateReply';
@@ -43,7 +44,7 @@ function InstanceRow({ i }: { i: InstanceUpdateView }) {
           Update {i.name}
         </Button>
       </div>
-      {i.needed && <Alert tone="warning">{i.needed[0].toUpperCase() + i.needed.slice(1)}.</Alert>}
+      {i.needed && <Alert tone="warning">{capitalize(i.needed)}.</Alert>}
     </li>
   );
 }

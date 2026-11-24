@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Button, List, ListHeading, ListRow, RelativeTime } from '@ui';
+import { capitalize } from '../common/text';
 import { api } from '../api/client';
 import type { InboxAnswered } from '../api/gen/InboxAnswered';
 import { isRecord } from '../common/guards';
@@ -25,7 +26,7 @@ function choiceText(choice: string | null): string {
   if (!choice) return 'Answered';
   if (choice === 'allow_always') return 'Always allow';
   const words = choice.replace(/^outcome:/, '').replace(/_/g, ' ');
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  return capitalize(words);
 }
 
 /** What it did and how: "Request changes · keyboard · phone", or by an agent. */

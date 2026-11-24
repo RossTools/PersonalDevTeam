@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import {
-  Alert, Badge, Button, Checkbox, Field, IconButton, Input, MenuButton, SectionLabel, SegmentedControl, Select, Skeleton, Textarea, toast, useConfirm, ViewHeader,
+  Alert, Badge, Button, Checkbox, EmptyState, Field, IconButton, Input, MenuButton, SectionLabel, SegmentedControl, Select, Skeleton, Textarea, toast, useConfirm, ViewHeader,
 } from '@ui';
 import { api } from '../api/client';
 import type { ParamType } from '../api/gen/ParamType';
@@ -38,7 +38,7 @@ function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; 
   const set = (i: number, change: Partial<TemplateParam>) => onChange(params.map((p, j) => (j === i ? { ...p, ...change } : p)));
   return (
     <div className="flex flex-col gap-2">
-      {params.length === 0 && <p className="text-sm text-muted-foreground">No parameters. Write {'{{params.<id>}}'} in the document and add one here.</p>}
+      {params.length === 0 && <EmptyState size="inline">No parameters. Write {'{{params.<id>}}'} in the document and add one here.</EmptyState>}
       {params.map((p, i) => (
         <div key={i} className="grid grid-cols-2 gap-2 rounded-md border border-border p-2 md:grid-cols-[8rem_1fr_9rem_1fr_auto_auto]">
           <Input mono aria-label={`Param ${i + 1} id`} placeholder="id" value={p.id} readOnly={readOnly} onChange={(e) => set(i, { id: e.target.value.trim() })} />

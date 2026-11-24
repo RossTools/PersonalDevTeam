@@ -205,7 +205,7 @@ export function NewWorkflowDialog({ projects, templateId, onClose, onCreated, on
   const body = templates.error ? <LoadError what="The templates" error={templates.error} />
     : !templates.data ? <Skeleton lines={6} />
       : g.empty ? (
-        <p className="py-5 text-sm text-muted-foreground">No templates match. <Link onClick={startFromScratch}>Start from scratch</Link></p>
+        <EmptyState size="inline" className="py-5" action={<Link onClick={startFromScratch}>Start from scratch</Link>}>No templates match.</EmptyState>
       ) : (
         <>
           {g.blank && <div className="mb-2"><Grid items={[g.blank]} picked={picked} onPick={pick} /></div>}

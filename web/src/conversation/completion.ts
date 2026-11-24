@@ -1,6 +1,7 @@
 import type { AgentCommandInfo } from '../api/gen/AgentCommandInfo';
 import type { RateLimitWindow } from '../api/gen/RateLimitWindow';
 import { clockTime, type Suggestion } from '@ui';
+import { capitalize } from '../common/text';
 
 /** What the word at the caret asks to complete: a `/command` (only as the message's first word) or an `@file`. */
 export interface Completion {
@@ -80,5 +81,5 @@ export function limitWarning(windows: RateLimitWindow[], now: number): LimitWarn
     return { text: reset ? `Rate limited until ${reset} (${label} limit)` : `Rate limited (${label} limit)`, reached: true };
   }
   const pct = Math.round(worst.utilization * 100);
-  return { text: `${label[0].toUpperCase()}${label.slice(1)} limit ${pct}%${reset ? ` · resets ${reset}` : ''}`, reached: false };
+  return { text: `${capitalize(label)} limit ${pct}%${reset ? ` · resets ${reset}` : ''}`, reached: false };
 }

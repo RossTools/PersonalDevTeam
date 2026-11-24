@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Page, Section, Skeleton, Switch, toast, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Page, RelativeTime, Section, Skeleton, Switch, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import type { Secret } from '../api/gen/Secret';
@@ -12,7 +12,7 @@ import { secretKeys, useSecrets } from '../secrets/queries';
 import { JoinRemoteProjectForm } from './JoinRemoteProjectForm';
 import { projectKeys, useRemoteProjects } from './queries';
 import { AutoSaveText } from '../common/AutoSave';
-import { LINK_STATE, ago, capOf } from './RemoteInstances';
+import { LINK_STATE, capOf } from './RemoteInstances';
 
 /** Where this instance keeps the project's checkout and worktrees; empty goes back to the default folder. */
 function CheckoutFolder({ r }: { r: RemoteProjectView }) {
@@ -87,8 +87,8 @@ function ProjectSecrets({ r }: { r: RemoteProjectView }) {
           {mine.map((s) => (
             <li key={s.id} className="flex flex-wrap items-center gap-2">
               <code>{s.name}</code>
-              <span className="text-muted-foreground">{s.lastUsedAt !== null ? `used ${ago(s.lastUsedAt)}` : 'not used yet'}</span>
-              <Button size="sm" variant="ghost" pending={removing} onClick={() => void remove(s)}>Remove…</Button>
+              <span className="text-muted-foreground">{s.lastUsedAt !== null ? <>used <RelativeTime time={s.lastUsedAt} /></> : 'not used yet'}</span>
+              <Button size="sm" pending={removing} onClick={() => void remove(s)}>Remove…</Button>
             </li>
           ))}
         </ul>
@@ -173,11 +173,11 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
         <span className="text-muted-foreground">· remote project of {owner}</span>
         <Badge tone={state.tone}>{state.label}</Badge>
         <span className="flex-1" />
-        <Button size="sm" variant="ghost" onClick={() => openExternal(r.openUrl)}><ExternalLink aria-hidden /> Open on {owner}</Button>
+        <Button size="sm" onClick={() => openExternal(r.openUrl)}><ExternalLink aria-hidden /> Open on {owner}</Button>
         <Button size="sm" pending={pausing} onClick={() => void pause()}>
           {r.link.paused ? <><Play aria-hidden /> Resume</> : <><Pause aria-hidden /> Pause</>}
         </Button>
-        <Button size="sm" variant="ghost" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Leave…</Button>
+        <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Leave…</Button>
       </div>
       {r.state === 'removed' && (
         <Alert tone="warning">{owner} removed this instance from {r.project.name}, or removed the project. Leave it to finish here.</Alert>
@@ -185,7 +185,7 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
       <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
         <span className="font-mono">{r.link.ownerUrl}</span>
         <span>{owner} v{r.link.ownerVersion}</span>
-        <span>{r.link.lastContactAt ? `last heard from ${ago(r.link.lastContactAt)}` : `waiting for ${owner}`}</span>
+        <span>{r.link.lastContactAt ? <>last heard from <RelativeTime time={r.link.lastContactAt} /></> : `waiting for ${owner}`}</span>
       </span>
       {r.running.length > 0 && (
         <ul aria-label={`Running for ${owner}`} className="flex flex-col gap-0.5 text-meta">
@@ -194,7 +194,7 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
               <Badge tone={s.live ? 'running' : 'neutral'}>{s.live ? 'running' : 'parked'}</Badge>
               {s.ticketKey && <span className="font-mono">{s.ticketKey}</span>}
               <span className="truncate">{s.title}</span>
-              <span className="text-muted-foreground">{s.agent} · since {ago(s.startedAt)}</span>
+              <span className="text-muted-foreground">{s.agent} · since <RelativeTime time={s.startedAt} /></span>
             </li>
           ))}
         </ul>
@@ -220,7 +220,7 @@ export function RemoteProjectsPage() {
       <Section label="Joined">
         {q.isPending && <Skeleton lines={2} label="Loading remote projects" />}
         <LoadError what="Remote projects" error={q.error} />
-        {q.data?.length === 0 && <EmptyState>No remote projects. Join one below.</EmptyState>}
+        {q.data?.length === 0 && <EmptyState size="inline">No remote projects. Join one below.</EmptyState>}
         {!!q.data?.length && (
           <ul data-flush className="flex flex-col divide-y divide-border">
             {q.data.map((r) => <RemoteProjectRow key={r.project.id} r={r} />)}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ImagePlus } from 'lucide-react';
-import { Alert, Button } from '@ui';
+import { Alert, Button, EmptyState } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { DocumentRead } from '../api/gen/DocumentRead';
 import { PreviewEdit } from '../common/PreviewEdit';
@@ -182,7 +182,7 @@ export function DocEditor({ id, markdown, version, editable }: DocEditorProps) {
           <Markdown variant="document">{text}</Markdown>
         </MarkdownImageContext.Provider>
       ) : (
-        <p className="text-xs text-muted-foreground">This document is empty.{editable && ' Switch to Edit to add to it.'}</p>
+        <EmptyState size="inline">This document is empty.{editable && ' Switch to Edit to add to it.'}</EmptyState>
       )}
     </div>
   );

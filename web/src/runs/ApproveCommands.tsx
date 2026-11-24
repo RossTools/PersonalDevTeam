@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, CodeCard, SectionLabel, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
+import { Badge, Button, CodeCard, EmptyState, SectionLabel, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
+import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
 import { invalidateCommands, runKeys } from './queries';
@@ -93,12 +94,12 @@ export function ConfigCommands({ projectId }: { projectId: string }) {
     await invalidateCommands(qc, projectId);
   }, { success: 'Approved' });
   if (list.isPending) return <Skeleton lines={2} label="Loading the commands" />;
-  if (list.isError) return <Alert tone="error">{list.error.message}</Alert>;
+  if (list.isError) return <LoadError what="The commands" error={list.error} onRetry={() => void list.refetch()} />;
   const waiting = new Set(list.data.untrusted);
   const ordered = [...list.data.commands].sort((a, b) => Number(waiting.has(b.fingerprint)) - Number(waiting.has(a.fingerprint)));
   const worktrees = list.data.worktrees;
   const main = list.data.error ? null : ordered.length === 0
-    ? <p className="text-xs text-muted-foreground">The run configuration names no commands.</p>
+    ? <EmptyState size="inline">The run configuration names no commands.</EmptyState>
     : ordered.map((c) => (
       <CommandRow key={c.fingerprint} command={c} waiting={waiting.has(c.fingerprint)} approve={(f) => void approve(f)} approving={approving} />
     ));
