@@ -30,6 +30,8 @@ pub struct FakeForge {
     pub login: Mutex<Option<String>>,
     /// Reads of change requests and issues fail with this (signed out, the forge down).
     pub error: Mutex<Option<String>>,
+    /// [`Forge::change_request_number`] alone fails with this (a read by number, as before a merge).
+    pub number_error: Mutex<Option<String>>,
     /// Change requests by repo, whoever opened them, most recently updated first ([`Forge::recent_change_requests`]).
     pub repo_prs: Mutex<HashMap<String, Vec<RepoChangeRequest>>>,
     /// [`Forge::change_request_stats`] by number (none when unset).
@@ -91,6 +93,7 @@ impl Default for FakeForge {
             merge_error: Default::default(),
             login: Default::default(),
             error: Default::default(),
+            number_error: Default::default(),
             repo_prs: Default::default(),
             stats: Default::default(),
             issues: Default::default(),
@@ -240,6 +243,9 @@ impl Forge for FakeForge {
     fn change_request_number(&self, repo: &str, number: u32) -> Result<Option<ChangeRequest>, ForgeError> {
         self.call(format!("pr {repo} #{number}"));
         self.failing()?;
+        if let Some(e) = self.number_error.lock().unwrap().clone() {
+            return Err(ForgeError::Failed(e));
+        }
         Ok(self.prs.lock().unwrap().values().find(|p| p.number == number).cloned())
     }
     fn open_change_request(&self, repo: &str, new: &NewChangeRequest) -> Result<OpenedChangeRequest, ForgeError> {

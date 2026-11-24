@@ -78,7 +78,7 @@ const DECIDE_TITLE: &str = "#{{trigger.number}}: {{trigger.title}}";
 /// The Inbox question after a review.
 const DECIDE: &str = "**[{{trigger.repo}}#{{trigger.number}}]({{trigger.url}})**: {{trigger.title}}\n\nBy \
 {{trigger.author}} ({{trigger.kind}}), {{trigger.changedFiles}} files, +{{trigger.additions}} -{{trigger.deletions}}. \
-CI on its head: {{steps.ci_now.ci}} {{steps.ci_now.ciUrl}}\n\n{{steps.review.summary}}\n\n\
+CI on its head: {{steps.ci_now.ci}}{{steps.ci_now.error}} {{steps.ci_now.ciUrl}}\n\n{{steps.review.summary}}\n\n\
 Approve & merge sets it to merge once CI passes. Request changes posts your note (or the review's feedback) on it \
 as a review; it is reviewed again when its author pushes. Close closes it, with your note as a comment.";
 
@@ -263,6 +263,9 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
                 with_pr(json!({"headSha": "{{trigger.headSha}}"})),
             );
             n["maxVisits"] = json!(10);
+            // Only its read of the pull request leaves by `error` (GitHub refusing the merge is `refused`): safe to
+            // run again.
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
             n
         },
         end("merging", 2100, -100, "Set to merge", false),
@@ -658,6 +661,11 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "base", "port": "error", "to": "why"}),
         json!({"from": "base_now", "port": "error", "to": "why"}),
         json!({"from": "update", "port": "error", "to": "why"}),
+        // The same for CI's reads and the merge (PDT-737), and CI pending past the wait's loop limit.
+        json!({"from": "wait_ci", "port": "error", "to": "why"}),
+        json!({"from": "check_ci", "port": "error", "to": "why"}),
+        json!({"from": "merge", "port": "error", "to": "why"}),
+        json!({"from": "watch", "port": "error", "to": "why"}),
         // The update's push hands the pull request to the push's run, which keeps an approval of the same diff.
         json!({"from": "wait_update", "port": "event", "to": "superseded"}),
         json!({"from": "wait_update", "port": "timeout", "to": "wait_ci"}),
@@ -719,6 +727,8 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "ci_now", "port": "merged", "to": "gone"}),
         json!({"from": "ci_now", "port": "closed", "to": "gone"}),
         json!({"from": "ci_now", "port": "none", "to": "gone"}),
+        // CI unreadable: the review is asked about all the same, its CI line saying why (PDT-737).
+        json!({"from": "ci_now", "port": "error", "to": "decide"}),
         json!({"from": "decide_request", "to": "forget_changes"}),
         json!({"from": "blocked_request", "to": "forget_changes"}),
         json!({"from": "forget_changes", "port": "out", "to": "requested"}),
@@ -970,10 +980,12 @@ mod tests {
             // approval; it never fails the run.
             assert_eq!(next("approved", "error"), ["wait_ci"]);
             assert_eq!(next("approval", "error"), ["dependabot"]);
-            for n in ["base", "base_now", "update"] {
+            for n in ["base", "base_now", "update", "wait_ci", "check_ci", "merge", "watch"] {
                 assert_eq!(next(n, "error"), ["why"], "{n}");
             }
-            for n in ["approval", "approved", "base", "base_now", "update"] {
+            // PDT-737: CI unreadable before the question still asks it.
+            assert_eq!(next("ci_now", "error"), ["decide"]);
+            for n in ["approval", "approved", "base", "base_now", "update", "check_ci", "merge", "watch", "ci_now"] {
                 assert!(d.node(n).unwrap().retry.is_some(), "{n} retries first");
             }
             for from in ["check_ci", "moved"] {

@@ -45,9 +45,9 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
 
 - **The review fails** (the agent is switched off or couldn't start): your Inbox shows **Review failed: ask me**, with
   the error. **Retry review** runs it again; **Skip review** asks you to decide without one.
-- **It doesn't merge.** Once set to merge, PDT watches the pull request until it merges. If CI fails, the merge
-  queue drops it, it's taken off auto-merge, or it still hasn't merged after 12 hours, your Inbox shows **Didn't
-  merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. **Approve & merge**
+- **It doesn't merge.** Once set to merge, PDT watches the pull request until it merges. If CI fails or is still
+  running after 12 hours, the merge queue drops it, it's taken off auto-merge, or it still hasn't merged after 12
+  hours, your Inbox shows **Didn't merge: ask me**, with its CI, the failed jobs and where it stands, and the same three choices. **Approve & merge**
   there waits for CI and watches the merge for as long again. A push hands it to the review of the new head instead;
   one that merges asks nothing.
 - **It fails only what your base branch fails.** When every failing check on the pull request also fails on the base
@@ -58,8 +58,9 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
   for each fix of the base), any other gets its base merged in, where GitHub allows it. A failure the base doesn't
   have still asks **Didn't merge** at once, as does a base that is still broken after a week.
 - **GitHub or CI is down.** PDT tries again for a few minutes. If it still can't reach them, your **Approve & merge**
-  still stands (it merges once CI passes, but isn't kept for a later update of its base), and a pull request waiting
-  on its base or being brought up to date asks **Didn't merge**.
+  still stands (it merges once CI passes, but isn't kept for a later update of its base). Waiting for CI or its base,
+  being set to merge or brought up to date, or watched until it merges, it asks **Didn't merge**. After a review,
+  you're asked as usual, with why its CI couldn't be read.
 
 ### Approvals across updates
 
