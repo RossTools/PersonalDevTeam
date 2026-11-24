@@ -6,14 +6,13 @@ import {
   MarkerType,
   Position,
   ReactFlow,
+  NodeChangeset,
   ReactFlowProvider,
-  applyNodeChanges,
   useNodesInitialized,
   useReactFlow,
-  useStore,
+  useViewportStore,
   type Edge,
   type Node,
-  type NodeChange,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
@@ -130,8 +129,8 @@ function startNode(nodes: Node<CardData>[]): Node<CardData> {
 function OpeningFit() {
   const { getNodes, getNodesBounds, setViewport } = useReactFlow<Node<CardData>>();
   const measured = useNodesInitialized();
-  const width = useStore((s) => s.width);
-  const height = useStore((s) => s.height);
+  const width = useViewportStore((s) => s.width);
+  const height = useViewportStore((s) => s.height);
   const done = useRef(false);
   useLayoutEffect(() => {
     if (done.current || !measured || !width || !height) return;
@@ -229,10 +228,10 @@ function Graph({
     })),
     [edges, selectedEdge],
   );
-  const onNodesChange = (changes: NodeChange<Node<CardData>>[]) => {
+  const onNodesChange = (changes: NodeChangeset<Node<CardData>>) => {
     // Removing and selecting are the parent's: it hears about them through onDelete and onSelect.
-    const kept = changes.filter((c) => c.type !== 'remove' && c.type !== 'select');
-    if (kept.length) setLocal((ns) => applyNodeChanges(kept, ns));
+    const kept = new NodeChangeset(changes.toArray().filter((c) => c.type !== 'remove' && c.type !== 'select'));
+    if (!kept.isEmpty()) setLocal((ns) => kept.applyTo(ns));
   };
   return (
     <ReactFlow<Node<CardData>>
