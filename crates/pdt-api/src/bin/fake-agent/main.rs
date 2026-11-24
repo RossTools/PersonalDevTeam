@@ -5,6 +5,7 @@
 //! - `slow` (its first line) — streams text for ~20 s unless interrupted (messages sent meanwhile wait for the next
 //!   turn).
 //! - `exit` — writes to stderr and exits 3.
+//! - `fail: <text>` — ends the turn with a failed result whose error is `<text>` (logged out too).
 //! - `compact: <ms>` (its first line) — compacts its context (a `compact_boundary`), then works on for `<ms>` before
 //!   ending the turn.
 //! - `deaf` — ends its turn, then never reads another message (it stays alive; nothing sent to it is echoed).
@@ -355,13 +356,6 @@ impl Agent {
             return self.result("success", started);
         }
         self.replay(&v);
-        if logged_out() {
-            return self.auth_failure(started);
-        }
-        if !images.is_empty() {
-            self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
-            return self.result("success", started);
-        }
         let text = v["message"]["content"].as_str().map(String::from).unwrap_or_else(|| {
             v["message"]["content"]
                 .as_array()
@@ -370,6 +364,14 @@ impl Agent {
                 .to_string()
         });
         let text = text.trim();
+        // `fail:` says what it is given even logged out.
+        if logged_out() && !text.starts_with("fail:") {
+            return self.auth_failure(started);
+        }
+        if !images.is_empty() {
+            self.say(&format!("saw {} images ({})", images.len(), images.join(", ")));
+            return self.result("success", started);
+        }
         if let Some(cmd) = text.strip_prefix("run:") {
             let cmd = cmd.trim();
             let Ok((tool_id, resp)) = self.tool("Bash", json!({"command": cmd, "description": "Run it"})) else {
@@ -511,6 +513,11 @@ impl Agent {
             loop {
                 std::thread::sleep(Duration::from_secs(3600));
             }
+        } else if let Some(why) = text.strip_prefix("fail:") {
+            out(json!({"type":"result","subtype":"success","is_error":true,
+                "duration_ms":started.elapsed().as_millis() as u64,"total_cost_usd":0,"session_id":self.session,
+                "result":why.trim()}));
+            return;
         } else if text == "exit" {
             eprintln!("fake-agent: crashing as asked");
             std::process::exit(3);

@@ -123,6 +123,31 @@ describe('folder view', () => {
     vi.restoreAllMocks();
   });
 
+  it('says a folder is being prepared, and starts nothing more until it is', async () => {
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.getAttribute('href')!); });
+    let ready = () => {};
+    const calls = stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/files?path=': [entry('build', true)],
+      'GET /api/projects/p/files/download?path=build&zip=1&check=1': () => new Promise<void>((r) => { ready = r; }),
+    });
+    renderWithQuery(<Harness />);
+    const zip = async () => {
+      await userEvent.pointer({ keys: '[MouseRight]', target: await screen.findByRole('row', { name: /build/ }) });
+      return within(await screen.findByRole('menu')).getByRole('menuitem', { name: 'Download as .zip' });
+    };
+    await userEvent.click(await zip());
+    expect(await screen.findByText('Preparing build.zip…')).toBeInTheDocument();
+    expect(await zip()).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.keyboard('{Escape}');
+    expect(calls.filter((c) => c.path.includes('/download')).length).toBe(1);
+    ready();
+    await waitFor(() => expect(saved).toEqual(['/api/projects/p/files/download?path=build&zip=1']));
+    await waitFor(() => expect(screen.queryByText('Preparing build.zip…')).not.toBeInTheDocument());
+    vi.restoreAllMocks();
+  });
+
   it('shows an error when the checkout cannot be listed', async () => {
     stubApi({ 'GET /api/projects/p/worktrees': [], 'GET /api/projects/p/files?path=': new Reply(404, { code: 'not_found', message: 'checkout is missing' }) });
     renderWithQuery(<Harness />);

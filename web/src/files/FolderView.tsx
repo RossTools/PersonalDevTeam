@@ -102,6 +102,9 @@ function NewFileButton({ state, place }: { state: FolderViewState; place: Place 
   );
 }
 
+/** The downloads being checked (by place, path and options), shared by every list of the files. */
+const preparing = new Set<string>();
+
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
 /**
@@ -149,17 +152,29 @@ function useFileOps(state: FolderViewState, place: Place) {
       if (state.file === path) state.setFile(null);
     } catch (e) { fail(e); }
   };
-  // Checked first, so a folder over the size cap (or a file gone since) says why rather than saving an error.
+  // Checked first, so a folder over the size cap (or a file gone since) says why rather than saving an error. A
+  // folder's check lists all its files, which takes a while in a big one: it says so, and asking again meanwhile
+  // starts nothing.
+  const key = (path: string, o: DownloadOptions) => `${placeKey(place)}|${path}|${o.zip ? 'zip' : ''}|${o.ignored ? 'ignored' : ''}`;
   const save = async (path: string, o: DownloadOptions = {}) => {
+    const k = key(path, o);
+    if (preparing.has(k)) return;
+    preparing.add(k);
+    const shown = o.zip ? toast.info(`Preparing ${path.split('/').pop() || 'the checkout'}.zip…`, { duration: Infinity }) : undefined;
     try {
       await api.checkFileDownload(place.projectId, place, path, o);
       download(api.fileDownloadUrl(place.projectId, place, path, o));
-    } catch (e) { fail(e); }
+    } catch (e) { fail(e); } finally {
+      preparing.delete(k);
+      if (shown !== undefined) toast.dismiss(shown);
+    }
   };
+  const zipEntry = (label: string, path: string, o: DownloadOptions): MenuEntry =>
+    ({ label, disabled: preparing.has(key(path, o)), onSelect: () => void save(path, o) });
   const downloads = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => (e.dir
     ? [
-        { label: 'Download as .zip', onSelect: () => void save(e.path, { zip: true }) },
-        { label: 'Download as .zip, including ignored files', onSelect: () => void save(e.path, { zip: true, ignored: true }) },
+        zipEntry('Download as .zip', e.path, { zip: true }),
+        zipEntry('Download as .zip, including ignored files', e.path, { zip: true, ignored: true }),
       ]
     : [{ label: 'Download', onSelect: () => void save(e.path) }]);
   const entries = (e: Pick<FileEntry, 'path' | 'dir'>): MenuEntry[] => {

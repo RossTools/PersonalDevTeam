@@ -532,9 +532,12 @@ has a switch for that.
 
 **Agents that aren't logged in** (`agent_login.rs`, `workflow/agent/login.rs`). The agents' errors (an
 `AgentEvent::Error` in a conversation: a failed turn's, an exit's) are read against one table of phrases in pdt-core
-`agent_login`; a match adds a notice with how to log in, doesn't mark the session as needing the user, and goes with
-the turn's end (`FollowUp::TurnEnded`'s `login_failure`, or `LoginFailed` outside a turn) to `agent_login::failed`.
-A weak phrase needs the agent's login check (`checks::agent_logged_in`) to agree. Confirmed, the agent's
+`agent_login` (Claude's mapper adds "(API Error: 401)" to a failed result whose `api_error_status` is 401, so the
+status counts over the text); a match goes with the turn's end (`FollowUp::TurnEnded`'s `login_failure`, or
+`LoginFailed` outside a turn) to `agent_login::failed`. A sure phrase at once adds a notice with how to log in and
+doesn't mark the session as needing the user. A weak phrase needs the agent's login check (`checks::agent_logged_in`)
+to agree: until then it is an error like any other, and the conversation adds the notice and clears the error only
+once the check confirms it (`live::weak_login_failure`). Confirmed, the agent's
 `agent_login` Inbox item opens (one per agent, under a per-agent lock; the open item is the record that it is logged
 out) and the session's working step goes to `waiting_login` instead of `outcome_less_turn`. While the item is open,
 `start_step` holds new steps of that agent with `wait.login` (`steps_waiting_for_login`; the idle net counts them as

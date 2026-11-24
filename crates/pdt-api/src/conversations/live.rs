@@ -8,6 +8,7 @@ use crate::log_err::LogErr;
 use crate::routes::{AppState, now_ms};
 use pdt_agents::adapter::{AdapterOutput, EventStream, LiveConversation, OpenSpec};
 use pdt_core::activity::{Activity, needs_attention};
+use pdt_core::agent_login::Strength;
 use pdt_core::conversation::{
     AgentEvent, ConversationServerMessage, DeltaField, PendingMessage, RequestState, SessionMode, TurnPhase,
     conversation_activity,
@@ -479,9 +480,12 @@ pub(super) async fn append(
     {
         crate::pm::request_opening(st, &c.id, id, tool, input);
     }
-    // An error that says the agent isn't logged in gets how to log in under it (PDT-604).
-    let login = matches!(&event, AgentEvent::Error { text, .. }
-        if pdt_core::agent_login::login_failure(c.agent, text).is_some());
+    // An error that says the agent isn't logged in gets how to log in under it (PDT-604): at once when its words are
+    // sure, once the login check agrees when they are weak (PDT-714).
+    let login = match &event {
+        AgentEvent::Error { text, .. } => pdt_core::agent_login::login_failure(c.agent, text),
+        _ => None,
+    };
     // The runtime state follows the event as it comes, whether or not it can be stored yet: a message the agent took
     // leaves the queue even while the disk is full (PDT-331). What reads the log waits until it is stored.
     let (state_changed, then) = apply_event(c, item_id, &event);
@@ -495,15 +499,41 @@ pub(super) async fn append(
         then,
     };
     store_in_order(st, c, unstored).await;
-    if login {
-        let label = crate::agent_login::label(st, c.agent).await;
-        let text = pdt_core::agent_login::inline_notice(&label, &pdt_core::agent_login::login_hint(c.agent, &label));
-        let event = AgentEvent::Notice { level: pdt_core::conversation::NoticeLevel::Warning, text, until: None };
-        let bytes = Unstored::size(&event, None);
-        let notice = Unstored { ts: now_ms(), item_id: None, turn_id: None, bytes, event, raw: None, then: vec![] };
-        store_in_order(st, c, notice).await;
+    match login {
+        Some(Strength::Sure) => login_notice(st, c).await,
+        Some(Strength::Weak) => {
+            let (st, c) = (st.clone(), c.clone());
+            tokio::spawn(async move { weak_login_failure(&st, &c).await });
+        }
+        None => {}
     }
     if state_changed {
+        c.push_state();
+        refresh_activity(st, c).await;
+    }
+}
+
+/// Shows how to log the agent in under its error.
+async fn login_notice(st: &AppState, c: &Arc<Conv>) {
+    let label = crate::agent_login::label(st, c.agent).await;
+    let text = pdt_core::agent_login::inline_notice(&label, &pdt_core::agent_login::login_hint(c.agent, &label));
+    let event = AgentEvent::Notice { level: pdt_core::conversation::NoticeLevel::Warning, text, until: None };
+    let bytes = Unstored::size(&event, None);
+    let notice = Unstored { ts: now_ms(), item_id: None, turn_id: None, bytes, event, raw: None, then: vec![] };
+    store_in_order(st, c, notice).await;
+}
+
+/// An error whose words only might mean the agent isn't logged in (an MCP server's or a tool's "failed to
+/// authenticate" reads the same) counts as an error until the agent's login check agrees (PDT-714); then it shows how
+/// to log in, and the conversation no longer needs you for it.
+async fn weak_login_failure(st: &AppState, c: &Arc<Conv>) {
+    let logged_in = crate::checks::agent_logged_in(st, c.agent).await;
+    if !pdt_core::agent_login::confirmed(Strength::Weak, logged_in) {
+        return;
+    }
+    login_notice(st, c).await;
+    let was = std::mem::replace(&mut c.state().errored, false);
+    if was {
         c.push_state();
         refresh_activity(st, c).await;
     }
@@ -599,13 +629,18 @@ fn apply_event(c: &Conv, item_id: Option<&str>, event: &AgentEvent) -> (bool, Ve
             false
         }
         // The agent isn't logged in (PDT-604): the Inbox's item for its agent says so, not the session as needing you.
+        // Weak words count as an error too until the login check agrees (PDT-714); `agent_login::failed` asks it.
         AgentEvent::Error { text, .. } if pdt_core::agent_login::login_failure(c.agent, text).is_some() => {
             if s.turn_running {
                 s.login_failure = Some(text.clone());
             } else {
                 then.push(FollowUp::LoginFailed(text.clone()));
             }
-            false
+            let weak = pdt_core::agent_login::login_failure(c.agent, text) == Some(Strength::Weak);
+            if weak {
+                s.errored = true;
+            }
+            weak
         }
         AgentEvent::Error { .. } => {
             s.errored = true;
