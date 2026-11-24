@@ -552,6 +552,10 @@ change near it can keep it. The map of the code is in [architecture.md](architec
 - **New tools and node kinds change the integrations snapshot** (`crates/pdtd/src/integrations/`): update it on
   purpose.
 - **The UI re-renders every 2 s**: effects must be idempotent, and never focus from an inline ref callback.
+- **A control that removes itself hands focus on** (web `common/focusLost.ts`): an Unsnooze, Remove or Approve whose
+  row (or button) goes once it lands calls `useKeepFocus()`'s `keep(from, to)` as it acts, so focus that fell to the
+  body goes to the next row or the control that stays; focus the user moved elsewhere stays there. An Inbox section
+  with Show all is a `CollapsibleListSection` (web `inbox/ListSection.tsx`), which moves focus to the first row it shows.
 - **The shell re-renders only when a poll brings something new** (web `shell/AppShell.tsx`): the `useWorkspaces` and
   `useBacklog` results are memoized, the views it passes them to (Sidebar, WorkspaceBar, SessionView, RunView,
   BottomPanel) are `memo`, and its handlers are `useCallback`. Keep new props to those views stable, and read a fast-

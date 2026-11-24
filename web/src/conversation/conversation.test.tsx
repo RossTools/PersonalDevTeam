@@ -308,6 +308,16 @@ describe('ConversationComposer', () => {
     expect(onUpload).toHaveBeenCalledTimes(1);
   });
 
+  it('says why an image could not be attached, where it shows without hovering (PDT-668)', async () => {
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:thumb'), revokeObjectURL: vi.fn() }));
+    setup({ onUpload: vi.fn(() => Promise.reject(new Error('Too large'))) });
+    await userEvent.click(screen.getByRole('textbox', { name: 'Message' }));
+    await userEvent.paste({ files: [new File(['x'], 'shot.png', { type: 'image/png' })] } as unknown as string);
+    expect(await screen.findByText(/shot\.png couldn't be attached: Too large\. Remove it to send\./)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove shot.png (Too large)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
   it('warns near a rate limit and says when one is hit', () => {
     setup({ limit: { text: 'Rate limited until 3:40 PM (5-hour limit)', reached: true } });
     expect(screen.getByRole('status')).toHaveTextContent('Rate limited until 3:40 PM (5-hour limit). Nothing is sent until you send again.');

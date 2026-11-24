@@ -25,12 +25,13 @@ describe('watches', () => {
     });
     renderWithQuery(<WatchButton of={{ ticket: 't1' }} />);
     const eye = await screen.findByRole('button', { name: 'Watch' });
-    expect(eye).toHaveAttribute('aria-pressed', 'false');
+    // The name says the state; it isn't also a pressed toggle (PDT-668).
+    expect(eye).not.toHaveAttribute('aria-pressed');
     await userEvent.click(eye);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Watching' })).toHaveAttribute('aria-pressed', 'true'));
+    expect(await screen.findByRole('button', { name: 'Watching' })).not.toHaveAttribute('aria-pressed');
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ ticket: 't1' });
     await userEvent.click(screen.getByRole('button', { name: 'Watching' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Watch' })).toHaveAttribute('aria-pressed', 'false'));
+    expect(await screen.findByRole('button', { name: 'Watch' })).toBeInTheDocument();
   });
 
   it('watches a document', async () => {
@@ -51,10 +52,22 @@ describe('watches', () => {
       'DELETE /api/watches/w2': () => { watches = watches.filter((w) => w.id !== 'w2'); return undefined; },
     });
     renderWithQuery(<Watchers of={{ run: 'r1' }} />);
-    const line = await screen.findByLabelText('Watched by');
+    const line = await screen.findByRole('group', { name: 'Watched by' });
     expect(line).toHaveTextContent('Watched by you· PM “Docs”');
     expect(calls[0].path).toBe('/api/watches?run=r1');
     await userEvent.click(screen.getByRole('button', { name: 'Stop PM “Docs” watching' }));
     await waitFor(() => expect(screen.getByLabelText('Watched by')).not.toHaveTextContent('Docs'));
+  });
+
+  it('moves focus to the next watcher\'s remove, and from the last to the Watch toggle (PDT-668)', async () => {
+    let watches = [watch({}), watch({ id: 'w2', sessionId: 's1', watcher: 'PM “Docs”' })];
+    const gone = (id: string) => () => { watches = watches.filter((w) => w.id !== id); return undefined; };
+    stubApi({ 'GET /api/watches': () => watches, 'DELETE /api/watches/w1': gone('w1'), 'DELETE /api/watches/w2': gone('w2') });
+    renderWithQuery(<><WatchButton of={{ ticket: 't1' }} /><Watchers of={{ ticket: 't1' }} /></>);
+    await userEvent.click(await screen.findByRole('button', { name: 'Stop watching' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop PM “Docs” watching' })).toHaveFocus());
+    await userEvent.click(screen.getByRole('button', { name: 'Stop PM “Docs” watching' }));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Watched by' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Watch' })).toHaveFocus());
   });
 });

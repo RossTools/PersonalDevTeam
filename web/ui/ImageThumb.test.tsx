@@ -13,6 +13,11 @@ describe('ImageThumb', () => {
     expect(onRemove).toHaveBeenCalled();
   });
 
+  it('names why an image could not be attached in its remove button, not only on hover', () => {
+    render(<ImageThumb src="blob:x" alt="shot.png" error="Too large" onRemove={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Remove shot.png (Too large)' })).toBeInTheDocument();
+  });
+
   it('opens a sent image and has a placeholder when there is nothing to show', () => {
     const { rerender } = render(<ImageThumb src="/a.png" href="/a.png" alt="Image 1" />);
     expect(screen.getByRole('link')).toHaveAttribute('href', '/a.png');
