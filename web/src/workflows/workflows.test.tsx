@@ -7,6 +7,7 @@ import { OpenSessionContext } from '../common/open';
 import { Reply, renderWithQuery, stubApi, type Call } from '../test-utils';
 import { DryRunDialog } from './DryRunDialog';
 import { RunsView } from './RunsView';
+import { TemplatePage } from './TemplatePage';
 import { classify } from './SchemaForm';
 import { CATALOG, DOC, detail } from './testData';
 import { TextView } from './TextView';
@@ -51,6 +52,47 @@ describe('workflows list', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Import or export workflows' }));
     expect(screen.getByRole('menuitem', { name: 'Import…' })).toBeEnabled();
     expect(screen.getByRole('menuitem', { name: 'Export…' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('badges only the exceptions, and marks the off ones Off', async () => {
+    const w = (id: string, over: object) => ({ ...detail({ id, name: id, enabled: true, builtin: 'x' }), ...over });
+    stubApi({ 'GET /api/workflows': [
+      w('built', {}), w('off', { enabled: false }), w('mine', { builtin: null }), w('repo', { builtin: null, source: 'repo' }), w('proposed', { proposed: 2 }),
+    ] });
+    renderWithQuery(<WorkflowsList projects={[]} current={null} onOpen={() => {}} onNew={() => {}} />);
+    const row = async (name: string) => within(await screen.findByRole('row', { name: new RegExp(name) }));
+    expect((await row('built')).queryByText('Built in')).not.toBeInTheDocument();
+    expect((await row('built')).getByRole('img', { name: 'On' })).toBeInTheDocument();
+    expect((await row('off')).getByText('Off')).toBeInTheDocument();
+    expect((await row('mine')).getByText('Yours')).toBeInTheDocument();
+    expect((await row('repo')).getByText('Repo')).toBeInTheDocument();
+    expect((await row('repo')).queryByText('Yours')).not.toBeInTheDocument();
+    expect((await row('proposed')).getByText('Proposal waiting')).toBeInTheDocument();
+    expect(screen.queryByText('Create and edit workflows on a computer.')).not.toBeInTheDocument();
+  });
+
+  it('on a phone, says where workflows are made', async () => {
+    stubPhone();
+    stubApi({ 'GET /api/workflows': [detail()] });
+    renderWithQuery(<WorkflowsList projects={[]} current={null} onOpen={() => {}} onNew={() => {}} />);
+    expect(await screen.findByText('Create and edit workflows on a computer.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New workflow' })).not.toBeInTheDocument();
+  });
+});
+
+describe('template page', () => {
+  it('shows a built-in template\'s params as text, not disabled inputs', async () => {
+    stubApi({ 'GET /api/workflow-templates/builtin%3At': {
+      id: 'builtin:t', name: 'Tell', description: 'Tells the agent.', builtin: true, category: 'other', doc: DOC, createdAt: 1, updatedAt: 1,
+      params: [{ id: 'message', title: 'Message', description: '', type: 'text', default: '{{trigger.notice.text}}', required: false }],
+    } });
+    renderWithQuery(<TemplatePage id="builtin:t" catalog={CATALOG} onUse={() => {}} onDeleted={() => {}} />);
+    const params = await screen.findByLabelText('Parameters');
+    expect(within(params).getByText(/Message/)).toBeInTheDocument();
+    expect(within(params).getByText(/Long text · optional/)).toBeInTheDocument();
+    expect(within(params).getByText('{{trigger.notice.text}}')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Param 1 id' })).not.toBeInTheDocument();
+    expect(screen.getByText('1 parameter')).toBeInTheDocument();
   });
 });
 
@@ -306,6 +348,15 @@ describe('runs view', () => {
     expect(within(row).getByText(/Waiting on main · PDT-639/)).toBeInTheDocument();
     const steps = await screen.findByRole('list', { name: 'Steps' });
     expect(within(steps).getByText('Waiting on main · PDT-639')).toBeInTheDocument();
+  });
+
+  it('with no runs, offers a dry run and says to turn an off workflow on', async () => {
+    stubApi({ 'GET /api/workflow-runs': [] });
+    const onDryRun = vi.fn();
+    renderWithQuery(<RunsView workflowId="w1" catalog={CATALOG} runId={null} onRunChange={() => {}} enabled={false} onDryRun={onDryRun} />);
+    expect(await screen.findByText(/Turn it on to run on its trigger\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Dry run' }));
+    expect(onDryRun).toHaveBeenCalled();
   });
 
   it('leaves the "Nothing to do" runs out until they are asked for', async () => {
