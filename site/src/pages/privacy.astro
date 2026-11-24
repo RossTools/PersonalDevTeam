@@ -5,7 +5,7 @@ import Landing from '../layouts/Landing.astro';
 import { NAME, SHORT_NAME } from '../brand.mjs';
 
 const SUPPORT = 'support@pdt.dev';
-const UPDATED = '4 November 2026';
+const UPDATED = '24 November 2026';
 ---
 
 <Landing title="Privacy" description={`What ${SHORT_NAME} keeps, what it sends, and how to take its access back.`}>
@@ -28,6 +28,20 @@ const UPDATED = '4 November 2026';
 			<h3>What {SHORT_NAME} sends, and where</h3>
 			<p>{SHORT_NAME} talks to the services you connect it to, from your machine, as you: GitHub for your repositories, the
 				coding agents you run, and the plugins you turn on. It checks GitHub for new releases.</p>
+
+			<h3>Remote access and remote projects</h3>
+			<ul>
+				<li>Remote access is off until you turn it on. {SHORT_NAME} then serves itself over HTTPS on your tailnet, through
+					the Tailscale on your machine, and lets in only the Tailscale login you name as its owner. Tailscale carries
+					that traffic between your own devices; nothing goes through {SHORT_NAME}'s developers. The HTTPS certificate
+					Tailscale gets for it names your machine and tailnet in public certificate logs, as every such certificate does.</li>
+				<li>Instances you pair for a remote project talk to each other over your tailnet. Each tells the project's owner
+					its name, version, operating system, CPUs, free disk space, the agents and tools it has, and whether each agent
+					is logged in (never the logins themselves).</li>
+				<li>For a ticket that runs on a remote instance, that instance gets a copy of your repository (usually cloned from
+					its <code>origin</code>, with your git credentials there). Its conversations, terminals, changes and files are shown on the owner, which
+					keeps the ticket and its board.</li>
+			</ul>
 
 			<h3>Bug reports</h3>
 			<p><strong>Report a bug</strong> sends what you write and, unless you leave them out, diagnostics ({SHORT_NAME}'s
