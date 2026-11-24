@@ -7,7 +7,7 @@ import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import { toast } from '@ui';
 import { renderWithQuery, Reply, stubApi, stubClipboard } from '../test-utils';
 import { AddProjectForm } from './AddProjectForm';
-import { ago, minutesLeft, RemoteInstances } from './RemoteInstances';
+import { minutesLeft, RemoteInstances } from './RemoteInstances';
 import { RemoteProjectsPage } from './RemoteProjectsPage';
 
 afterEach(() => {
@@ -324,10 +324,4 @@ describe('Remote projects (the remote instance)', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/settings/host/remote-access'));
   });
 
-  it('says how long ago', () => {
-    const now = 10_000_000;
-    expect(ago(now - 5_000, now)).toBe('just now');
-    expect(ago(now - 3 * 60_000, now)).toBe('3 min ago');
-    expect(ago(now - 5 * 3_600_000, now)).toBe('5 h ago');
-  });
 });

@@ -202,7 +202,7 @@ export function Storage() {
         </SettingsRow>
       </Section>
       <Cleanup />
-      {s && s.projects.length === 0 && <EmptyState>No projects with worktrees.</EmptyState>}
+      {s && s.projects.length === 0 && <EmptyState size="inline">No projects with worktrees.</EmptyState>}
       {s?.projects.map((p) => <ProjectWorktrees key={p.projectId} p={p} />)}
     </>
   );
