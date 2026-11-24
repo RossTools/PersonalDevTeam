@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/RossTools/PersonalDevTeam/security/advisories/new
     about: Report it privately (or email security@pdt.dev), never in a public issue. See SECURITY.md.
   - name: Documentation
-    url: https://github.com/RossTools/PersonalDevTeam/tree/main/docs
+    url: https://pdt.dev/docs/
     about: How PDT works, and how to set it up.

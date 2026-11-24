@@ -27,7 +27,9 @@ trying to do, what gets in the way, and how you picture it working.
 
 ## Work on PDT itself
 
-PDT is built with PDT. Start with the developer guide:
+PDT is built with PDT. [CONTRIBUTING.md](../../../CONTRIBUTING.md) has what you need to send a change: the tools to
+install, working from a fork, the checks to run and the changelog entry a pull request adds. The developer guide
+explains the code:
 
 - [How PDT is built](../../dev/architecture.md): the processes, the parts of the code and where each area lives.
 - [Invariants that are easy to break](../../dev/invariants.md): the rules a change must keep.
