@@ -400,6 +400,12 @@ async fn several_pm_conversations_run_at_once_each_with_its_own_transcript() {
     assert_eq!(pm_info(&env, &fresh).await["title"], "Release notes for 1.4");
     ask(&env, &named, "Hi").await;
     assert_eq!(pm_info(&env, &named).await["title"], "Named", "a given title stays");
+    // Called the host project's name by the user, it keeps it after later messages (PDT-739).
+    let host = pdt_core::brand::SHORT_NAME;
+    let (s, _) = call(&env.app, "PATCH", &format!("/api/pm/sessions/{named}"), Some(json!({"title": host}))).await;
+    assert_eq!(s, StatusCode::OK);
+    ask(&env, &named, "Cut a release").await;
+    assert_eq!(pm_info(&env, &named).await["title"], host, "only the New conversation rule names a PM conversation");
     for id in [&cb, &pdt, &named, &fresh] {
         call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
     }

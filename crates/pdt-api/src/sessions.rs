@@ -8,7 +8,7 @@ use pdt_agents::{PtyError, SpawnSpec};
 use pdt_core::conversation::{PermissionMode, SessionMode};
 use pdt_core::session::{
     AgentKind, NewSession, Resume, Session, SessionKind, SessionStatus, TerminalSize, ValidSession, clean_title,
-    default_title, is_scrubbed, launch, prompt_arg, shim_prompt, title_from_message,
+    is_scrubbed, launch, new_title, prompt_arg, shim_prompt, title_from_message,
 };
 use pdt_core::ticket::{AttemptState, SessionTicket};
 use pdt_core::workspace::TabPlacement;
@@ -138,6 +138,8 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         && valid.agent == Some(AgentKind::Codex)
         && valid.mode == SessionMode::Terminal;
     let fresh_started_at = if codex { Some(wait_for_fresh_codex_slot(st, &cwd).await) } else { None };
+    // Untitled, it is named after its first message (PDT-683), only that one (PDT-739).
+    let (title, auto_title) = new_title(req.title, &place, valid.initial_prompt.as_deref(), project.is_host());
     let session = Session {
         id: req.id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string()),
         project_id: project.id,
@@ -145,11 +147,7 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
         kind: valid.kind,
         agent: valid.agent,
         bypass_permissions: valid.bypass_permissions,
-        // Untitled, it is named after its first message when it starts with one (PDT-683).
-        title: req.title.unwrap_or_else(|| {
-            let prompt = valid.initial_prompt.as_deref().unwrap_or("");
-            title_from_message(&default_title(&place), &place, prompt).unwrap_or_else(|| default_title(&place))
-        }),
+        title,
         cwd,
         status: SessionStatus::Running,
         exit_code: None,
@@ -173,6 +171,9 @@ pub(crate) async fn create_session(st: &AppState, req: CreateSession) -> Result<
     // Before the row exists, so a lookup failure leaves no half-created session.
     let creds = credentials_for(st, &session.project_id).await?;
     st.store.insert_session(&session).await?;
+    if auto_title {
+        st.store.wait_for_first_message_title(&session.id).await?;
+    }
     if session.mode == SessionMode::Conversation {
         // The first prompt is the first message; the agent starts now so a missing program fails here.
         if let Err(e) = crate::conversations::start(st, &session, valid.initial_prompt).await {
@@ -725,15 +726,11 @@ pub(crate) async fn settle_exit(st: &AppState, id: &str) {
     }
 }
 
-/// The user wrote `text` to session `s`: one still called its default title (its branch, or its project for the main
-/// checkout) is named after the message (PDT-683). A rename the user made first, or meanwhile, stays.
+/// The user wrote `text` to session `s`: their first message to one made untitled names it (PDT-683); no later one
+/// does, and a rename the user made first, or meanwhile, stays (PDT-739).
 pub(crate) async fn user_wrote(st: &AppState, s: &Session, text: &str) {
-    let place = match &s.worktree_id {
-        Some(wid) => st.store.get_worktree(wid).await.ok().flatten().map(|w| w.branch),
-        None => st.store.get_project(&s.project_id).await.ok().flatten().map(|p| p.name),
-    };
-    let Some(title) = place.and_then(|place| title_from_message(&s.title, &place, text)) else { return };
-    if let Err(e) = st.store.retitle_session(&s.id, &s.title, &title).await {
+    let title = title_from_message(text);
+    if let Err(e) = st.store.title_from_first_message(&s.id, title.as_deref()).await {
         tracing::warn!(session = %s.id, error = %e, "could not title a conversation after its first message");
     }
 }

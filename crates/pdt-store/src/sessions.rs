@@ -364,19 +364,30 @@ impl Store {
     }
 
     pub async fn rename_session(&self, id: &str, title: &str) -> Result<bool, StoreError> {
-        let r =
-            sqlx::query("UPDATE sessions SET title = ? WHERE id = ?").bind(title).bind(id).execute(&self.pool).await?;
+        let r = sqlx::query("UPDATE sessions SET title = ?, auto_title = 0 WHERE id = ?")
+            .bind(title)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
-    /// Renames a session only while it is still called `from`, so a rename made meanwhile wins. False when it wasn't.
-    pub async fn retitle_session(&self, id: &str, from: &str, to: &str) -> Result<bool, StoreError> {
-        let r = sqlx::query("UPDATE sessions SET title = ? WHERE id = ? AND title = ?")
-            .bind(to)
-            .bind(id)
-            .bind(from)
-            .execute(&self.pool)
-            .await?;
+    /// Lets the user's first message name an untitled session (PDT-739).
+    pub async fn wait_for_first_message_title(&self, id: &str) -> Result<(), StoreError> {
+        sqlx::query("UPDATE sessions SET auto_title = 1 WHERE id = ?").bind(id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// The user's message reached session `id`: the first one since it was made untitled names it `title` (None keeps
+    /// its title), and no later one does. A rename made first, or meanwhile, wins. True when it was the first.
+    pub async fn title_from_first_message(&self, id: &str, title: Option<&str>) -> Result<bool, StoreError> {
+        let r = sqlx::query(
+            "UPDATE sessions SET title = COALESCE(?, title), auto_title = 0 WHERE id = ? AND auto_title = 1",
+        )
+        .bind(title)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(r.rows_affected() > 0)
     }
 
@@ -616,9 +627,30 @@ pub(crate) mod tests {
         assert!(store.rename_session("a", "New name").await.unwrap());
         assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
         assert!(!store.rename_session("zz", "x").await.unwrap());
-        assert!(!store.retitle_session("a", "Old name", "Auto").await.unwrap(), "renamed meanwhile");
-        assert!(store.retitle_session("a", "New name", "Auto").await.unwrap());
+        assert!(!store.title_from_first_message("a", Some("Auto")).await.unwrap(), "never waited for a message");
+        assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "New name");
+    }
+
+    #[tokio::test]
+    async fn only_the_first_message_names_a_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store_with_project(tmp.path()).await;
+        store.insert_session(&session("a", 1)).await.unwrap();
+        store.wait_for_first_message_title("a").await.unwrap();
+        assert!(store.title_from_first_message("a", Some("Auto")).await.unwrap());
+        assert!(!store.title_from_first_message("a", Some("Later")).await.unwrap(), "only the first");
         assert_eq!(store.get_session("a").await.unwrap().unwrap().title, "Auto");
+
+        store.insert_session(&session("b", 2)).await.unwrap();
+        store.wait_for_first_message_title("b").await.unwrap();
+        assert!(store.title_from_first_message("b", None).await.unwrap(), "a first message without words");
+        assert!(!store.title_from_first_message("b", Some("Later")).await.unwrap());
+
+        store.insert_session(&session("c", 3)).await.unwrap();
+        store.wait_for_first_message_title("c").await.unwrap();
+        assert!(store.rename_session("c", "Mine").await.unwrap());
+        assert!(!store.title_from_first_message("c", Some("Auto")).await.unwrap(), "the user's rename wins");
+        assert_eq!(store.get_session("c").await.unwrap().unwrap().title, "Mine");
     }
 
     #[tokio::test]

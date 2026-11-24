@@ -1110,5 +1110,25 @@ async fn a_conversation_is_named_after_its_first_message_unless_renamed() {
     assert_eq!(st, 200);
     send(&env, id, "hello").await;
     assert_eq!(session(&env, id).await["title"], "Mine", "the user's rename wins");
+    send(&env, id, "and later").await;
+    assert_eq!(session(&env, id).await["title"], "Mine");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+
+    // Named after its project by the user, it stays so after any later message (PDT-739).
+    let s = new_conversation(&env, json!({})).await;
+    let id = s["id"].as_str().unwrap();
+    send(&env, id, "First").await;
+    let (st, _) = call(&env.app, "PATCH", &format!("/api/sessions/{id}"), Some(json!({"title": "P"}))).await;
+    assert_eq!(st, 200);
+    send(&env, id, "Cut a release").await;
+    assert_eq!(session(&env, id).await["title"], "P", "a title equal to the project's name, set by the user");
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+
+    // A first message with nothing to name it after uses up the naming.
+    let s = new_conversation(&env, json!({})).await;
+    let id = s["id"].as_str().unwrap();
+    send(&env, id, "##").await;
+    send(&env, id, "Second").await;
+    assert_eq!(session(&env, id).await["title"], "P", "only the first message names it");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }

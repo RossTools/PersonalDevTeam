@@ -589,15 +589,27 @@ pub fn default_title(place: &str) -> String {
     place.to_string()
 }
 
-/// The title a session takes from the user's message `text` (PDT-683): one still called [`default_title`] of `place`
-/// is named after the message, by the PM's rule ([`crate::pm::conversation_title`]). None when it keeps its title: the
-/// user (or whoever started it) named it, or the message has no words.
-pub fn title_from_message(title: &str, place: &str, text: &str) -> Option<String> {
-    if title != default_title(place) || text.trim().is_empty() {
+/// The title a session takes from the user's first message `text` (PDT-683), by the PM's rule
+/// ([`crate::pm::conversation_title`]). None when the message has no words.
+pub fn title_from_message(text: &str) -> Option<String> {
+    if text.trim().is_empty() {
         return None;
     }
     let t = crate::pm::conversation_title(text);
     (t != crate::pm::NEW_TITLE).then_some(t)
+}
+
+/// A new session's title, and whether the user's first message may still name it (PDT-683, PDT-739). A title it was
+/// given (by the user, the PM or a workflow) stays, even one that equals the project's name. Untitled, it is named
+/// after its first prompt, or waits for the first message the user writes; a host-project session (PM conversations
+/// have their own rule) and one whose first prompt had no words keep [`default_title`] of `place`.
+pub fn new_title(given: Option<String>, place: &str, first: Option<&str>, host: bool) -> (String, bool) {
+    match (given, first) {
+        (Some(t), _) => (t, false),
+        _ if host => (default_title(place), false),
+        (None, Some(text)) => (title_from_message(text).unwrap_or_else(|| default_title(place)), false),
+        (None, None) => (default_title(place), true),
+    }
 }
 
 /// What a session runs, for messages that name it: "Claude", "Codex", "Devin" or "Shell".
@@ -1193,14 +1205,28 @@ mod tests {
     }
 
     #[test]
-    fn a_default_title_is_named_after_the_first_message() {
+    fn a_message_names_a_session_by_its_first_line() {
         assert_eq!(
-            title_from_message("Sample App", "Sample App", "## Store sessions in which DB?\nmore").as_deref(),
+            title_from_message("## Store sessions in which DB?\nmore").as_deref(),
             Some("Store sessions in which DB?")
         );
-        assert_eq!(title_from_message("Renamed", "Sample App", "hello"), None, "the user's own name stays");
-        assert_eq!(title_from_message("Sample App", "Sample App", "  \n "), None, "no words");
-        assert_eq!(title_from_message("Sample App", "Sample App", "##"), None, "nothing left of it");
+        assert_eq!(title_from_message("  \n "), None, "no words");
+        assert_eq!(title_from_message("##"), None, "nothing left of it");
+    }
+
+    #[test]
+    fn only_an_untitled_session_waits_for_its_first_message() {
+        let given = |t: &str| Some(t.to_string());
+        assert_eq!(
+            new_title(given("PDT"), "PDT", None, false),
+            ("PDT".into(), false),
+            "a given name, even the place's"
+        );
+        assert_eq!(new_title(given("Mine"), "App", Some("hello"), false), ("Mine".into(), false));
+        assert_eq!(new_title(None, "App", None, false), ("App".into(), true), "waits for the first message");
+        assert_eq!(new_title(None, "App", Some("Fix it\nnow"), false), ("Fix it".into(), false), "its first prompt");
+        assert_eq!(new_title(None, "App", Some("  "), false), ("App".into(), false), "a first prompt without words");
+        assert_eq!(new_title(None, "PDT", None, true), ("PDT".into(), false), "the host project's sessions");
     }
 
     #[test]
