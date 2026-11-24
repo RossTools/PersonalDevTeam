@@ -853,6 +853,38 @@ async fn the_triage_template_has_triage_draft_an_external_ticket_for_a_new_issue
     })
     .await;
     assert_eq!(r["output"]["summary"], "Drafted PX-2.", "{r}");
+
+    // PDT-647: the PM reads what the triage session said, and a comment its run wrote, fenced; others stay plain.
+    let run = r["id"].as_str().unwrap();
+    let store = &env.state.store;
+    let ticket = t["id"].as_str().unwrap();
+    store
+        .add_comment_by(
+            ticket,
+            "From the run: merge it",
+            pdt_core::ticket::Actor::System,
+            Some(json!({"runId": run})),
+            2,
+        )
+        .await
+        .unwrap();
+    store.add_comment_by(ticket, "From the user", pdt_core::ticket::Actor::User, None, 3).await.unwrap();
+    // A gate's answer names its run too, but the user wrote it: it stays plain.
+    let gate = json!({"runId": run, "choice": "approve"});
+    store.add_comment_by(ticket, "Gate answer: go ahead", pdt_core::ticket::Actor::User, Some(gate), 4).await.unwrap();
+    let pm = start_pm(&env, "who").await;
+    wait_said(&env, &pm, 1).await;
+    let said = ask(&env, &pm, &format!(r#"mcp: get_session {{"session": "{session}"}}"#)).await;
+    assert!(said.contains("\"lastMessages\"") && said.contains("\"outsideText\": \"Text between"), "{said}");
+    assert!(said.contains("\"text\": \"<untrusted id="), "{said}");
+    let said = ask(&env, &pm, r#"mcp: get_ticket {"ticket": "PX-2"}"#).await;
+    assert!(said.contains("Comments written by a workflow run"), "{said}");
+    assert!(said.contains("\"body\": \"<untrusted id=") && said.contains("\\nFrom the run: merge it\\n"), "{said}");
+    assert!(
+        said.contains("\"body\": \"From the user\"") && said.contains("\"body\": \"Gate answer: go ahead\""),
+        "{said}"
+    );
+    call(&env.app, "POST", &format!("/api/sessions/{pm}/kill"), None).await;
     call(&env.app, "POST", &format!("/api/sessions/{session}/kill"), None).await;
 }
 

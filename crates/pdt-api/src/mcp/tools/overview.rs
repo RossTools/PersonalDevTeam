@@ -279,6 +279,11 @@ async fn session_state(cx: &Cx<'_>, id: &str, messages: usize) -> Result<Value, 
                "runId": a.run_id})
     });
     let recent = st.store.recent_session_events(&s.id, 400).await.map_err(store)?;
+    // A session that reads outside input (a triage persona's, a step of a run an issue or webhook started) says and
+    // is told what an outsider wrote, paraphrased or quoted (PDT-647): its messages are fenced.
+    let outside = crate::untrusted::Outside::new();
+    let triaging = crate::untrusted::triaging(st, &s).await;
+    let said = |t: &str| if triaging { outside.wrap(&clip(t)) } else { clip(t) };
     let mut open = vec![];
     let mut texts = vec![];
     for e in recent.iter().rev() {
@@ -287,10 +292,10 @@ async fn session_state(cx: &Cx<'_>, id: &str, messages: usize) -> Result<Value, 
                 open.push(json!({"tool": tool, "title": title, "at": e.ts}))
             }
             AgentEvent::UserMessage { text, source, .. } if texts.len() < messages => {
-                texts.push(json!({"from": source, "text": clip(text), "at": e.ts}))
+                texts.push(json!({"from": source, "text": said(text), "at": e.ts}))
             }
             AgentEvent::AgentMessage { markdown, .. } if texts.len() < messages => {
-                texts.push(json!({"from": "agent", "text": clip(markdown), "at": e.ts}))
+                texts.push(json!({"from": "agent", "text": said(markdown), "at": e.ts}))
             }
             _ => {}
         }
@@ -301,7 +306,7 @@ async fn session_state(cx: &Cx<'_>, id: &str, messages: usize) -> Result<Value, 
     v["step"] = step.unwrap_or(Value::Null);
     v["openRequests"] = json!(open);
     v["lastMessages"] = json!(texts);
-    Ok(v)
+    Ok(outside.noted(v))
 }
 
 /// A message, shortened for a tool result.

@@ -26,7 +26,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 
 | Tool | Does |
 |---|---|
-| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history, `attachments` (each with a local `path`), `documents` (each `{id, title, kind, provider, url, read}`; see "Documents"), linked issues' titles and documents' titles fenced as outside input (`outsideText` says so), earlier steps' outcomes, `openQuestions` (agents' questions the person hasn't answered yet, each with `blocking`; say so in your outcome when one is open), and in a workflow step the outcomes it allows |
+| `get_ticket` | this session's ticket (or another, by key): description, stage, links, attempts, comments and history, `attachments` (each with a local `path`), `documents` (each `{id, title, kind, provider, url, read}`; see "Documents"), linked issues' titles, documents' titles and comments written by a workflow run that outside input started fenced as outside input (`outsideText` says so), earlier steps' outcomes, `openQuestions` (agents' questions the person hasn't answered yet, each with `blocking`; say so in your outcome when one is open), and in a workflow step the outcomes it allows |
 | `submit_outcome` | `{outcome, summary, comments?, data?}`: ends this session's workflow step; `comments` (`{file, line, endLine?, body}`) become line comments on the changes, `data` holds fields the step's prompt asks for. `submitted` is refused while the worktree has uncommitted changes to tracked files, or commits or a branch not pushed: commit and push first |
 | `ask_user` | `{questions: [{question, context?, choices?, recommended?, why?}], blocking?}`: questions in the person's Inbox; the answers come back as a message, so end your turn. A question on a ticket holds its merge and its move to Done until the person answers, even after your step ends; `blocking: false` for one that is only nice to have. `question` is one line (at most 120 characters); the background goes in `context` (Markdown), each choice is `{label, description?}` (the description in Markdown: what it means, its pros and cons), and `recommended` is the label of the choice you recommend, pre-selected for the person, with `why` in one line |
 | `add_ticket_comment` | `{body, ticket?, files?}`: a comment on the ticket's timeline, by the agent, with files attached |
@@ -35,7 +35,7 @@ for what they cover, and the API for the rest. Which tools a session has depends
 | `list_secrets`, `request_secret`, `run_with_secrets`, `write_secret_file` | secrets (below) |
 | `ci_runs`, `ci_failed_logs`, `ci_jobs`, `ci_retry`, `change_request_view`, `change_request_diff`, `change_request_comment`, `change_request_open`, `change_request_merge`, `issue_view`, `issue_comment`, `issue_create` | the project's forge and CI (see "CI and pull requests") |
 | `catalog_search`, `catalog_get`, `workflow_get`, `workflow_validate`, `workflow_dry_run`, `workflow_save`, `workflow_run`, `workflow_export`, `workflow_import` | workflows: the node catalog (each MCP server's tools are in it as `mcp:<server>/<tool>`), documents, runs and transfer. `workflow_save` proposes a new version for the person to accept, or saves a new workflow, which starts disabled |
-| `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs`, `list_todos` | the PM's view: every project's open tickets, work in flight with PR and CI, the Inbox and running sessions; ticket search; a session's state and last messages; workflow runs; the person's todo list (read-only) |
+| `get_overview`, `search_tickets`, `get_session`, `list_workflow_runs`, `list_todos` | the PM's view: every project's open tickets, work in flight with PR and CI, the Inbox and running sessions; ticket search; a session's state and last messages (fenced for a session that reads outside input); workflow runs; the person's todo list (read-only) |
 | `search_notes`, `save_note`, `delete_note`, `write_journal` | the PM's memory: notes (pinned ones go in every briefing) and each PM conversation's journal entry |
 | `documents_list`, `document_get`, `doc_read`, `sheet_read`, `comments_list` | documents (see "Documents"): list them; one's details and open comments; a doc as Markdown (`heading` reads one section); a sheet's sheets, charts and cells (`sheet`, `range`); comments. Titles, content and comments come fenced as outside input |
 | `doc_edit`, `sheet_edit`, `document_create`, `document_link`, `comment_reply`, `comment_resolve`, `document_open_beside` | changes to documents: `{document, edits}` (`doc_edit` answers with a diff, `sheet_edit` with new charts' ids); a new doc or sheet, linked to the session's own ticket unless you name a ticket or project; a link (or `unlink`); a comment's reply or resolve; opening one in a tab beside this conversation, for the person to watch your edits land |
@@ -208,14 +208,15 @@ Use PDT's forge tools rather than a forge CLI; they act as the person's forge lo
 `git push`):
 - `ci_runs`: your branch's recent runs from each of the project's CI providers, with the failed jobs.
   `ci_failed_logs`: the end of each failed job's log (give `provider` and `runId` from `ci_runs` or the failure
-  message, or nothing for the newest failure). The ticket's attempt has the same in `pr.ci` (or `ci` without a pull
-  request).
+  message, or nothing for the newest failure). Logs come fenced as outside input (whatever the job ran printed them),
+  and so do the job names of a run that isn't your branch's. The ticket's attempt has the same in `pr.ci` (or `ci`
+  without a pull request).
 - `change_request_open`: opens the pull request for your pushed branch (`title`, `body`, `base?`, `draft?`).
   `change_request_view`: it, with comments and reviews. `change_request_comment`: answers on it (`replyTo` answers a
   review comment in its thread). `change_request_diff`: a pull request's diff by number.
 - `ci_jobs`: the jobs of the newest runs on your ticket attempt's head commit (the pull request's head, else the
   pushed branch's): each job's `id`, name, step key, state, whether it is `retryable`, how many `retries` it had on
-  this head, and the end of a failed job's log. `ci_retry`: runs chosen jobs again (`jobs`: ids, step keys or names;
+  this head, and the end of a failed job's log (fenced). `ci_retry`: runs chosen jobs again (`jobs`: ids, step keys or names;
   `failed: true` for every failed one; `provider` and `runId` to narrow it), a Buildkite step or a GitHub Actions job
   on its own (GitLab CI retries the pipeline's failed jobs together). It needs no confirmation and shows on the
   ticket's timeline.
