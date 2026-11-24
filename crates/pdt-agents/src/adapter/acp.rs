@@ -4,6 +4,7 @@
 //! [`AcpProfile`] (Devin's: `super::devin`).
 
 use super::lines::{CappedLines, MAX_LINE};
+use super::stderr::{STDERR_TAIL, stderr_tail};
 use super::{
     AdapterError, AdapterOutput, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing, REQUEST_TIMEOUT,
     START_TIMEOUT, SessionChange,
@@ -17,11 +18,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, watch};
 
-/// How much of the agent's error output is kept to explain a crash.
-const STDERR_TAIL: usize = 4096;
 /// How long "Send now" waits for the cancelled turn to end before sending.
 const CANCEL_WAIT: Duration = Duration::from_secs(10);
 
@@ -412,28 +411,7 @@ impl<P: AcpProfile> AcpLive<P> {
             }
         });
 
-        let tail = Arc::new(Mutex::new(String::new()));
-        let err_task = {
-            let tail = tail.clone();
-            tokio::spawn(async move {
-                let mut stderr = stderr;
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = stderr.read(&mut buf).await {
-                    if n == 0 {
-                        break;
-                    }
-                    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
-                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if t.len() > STDERR_TAIL {
-                        let mut cut = t.len() - STDERR_TAIL;
-                        while !t.is_char_boundary(cut) {
-                            cut += 1;
-                        }
-                        t.drain(..cut);
-                    }
-                }
-            })
-        };
+        let (tail, err_task) = stderr_tail(stderr, STDERR_TAIL);
 
         let (exit_tx, exit_rx) = watch::channel(false);
         {

@@ -2,6 +2,7 @@
 //! capability token (the real TUI can attach to it with `--remote`), one client connection multiplexing every thread,
 //! and a `CodexLive` per conversation. The frame mapping is pdt-core's `CodexMapper`.
 
+use super::stderr::{STDERR_TAIL, stderr_tail};
 use super::{
     AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
     REQUEST_TIMEOUT, START_TIMEOUT, SessionChange,
@@ -264,28 +265,10 @@ impl CodexServer {
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         let mut child = crate::launch::spawn_child(cmd).await.map_err(|e| AdapterError::Spawn(e.to_string()))?;
         let pid = child.id();
-        let stderr_tail = Arc::new(Mutex::new(String::new()));
-        if let Some(mut err) = child.stderr.take() {
-            let tail = stderr_tail.clone();
-            tokio::spawn(async move {
-                use tokio::io::AsyncReadExt;
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = err.read(&mut buf).await {
-                    if n == 0 {
-                        break;
-                    }
-                    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
-                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if t.len() > 4096 {
-                        let mut cut = t.len() - 4096;
-                        while !t.is_char_boundary(cut) {
-                            cut += 1;
-                        }
-                        t.drain(..cut);
-                    }
-                }
-            });
-        }
+        let stderr_tail = match child.stderr.take() {
+            Some(err) => stderr_tail(err, STDERR_TAIL).0,
+            None => Arc::new(Mutex::new(String::new())),
+        };
         let child = Arc::new(tokio::sync::Mutex::new(child));
 
         // Connect once it listens.
