@@ -171,7 +171,7 @@ fn levels_of(doc: &pdt_core::workflow::doc::WorkflowDoc) -> Vec<Levels> {
 /// The rules now: the Notification rules workflow's while it is on, PDT's defaults while it is off, and the levels
 /// stored before it while it isn't installed yet. Read again when its version changes.
 pub(crate) async fn rules(st: &AppState) -> Rules {
-    let w = st.store.workflow_by_builtin(crate::workflow::builtins::NOTIFICATION_RULES).await.ok().flatten();
+    let w = st.store.workflow_by_builtin(crate::workflow::builtins::notification_rules::ID).await.ok().flatten();
     let from: RulesFrom = w.as_ref().map(|w| (w.id.clone(), w.version, w.enabled));
     if let Some((f, r)) = st.notifier.rules.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
         && *f == from

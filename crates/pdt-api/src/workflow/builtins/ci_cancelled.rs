@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "ci-cancelled";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::CiPr, doc: ci_cancelled };
+
 /// How many times it re-runs one head's cancelled CI on its own before it asks the user.
 pub const RERUNS: u32 = 1;
 

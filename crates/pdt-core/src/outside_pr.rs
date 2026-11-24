@@ -95,7 +95,7 @@ fn group_size(words: &[&str]) -> Option<usize> {
 /// None unless it names at least `n` packages (the title's count) and every line gives versions it can compare, so a
 /// body cut short, or one whose updates only widen a requirement, is reviewed. Dependabot quotes release notes as
 /// HTML, so a line from them can only add a package, never make a bump smaller.
-pub fn group_update(body: &str, n: usize) -> Option<UpdateType> {
+fn group_update(body: &str, n: usize) -> Option<UpdateType> {
     let mut names = std::collections::BTreeSet::new();
     let mut most: Option<UpdateType> = None;
     for line in body.lines().map(str::trim_end) {

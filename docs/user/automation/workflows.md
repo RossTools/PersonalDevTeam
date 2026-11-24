@@ -5,7 +5,9 @@ issue is opened. Each one is a **trigger** (what happened) followed by **steps**
 decides something or asks you.
 
 Open **Workflows** in the rail. The list groups your workflows by where they apply: **This host** (every project),
-**Personal**, and each project. A dot shows whether each is on.
+**Personal**, and each project. A green dot means a workflow is on; **Off** marks one that is off. Badges mark your own
+workflows (**Yours**), ones from the repo (**Repo**) and ones with a change waiting (**Proposal waiting**). On a phone
+you can look at workflows and their runs; create and edit them on a computer.
 
 ## The built-in workflows
 
@@ -202,7 +204,7 @@ one back.
 
 ## Read a run
 
-A workflow's **Runs** tab lists its runs, newest first. Runs that ended with **Nothing to do** (an every-minute
+A workflow's **Runs** tab lists its runs, newest first. Before it has run, the tab offers a **Dry run**. Runs that ended with **Nothing to do** (an every-minute
 schedule that found no work) are left out; turn on **Show “Nothing to do” runs** above the list to see them. Automatic
 ones are kept for two days, other runs for 30. Open one to see the graph of the version it ran with the path
 it took, and each step's input, output or error. **Open session** on an agent step shows what the agent did (step

@@ -65,7 +65,10 @@ async fn bk_app(State(b): State<Shared>, req: Request<Body>) -> (StatusCode, axu
             Some(x) => ok(x.clone()),
             None => (StatusCode::NOT_FOUND, axum::Json(json!({"message": "No build found"}))),
         },
-        ("GET", ["app", "builds", _, "jobs", job, "log"]) => ok(json!({"content": format!("one\ntwo\n{job} broke\n")})),
+        ("GET", ["app", "builds", _, "jobs", job, "log"]) => ok({
+            // Buildkite's timestamps and colours, as its log API gives them.
+            json!({"content": format!("one\n\u{1b}_bk;t=1700000000000\u{7}two\n\u{1b}[31m{job} broke\u{1b}[0m\n")})
+        }),
         ("PUT", ["app", "builds", _, "jobs", _, "retry"]) => ok(json!({"id": "retried"})),
         ("PUT", ["app", "builds", n, "rebuild"]) => {
             let n: u64 = n.parse().unwrap();
@@ -423,7 +426,7 @@ async fn the_provider_reads_jobs_and_logs_retries_and_triggers() {
         jobs.iter().map(|j| (j.id.as_str(), j.state)).collect::<Vec<_>>(),
         [("job-test", CiState::Failed), ("job-build", CiState::Passed)]
     );
-    assert_eq!(log, "… (1 earlier lines)\ntwo\njob-test broke\n");
+    assert_eq!(log, "… (1 earlier lines)\ntwo\njob-test broke\n", "without its timestamps and colours");
     let seen = env.bk.lock().unwrap().seen.clone();
     let did = |m: &str, end: &str| seen.iter().any(|(x, p, _)| x == m && p.ends_with(end));
     assert!(did("PUT", "/builds/4/jobs/job-test/retry"), "the failed jobs again: {seen:?}");

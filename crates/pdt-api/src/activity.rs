@@ -8,6 +8,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pdt_agents::PtyEvent;
+use pdt_agents::adapter::stderr::keep_tail;
 use pdt_core::activity::{
     Activity, HookReport, Signal, Watch, codex_approval_shown, needs_attention, next, osc_titles, program_status,
     program_status_app, squash, strip_ansi, tick_with, titles_say_action_required,
@@ -88,13 +89,7 @@ impl Screen {
 
     fn push_text(&mut self, bytes: &[u8]) {
         self.text.push_str(&squash(&strip_ansi(bytes)));
-        if self.text.len() > SCREEN_TAIL {
-            let mut cut = self.text.len() - SCREEN_TAIL;
-            while !self.text.is_char_boundary(cut) {
-                cut += 1;
-            }
-            self.text.drain(..cut);
-        }
+        keep_tail(&mut self.text, SCREEN_TAIL);
     }
 }
 

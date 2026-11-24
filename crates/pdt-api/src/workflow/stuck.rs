@@ -30,7 +30,7 @@ pub(crate) const START_GRACE_MS: i64 = 60_000;
 
 /// The built-in "When an agent is stuck", while it is on.
 pub(crate) async fn handler(st: &AppState) -> Option<Workflow> {
-    let w = st.store.workflow_by_builtin(super::builtins::STUCK_AGENTS).await.ok().flatten()?;
+    let w = st.store.workflow_by_builtin(super::builtins::stuck_agents::ID).await.ok().flatten()?;
     (w.enabled && !super::builtins::hidden(&st.registry(), &w)).then_some(w)
 }
 

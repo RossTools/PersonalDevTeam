@@ -6,7 +6,7 @@
 
 use crate::builtin_settings::{Reset, router_with};
 use crate::routes::{AppState, now_ms};
-use crate::workflow::builtins::INSTALL_UPDATES;
+use crate::workflow::builtins::install_updates::ID as INSTALL_UPDATES;
 use crate::workflow::builtins::install_updates::SETTINGS;
 use axum::Router;
 use futures_util::future::BoxFuture;

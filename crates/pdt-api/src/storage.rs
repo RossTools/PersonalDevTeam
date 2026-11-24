@@ -416,8 +416,8 @@ fn group_disks(
 /// The low and critical thresholds in GB (0: off): the built-in Clean up storage's inputs (PDT-370); before it is
 /// installed, the host settings that held them.
 pub async fn thresholds(st: &AppState) -> (u32, u32) {
-    use crate::workflow::builtins::{CLEAN_UP_STORAGE, clean_up_storage};
-    if let Ok(Some(w)) = st.store.workflow_by_builtin(CLEAN_UP_STORAGE).await
+    use crate::workflow::builtins::clean_up_storage;
+    if let Ok(Some(w)) = st.store.workflow_by_builtin(clean_up_storage::ID).await
         && let Ok(Some(doc)) = st.store.workflow_doc(&w.id, w.version).await
     {
         return clean_up_storage::thresholds(&clean_up_storage::SETTINGS.values_of(&doc));

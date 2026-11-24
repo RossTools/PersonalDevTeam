@@ -34,31 +34,57 @@ function typedDefault(type: ParamType, text: string): unknown {
   return text;
 }
 
-function ParamsTable({ params, onChange, readOnly }: { params: TemplateParam[]; onChange: (p: TemplateParam[]) => void; readOnly: boolean }) {
+/** A param's default as text: a choice's choices, a list's items, nothing when it has none. */
+function defaultText(p: TemplateParam): string {
+  if (p.type === 'choice') return (p.choices ?? []).join(', ');
+  if (p.default === undefined || p.default === null) return '';
+  return Array.isArray(p.default) ? p.default.join(', ') : String(p.default);
+}
+
+/** Params that can't be changed (a built-in template's, any on a phone), as text rather than disabled inputs (PDT-680). */
+function ParamsReadOnly({ params }: { params: TemplateParam[] }) {
+  if (params.length === 0) return <EmptyState size="inline">No parameters.</EmptyState>;
+  return (
+    <dl aria-label="Parameters" className="flex flex-col divide-y divide-border rounded-md border border-border text-sm">
+      {params.map((p) => {
+        const value = defaultText(p);
+        return (
+          <div key={p.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
+            <dt className="min-w-0">{p.title} <span className="font-mono text-xs text-muted-foreground">({p.id})</span></dt>
+            <dd className="text-xs text-muted-foreground">
+              {TYPES.find((t) => t.value === p.type)?.label ?? p.type} · {p.required ? 'required' : 'optional'}
+              {value && <> · {p.type === 'choice' ? 'one of' : 'default'} <span className="font-mono">{value}</span></>}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
+
+function ParamsTable({ params, onChange }: { params: TemplateParam[]; onChange: (p: TemplateParam[]) => void }) {
   const set = (i: number, change: Partial<TemplateParam>) => onChange(params.map((p, j) => (j === i ? { ...p, ...change } : p)));
   return (
     <div className="flex flex-col gap-2">
       {params.length === 0 && <EmptyState size="inline">No parameters. Write {'{{params.<id>}}'} in the document and add one here.</EmptyState>}
       {params.map((p, i) => (
         <div key={i} className="grid grid-cols-2 gap-2 rounded-md border border-border p-2 md:grid-cols-[8rem_1fr_9rem_1fr_auto_auto]">
-          <Input mono aria-label={`Param ${i + 1} id`} placeholder="id" value={p.id} readOnly={readOnly} onChange={(e) => set(i, { id: e.target.value.trim() })} />
-          <Input aria-label={`Param ${i + 1} title`} placeholder="Title" value={p.title} readOnly={readOnly} onChange={(e) => set(i, { title: e.target.value })} />
-          <Select aria-label={`Param ${i + 1} type`} options={TYPES} value={p.type} disabled={readOnly} onChange={(type) => set(i, { type })} />
-          <Input aria-label={`Param ${i + 1} default`} placeholder={p.type === 'choice' ? 'Choices, comma-separated' : p.type === 'list' ? 'Default, comma-separated' : 'Default'} readOnly={readOnly}
-            value={p.type === 'choice' ? (p.choices ?? []).join(', ') : p.default === undefined || p.default === null ? '' : Array.isArray(p.default) ? p.default.join(', ') : String(p.default)}
+          <Input mono aria-label={`Param ${i + 1} id`} placeholder="id" value={p.id} onChange={(e) => set(i, { id: e.target.value.trim() })} />
+          <Input aria-label={`Param ${i + 1} title`} placeholder="Title" value={p.title} onChange={(e) => set(i, { title: e.target.value })} />
+          <Select aria-label={`Param ${i + 1} type`} options={TYPES} value={p.type} onChange={(type) => set(i, { type })} />
+          <Input aria-label={`Param ${i + 1} default`} placeholder={p.type === 'choice' ? 'Choices, comma-separated' : p.type === 'list' ? 'Default, comma-separated' : 'Default'}
+            value={defaultText(p)}
             onChange={(e) => (p.type === 'choice'
               ? set(i, { choices: e.target.value.split(',').map((c) => c.trim()).filter(Boolean) })
               : set(i, { default: typedDefault(p.type, e.target.value) }))} />
-          <Checkbox checked={p.required} disabled={readOnly} onChange={(required) => set(i, { required })}>Required</Checkbox>
-          {!readOnly && <IconButton label={`Remove param ${i + 1}`} size="sm" onClick={() => onChange(params.filter((_, j) => j !== i))}><Trash2 aria-hidden /></IconButton>}
+          <Checkbox checked={p.required} onChange={(required) => set(i, { required })}>Required</Checkbox>
+          <IconButton label={`Remove param ${i + 1}`} size="sm" onClick={() => onChange(params.filter((_, j) => j !== i))}><Trash2 aria-hidden /></IconButton>
         </div>
       ))}
-      {!readOnly && (
-        <Button size="sm" variant="secondary" className="self-start"
-          onClick={() => onChange([...params, { id: `param${params.length + 1}`, title: `Param ${params.length + 1}`, description: '', type: 'string', choices: [], required: false }])}>
-          <Plus aria-hidden /> Add parameter
-        </Button>
-      )}
+      <Button size="sm" variant="secondary" className="self-start"
+        onClick={() => onChange([...params, { id: `param${params.length + 1}`, title: `Param ${params.length + 1}`, description: '', type: 'string', choices: [], required: false }])}>
+        <Plus aria-hidden /> Add parameter
+      </Button>
     </div>
   );
 }
@@ -94,7 +120,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
     <div className="flex min-h-0 flex-1 flex-col">
       <ViewHeader
         title={t.name}
-        meta={<>{t.builtin ? <Badge tone="neutral">Built in</Badge> : <span>Your template</span>}<span>{t.params.length} parameters</span></>}
+        meta={<>{t.builtin ? <Badge tone="neutral">Built in</Badge> : <span>Your template</span>}<span>{t.params.length === 1 ? '1 parameter' : `${t.params.length} parameters`}</span></>}
         actions={phone ? undefined : (
           <>
             <Button size="sm" variant="primary" onClick={() => onUse(t.id)} disabled={dirty} title={dirty ? 'Save first' : undefined}>Use this template</Button>
@@ -122,7 +148,7 @@ function Loaded({ t, catalog, onUse, onDeleted }: { t: WorkflowTemplate; catalog
             </>
           )}
           <SectionLabel>Parameters</SectionLabel>
-          <ParamsTable params={params} onChange={setParams} readOnly={readOnly} />
+          {readOnly ? <ParamsReadOnly params={params} /> : <ParamsTable params={params} onChange={setParams} />}
           {save.error && <Alert tone="error">{save.error.message}</Alert>}
           {!readOnly && (
             <div className="flex gap-2">

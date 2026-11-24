@@ -186,13 +186,7 @@ impl CiProvider for BuildkiteCi {
     fn job_log_tail(&self, _repo: &str, run: &CiRun, job: &CiJob, lines: usize) -> Result<String, ForgeError> {
         let (pipeline, number) = build_of(run)?;
         let log = self.with_client(async |c| c.job_log(&pipeline, number, &job.id).await)?;
-        let all: Vec<&str> = log.lines().collect();
-        let skipped = all.len().saturating_sub(lines);
-        let mut out: String = all[skipped..].iter().map(|l| format!("{l}\n")).collect();
-        if skipped > 0 {
-            out = format!("… ({skipped} earlier lines)\n{out}");
-        }
-        Ok(out)
+        Ok(pdt_forge::ci::log_tail(&log, lines, |l| l))
     }
 
     /// The failed jobs again (`failed_only`, when some can be), else the whole build.

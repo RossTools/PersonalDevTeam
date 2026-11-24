@@ -13,8 +13,13 @@ use pdt_core::storage::{DEFAULT_CRITICAL_DISK_GB, DEFAULT_LOW_DISK_GB};
 use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "clean-up-storage";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Tickets, doc: clean_up_storage };
+
 pub static SETTINGS: InputsBuiltin = InputsBuiltin {
-    id: CLEAN_UP_STORAGE,
+    id: ID,
     params: storage_params,
     template: storage_template,
     finish: Some(finish),

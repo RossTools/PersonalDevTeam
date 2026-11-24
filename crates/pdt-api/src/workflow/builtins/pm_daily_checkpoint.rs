@@ -6,13 +6,17 @@ use crate::workflow::templates::params;
 use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "pm-daily-checkpoint";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::Pm, doc: pm_daily_checkpoint };
+
 /// The PM daily checkpoint (PDT-372; hard-coded at the end of a turn before): every hour, each open PM conversation
 /// you wrote to since its last update, a day or more ago, gets what happened since (and writes a journal checkpoint);
 /// one with nothing new is asked only for the checkpoint. Its inputs are what Settings → This host → PM shows
 /// (PDT-384): a time of day instead of every hour, the days it runs, and a chat channel to post the update to.
 /// Journaling when a conversation is reset or closed stays PDT's own.
 pub static SETTINGS: InputsBuiltin = InputsBuiltin {
-    id: PM_DAILY_CHECKPOINT,
+    id: ID,
     params: checkpoint_params,
     template: checkpoint_template,
     finish: Some(finish),
