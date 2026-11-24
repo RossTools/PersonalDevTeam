@@ -268,14 +268,16 @@ pub async fn paste(
 /// `invalid_input`, PDT's own failure (its database, the keychain) is said as the API says it, its full text logged.
 async fn finish(st: &AppState, shared: &Shared, q: CallbackQuery) -> Result<String, ApiError> {
     let pending = q.state.and_then(|s| shared.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&s));
-    if let Some(e) = q.error {
-        return Err(ApiError::invalid(format!("Google said: {e}. Try again from Settings → Plugins → Google.")));
-    }
+    // Google's error only for a sign-in under way: any other link's text would read as PDT's own (PDT-650).
     let Some(p) = pending.filter(|p| now_ms() - p.started_ms < accounts::PENDING_MS) else {
         return Err(ApiError::invalid(
             "This sign-in is unknown or too old. Start it again from Settings → Plugins → Google.",
         ));
     };
+    if let Some(e) = q.error {
+        let e: String = e.chars().take(100).collect();
+        return Err(ApiError::invalid(format!("Google said: {e}. Try again from Settings → Plugins → Google.")));
+    }
     let Some(code) = q.code else { return Err(ApiError::invalid("Google sent no code back.")) };
     let existing = match &p.connection_id {
         Some(id) => match connection(st, id).await {
