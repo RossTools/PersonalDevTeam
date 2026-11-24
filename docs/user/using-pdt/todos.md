@@ -32,6 +32,8 @@ Open todos are grouped by when they're due: **Overdue**, **Today**, **Tomorrow**
 - **Drag** a todo, or press **Alt+↑** / **Alt+↓**, to reorder it.
 - Each row's **⋯** has **Edit**, **Due date…**, **Repeat…**, **Stop repeating**, **Link to a ticket…**, **Project** and
   **Delete**. Deleting a repeating todo asks whether to delete only this one or the whole series.
+- A delete, or a **Clear**, waits a few seconds with **Undo** in a toast before it happens. Clear deletes all the
+  finished todos together, or none if it fails.
 
 A todo linked to a ticket shows its key; click it to open the ticket.
 

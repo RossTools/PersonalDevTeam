@@ -156,6 +156,14 @@ pub struct TodoPatch {
     pub recurrence: Option<Option<Recurrence>>,
 }
 
+/// `POST /api/todos/delete`: deletes these todos together, all or none (Clear completed).
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TodosDelete {
+    pub ids: Vec<String>,
+}
+
 /// Tells an absent field (None) from an explicit null (Some(None)).
 fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<Recurrence>>, D::Error> {
     Ok(Some(Option::<Recurrence>::deserialize(d)?))
