@@ -1476,3 +1476,73 @@ async fn an_approval_expires_after_30_days() {
     assert_eq!(approval_port(&env, &newest_run(&env).await).await, "none");
     assert!(!env.gh.calls.lock().unwrap().iter().any(|c| c.starts_with("merge ")));
 }
+
+// ---- PDT-700: the forge down partway through ----
+
+/// Lets the run's retries of `node` run out, one cut-short wait at a time; returns where it waits next.
+async fn retries_run_out(env: &Env, id: &str, node: &str) -> String {
+    for _ in 0..10 {
+        let at = waiting(env, id).await.0;
+        if at != node {
+            return at;
+        }
+        time_passes(env, id).await;
+    }
+    panic!("{node} still retrying: {}", run(env, id).await);
+}
+
+/// GitHub down when the user clicks Approve & merge: the approval can't be recorded, but the answer stands and the
+/// pull request merges once GitHub is back and CI passes. Only a later head has no approval to keep.
+#[tokio::test]
+async fn approve_and_merge_while_the_forge_is_down_still_merges() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    the_files(&env, 50, "new");
+    let pr = outside(50, "al", "Fix the board", "patch-50", 1);
+    look(&env, vec![pr.clone()]).await;
+    let session = reviewer(&env, &mut seen).await;
+    let (run_id, step) = review(&env, &session, "merge", "").await;
+    *env.gh.error.lock().unwrap() = Some("GitHub is down".into());
+    answer(&env, &run_id, &step, "approve_merge", None).await;
+    assert_eq!(retries_run_out(&env, &run_id, "approved").await, "wait_ci");
+    let r = run(&env, &run_id).await;
+    let approved = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "approved").cloned().unwrap();
+    assert_eq!(approved["port"], "error", "{approved}");
+    let key = format!("_pdt.approval.{}#50", RELEASE_REPO.to_lowercase());
+    assert!(env.state.store.workflow_state(&env.wf).await.unwrap().get(&key).is_none(), "nothing recorded");
+
+    *env.gh.error.lock().unwrap() = None;
+    env.gh.set_runs("patch-50", vec![ci_run(&env, "patch-50", "sha-50", "10", CiState::Passed, &[], 2)]);
+    time_passes(&env, &run_id).await;
+    let calls = env.gh.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c == &format!("merge {RELEASE_REPO} 50 squash")), "{calls:?}");
+    assert_ne!(run(&env, &run_id).await["status"], "failed");
+}
+
+/// GitHub down when a pull request is to be brought up to date (after main is fixed): the user is asked "Didn't
+/// merge", and the run doesn't fail.
+#[tokio::test]
+async fn the_forge_down_at_the_update_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    let _pr = approved(&env, 51, &mut seen).await;
+    let run_id = newest_run(&env).await;
+    let failing = main_fails_the_audit(&env);
+    env.gh.set_runs("main", vec![failing.clone()]);
+    env.gh.set_runs("patch-51", vec![ci_run(&env, "patch-51", "sha-51", "10", CiState::Failed, &[AUDIT], 2)]);
+    time_passes(&env, &run_id).await;
+    assert_eq!(waiting(&env, &run_id).await.0, "wait_base");
+
+    // Main is fixed (CI answers), but GitHub's pull requests can't be read.
+    env.gh.set_runs("main", vec![failing, ci_run(&env, "main", "m2", "21", CiState::Passed, &[], 3)]);
+    *env.gh.error.lock().unwrap() = Some("GitHub is down".into());
+    time_passes(&env, &run_id).await;
+    let after_update = retries_run_out(&env, &run_id, "update").await;
+    assert_eq!(retries_run_out(&env, &run_id, &after_update).await, "blocked", "asked once `why` gives up too");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "Didn't merge: ask me", "{gate}");
+    let r = run(&env, &run_id).await;
+    let update = r["steps"].as_array().unwrap().iter().find(|s| s["nodeId"] == "update").cloned().unwrap();
+    assert_eq!(update["port"], "error", "{update}");
+    untouched(&env.gh);
+}
