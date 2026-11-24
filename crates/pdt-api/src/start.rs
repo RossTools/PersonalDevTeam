@@ -172,6 +172,11 @@ pub(crate) async fn start_ticket(
         (None, None) => crate::placement::place(&st, &project, &ticket.summary.labels, v.runs_on.as_deref()).await?,
         _ => None,
     };
+    // A missing or switched-off agent is refused before the branch and worktree are made (PDT-718). A remote
+    // instance's agents are its own; a chat's agent runs already.
+    if !v.no_session && chat.is_none() && placed.is_none() {
+        crate::agent_installed::ensure(&st, v.agent).await?;
+    }
     // Whether PDT named the branch from the project's template (PDT-594): Won't do may delete such a branch from the
     // remote, whatever its name. Only a name `start_branch` chose (and checked was free) is PDT's.
     let named = chat.is_none() && personal.is_none() && v.branch.is_none();

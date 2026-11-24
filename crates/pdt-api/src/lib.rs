@@ -1,4 +1,5 @@
 mod activity;
+mod agent_installed;
 mod agent_login;
 mod agent_mcp;
 mod attachments;

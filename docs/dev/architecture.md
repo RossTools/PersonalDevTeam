@@ -297,7 +297,8 @@ over the `project_settings.branch_names` setting over the default `pdt-{key}-{sl
 responses is that name (`overlap::decorate`). Start adds `-2`, `-3`, … when another branch, here or on origin, or
 another ticket's worktree has the name, and records `attempts.branch_named` (PDT named it, or was given it). Start
 (pdt-api `start.rs`) makes the branch and worktree, the attempt and the first agent session, whose
-prompt is pdt-core `start::start_prompt`. An attempt ends as merged or abandoned. Merge detection (pdt-git
+prompt is pdt-core `start::start_prompt`; before the branch it refuses a local agent that is switched off or whose
+program isn't found (`agent_installed.rs`, which the PM's new conversations check too). An attempt ends as merged or abandoned. Merge detection (pdt-git
 `merge.rs`, run by the poll) counts a branch as merged when its head is in the base, its patch is (a squash), or the
 forge says its PR merged; it counts only once the branch had commits of its own. Finish (pdt-api `finish.rs`) moves
 the ticket to Done and cleans up the worktree, sessions, runs and workspace. Closing a ticket any other way, or
