@@ -125,10 +125,6 @@ pub const CAPABILITIES: Capabilities = Capabilities::ALL;
 pub const ISSUE_PAGE: usize = 100;
 pub const ISSUE_PAGES: u32 = 10;
 
-/// The most lines of a failed job's log kept, and of characters.
-pub const LOG_LINES: usize = 200;
-pub const LOG_CHARS: usize = 30_000;
-
 /// The headers of an API call with `token`.
 pub(crate) fn headers(token: &str) -> Vec<(&'static str, String)> {
     vec![
@@ -391,48 +387,17 @@ pub fn job_list(v: &Value) -> Result<&Vec<Value>, GhError> {
     v["jobs"].as_array().ok_or_else(|| GhError::BadAnswer("no jobs in the answer".into()))
 }
 
-/// The end of a job's log: its last [`LOG_LINES`] lines (at most [`LOG_CHARS`] characters), without Actions'
-/// timestamps and terminal colours.
-pub fn log_tail(raw: &str) -> String {
-    log_tail_lines(raw, LOG_LINES)
-}
-
-/// [`log_tail`] of the last `keep` lines.
+/// The end of a job's log: its last `keep` lines ([`pdt_forge::ci::log_tail`]), without Actions' timestamps.
 pub fn log_tail_lines(raw: &str, keep: usize) -> String {
-    let lines: Vec<&str> = raw.lines().collect();
-    let skipped = lines.len().saturating_sub(keep);
-    let mut out: String = lines[skipped..].iter().map(|l| format!("{}\n", clean_line(l))).collect();
-    let chars = out.chars().count();
-    if chars > LOG_CHARS {
-        out = out.chars().skip(chars - LOG_CHARS).collect();
-    }
-    if skipped > 0 {
-        out = format!("… ({skipped} earlier lines)\n{out}");
-    }
-    out
+    pdt_forge::ci::log_tail(raw, keep, clean_line)
 }
 
-fn clean_line(l: &str) -> String {
+fn clean_line(l: &str) -> &str {
     // `2026-10-19T02:00:10.1234567Z text`
-    let l = match l.split_once(' ') {
+    match l.split_once(' ') {
         Some((t, rest)) if t.len() >= 20 && t.ends_with('Z') && t.as_bytes()[4] == b'-' && t.contains('T') => rest,
         _ => l,
-    };
-    let mut out = String::with_capacity(l.len());
-    let mut chars = l.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
     }
-    out
 }
 
 /// Reads pages of issues (newest first, `page(n)` the items of page `n`) until one reaches issue `after` or is the
