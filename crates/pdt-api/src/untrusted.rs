@@ -503,10 +503,7 @@ pub(crate) struct Outside {
 
 impl Outside {
     pub(crate) fn new() -> Self {
-        Self {
-            fence: pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string()),
-            used: std::sync::atomic::AtomicBool::new(false),
-        }
+        Self { fence: pdt_core::fence::Fence::random(), used: std::sync::atomic::AtomicBool::new(false) }
     }
 
     /// `text` in a block.

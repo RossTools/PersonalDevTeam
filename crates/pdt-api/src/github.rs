@@ -215,7 +215,7 @@ pub(crate) fn feedback_events(
     let mut out = vec![];
     // A bot's text is outside text (PDT-415), whatever its role on the repository: it can relay what an outsider wrote,
     // so its notice fences it.
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let fence = pdt_core::fence::Fence::random();
     let relayed = |bot: bool| bot.then_some(&fence);
     for c in comments {
         let floor = if c.in_review { seen.review_comment } else { seen.comment };

@@ -290,7 +290,7 @@ pub fn ci_failed_notice(
         Some(p) => format!("{} ({branch})", p.name()),
         None => branch.to_string(),
     };
-    let mut text = format!("[PDT] {what} failed on {on} at {}", short(head));
+    let mut text = format!("[PDT] {what} failed on {on} at {}", crate::ci_retry::short_sha(head));
     if !jobs.is_empty() {
         text.push_str(&format!(": {}", jobs.join(", ")));
     }
@@ -684,7 +684,7 @@ pub enum CiGate {
 /// The gate for `pr` with `ci` on its head (the forge's CI and the CI integrations' together). `has_ci`: the repository
 /// has CI (workflow files, a CI integration's pipeline), so no run yet means one is still to come.
 pub fn ci_gate(pr: &PullRequestStatus, ci: Option<&CiStatus>, has_ci: bool) -> CiGate {
-    let (n, at) = (pr.name(), short(&pr.head_sha));
+    let (n, at) = (pr.name(), crate::ci_retry::short_sha(&pr.head_sha));
     let Some(ci) = ci else {
         return if has_ci { CiGate::Pending(format!("CI hasn't started on {n} at {at} yet")) } else { CiGate::NoCi };
     };
@@ -732,8 +732,11 @@ pub struct LateCommit {
 /// Inbox ("CB-25: 1 commit pushed after PR #308 merged: cd5d0b7 Fix the build"), `notice` for the attempt's agent.
 pub fn late_commits_notice(key: &str, pr: u32, branch: &str, base: &str, commits: &[LateCommit]) -> (String, Notice) {
     let n = commits.len();
-    let list: Vec<String> =
-        commits.iter().take(5).map(|c| format!("{} {}", short(&c.sha), c.subject).trim_end().to_string()).collect();
+    let list: Vec<String> = commits
+        .iter()
+        .take(5)
+        .map(|c| format!("{} {}", crate::ci_retry::short_sha(&c.sha), c.subject).trim_end().to_string())
+        .collect();
     let mut listed = list.join("; ");
     if n > list.len() {
         listed.push_str(&format!("; and {} more", n - list.len()));
@@ -757,10 +760,6 @@ pub fn late_commits_notice(key: &str, pr: u32, branch: &str, base: &str, commits
         text,
     };
     (summary, notice)
-}
-
-fn short(sha: &str) -> &str {
-    sha.get(..7).unwrap_or(sha)
 }
 
 #[cfg(test)]

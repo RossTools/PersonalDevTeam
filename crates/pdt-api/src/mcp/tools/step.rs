@@ -240,7 +240,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     // An external ticket's title and description are what someone outside PDT wrote (an imported issue, PDT-202,
     // PDT-415): fenced. Linked issues' titles (PDT-536) and the documents' titles are outside text on any ticket.
     let external = ticket.summary.source == TicketSource::External;
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let fence = pdt_core::fence::Fence::random();
     let outside = external.then(|| (fence.wrap(&ticket.summary.title), fence.wrap(&ticket.description)));
     let attachments = attachments_of(st, id, external.then_some(&fence)).await?;
     let ticket_project = ticket.summary.project_id.clone();

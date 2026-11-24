@@ -120,9 +120,9 @@ pub fn conflict_message(n: &ConflictNote<'_>) -> String {
     );
     if let Some((cmd, out)) = n.failed {
         s.push_str(&format!(
-            "\nOnly generated files conflicted, but regenerating them failed: `{cmd}` said\n\n```\n{}\n```\n\nFix that \
-             and run it again.\n",
-            out.trim_end()
+            "\nOnly generated files conflicted, but regenerating them failed: `{cmd}` said\n\n{}\n\nFix that and run \
+             it again.\n",
+            crate::text::code_block("", out.trim_end())
         ));
     }
     if !n.files.is_empty() {
@@ -147,7 +147,7 @@ pub fn conflict_message(n: &ConflictNote<'_>) -> String {
     if !hunks.is_empty() {
         let lines: Vec<&str> = hunks.lines().collect();
         let shown = lines.len().min(MAX_HUNK_LINES);
-        s.push_str(&format!("\nThe conflicts:\n\n```diff\n{}\n```\n", lines[..shown].join("\n")));
+        s.push_str(&format!("\nThe conflicts:\n\n{}\n", crate::text::code_block("diff", &lines[..shown].join("\n"))));
         if lines.len() > shown {
             s.push_str(&format!("({} more lines: `git diff` shows them all.)\n", lines.len() - shown));
         }
@@ -228,5 +228,19 @@ mod tests {
         });
         assert!(m.contains("(5 more lines"), "{m}");
         assert!(m.contains("`pnpm install` said") && m.contains("boom"), "{m}");
+    }
+
+    #[test]
+    fn a_hunk_with_a_code_fence_stays_in_its_block() {
+        let hunks = "<<<<<<< HEAD\n```rust\nlet a = 1;\n```\n=======\n```rust\nlet a = 2;\n```\n>>>>>>> main";
+        let m = conflict_message(&ConflictNote {
+            base: "main",
+            files: &files(&["README.md"]),
+            hunks,
+            merged: &[],
+            regenerate: &[],
+            failed: None,
+        });
+        assert!(m.contains(&format!("\n````diff\n{hunks}\n````\n")), "{m}");
     }
 }
