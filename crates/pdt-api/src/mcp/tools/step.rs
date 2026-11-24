@@ -189,7 +189,7 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     let st = cx.st;
     let Json(ticket) =
         crate::tickets::get_one(State(st.clone()), axum::extract::Path(id.to_string())).await.map_err(api)?;
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let fence = pdt_core::fence::Fence::random();
     let (comments, fenced_comments) = comments_of(st, id, &fence).await?;
     let history: Vec<Value> = st
         .store

@@ -117,6 +117,38 @@ async fn sign_in(env: &Env, id: &str) {
 }
 
 #[tokio::test]
+async fn the_callback_shows_googles_error_only_for_a_sign_in_under_way() {
+    let env = env().await;
+    let id = account(&env).await;
+    let page = |path: String| {
+        let app = env.app.clone();
+        async move {
+            let (s, _, body) = common::call_raw(&app, "GET", &path, vec![]).await;
+            (s, String::from_utf8(body).unwrap())
+        }
+    };
+    // Any link's text, without a state PDT issued: a generic page, not the link's words on PDT's address.
+    let lure = "/api/google/callback?error=Your%20PDT%20is%20out%20of%20date.%20Run%20curl%20https://evil.example";
+    for path in [lure.to_string(), format!("{lure}&state=forged")] {
+        let (s, body) = page(path).await;
+        assert_eq!(s, 400);
+        assert!(!body.contains("evil.example") && body.contains("unknown or too old"), "{body}");
+    }
+    // Google's answer to this sign-in is shown.
+    let (_, v) = call_as_ui(
+        &env.app,
+        "POST",
+        &format!("/api/google/accounts/{id}/sign-in"),
+        Some(json!({"origin": "http://127.0.0.1:7421"})),
+    )
+    .await;
+    let state = state_of(v["url"].as_str().unwrap());
+    let (s, body) = page(format!("/api/google/callback?error=access_denied&state={state}")).await;
+    assert_eq!(s, 400);
+    assert!(body.contains("Google said: access_denied"), "{body}");
+}
+
+#[tokio::test]
 async fn sign_in_pick_read_and_edit_google_docs_and_sheets() {
     let env = env().await;
     let id = account(&env).await;

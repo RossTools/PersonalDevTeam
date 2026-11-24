@@ -59,7 +59,7 @@ impl Action for IssueView {
             let d = h.call(move |f, r| f.issue(r, n)).await?.ok_or(format!("there is no issue #{n}"))?;
             let comments = h.call(move |f, r| f.issue_comments(r, n)).await?;
             // An issue is outside input (PDT-202): its title and text, and outsiders' and bots' comments, are fenced.
-            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            let fence = pdt_core::fence::Fence::random();
             let comments: Vec<CommentOut> = comments
                 .into_iter()
                 .map(|c| {

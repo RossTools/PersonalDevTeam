@@ -165,7 +165,7 @@ pub(crate) async fn record(st: &AppState, s: &Session, d: &Document, c: Change) 
         "documentId": d.id, "title": d.title, "tool": change.tool, "summary": change.summary,
         "version": change.version, "changeId": change.id,
     });
-    let body = change.diff.as_deref().map(diff_block);
+    let body = change.diff.as_deref().map(|d| pdt_core::text::code_block("diff", d));
     let by = By::agent(agent.clone());
     if let Err(e) = st.store.add_ticket_event(ticket, EventKind::Document, by, body.as_deref(), Some(data), at).await {
         tracing::warn!(ticket = %ticket, error = %e, "could not record an agent's document change on its ticket");
@@ -206,13 +206,6 @@ pub(crate) async fn restore(
     Ok(axum::Json(super::routes::EditResult { version: Some(version), charts: vec![] }))
 }
 
-/// A diff as a Markdown code block, fenced longer than any run of backticks in it.
-fn diff_block(diff: &str) -> String {
-    let longest = diff.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    let fence = "`".repeat(longest.max(2) + 1);
-    format!("{fence}diff\n{}\n{fence}", diff.trim_end_matches('\n'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,11 +228,5 @@ mod tests {
         assert!(Wants::of_call("comment_reply", &edit).is_none(), "comment replies keep asking");
         assert!(Wants::of_call("comment_resolve", &edit).is_none());
         assert!(Wants::of_call("doc_edit", &json!({})).is_none());
-    }
-
-    #[test]
-    fn diffs_go_in_a_fence_longer_than_their_backticks() {
-        assert_eq!(diff_block("-a\n+b\n"), "```diff\n-a\n+b\n```");
-        assert_eq!(diff_block("+````x"), "`````diff\n+````x\n`````");
     }
 }

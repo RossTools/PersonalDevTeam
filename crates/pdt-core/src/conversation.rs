@@ -702,11 +702,8 @@ pub fn cap_text(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let mut cut = max;
-    while !s.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    format!("{}\n… (cut: {} more bytes)", &s[..cut], s.len() - cut)
+    let head = crate::text::head_bytes(s, max);
+    format!("{head}\n… (cut: {} more bytes)", s.len() - head.len())
 }
 
 /// A model name the agent is given: 1 to 100 characters, no spaces.

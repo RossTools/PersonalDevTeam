@@ -34,16 +34,6 @@ pub struct TicketDraft {
     pub description: String,
 }
 
-fn cut(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        return s.to_string();
-    }
-    let mut out: String = s.chars().take(max_chars - 1).collect();
-    out = out.trim_end().to_string();
-    out.push('…');
-    out
-}
-
 impl TicketDraft {
     /// The draft in an answer: an object, or text holding one (Codex answers with text; a Markdown code fence around
     /// it is fine). Trimmed and cut to the ticket limits; None without a title.
@@ -67,7 +57,7 @@ impl TicketDraft {
         } else {
             description
         };
-        Some(Self { title: cut(&title, MAX_TITLE), description: description.to_string() })
+        Some(Self { title: crate::text::clip(&title, MAX_TITLE), description: description.to_string() })
     }
 }
 

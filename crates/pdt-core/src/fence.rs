@@ -31,6 +31,11 @@ impl Fence {
         Self { id, budget: None }
     }
 
+    /// A fence with a new random id: one per prompt.
+    pub fn random() -> Self {
+        Self::new(uuid::Uuid::new_v4().simple().to_string())
+    }
+
     /// The fence, cutting each text it wraps to `bytes`, with a note that the whole text is at `link`.
     pub fn with_budget(mut self, bytes: usize, link: Option<&str>) -> Self {
         self.budget = Some((bytes, link.map(str::trim).filter(|l| !l.is_empty()).map(String::from)));
@@ -122,10 +127,7 @@ pub fn cut<'a>(text: &'a str, bytes: usize, link: Option<&str>) -> (&'a str, Str
     if text.len() <= bytes {
         return (text, String::new());
     }
-    let mut end = bytes;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::text::head_bytes(text, bytes).len();
     let kb = (text.len() - end).div_ceil(1024);
     let note = match link {
         Some(l) => format!("\n[… {kb} KB of that text was cut; the full text is at {l}]"),
@@ -172,6 +174,8 @@ mod tests {
         assert!(!f.used_in("Look: nothing") && !Fence::new("other").used_in(&f.wrap("x")));
         assert!(fenced(&f.wrap("x")) && !fenced("plain"));
         assert_eq!(Fence::new("a-1\"><b").id(), "a1b", "only letters and digits");
+        assert_ne!(Fence::random().id(), Fence::random().id());
+        assert_eq!(Fence::random().id().len(), 32);
     }
 
     #[test]

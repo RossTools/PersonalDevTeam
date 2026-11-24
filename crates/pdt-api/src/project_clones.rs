@@ -141,17 +141,22 @@ async fn run(
     // this sees its flag.
     job.cloned.store(true, Ordering::SeqCst);
     if job.cancel.load(Ordering::SeqCst) {
-        let _ = std::fs::remove_dir_all(&dest);
+        remove_clone(dest).await;
         return Err(pdt_git::GitError::Cancelled.into());
     }
     match add(&st, dest.clone(), name, None, key).await {
         Ok(p) => Ok((StatusCode::CREATED, Json(p))),
         Err(e) => {
             // The clone is ours and unused: don't leave it behind.
-            let _ = std::fs::remove_dir_all(&dest);
+            remove_clone(dest).await;
             Err(e)
         }
     }
+}
+
+/// Deletes an unused fresh clone, a whole repository, on the blocking pool.
+async fn remove_clone(dest: PathBuf) {
+    let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dest)).await;
 }
 
 pub(crate) async fn list(State(st): State<AppState>) -> Json<Vec<CloneJob>> {

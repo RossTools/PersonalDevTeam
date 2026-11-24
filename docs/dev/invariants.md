@@ -393,6 +393,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   server and every endpoint in that server's metadata pass `pdt_core::mcp_servers::endpoint_ok`, and the metadata's
   `issuer` matches (`AuthServer::check`, in pdt-api `mcp_oauth.rs` `discover`), because the browser opens the sign-in
   address in PDT's own page and PDT sends the token address a client secret. The UI also opens only http(s) addresses.
+- **A sign-in callback checks `state` before it shows any of the query's text**: `error` / `error_description`
+  appear on the page (capped) only for a sign-in still under way (pdt-api `mcp_oauth.rs` `callback`, pdt-int-google
+  `routes.rs` `finish`); any other link gets a generic page, so it can't put its own words on PDT's origin.
 - **A dev instance never reads stable's keychain entries**: keys outside the stable data folder are scoped by the data
   folder (pdt-api `secrets.rs`).
 - **On Linux the secret backend sticks to its data folder** (keychain or file); it never switches.
