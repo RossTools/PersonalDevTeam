@@ -5,7 +5,7 @@ import { Button, EmptyState, IconButton, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { TicketAttachment } from '../api/gen/TicketAttachment';
 import { AttachmentImage, AttachmentLink } from '../common/AttachmentViews';
-import { download, downloadUrl } from '../common/download';
+import { downloadUrl } from '../common/download';
 import { actionError, runAction } from '../common/useAction';
 import { POLL } from '../common/poll';
 import { OverviewSection } from './TicketParts';
@@ -172,7 +172,7 @@ export function TicketAttachments({ ticketId }: { ticketId: string }) {
                     {a.mediaType.startsWith('image/') && `${a.name} · `}{sizeText(Number(a.size))}
                   </p>
                 </div>
-                <IconButton label={`Download ${a.name}`} size="sm" variant="ghost" onClick={() => download(downloadUrl(src))}>
+                <IconButton label={`Download ${a.name}`} size="sm" variant="ghost" href={downloadUrl(src)} download>
                   <Download aria-hidden />
                 </IconButton>
                 <IconButton label={`Remove ${a.name}`} size="sm" variant="ghost" onClick={() => remove(a)}>

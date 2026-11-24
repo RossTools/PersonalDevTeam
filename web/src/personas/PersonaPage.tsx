@@ -12,6 +12,8 @@ import {
   Page,
   RelativeTime,
   Section,
+  SectionItem,
+  SectionList,
   Select,
   SettingsRow,
   Skeleton,
@@ -284,9 +286,9 @@ function Versions({ persona }: { persona: Persona }) {
       {versions.isPending && <Skeleton lines={3} label="Loading versions" />}
       <LoadError what="Versions" error={versions.error} />
       {list.length > 0 && (
-        <ul data-flush aria-label="Versions" className="flex flex-col divide-y divide-border">
+        <SectionList aria-label="Versions">
           {list.map((v) => <VersionRow key={v.version} v={v} current={v.version === persona.version} picked={picks.includes(v.version)} onPick={(on) => toggle(v.version, on)} />)}
-        </ul>
+        </SectionList>
       )}
       {from !== null && to !== null && <VersionDiff personaId={persona.id} from={from} to={to} />}
     </Section>
@@ -295,14 +297,15 @@ function Versions({ persona }: { persona: Persona }) {
 
 function VersionRow({ v, current, picked, onPick }: { v: PersonaVersion; current: boolean; picked: boolean; onPick: (on: boolean) => void }) {
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs">
-      <Checkbox checked={picked} onChange={onPick} aria-label={`Compare version ${v.version}`} />
-      <span className="font-medium text-foreground">v{v.version}</span>
-      {current && <Badge tone="accent">Current</Badge>}
-      <span className="text-muted-foreground">{AUTHOR_LABEL[v.author]}</span>
-      <span className="min-w-0 flex-1 truncate" title={v.note || undefined}>{v.note || <span className="text-muted-foreground">No note</span>}</span>
-      <RelativeTime time={v.createdAt} className="text-meta text-muted-foreground" />
-    </li>
+    <SectionItem
+      leading={<Checkbox checked={picked} onChange={onPick} aria-label={`Compare version ${v.version}`} />}
+      title={`v${v.version}`}
+      badges={<>
+        {current && <Badge tone="accent">Current</Badge>}
+        <span className="min-w-0 flex-1 truncate text-xs" title={v.note || undefined}>{v.note || <span className="text-muted-foreground">No note</span>}</span>
+      </>}
+      meta={<><span>{AUTHOR_LABEL[v.author]}</span><RelativeTime time={v.createdAt} /></>}
+    />
   );
 }
 

@@ -3,7 +3,7 @@
 // happens when a disk is almost full.
 import { useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
-import { Alert, Banner, Button, EmptyState, Popover, Section, SettingsRow, Skeleton, Switch } from '@ui';
+import { Alert, Banner, Button, EmptyState, Popover, Section, SectionItem, SectionList, SettingsRow, Skeleton, Switch } from '@ui';
 import { api } from '../api/client';
 import type { BuiltinSettingsView } from '../api/gen/BuiltinSettingsView';
 import type { DiskView } from '../api/gen/DiskView';
@@ -89,18 +89,16 @@ function PausedBanner({ reason }: { reason: string }) {
 
 function WorktreeLine({ wt }: { wt: WorktreeStorage }) {
   return (
-    <li className="flex flex-col gap-1 px-4 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <BranchChip branch={wt.branch} forge={null} />
-        {wt.ticket && <TicketKey ticketKey={wt.ticket.key} />}
-        {wt.ticket && <StageBadge stage={wt.ticket.stage} />}
-        <span className="flex-1" />
+    <SectionItem
+      title={<BranchChip branch={wt.branch} forge={null} />}
+      badges={wt.ticket && <><TicketKey ticketKey={wt.ticket.key} /><StageBadge stage={wt.ticket.stage} /></>}
+      actions={<>
         <span className="text-xs text-muted-foreground">{sizeText(wt.size, wt.missing)}</span>
         {!wt.missing && <CleanButton id={wt.id} label="Clean" />}
         {!wt.missing && (!wt.ticket || wt.ticket.finished) && <RemoveButton wt={wt} size={wt.size} />}
-      </div>
-      {wt.ticket && <span className="truncate text-meta text-muted-foreground" title={wt.ticket.title}>{wt.ticket.title}</span>}
-    </li>
+      </>}
+      meta={wt.ticket && <span className="min-w-0 truncate" title={wt.ticket.title}>{wt.ticket.title}</span>}
+    />
   );
 }
 
@@ -122,9 +120,9 @@ function ProjectWorktrees({ p }: { p: ProjectStorage }) {
       </SettingsRow>
       {out.error && <Alert tone="error">{out.error}</Alert>}
       {p.worktrees.length > 0 && (
-        <ul data-flush className="flex flex-col divide-y divide-border">
+        <SectionList>
           {p.worktrees.map((w) => <WorktreeLine key={w.id} wt={w} />)}
-        </ul>
+        </SectionList>
       )}
     </Section>
   );

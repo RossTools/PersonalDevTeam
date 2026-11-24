@@ -142,8 +142,8 @@ describe('design system rules', () => {
     expectOnly(offenders(/<a[\s>]/, outsideUi), ['src/common/Markdown.tsx', 'src/tickets/IssueLinks.tsx']);
   });
 
-  it('downloads with common/download.ts, never a hand-made <a download>', () => {
-    expectOnly(offenders(/\bcreateElement\(\s*['"]a['"]\s*\)/), ['src/common/download.ts']);
+  it("downloads with @ui's download (ui/lib/download.ts), never a hand-made <a download>", () => {
+    expectOnly(offenders(/\bcreateElement\(\s*['"]a['"]\s*\)/), ['ui/lib/download.ts']);
   });
 
   it("formats times and dates with ui/lib/time.ts, never the browser's own toLocale… or Intl.DateTimeFormat", () => {

@@ -24,8 +24,8 @@ export function siteLinks(baseUrl) {
 
 /** The newest stable release's file for `os` (`mac`, `windows` or `linux`), straight from GitHub: release assets carry
  * no version in their names (the bundle action names them), so releases/latest/download/ always has them. Linux gets
- * the x86_64 AppImage, the desktop one; the releases page has the rest. */
-export function downloadUrl(os) {
-  const asset = { mac: 'Personal.Dev.Team.app.tar.gz', windows: 'pdt-windows-x64-setup.exe', linux: 'pdt-linux-x86_64.AppImage' }[os];
+ * the AppImage (the desktop one, with the tray icon) for `arch`, `x86_64` or `aarch64`; the releases page has the rest. */
+export function downloadUrl(os, arch = 'x86_64') {
+  const asset = { mac: 'Personal.Dev.Team.app.tar.gz', windows: 'pdt-windows-x64-setup.exe', linux: `pdt-linux-${arch}.AppImage` }[os];
   return `${REPO}/releases/latest/download/${asset}`;
 }

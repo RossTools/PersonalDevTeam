@@ -12,7 +12,6 @@ import { POLL } from '../common/poll';
 import { TicketKey } from '../common/TicketKey';
 import { type HeldAnswer, undoAnswer, useHeldAnswers } from './held';
 import { CollapsibleListSection } from './ListSection';
-import { ROW_ACTION } from './rows';
 import { inboxKeys } from './queries';
 import { keepFocusOnReturn } from './snooze';
 
@@ -83,7 +82,7 @@ export function RecentlyAnswered() {
           className="py-1.5"
           secondary={`${r.held.label} · ${r.held.sending ? 'sending' : 'waiting to send'}`}
           trailing={!r.held.sending && (
-            <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={(e) => {
+            <Button size="xs" variant="ghost" onClick={(e) => {
               keepFocusOnReturn(keep, e.target, r.held.itemId);
               undoAnswer(r.held.itemId);
             }}>Undo</Button>

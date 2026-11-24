@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
 import { CircleAlert, CircleCheck, Clock, Timer } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { Badge, OverlapBadge } from '@ui';
+import { Badge, OverlapBadge, useNow } from '@ui';
 import type { AgentBy } from '../api/gen/AgentBy';
 import type { TicketSummary } from '../api/gen/TicketSummary';
 import { plural } from '../common/text';
@@ -17,11 +16,7 @@ export function countdown(at: number, now: number): string {
 
 /** "Auto-starts in 1:30" while the ticket waits out its project's start delay (PDT-146), ticking every second. */
 function AutoStartBadge({ at }: { at: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
+  const now = useNow(1000);
   return (
     <Badge title="Auto-start takes it once it has gone the project's start delay unchanged; any change starts the wait again">
       <Timer aria-hidden /> Auto-starts in {countdown(at, now)}

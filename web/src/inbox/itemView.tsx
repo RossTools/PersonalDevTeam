@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  AgentMessage, answerText, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, requestAnswers, SectionLabel, Select, Textarea, type ApprovalAnswer, type QuestionAnswer,
+  AgentMessage, answerText, Callout, Checkbox, CodeCard, DiffViewer, EmptyState, Facts, Field, Input, NO_ANSWER, otherInputId, PassList, QuestionCard, requestAnswers, SectionLabel, Select, Textarea, useTwoPress, type ApprovalAnswer, type QuestionAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
@@ -24,7 +24,7 @@ import {
   CHECKS_PATH, commandNoticeOf, confirmOf, CONNECT_PATH, decideRowsOf, dismissable, gateQuestion, MCP_SERVERS_PATH, noticeText, outcomeTone, passesOf, proposalOf,
   againstRecommendation, holdsTicket, inboxTargets, loginStepsOf, longTitle, needsConfirm, proposalPath, recommendationOf, recommendationTone, questionsOf, resends, ticketProposalOf, triageOf,
 } from './model';
-import { answerTiming, useAnswersHeld } from '../common/answerGuard';
+import { useAnswersHeld } from '../common/answerGuard';
 import { answerApproval, approveCommand } from './approval';
 import { DecideRows, useRowsDecision } from '../common/DecideRows';
 import { pdtApproval } from '../conversation/PdtProposal';
@@ -661,36 +661,20 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
   // An action that acts outside PDT or can't be taken back (Request changes, Close, Always allow) arms on its first
   // press and acts on a second (PDT-623), not one inside a double-click. It disarms after a few seconds, and says so for
   // a few more (PDT-667: the hint is what a screen reader hears).
-  const [armed, setArmed] = useState<{ id: string; at: number } | null>(null);
-  const [lapsed, setLapsed] = useState(false);
-  useEffect(() => {
-    if (!armed) return;
-    setLapsed(false);
-    const t = setTimeout(() => { setArmed(null); setLapsed(true); }, 4000);
-    return () => clearTimeout(t);
-  }, [armed]);
-  useEffect(() => {
-    if (!lapsed) return;
-    const t = setTimeout(() => setLapsed(false), 4000);
-    return () => clearTimeout(t);
-  }, [lapsed]);
+  const { armed, lapsed, press } = useTwoPress();
   // Right after an answer the actions are off: a click meant for the answered item does nothing on this one.
   const held = useAnswersHeld();
   const actions = spec.actions.map((a): ItemAction => {
     const disabled = a.disabled || held;
     if (!needsConfirm(item, a.id)) return { ...a, disabled };
-    if (armed?.id !== a.id) return { ...a, disabled, run: () => setArmed({ id: a.id, at: Date.now() }) };
-    const confirm = () => {
-      if (Date.now() - armed.at < answerTiming.cooldownMs) return;
-      setArmed(null);
-      a.run();
-    };
-    return { ...a, title: `Confirm ${a.title.charAt(0).toLowerCase()}${a.title.slice(1)}`, short: 'Confirm', danger: true, confirming: true, disabled, run: confirm };
+    const run = () => press(a.id, a.run);
+    if (armed !== a.id) return { ...a, disabled, run };
+    return { ...a, title: `Confirm ${a.title.charAt(0).toLowerCase()}${a.title.slice(1)}`, short: 'Confirm', danger: true, confirming: true, disabled, run };
   });
   const rec = recommendationOf(item);
   const hint = !armed
     ? lapsed ? 'Not confirmed: nothing was sent.' : spec.hint
-    : rec && againstRecommendation(item, armed.id)
+    : rec && againstRecommendation(item, armed)
       ? `Press again to confirm: ${rec.by} recommends ${rec.title}.`
       : waitingCommand
         ? <>Press again to approve <code>{waitingCommand.command.command}</code>: it runs in every branch of the project.</>

@@ -12,7 +12,7 @@ import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { KindIcon } from './kinds';
 import { CollapsibleListSection, rowInPlaceOf } from './ListSection';
-import { ROW_ACTION, RowTitle } from './rows';
+import { RowTitle } from './rows';
 import { useInbox, useRefreshInbox } from './useInbox';
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -133,7 +133,7 @@ export function Snoozed({ selectedId = null, onSelect }: { selectedId?: string |
             </span>
           }
           trailing={
-            <Button size="sm" variant="ghost" className={ROW_ACTION} pending={unsnooze.isPending && unsnooze.variables === i.id}
+            <Button size="xs" variant="ghost" pending={unsnooze.isPending && unsnooze.variables === i.id}
               onClick={(e) => {
                 keepFocusOnReturn(keep, e.target, i.id);
                 unsnooze.mutate(i.id);

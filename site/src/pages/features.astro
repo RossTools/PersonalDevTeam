@@ -22,7 +22,7 @@ const whereLabel = `What runs where. On your computer: the PDT window (a browser
 
 // Each area: `id` is its anchor (the landing page's feature cards link to them), `docs` its user docs page, `more`
 // further docs pages, and `shots` its screenshots (`narrow` for a tall one, a phone's or a panel's, shown narrow beside
-// the other).
+// the other; none, and the section is text only).
 const areas = [
 	{
 		id: 'tickets',
@@ -74,13 +74,27 @@ const areas = [
 		],
 	},
 	{
+		id: 'documents',
+		kicker: 'documents',
+		title: 'Designs and sheets beside the work, not in your repository.',
+		text: 'Keep design docs, plans and working spreadsheets in PDT, linked to the projects and tickets they\'re about. Agents and the PM read and write them too, and you watch their edits land.',
+		points: [
+			['Docs and sheets.', 'Markdown docs, and spreadsheets with formulas, formats, sorting, filters and charts, kept as files on your machine; or Google Docs and Sheets with the Google plugin.'],
+			['Linked to tickets.', 'Create a design doc from a ticket, and the agents working on it read it before they start.'],
+			['Agents ask before they write.', 'Reading never asks; a change waits for your Allow in the Inbox, unless the project lets agents change their ticket\'s documents.'],
+			['Comments and watching.', 'Comment on a heading, a selection or cells, and agents answer; watch a document to hear what changed.'],
+		],
+		docs: ['Documents', 'using-pdt/documents'],
+		shots: [],
+	},
+	{
 		id: 'workflows',
 		kicker: 'workflows',
 		title: 'A team process that runs itself.',
 		text: 'Workflows act when something happens. The Pipeline hands each ticket from a Coder to a Reviewer to QA, then to you, then to merge. Others tell agents when CI fails, triage new issues, or run every night.',
 		points: [
 			['Coder → Reviewer → QA.', 'The Pipeline\'s stages each have their agent (or you), and send work back with notes when it isn\'t right.'],
-			['Templates', 'for CI and pull requests, tickets, issues, notifications and releases, or start from scratch.'],
+			['Templates', 'for CI and pull requests, tickets, issues, notifications, releases and documents, or start from scratch.'],
 			['A visual builder.', 'Triggers, steps, conditions and gates that ask you in the Inbox, as a graph. Try one with a dry run.'],
 			['Triggers and plugins.', 'Ticket and pull request events, new GitHub issues and pull requests, schedules and webhooks; plugins such as Jira and Discord add their own.'],
 		],
@@ -146,7 +160,7 @@ const areas = [
 
 <Landing
 	title="Features"
-	description="What PDT does, area by area: tickets and the board, your own agents, review and merge, workflows, the PM, your phone, safety and running locally."
+	description="What PDT does, area by area: tickets and the board, your own agents, review and merge, documents, workflows, the PM, your phone, safety and running locally."
 >
 	<header class="hero features-hero">
 		<div class="grid-dots"></div>
@@ -178,7 +192,7 @@ const areas = [
 						{a.points.map(([lead, rest]) => <li><span><b>{lead}</b> {rest}</span></li>)}
 					</ul>
 				</div>
-				<div class:list={['area-shots', { 'with-narrow': a.shots.some((s) => s.narrow) }]}>
+				{a.shots.length > 0 && <div class:list={['area-shots', { 'with-narrow': a.shots.some((s) => s.narrow) }]}>
 					{a.shots.map((s) => (
 						<a class:list={['shot', { narrow: s.narrow }]} href={s.src.src}>
 							<Image
@@ -189,7 +203,7 @@ const areas = [
 							/>
 						</a>
 					))}
-				</div>
+				</div>}
 			</div>
 		</section>
 	))}
@@ -204,7 +218,7 @@ const areas = [
 					<li><span><b>A daemon, not a cloud.</b> It answers on 127.0.0.1, and there's no PDT server in between: your repositories, tickets and history stay on your disk.</span></li>
 					<li><span><b>Your subscriptions.</b> PDT runs the agents' official CLIs with your own logins: no resold tokens, no middleman.</span></li>
 					<li><span><b>Updates with rollback.</b> Each release is checked against its checksums, health-checked once installed, and rolled back with your data as it was if it fails.</span></li>
-					<li><span><b>macOS, Windows and Linux.</b> PDT starts when you log in, with a tray icon to open, update or restart it.</span></li>
+					<li><span><b>macOS, Windows and Linux.</b> PDT starts when you log in. On macOS, Windows and a Linux desktop with the AppImage, a tray icon opens, updates or restarts it.</span></li>
 				</ul>
 				<p class="docs-links">
 					<a class="btn sm ghost" href={links.doc('your-machine/updates')}>Read the docs: Running and updating PDT →</a>

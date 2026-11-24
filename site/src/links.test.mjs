@@ -16,6 +16,7 @@ test('each system downloads its file from releases/latest/download', () => {
   assert.match(name('mac'), /.\.app\.tar\.gz$/);
   assert.match(name('windows'), /.-setup\.exe$/);
   assert.equal(name('linux'), 'pdt-linux-x86_64.AppImage');
+  assert.equal(downloadUrl('linux', 'aarch64').split('/').pop(), 'pdt-linux-aarch64.AppImage');
 });
 
 test('the release names the Windows installer and the AppImage without their version', () => {

@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, Pause } from 'lucide-react';
 import {
-  Alert, ApprovalCard, Button, clockTime, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, formatDuration, ImageThumb, MessageBubble, parseDiff, RelativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, type ApprovalAnswer,
+  Alert, ApprovalCard, Button, clockTime, Dialog, DiffStat, diffStats, DiffViewer, Disclosure, formatDuration, ImageThumb, MessageBubble, parseDiff, RelativeTime, SectionLabel, Spinner, ToolCallRow, ToolOutput, useNow, type ApprovalAnswer,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import type { AgentEvent } from '../api/gen/AgentEvent';
@@ -125,25 +125,13 @@ export const WINDOW = 50;
 /** How close to the top (px) of what is shown brings in the blocks before it. */
 const EARLIER_PX = 600;
 
-/** The time, updated every second while `on`. */
-function useTicker(on: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!on) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [on]);
-  return now;
-}
-
 /** The newest open request's row: while there is one, the agent waits for the user, not on a command. */
 function openRequest(rows: ConversationEvent[]): ConversationEvent | undefined {
   return findLast(rows, (r) => r.event.kind === 'request' && r.event.state === 'open');
 }
 
 function WorkingRow({ rows }: { rows: ConversationEvent[] }) {
-  const now = useTicker(true);
+  const now = useNow(1000);
   // Not "Running `rm -rf build`" under a card asking whether to run it (PDT-685).
   const waiting = openRequest(rows);
   if (waiting) {

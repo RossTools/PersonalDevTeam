@@ -77,11 +77,10 @@ describe('ticket attachments', () => {
     renderWithQuery(<TicketAttachments ticketId="t1" />);
     expect(await screen.findByRole('img', { name: 'shot.png' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'build.log' })).toBeInTheDocument();
-    const saved: string[] = [];
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.getAttribute('href')!); });
-    await userEvent.click(screen.getByRole('button', { name: 'Download build.log' }));
-    expect(saved).toEqual(['/api/tickets/t1/attachments/a2?download=1']);
-    click.mockRestore();
+    // A link that saves the file, so it keeps the browser's own Save link as… too.
+    const save = screen.getByRole('link', { name: 'Download build.log' });
+    expect(save).toHaveAttribute('href', '/api/tickets/t1/attachments/a2?download=1');
+    expect(save).toHaveAttribute('download');
     await userEvent.click(screen.getByRole('button', { name: 'Remove build.log' }));
     const confirm = await screen.findByRole('alertdialog');
     await userEvent.click(within(confirm).getByRole('button', { name: 'Remove attachment' }));

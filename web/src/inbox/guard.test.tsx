@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { ApprovalCard, approvalTiming, toast } from '@ui';
+import { ApprovalCard, toast, twoPressTiming } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
 import { answerTiming, guardedAnswer } from '../common/answerGuard';
@@ -124,7 +124,7 @@ describe('answers that act outside PDT ask for a second press', () => {
   });
 
   it('arms Request changes on the first press and sends it on the second, not on a double-click', async () => {
-    answerTiming.cooldownMs = 300;
+    twoPressTiming.confirmAfterMs = 300;
     const calls = stubApi({ 'POST /api/inbox/pr/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<Inbox items={[review]} />);
     const request = screen.getByRole('button', { name: 'Request changes' });
@@ -138,7 +138,7 @@ describe('answers that act outside PDT ask for a second press', () => {
   });
 
   it('never approves a waiting command on Enter, and asks twice, showing the command (PDT-705)', async () => {
-    answerTiming.cooldownMs = 300;
+    twoPressTiming.confirmAfterMs = 300;
     const notice = (id: string, fingerprint: string, command: string) => item(id, {
       kind: 'notice', group: 'notice', stepId: null, ticketId: null, title: `A command waits on your approval ${id}`, choices: [],
       body: { notice: null, key: 'untrusted-commands', fingerprint, command: { fingerprint, uses: ['run "web"'], setup: null, command, env: {} } },
@@ -198,7 +198,7 @@ describe('answers that act outside PDT ask for a second press', () => {
   });
 
   it('asks again for Always allow on a conversation’s card, not within a double-click', async () => {
-    approvalTiming.confirmAfterMs = 300;
+    twoPressTiming.confirmAfterMs = 300;
     const onAnswer = vi.fn();
     renderWithQuery(<ApprovalCard title="Edit this file?" subject="a.ts" canAlways onAnswer={onAnswer} />);
     fireEvent.click(screen.getByRole('button', { name: 'Always allow in this session' }));
@@ -235,7 +235,6 @@ describe('a gate’s recommendation', () => {
   });
 
   it('leads the item, and approving against it takes a second press that says what was recommended', async () => {
-    answerTiming.cooldownMs = 0;
     const calls = stubApi({ 'POST /api/inbox/rec/answer': {}, 'GET /api/inbox': { items: [], total: 0 } });
     renderWithQuery(<Inbox items={[recommendsClose]} />);
     expect(within(screen.getByRole('region', { name: 'Recommendation' })).getByText('Reviewer recommends: Close')).toBeInTheDocument();

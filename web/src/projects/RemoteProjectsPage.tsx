@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Page, RelativeTime, Section, Skeleton, Switch, toast, useConfirm } from '@ui';
+import { Alert, Badge, Button, EmptyState, Input, Page, RelativeTime, Section, SectionItem, SectionList, Skeleton, Switch, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import type { Secret } from '../api/gen/Secret';
@@ -174,26 +174,26 @@ function RemoteProjectRow({ r, onGone }: { r: RemoteProjectView; onGone: (row: E
     await refresh();
   });
   return (
-    <li ref={row} className="flex flex-col gap-1 px-4 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{r.project.name}</span>
-        <span className="text-muted-foreground">· remote project of {owner}</span>
-        <Badge tone={state.tone}>{state.label}</Badge>
-        <span className="flex-1" />
+    <SectionItem
+      ref={row}
+      title={r.project.name}
+      badges={<><span className="text-muted-foreground">· remote project of {owner}</span><Badge tone={state.tone}>{state.label}</Badge></>}
+      actions={<>
         <Button size="sm" onClick={() => openExternal(r.openUrl)}><ExternalLink aria-hidden /> Open on {owner}</Button>
         <Button size="sm" pending={pausing} onClick={() => void pause()}>
           {r.link.paused ? <><Play aria-hidden /> Resume</> : <><Pause aria-hidden /> Pause</>}
         </Button>
         <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Leave…</Button>
-      </div>
-      {r.state === 'removed' && (
+      </>}
+      notice={r.state === 'removed' && (
         <Alert tone="warning">{owner} removed this instance from {r.project.name}, or removed the project. Leave it to finish here.</Alert>
       )}
-      <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
+      meta={<>
         <span className="font-mono">{r.link.ownerUrl}</span>
         <span>{owner} v{r.link.ownerVersion}</span>
         <span>{r.link.lastContactAt ? <>last heard from <RelativeTime time={r.link.lastContactAt} /></> : `waiting for ${owner}`}</span>
-      </span>
+      </>}
+    >
       {r.running.length > 0 && (
         <ul aria-label={`Running for ${owner}`} className="flex flex-col gap-0.5 text-meta">
           {r.running.map((s) => (
@@ -210,7 +210,7 @@ function RemoteProjectRow({ r, onGone }: { r: RemoteProjectView; onGone: (row: E
       <ProjectSecrets r={r} />
       <OwnUpdateChannel r={r} />
       <Cap r={r} />
-    </li>
+    </SectionItem>
   );
 }
 
@@ -232,11 +232,11 @@ export function RemoteProjectsPage() {
         <LoadError what="Remote projects" error={q.error} />
         {q.data?.length === 0 && <EmptyState size="inline">No remote projects. Join one below.</EmptyState>}
         {!!q.data?.length && (
-          <ul data-flush className="flex flex-col divide-y divide-border">
+          <SectionList>
             {q.data.map((r) => (
               <RemoteProjectRow key={r.project.id} r={r} onGone={(row) => keep(row, itemInPlaceOf(row, join))} />
             ))}
-          </ul>
+          </SectionList>
         )}
       </Section>
       <Section label="Join a remote project" description="On the owner, open the project's settings → Remote instances → Add instance for a code.">
