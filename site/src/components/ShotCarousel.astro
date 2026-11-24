@@ -2,13 +2,15 @@
 // The landing page's screenshot carousel. The slides are a row that scrolls and snaps, so without JS (or on touch)
 // they still scroll and swipe; the script adds the buttons, dots and arrow keys. No autoplay. Every slide's image sits
 // in a frame of the same shape (the board's 2:1, taller shots cropped at the bottom), so the carousel's height never
-// changes between slides.
+// changes between slides. On phones the frames are taller (4:5) and every shot fills its frame at a readable size: a
+// desktop shot shows the part at its `detail` (an object-position), and the `phone` slide, a phone's capture, comes
+// first (CSS `order`, so the script follows the slides' order on screen, not in the page).
 import type { ImageMetadata } from 'astro';
 import { Image } from 'astro:assets';
 
 interface Props {
 	label: string;
-	slides: { src: ImageMetadata; title: string; text: string; alt: string }[];
+	slides: { src: ImageMetadata; title: string; text: string; alt: string; detail?: string; phone?: boolean }[];
 }
 
 const { label, slides } = Astro.props;
@@ -17,13 +19,13 @@ const { label, slides } = Astro.props;
 <div class="carousel" role="region" aria-roledescription="carousel" aria-label={label}>
 	<div class="carousel-track" tabindex="0" aria-live="off">
 		{slides.map((slide, i) => (
-			<figure class="carousel-slide" role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${slides.length}: ${slide.title}`}>
-				<div class="shot carousel-frame">
+			<figure class:list={['carousel-slide', { phone: slide.phone }]} role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${slides.length}: ${slide.title}`}>
+				<div class="shot carousel-frame" style={slide.detail && `--detail: ${slide.detail}`}>
 					<Image
 						src={slide.src}
 						alt={slide.alt}
-						widths={[640, 1040, 1600, 2080]}
-						sizes="(max-width: 1088px) calc(100vw - 48px), 1040px"
+						widths={slide.phone ? [400, 800, 1170] : [640, 1040, 1600, 2080]}
+						sizes={slide.phone ? '(max-width: 640px) calc(100vw - 48px), 240px' : `(max-width: 640px) calc(${(1.25 * slide.src.width / slide.src.height).toFixed(2)} * (100vw - 48px)), (max-width: 1088px) calc(100vw - 48px), 1040px`}
 						loading={i === 0 ? 'eager' : 'lazy'}
 					/>
 				</div>
@@ -35,7 +37,7 @@ const { label, slides } = Astro.props;
 		<button type="button" class="carousel-btn" data-step="-1" aria-label="Previous screenshot">‹</button>
 		<div class="carousel-dots">
 			{slides.map((slide, i) => (
-				<button type="button" class="carousel-dot" data-to={i} aria-label={`Show ${slide.title}`}></button>
+				<button type="button" class:list={['carousel-dot', { phone: slide.phone }]} aria-label={`Show ${slide.title}`}></button>
 			))}
 		</div>
 		<button type="button" class="carousel-btn" data-step="1" aria-label="Next screenshot">›</button>
@@ -45,8 +47,13 @@ const { label, slides } = Astro.props;
 <script>
 	for (const root of document.querySelectorAll<HTMLElement>('.carousel')) {
 		const track = root.querySelector<HTMLElement>('.carousel-track')!;
-		const slides = [...track.querySelectorAll<HTMLElement>('.carousel-slide')];
+		const all = [...track.querySelectorAll<HTMLElement>('.carousel-slide')];
 		const dots = [...root.querySelectorAll<HTMLButtonElement>('.carousel-dot')];
+		// The slides in their order on screen: phones put the phone's first.
+		let slides = all;
+		const order = () => {
+			slides = [...all].sort((a, b) => a.offsetLeft - b.offsetLeft);
+		};
 		const [prev, next] = root.querySelectorAll<HTMLButtonElement>('.carousel-btn');
 		const nav = root.querySelector<HTMLElement>('.carousel-nav')!;
 		const still = matchMedia('(prefers-reduced-motion: reduce)');
@@ -59,14 +66,14 @@ const { label, slides } = Astro.props;
 		};
 		const mark = () => {
 			slides.forEach((s, i) => s.toggleAttribute('inert', i !== current));
-			dots.forEach((d, i) => d.toggleAttribute('aria-current', i === current));
+			dots.forEach((d, i) => d.toggleAttribute('aria-current', all[i] === slides[current]));
 			prev.disabled = current === 0;
 			next.disabled = current === slides.length - 1;
 		};
 
 		prev.addEventListener('click', () => show(current - 1));
 		next.addEventListener('click', () => show(current + 1));
-		dots.forEach((d, i) => d.addEventListener('click', () => show(i)));
+		dots.forEach((d, i) => d.addEventListener('click', () => show(slides.indexOf(all[i]))));
 		root.addEventListener('keydown', (e) => {
 			if (e.key === 'ArrowLeft') show(current - 1);
 			else if (e.key === 'ArrowRight') show(current + 1);
@@ -82,8 +89,18 @@ const { label, slides } = Astro.props;
 			}
 		}, { passive: true });
 
+		// Crossing the phone breakpoint reorders the slides: keep the one in view.
+		matchMedia('(max-width: 640px)').addEventListener('change', () => {
+			const shown = slides[current];
+			order();
+			current = slides.indexOf(shown);
+			track.scrollTo({ left: shown.offsetLeft - track.offsetLeft });
+			mark();
+		});
+
 		nav.hidden = false;
 		root.classList.add('ready');
+		order();
 		mark();
 	}
 </script>
