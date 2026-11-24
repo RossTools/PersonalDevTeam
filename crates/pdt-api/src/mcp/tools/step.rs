@@ -324,7 +324,8 @@ async fn get_ticket(cx: &Cx<'_>, id: &str) -> Result<Value, String> {
     Ok(v)
 }
 
-/// A ticket's comments for `get_ticket`, and whether any went in a block of `fence`: one a workflow step wrote in a run
+/// A ticket's comments for `get_ticket`, and whether any went in a block of `fence`: one a workflow step wrote (not a
+/// user's gate answer, which names its run too) in a run
 /// that outside input started (PDT-647: its body is templated, and can quote the issue or webhook that started it), or
 /// whose run is gone.
 async fn comments_of(st: &AppState, id: &str, fence: &pdt_core::fence::Fence) -> Result<(Vec<Value>, bool), String> {
@@ -332,7 +333,9 @@ async fn comments_of(st: &AppState, id: &str, fence: &pdt_core::fence::Fence) ->
     let (mut out, mut fenced) = (vec![], false);
     for e in st.store.events_of(id, &[EventKind::Comment], 1000).await.map_err(store)? {
         let Some(body) = &e.body else { continue };
-        let run = e.data.as_ref().and_then(|d| d.get("runId")).and_then(Value::as_str);
+        // Only what the workflow wrote: the user's answer to a gate carries its run too, and is the user's own word.
+        let wrote = e.actor == pdt_core::ticket::Actor::System;
+        let run = e.data.as_ref().and_then(|d| d.get("runId")).and_then(Value::as_str).filter(|_| wrote);
         let outside = match run {
             Some(run) => match untrusted.get(run) {
                 Some(&u) => u,
