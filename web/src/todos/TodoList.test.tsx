@@ -7,6 +7,7 @@ import type { Todo } from '../api/gen/Todo';
 import { OpenTicketContext } from '../common/open';
 import { editorText, renderWithQuery, setEditorText, stubApi, type Call } from '../test-utils';
 import { AUTOSAVE_MS } from '../notes/useNoteDraft';
+import { holdTiming } from '../inbox/held';
 import { TodoList, type TodoFocus } from './TodoList';
 
 const todo = (id: string, position: number, more: Partial<Todo> = {}): Todo => ({
@@ -122,6 +123,33 @@ describe('TodoList', () => {
     expect(within(screen.getByRole('list', { name: 'Completed todos' })).getByText('Todo d')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.path === '/api/todos/d')).toBe(true));
+  });
+
+  it('clears several completed todos in one request', async () => {
+    calls = stubApi({
+      'GET /api/todos': [...list, todo('e', 4, { done: true, doneAt: 6 })],
+      'POST /api/todos/delete': undefined,
+    });
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Clear' }));
+    await waitFor(() => expect(sent('POST', '/api/todos/delete')).toEqual([{ ids: ['e', 'd'] }]));
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+  });
+
+  it('holds a delete or a clear for Undo before sending it', async () => {
+    holdTiming.undoMs = 60_000;
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for Todo a' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    expect(titles()).toEqual(['Todo b', 'Todo c']);
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(titles()).toEqual(['Todo a', 'Todo b', 'Todo c']));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.queryByRole('button', { name: /^Completed/ })).toBeNull();
+    await userEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(await screen.findByRole('button', { name: 'Completed · 1' })).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'DELETE' || c.path === '/api/todos/delete')).toBe(false);
   });
 
   it('links a todo to a ticket from its menu', async () => {

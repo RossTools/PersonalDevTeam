@@ -6,7 +6,7 @@ import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { PmState } from '../api/gen/PmState';
 import type { Session } from '../api/gen/Session';
 import type { WatchInfo } from '../api/gen/WatchInfo';
-import { renderWithQuery, stubApi } from '../test-utils';
+import { renderWithQuery, Reply, stubApi } from '../test-utils';
 import { PmList } from './PmList';
 import { PmView } from './PmView';
 import { firstLine } from './usePm';
@@ -117,6 +117,32 @@ describe('the PM', () => {
     await userEvent.type(box, "What's in flight?{Enter}");
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith('s2'));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ text: "What's in flight?" });
+  });
+
+  it('says no agent is installed above the start box, which waits for one', async () => {
+    const tool = (found: boolean) => ({ found, ok: found, detail: '' });
+    const calls = stubApi({
+      'GET /api/pm': ended,
+      'GET /api/host/checks': { claude: tool(false), codex: tool(false), devin: tool(false), git: tool(true), gitIdentity: tool(true), tailscale: tool(true), checkedAt: 1 },
+    });
+    renderWithQuery(<PmView selection="new" onSelect={() => {}} onNew={() => {}} />);
+    const notice = (await screen.findByText('No agent is installed yet')).closest<HTMLElement>('[role="status"]')!;
+    expect(within(notice).getByRole('button', { name: 'Open Get started' })).toBeInTheDocument();
+    await userEvent.type(screen.getByRole('textbox', { name: 'Ask the PM' }), 'What first?{Enter}');
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
+  it("says the server's refusal of the PM's agent above the box, not in a toast", async () => {
+    const message = "Claude isn't installed on this machine: install it, or set its path, under Agents on this machine in Get started";
+    stubApi({ 'GET /api/pm': ended, 'POST /api/pm/sessions': new Reply(409, { code: 'agent_not_found', message }) });
+    const onSelect = vi.fn();
+    renderWithQuery(<PmView selection="new" onSelect={onSelect} onNew={() => {}} />);
+    const box = await screen.findByRole('textbox', { name: 'Ask the PM' });
+    await userEvent.type(box, 'What first?{Enter}');
+    const notice = (await screen.findByText(message)).closest<HTMLElement>('[role="status"]')!;
+    expect(within(notice).getByRole('button', { name: 'Open Get started' })).toBeInTheDocument();
+    expect(box).toHaveValue('What first?');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('keeps the start box’s unsent text when the page goes and comes back; starting clears it', async () => {

@@ -194,7 +194,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
       completing={completing.has(t.id)}
       onOpen={() => setOpenId(t.id)}
       onPatch={(p) => (p.done !== undefined ? tick(t, p.done) : void actions.patch(t.id, p))}
-      onDelete={() => (!t.done && t.recurrence ? setDeleting(t) : void actions.remove([t.id]))}
+      onDelete={() => (!t.done && t.recurrence ? setDeleting(t) : actions.remove([t.id], 'Deleted'))}
       onLink={() => setLinking(t)}
       onRepeat={() => editRepeat(t)}
       onOpenTicket={openTicket}
@@ -212,7 +212,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
   const removeRepeating = (t: Todo, series: 'only' | 'series') => {
     setDeleting(null);
     if (t.id === openId) setOpenId(null);
-    void actions.remove([t.id], series);
+    actions.remove([t.id], series === 'only' ? 'Deleted this one' : 'Stopped the series', series);
   };
   const opened = openId ? all.find((t) => t.id === openId) : undefined;
   return (
@@ -230,7 +230,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
             if (!opened.done && opened.recurrence) setDeleting(opened);
             else {
               setOpenId(null);
-              void actions.remove([opened.id]);
+              actions.remove([opened.id], 'Deleted');
             }
           }}
           onLink={() => opened && setLinking(opened)}
@@ -308,7 +308,7 @@ export function TodoList({ projectId, projects, focus, onFocused, focusAddSeq, t
                   {doneOpen ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
                   Completed · {done.length}
                 </Button>
-                <Button variant="ghost" size="sm" className="ml-auto font-normal text-muted-foreground" onClick={() => void actions.remove(done.map((t) => t.id))}>
+                <Button variant="ghost" size="sm" className="ml-auto font-normal text-muted-foreground" onClick={() => actions.remove(done.map((t) => t.id), 'Cleared completed')}>
                   Clear
                 </Button>
               </div>

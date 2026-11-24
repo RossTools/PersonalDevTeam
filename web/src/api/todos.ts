@@ -2,6 +2,7 @@ import { enc, queryString, request } from './core';
 import type { NewTodo } from './gen/NewTodo';
 import type { Todo } from './gen/Todo';
 import type { TodoPatch } from './gen/TodoPatch';
+import type { TodosDelete } from './gen/TodosDelete';
 
 /** The user's todo list. */
 export const todosApi = {
@@ -12,5 +13,7 @@ export const todosApi = {
     patch: (id: string, p: TodoPatch) => request<Todo>(`/api/todos/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(p) }),
     /** `series` (a repeating todo): `only` skips to the next one, `series` stops it repeating. */
     remove: (id: string, series?: 'only' | 'series') => request<void>(`/api/todos/${enc(id)}${queryString({ series })}`, { method: 'DELETE' }),
+    /** Deletes these together, all or none (Clear completed); ones already gone are skipped. */
+    removeMany: (ids: string[]) => request<void>('/api/todos/delete', { method: 'POST', body: JSON.stringify({ ids } satisfies TodosDelete) }),
   },
 };
