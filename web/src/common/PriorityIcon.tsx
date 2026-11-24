@@ -39,8 +39,8 @@ export interface PriorityIconProps {
 }
 
 /**
- * A priority as an icon (bars for low → high, a dash for none). Urgent is the one that asks for attention, so it
- * takes the `waiting` state colour; the rest stay neutral (colour means state).
+ * A priority as an icon (bars for low → high, a dash for none; with its label, none is the words alone). Urgent is
+ * the one that asks for attention, so it takes the `waiting` state colour; the rest stay neutral (colour means state).
  */
 export function PriorityIcon({ priority, showLabel = false, className }: PriorityIconProps) {
   const level = LEVEL[priority];
@@ -59,7 +59,7 @@ export function PriorityIcon({ priority, showLabel = false, className }: Priorit
         <OctagonAlert aria-hidden className="size-3.5 shrink-0" />
       ) : level ? (
         <Bars level={level} />
-      ) : (
+      ) : showLabel ? null : (
         <Minus aria-hidden className="size-3.5 shrink-0" />
       )}
       <span className={showLabel ? undefined : 'sr-only'}>{label}</span>
