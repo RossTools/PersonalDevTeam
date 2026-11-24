@@ -2,12 +2,17 @@
 // anything happens, inside PDT or out (a review posted on a pull request, a ticket made). Until it has gone, the item
 // is out of the Inbox's list; Undo puts it back. The page going away (closed, reloaded) ends the window: what is held
 // goes out at once, with `keepalive` so it outlives the page (PDT-707), and a reload for a new build waits for it.
+// Todos' deletes are held the same way (PDT-715), in their own scope: the Inbox's list, its `u` and Recently answered
+// leave them out.
 import { useSyncExternalStore } from 'react';
 import { toast } from '@ui';
 import { setLeaving } from '../api/core';
 
 /** How long an answer waits for Undo (ms). Tests set it to 0 (test-setup.ts). */
 export const holdTiming = { undoMs: 5000 };
+
+/** Whose list a held change leaves things out of. */
+type HoldScope = 'inbox' | 'todos';
 
 /** An answer waiting to go out, or going. */
 export interface HeldAnswer {
@@ -23,6 +28,9 @@ export interface HeldAnswer {
 }
 
 interface Entry extends HeldAnswer {
+  scope: HoldScope;
+  /** What its list leaves out meanwhile: the item, or for todos the todos it deletes. */
+  hides: readonly string[];
   /** Its run of the window: a later answer to the same item, or Undo, makes a new one. */
   run: object;
   /** Null while the window is paused. */
@@ -38,12 +46,15 @@ const entries = new Map<string, Entry>();
 const listeners = new Set<() => void>();
 let snapshot: readonly HeldAnswer[] = [];
 let ids: ReadonlySet<string> = new Set();
+let todoIds: ReadonlySet<string> = new Set();
 /** The Undo toasts are hovered or focused: the windows wait (PDT-667, WCAG 2.2.1). */
 let paused = false;
 
 function changed() {
-  snapshot = [...entries.values()].map(({ itemId, title, label, sendsAt, sending }) => ({ itemId, title, label, sendsAt, sending }));
+  const all = [...entries.values()];
+  snapshot = all.filter((e) => e.scope === 'inbox').map(({ itemId, title, label, sendsAt, sending }) => ({ itemId, title, label, sendsAt, sending }));
   ids = new Set(entries.keys());
+  todoIds = new Set(all.filter((e) => e.scope === 'todos').flatMap((e) => e.hides));
   listeners.forEach((l) => l());
 }
 
@@ -61,13 +72,17 @@ function start(e: Entry) {
 
 /**
  * Holds the answer to `itemId` for the Undo window, then runs `send` (which reports its own errors). The item stays out
- * of the list until `send` settles; a failed one comes back.
+ * of the list until `send` settles; a failed one comes back. `scope: 'todos'` holds a delete of the todos in `hides`
+ * (keyed apart from Inbox items: `itemId` should start `todos:`).
  */
-export function holdAnswer(h: { itemId: string; title: string; label: string; send: () => Promise<unknown> }) {
+export function holdAnswer(h: { itemId: string; title: string; label: string; send: () => Promise<unknown>; scope?: HoldScope; hides?: readonly string[] }) {
   const old = entries.get(h.itemId);
   if (old?.timer) clearTimeout(old.timer);
   if (old) dismissToast(old);
-  const e: Entry = { itemId: h.itemId, title: h.title, label: h.label, sendsAt: 0, sending: false, run: {}, timer: null, left: holdTiming.undoMs, send: h.send };
+  const e: Entry = {
+    itemId: h.itemId, title: h.title, label: h.label, scope: h.scope ?? 'inbox', hides: h.hides ?? [h.itemId],
+    sendsAt: 0, sending: false, run: {}, timer: null, left: holdTiming.undoMs, send: h.send,
+  };
   entries.set(h.itemId, e);
   start(e);
   changed();
@@ -148,7 +163,7 @@ export function undoAnswer(itemId: string): boolean {
 
 /** Undoes the newest held answer that hasn't gone out (the Inbox's `u`): its item, or null when there is none. */
 export function undoLast(): string | null {
-  const last = [...entries.values()].filter((e) => !e.sending).at(-1);
+  const last = [...entries.values()].filter((e) => !e.sending && e.scope === 'inbox').at(-1);
   return last && undoAnswer(last.itemId) ? last.itemId : null;
 }
 
@@ -176,9 +191,14 @@ export function useHeldAnswers(): readonly HeldAnswer[] {
   return useSyncExternalStore(subscribe, () => snapshot);
 }
 
-/** The items whose answers are held or going out: the list leaves them out. */
+/** The items whose answers are held or going out: the list leaves them out. Todos' holds are here too, keyed `todos:…`. */
 export function useHeldIds(): ReadonlySet<string> {
   return useSyncExternalStore(subscribe, () => ids);
+}
+
+/** The todos whose deletes are held or going out: the todo list leaves them out. */
+export function useHeldTodoIds(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribe, () => todoIds);
 }
 
 /** For tests: nothing held. */

@@ -119,6 +119,30 @@ async fn todos_are_added_edited_checked_off_reordered_and_deleted() {
 }
 
 #[tokio::test]
+async fn clearing_deletes_many_todos_together() {
+    let env = setup().await;
+    let a = add(&env, json!({"title": "Write the spec"})).await;
+    let b = add(&env, json!({"title": "Call Sam"})).await;
+    add(&env, json!({"title": "Keep me"})).await;
+    let ids = [a["id"].as_str().unwrap(), b["id"].as_str().unwrap()];
+
+    // Already gone ones are skipped, not an error: another tab may have cleared them.
+    let body = json!({"ids": [ids[0], ids[1], "missing"]});
+    let (s, v) = call(&env.app, "POST", "/api/todos/delete", Some(body)).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{v}");
+    assert_eq!(titles(&env, "").await, ["Keep me"]);
+
+    let (s, _) = call(&env.app, "POST", "/api/todos/delete", Some(json!({"ids": []}))).await;
+    assert_eq!(s, StatusCode::NO_CONTENT);
+    let (s, v) = call(&env.app, "POST", "/api/todos/delete", Some(json!({"ids": "x"}))).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{v}");
+    let many: Vec<String> = (0..1001).map(|i| i.to_string()).collect();
+    let (s, _) = call(&env.app, "POST", "/api/todos/delete", Some(json!({"ids": many}))).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert_eq!(titles(&env, "").await, ["Keep me"]);
+}
+
+#[tokio::test]
 async fn todos_link_to_a_project_or_a_ticket_and_filter_by_project() {
     let env = setup().await;
     let loose = add(&env, json!({"title": "Buy milk"})).await;

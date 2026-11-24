@@ -697,7 +697,9 @@ of its own: `held.ts` dismisses it when the answer goes out or is undone, so Und
 item's `ItemHeader` takes focus on its title when focus was lost with the last item (on `<body>` or in a toast), and
 again when the item is snoozed or unsnoozed in place (its Snooze button, focused, gives way to Unsnooze). On `pagehide`
 the held answers go out at once, with `keepalive` (`setLeaving` in `web/src/api/core.ts`), and `useReloadOnNewBuild`
-doesn't reload for a new build while any answer is held. The client says
+doesn't reload for a new build while any answer is held. Todos' deletes are held the same way, in `held.ts`'s `todos`
+scope (`useTodos` leaves them out; the Inbox doesn't see them), and Clear sends one `POST /api/todos/delete`, deleted in
+one transaction. The client says
 how an answer was given in the `x-pdt-answer-source` header (`<click|keyboard>/<desktop|phone>`,
 `inbox::AnswerSource`), which `inbox.answered` carries as `source`; Recently answered reads those events.
 

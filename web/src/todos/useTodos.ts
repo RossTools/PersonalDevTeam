@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { NewTodo } from '../api/gen/NewTodo';
@@ -5,12 +6,19 @@ import type { Todo } from '../api/gen/Todo';
 import type { TodoPatch } from '../api/gen/TodoPatch';
 import { runAction } from '../common/useAction';
 import { POLL } from '../common/poll';
+import { holdAnswer, undoToast, useHeldTodoIds } from '../inbox/held';
 
 export const TODOS_KEY = ['todos'] as const;
 
-/** Every todo (the list filters on the client), polled like the rest of the UI. */
+/**
+ * Every todo (the list filters on the client), polled like the rest of the UI; those whose delete is held for Undo are
+ * left out.
+ */
 export function useTodos() {
-  return useQuery({ queryKey: TODOS_KEY, queryFn: () => api.todos.list(), refetchInterval: POLL.live });
+  const held = useHeldTodoIds();
+  const q = useQuery({ queryKey: TODOS_KEY, queryFn: () => api.todos.list(), refetchInterval: POLL.live });
+  const data = useMemo(() => (held.size && q.data ? q.data.filter((t) => !held.has(t.id)) : q.data), [q.data, held]);
+  return { ...q, data };
 }
 
 /** How many todos are still open (the collapsed panel's count). */
@@ -45,16 +53,27 @@ export function useTodoActions() {
         }
       });
     },
-    /** `series`, for a repeating todo: `only` makes the next one in its place, `series` stops it repeating. */
-    remove: (ids: string[], series?: 'only' | 'series') => {
-      edit((list) => list.filter((t) => !ids.includes(t.id)));
-      return runAction(async () => {
-        try {
-          await Promise.all(ids.map((id) => api.todos.remove(id, series)));
-        } finally {
-          refresh(qc);
-        }
+    /**
+     * Deletes `ids` after the Undo window (PDT-715): they leave the list at once, with a toast offering Undo, and go
+     * out together (one todo alone takes `series`, for a repeating one: `only` makes the next one in its place,
+     * `series` stops it repeating). `label` is the toast's ("Deleted", "Cleared completed").
+     */
+    remove: (ids: string[], label: string, series?: 'only' | 'series') => {
+      if (ids.length === 0) return;
+      const title = ids.length === 1 ? (qc.getQueryData<Todo[]>(TODOS_KEY)?.find((t) => t.id === ids[0])?.title ?? '') : `${ids.length} todos`;
+      const key = `todos:${ids.join(',')}`;
+      holdAnswer({
+        itemId: key, title, label, scope: 'todos', hides: ids,
+        send: () => runAction(async () => {
+          try {
+            await (ids.length === 1 ? api.todos.remove(ids[0]!, series) : api.todos.removeMany(ids));
+            edit((list) => list.filter((t) => !ids.includes(t.id)));
+          } finally {
+            refresh(qc);
+          }
+        }),
       });
+      undoToast(key, title, label);
     },
   };
 }
