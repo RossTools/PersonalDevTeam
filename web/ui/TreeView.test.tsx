@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Button } from 'react-aria-components';
 import { describe, expect, it, vi } from 'vitest';
 import { TreeView, type TreeChildren, type TreeNode } from './TreeView';
 
@@ -139,6 +140,27 @@ describe('TreeView', () => {
     await userEvent.tab();
     await userEvent.keyboard('{ArrowLeft}');
     expect(screen.getByRole('row', { name: 'e' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it("a row's actions are pressed without opening it, and Right reaches them from an open row", async () => {
+    const onPress = vi.fn();
+    render(
+      <TreeView<TreeNode> aria-label="Files" useChildren={(n) => ({ status: 'ready', items: tree[n.id] ?? [] })}
+        items={[{ id: 'src', label: 'src', hasChildren: true, actions: <Button onPress={onPress}>Download src</Button> }]} />,
+    );
+    const src = screen.getByRole('row', { name: 'src' });
+    await userEvent.click(within(src).getByRole('button', { name: 'Download src' }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(src).toHaveAttribute('aria-expanded', 'false');
+    src.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(src).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.keyboard('{ArrowRight}');
+    expect(within(src).getByRole('button', { name: 'Download src' })).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    expect(onPress).toHaveBeenCalledTimes(2);
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(src).toHaveFocus();
   });
 
   it('shows the empty state', () => {

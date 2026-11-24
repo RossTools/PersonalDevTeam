@@ -58,7 +58,8 @@ PDT says so, with **Back to the folder**.
 
 - **A file**: the download button at the top of an open file, or **Download** in its menu (right-click it in the
   tree; on a phone, press and hold it). Binary files and files too large to show have a **Download** button too.
-- **A folder**: **Download as .zip** in its menu. The `.zip` holds what the tree shows, so files `.gitignore` leaves
+- **A folder**: the download button on its row in the tree (it shows when you point at the row), **Download as .zip**
+  in its menu, or **Download as .zip** at the top of the folder on a phone. The `.zip` holds what the tree shows, so files `.gitignore` leaves
   out stay out; **Download as .zip, including ignored files** puts them in too (never the `.git` folder). PDT shows
   "Preparing…" while it gathers the files. A `.zip` holds at most 2 GB and 200,000 files; past that PDT says so and
   downloads nothing.

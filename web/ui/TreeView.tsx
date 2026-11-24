@@ -14,6 +14,11 @@ export interface TreeNode {
   icon?: ReactNode;
   /** After the label, right-aligned (a git status letter). */
   trailing?: ReactNode;
+  /**
+   * Buttons at the row's end (a folder's Download): shown on hover and keyboard focus, always on touch screens. Right
+   * moves focus from an open row into them (Left back); a closed branch opens first.
+   */
+  actions?: ReactNode;
   /** Extra classes for the label (e.g. `line-through` for a deleted file). */
   labelClassName?: string;
   /** Tooltip (e.g. the full path). */
@@ -219,7 +224,16 @@ function Row({ node, branch, expanded }: { node: TreeNode; branch: boolean; expa
       )}
       <span className="flex items-center text-muted-foreground">{node.icon}</span>
       <span className={cn('truncate', node.labelClassName)} title={node.title}>{node.label}</span>
-      {node.trailing != null ? <span className="flex items-center">{node.trailing}</span> : <span />}
+      {node.trailing != null || node.actions != null ? (
+        <span className="flex items-center gap-1">
+          {node.trailing}
+          {node.actions != null && (
+            <span className="flex items-center opacity-0 group-data-hovered/row:opacity-100 group-data-focus-visible/row:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
+              {node.actions}
+            </span>
+          )}
+        </span>
+      ) : <span />}
     </>
   );
 }
