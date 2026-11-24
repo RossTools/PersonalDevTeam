@@ -180,7 +180,8 @@ describe('SessionView ended', () => {
     expect(screen.getByTestId('terminal-view')).toHaveAttribute('data-dimmed', 'true');
     const bar = screen.getByRole('group', { name: 'Session ended' });
     expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeInTheDocument();
-    expect(within(header()).getByRole('button', { name: 'Restart' })).toBeInTheDocument();
+    // The bar's Restart is the only one: the header leaves it to the bar (and ⋯).
+    expect(within(header()).queryByRole('button', { name: 'Restart' })).not.toBeInTheDocument();
     await userEvent.click(within(bar).getByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(calls.find((c) => c.path === '/api/sessions/s1/restart')?.body).toEqual({ cols: 120, rows: 32 }));
   });
@@ -204,7 +205,7 @@ describe('SessionView ended', () => {
     });
     renderWithQuery(<SessionView session={session({ status: 'finished', exitCode: 0 })} onRemoved={() => {}} />);
     const bar = screen.getByRole('group', { name: 'Session ended' });
-    await userEvent.click(within(header()).getByRole('button', { name: 'Restart' }));
+    await userEvent.click(within(bar).getByRole('button', { name: 'Restart' }));
     await waitFor(() => expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeDisabled());
     respond(session({}));
     await waitFor(() => expect(within(bar).getByRole('button', { name: 'Remove…' })).toBeEnabled());
