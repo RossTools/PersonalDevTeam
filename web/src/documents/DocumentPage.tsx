@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Button, Dialog, download, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { ExternalLink, Plus, X } from 'lucide-react';
+import { Button, Dialog, download, EmptyState, IconButton, Link, MenuButton, RelativeTime, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
@@ -33,8 +33,9 @@ function addedBy(d: Document): string {
 }
 
 /**
- * One document (PDT-314): its title (rename in place), kind, provider and who added it; where it opens; its links to
- * projects and tickets (add and remove); and its content as the provider reads it. Removing it from PDT keeps the
+ * One document (PDT-314): its title (click it to rename in place), kind, provider and who added it; where it opens;
+ * its links to projects and tickets as chips on the same line (add and remove, PDT-681); and its content as the
+ * provider reads it. Removing it from PDT keeps the
  * file; Delete removes the file too, where the provider can.
  */
 export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean; onGone: () => void }) {
@@ -120,17 +121,18 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
               <InlineRename label="Document title" initial={d.title} maxLength={200} size="md" className="flex-1"
                 onCommit={(t) => { setRenaming(false); rename(t); }} onCancel={() => setRenaming(false)} />
             ) : (
-              <h1 className="min-w-0 flex-1 truncate text-heading font-semibold tracking-tight" title={d.title}>{d.title}</h1>
+              <h1 className="min-w-0 flex-1 truncate text-heading font-semibold tracking-tight">
+                <button type="button" title={`${d.title} (click to rename)`} className="max-w-full truncate rounded-sm text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setRenaming(true)}>{d.title}</button>
+              </h1>
             )}
             {!phone && !renaming && (
               <>
                 <WatchButton of={{ document: id }} />
-                <IconButton label="Rename" variant="ghost" size="sm" onClick={() => setRenaming(true)}><Pencil aria-hidden /></IconButton>
                 <MenuButton label="Document actions" entries={entries} placement="bottom end" />
               </>
             )}
           </div>
-          <p className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
             <span>{KIND_LABEL[d.kind]}</span>
             <span aria-hidden>·</span>
             <span>{providerLabel(providers.data?.providers, d.provider)}</span>
@@ -143,49 +145,37 @@ export function DocumentPage({ id, phone, onGone }: { id: string; phone: boolean
               </>
             )}
             <Watchers inline of={{ document: id }} />
-          </p>
+            <span aria-hidden>·</span>
+            <span role="group" aria-label="Links" className="contents">
+              {d.projects.map((p) => (
+                <span key={p.id} className="inline-flex items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs text-foreground">
+                  <ProjectKey projectKey={p.key} /> {p.name}
+                  <IconButton label={`Unlink ${p.name}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkProject(p.id)}><X aria-hidden /></IconButton>
+                </span>
+              ))}
+              {d.tickets.map((t) => (
+                <span key={t.id} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs text-foreground">
+                  <button type="button" className="min-w-0 truncate hover:underline" onClick={() => openTicket({ id: t.id, projectId: t.projectId })} title={t.title}>
+                    <TicketKey ticketKey={t.key} /> {t.title}
+                  </button>
+                  <IconButton label={`Unlink ${t.key}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkTicket(t.id)}><X aria-hidden /></IconButton>
+                </span>
+              ))}
+              {unlinked.length > 0 && (
+                <MenuButton label="Link a project" entries={() => unlinked.map((p) => ({
+                  label: p.name,
+                  onSelect: () => void runAction(async () => {
+                    await api.linkDocument(id, { projectId: p.id });
+                    settle();
+                  }),
+                }))}>
+                  <Button variant="ghost" size="sm" compact aria-label="Link a project"><Plus aria-hidden /> Project</Button>
+                </MenuButton>
+              )}
+              <Button variant="ghost" size="sm" compact aria-label="Link a ticket" onClick={() => setLinkingTicket(true)}><Plus aria-hidden /> Ticket</Button>
+            </span>
+          </div>
         </header>
-
-        <section aria-label="Links" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <SectionLabel as="h2">Projects</SectionLabel>
-            {d.projects.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
-            {d.projects.map((p) => (
-              <span key={p.id} className="inline-flex items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
-                <ProjectKey projectKey={p.key} /> {p.name}
-                <IconButton label={`Unlink ${p.name}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkProject(p.id)}><X aria-hidden /></IconButton>
-              </span>
-            ))}
-            {unlinked.length > 0 && (
-              <Select
-                aria-label="Link a project"
-                size="sm"
-                quiet
-                className="w-auto"
-                placeholder="Link a project"
-                options={unlinked.map((p) => ({ value: p.id, label: p.name }))}
-                value={null}
-                onChange={(projectId) => void runAction(async () => {
-                  await api.linkDocument(id, { projectId });
-                  settle();
-                })}
-              />
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <SectionLabel as="h2">Tickets</SectionLabel>
-            {d.tickets.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
-            {d.tickets.map((t) => (
-              <span key={t.id} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
-                <button type="button" className="min-w-0 truncate hover:underline" onClick={() => openTicket({ id: t.id, projectId: t.projectId })} title={t.title}>
-                  <TicketKey ticketKey={t.key} /> {t.title}
-                </button>
-                <IconButton label={`Unlink ${t.key}`} size="sm" variant="ghost" className="size-5" onClick={() => unlinkTicket(t.id)}><X aria-hidden /></IconButton>
-              </span>
-            ))}
-            <Button variant="ghost" size="sm" compact onClick={() => setLinkingTicket(true)}><Plus aria-hidden /> Link a ticket</Button>
-          </div>
-        </section>
 
         <section aria-label="Content" className="flex flex-col gap-2">
           <DocumentBody id={id} providerLabel={provider?.label ?? d.provider} onSheet={onSheet} />
