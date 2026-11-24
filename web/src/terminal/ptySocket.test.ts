@@ -71,6 +71,29 @@ describe('gzipped replay', () => {
     expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset', 'ready', 'data:live']);
   });
 
+  it('handles an exit that waited behind the replay before the close, and does not reconnect', async () => {
+    let finish: () => void = () => {};
+    const gunzip = (b: Uint8Array) => new Promise<Uint8Array>((res) => {
+      finish = () => res(b);
+    });
+    const { sock, sockets, events } = setup(gunzip);
+    sock.connect();
+    const s = sockets[0];
+    s.open();
+    s.data('last screen');
+    s.text('{"type":"ready"}');
+    s.text(JSON.stringify({ type: 'exit', code: 3 }));
+    s.drop();
+    expect(events).not.toContain('status:reconnecting');
+    finish();
+    await vi.waitFor(() => expect(events).toContain('exit:3'));
+    vi.advanceTimersByTime(10_000);
+    expect(sockets).toHaveLength(1);
+    expect(events.filter((e) => !e.startsWith('status'))).toEqual(['reset', 'replay:last screen', 'ready', 'exit:3']);
+    expect(events).toContain('status:exited');
+    expect(events).not.toContain('status:reconnecting');
+  });
+
   it('adds the parameter to URLs with or without a query', () => {
     expect(withGzipReplay('ws://h/api/runs/r/pty/setup')).toBe('ws://h/api/runs/r/pty/setup?replay=gzip');
     expect(withGzipReplay('ws://h/x?a=1')).toBe('ws://h/x?a=1&replay=gzip');
