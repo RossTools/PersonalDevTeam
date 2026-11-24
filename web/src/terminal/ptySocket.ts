@@ -161,15 +161,16 @@ export class PtySocket {
         },
       );
     });
-    s.onclose = () => {
-      // Not the current socket: it was replaced (retry) or ended on purpose.
-      if (this.sock !== s) return;
+    // The close waits its turn too: an `exit` queued behind the replay must be seen first, or an ended terminal
+    // would reconnect forever (each attach replays, says it exited and closes).
+    s.onclose = () => inOrder(() => {
+      // Not the current socket (checked by inOrder): it was replaced (retry) or ended on purpose.
       this.sock = null;
       if (this.disposed || this.exited || this.ended) return;
       this.h.onStatus?.('reconnecting');
       if (openedAt !== null && Date.now() - openedAt >= this.opts.stableMs) this.attempt = 0;
       this.scheduleReconnect();
-    };
+    });
     this.sock = s;
   }
 
