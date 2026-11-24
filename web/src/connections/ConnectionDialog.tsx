@@ -5,7 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, Dialog, Field, Input, Link, Select, Switch, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
-import { pluginsKey } from '../plugins/model';
+import { pluginsKey } from '../plugins/queries';
 import {
   AUTH_MODES, fieldShown, fieldText, fieldValid, fieldsConfig, hookUrl, kindOf, linkUrl, randomSecret, useConnectionKinds, whenHolds, type ConnectionKind,
 } from './kinds';

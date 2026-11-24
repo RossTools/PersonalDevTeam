@@ -107,6 +107,11 @@ async fn a_new_claude_tab_is_a_conversation_that_streams_replies() {
     let (_, tail) = call(&env.app, "GET", &format!("/api/sessions/{id}/events?last=3"), None).await;
     let kinds: Vec<&str> = tail.as_array().unwrap().iter().map(|e| e["event"]["kind"].as_str().unwrap()).collect();
     assert_eq!(kinds, ["agent_message", "usage", "turn"], "{tail:#}");
+    // Several sessions' newest events in one request (the overview's cards); an unknown id is left out.
+    let (s, many) = call(&env.app, "GET", &format!("/api/sessions/last-events?ids={id},nope&last=3"), None).await;
+    assert_eq!(s, 200, "{many}");
+    assert_eq!(many[id], tail, "{many:#}");
+    assert!(many.get("nope").is_none(), "{many:#}");
     wait_activity(&env, id, "idle").await;
     let s = session(&env, id).await;
     assert!(s["unseen"].as_bool().unwrap(), "a finished turn wants attention");

@@ -7,7 +7,8 @@ import { cn } from '@ui/lib/utils';
 import { api } from '../api/client';
 import { ConnectionDialog } from '../connections/ConnectionDialog';
 import { useConnectionKinds } from '../connections/kinds';
-import { STATUS_LABEL, STATUS_TONE, enabledWith, offWith, pluginsKey, stuckOn, type Plugin } from './model';
+import { STATUS_LABEL, STATUS_TONE, enabledWith, offWith, stuckOn, type Plugin } from './model';
+import { pluginsKey } from './queries';
 
 /** A plugin's letters on its own colour (the brand's, from the plugin: not a theme colour). */
 export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'xs' | 'sm' | 'md' | 'lg' }) {

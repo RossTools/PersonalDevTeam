@@ -6,12 +6,12 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { hookUrl, summaryText, useConnectionKinds, type ConnectionKind } from './kinds';
 import { POLL } from '../common/poll';
-import { useConnectionStatus } from './queries';
+import { toolsKey, useConnectionStatus } from './queries';
 
 /** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
 function McpToolsLine({ c }: { c: Connection }) {
   const qc = useQueryClient();
-  const key = ['connection-tools', c.id];
+  const key = toolsKey(c.id);
   const tools = useQuery({ queryKey: key, queryFn: () => api.connectionTools(c.id), refetchInterval: POLL.slow });
   const relist = useMutation({ meta: { errorShown: true }, mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
   const t = tools.data;

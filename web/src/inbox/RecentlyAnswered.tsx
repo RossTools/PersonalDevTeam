@@ -11,14 +11,11 @@ import { POLL } from '../common/poll';
 import { TicketKey } from '../common/TicketKey';
 import { undoAnswer, useHeldAnswers } from './held';
 import { ROW_ACTION } from './rows';
-import { inboxKey } from './useInbox';
+import { inboxKeys } from './queries';
 
 /** How many answers the list keeps, and shows before Show all. */
 const KEPT = 10;
 const SHOWN = 3;
-
-/** Under the Inbox's key, so answering refreshes it with the list. */
-const answeredKey = [...inboxKey, 'answered'] as const;
 
 /** A choice as the list says it: `allow_always` → "Always allow", `outcome:approved` → "Approved". */
 function choiceText(choice: string | null): string {
@@ -44,9 +41,10 @@ function answeredOf(payload: unknown): InboxAnswered | null {
 export function RecentlyAnswered() {
   const held = useHeldAnswers();
   const events = useQuery({
-    queryKey: answeredKey,
+    // Under the Inbox's key, so answering (and the notification stream) refreshes it with the list.
+    queryKey: inboxKeys.answered,
     queryFn: () => api.listLogEvents({ type: 'inbox.answered', limit: KEPT }),
-    refetchInterval: POLL.live,
+    refetchInterval: POLL.steady,
   });
   const [all, setAll] = useState(false);
   const openTicket = useOpenTicket();

@@ -33,7 +33,7 @@ import { nonBlank } from '../common/guards';
 import { capitalize, formatBytes } from '../common/text';
 import { commandText } from '../runs/ApproveCommands';
 import { invalidateCommands } from '../runs/queries';
-import { inboxKey } from './useInbox';
+import { inboxKeys } from './queries';
 
 /** One of an item's actions. */
 export interface ItemAction {
@@ -150,7 +150,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
   // A command waiting on the user's approval is approved in place (PDT-611); approving closes the notice.
   const qc = useQueryClient();
   const approve = (a: ApprovalAnswer, rows?: number[]) =>
-    answerApproval(item, a, onApproved, { rows, phone, onUndo, then: () => qc.invalidateQueries({ queryKey: inboxKey }) });
+    answerApproval(item, a, onApproved, { rows, phone, onUndo, then: () => qc.invalidateQueries({ queryKey: inboxKeys.all }) });
   const waitingCommand = commandNoticeOf(item);
   // It trusts the command for every branch, so it is held for Undo, asks twice (`needsConfirm`) and Enter doesn't take it
   // (PDT-705).
@@ -161,7 +161,7 @@ export function useItemView({ item, busy, answer, dismiss, onApproved, onUndo, p
       onUndo,
       then: async () => {
         void invalidateCommands(qc, projectId);
-        await qc.invalidateQueries({ queryKey: inboxKey });
+        await qc.invalidateQueries({ queryKey: inboxKeys.all });
       },
     });
   };

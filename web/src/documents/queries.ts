@@ -14,6 +14,8 @@ export const documentKeys = {
   lists: ['documents', 'list'] as const,
   list: (f: DocumentFilter) => ['documents', 'list', f] as const,
   one: (id: string) => ['documents', 'one', id] as const,
+  /** A project's document settings (where its documents are kept). */
+  settings: (projectId: string) => ['project-document-settings', projectId] as const,
   content: (id: string) => ['documents', 'content', id] as const,
   comments: (id: string) => ['documents', 'comments', id] as const,
   changes: (id: string) => ['documents', 'changes', id] as const,

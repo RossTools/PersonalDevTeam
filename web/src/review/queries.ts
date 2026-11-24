@@ -5,6 +5,9 @@ import { POLL } from '../common/poll';
 
 export const changesKey = (worktreeId: string) => ['changes', worktreeId] as const;
 const commentsKey = (worktreeId: string) => ['review-comments', worktreeId] as const;
+/** A changed file's two sides, at its version. */
+const fileSidesKey = (worktreeId: string, path: string | undefined, version: string | undefined) =>
+  ['file-sides', worktreeId, path, version] as const;
 export const mergePreviewKey = (attemptId: string) => ['merge-preview', attemptId] as const;
 
 export function useChanges(worktreeId: string | null) {
@@ -28,7 +31,7 @@ export function useDiffSize(worktreeId: string | null): { added: number; removed
 /** A file's two sides, read again only when its version changes. */
 export function useFileSides(worktreeId: string, file: ChangedFile | null) {
   return useQuery({
-    queryKey: ['file-sides', worktreeId, file?.path, file?.version],
+    queryKey: fileSidesKey(worktreeId, file?.path, file?.version),
     queryFn: () => api.getFileSides(worktreeId, file!.path, file!.oldPath),
     enabled: !!file && !file.binary,
     staleTime: Infinity,

@@ -21,6 +21,8 @@ export const ticketKeys = {
   /** A ticket's hover card, by key (under `lists`, so a write refreshes it). */
   card: (key: string) => ['tickets', 'card', key.toUpperCase()] as const,
   one: (id: string) => ['ticket', id] as const,
+  /** The id of the ticket a key names (any case). */
+  byKey: (key: string) => ['ticket-by-key', key.toUpperCase()] as const,
   /** A ticket's timeline: every page (`timeline`) and the peek's last few (`recentEvents`) under it. */
   events: (id: string) => ['ticketEvents', id] as const,
   timeline: (id: string) => ['ticketEvents', id, 'all'] as const,
@@ -76,7 +78,7 @@ export function useTicketId(ref: string | null): { id: string | null; missing: b
   const byKey = !!ref && isTicketKey(ref);
   const qc = useQueryClient();
   const q = useQuery({
-    queryKey: ['ticket-by-key', ref?.toUpperCase() ?? ''],
+    queryKey: ticketKeys.byKey(ref ?? ''),
     // pdtd looks a key up itself (PDT-271): a search's first page can miss a key that other tickets mention.
     queryFn: async () => {
       const t = await ticketByKey(ref!);

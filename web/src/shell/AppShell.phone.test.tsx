@@ -272,12 +272,12 @@ describe('phone', () => {
     };
     const reply = { seq: 3, pos: 3, ts: 1, event: { kind: 'agent_message', id: 'm', markdown: 'Looking now.\n\n- Tests **pass**', phase: 'final' } };
     stubPhone();
-    stubWorkspaces({
+    const calls = stubWorkspaces({
       [`GET /api/projects/${project.id}/sessions`]: [
         sess('a', 'Claude A', { kind: 'agent_tui', agent: 'claude', activity: 'working', mode: 'conversation' }),
         sess('b', 'Codex B', { kind: 'agent_tui', agent: 'codex', activity: 'needs_you', unseen: true }),
       ],
-      'GET /api/sessions/a/events': [reply],
+      'GET /api/sessions/last-events': { a: [reply] },
       'GET /api/inbox': { items: [question], total: 1 },
     });
     window.history.replaceState(null, '', '/sessions/wa/ta');
@@ -288,6 +288,8 @@ describe('phone', () => {
     const cardA = within(overview).getByRole('button', { name: /Claude A/ });
     expect(cardA).toHaveAttribute('aria-current', 'true');
     expect(await within(cardA).findByText('Tests pass')).toBeInTheDocument();
+    // One request for every conversation's card (the terminal has none).
+    expect(calls.filter((c) => c.path.startsWith('/api/sessions/') && c.path.includes('events')).map((c) => c.path)).toEqual(['/api/sessions/last-events?ids=a&last=20']);
     const cardB = within(overview).getByRole('button', { name: /Codex B/ });
     expect(within(cardB).getByText('Needs you')).toBeInTheDocument();
     expect(await within(cardB).findByText('? Which file?')).toBeInTheDocument();

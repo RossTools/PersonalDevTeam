@@ -9,8 +9,6 @@ import type { PluginStatus } from '../api/gen/PluginStatus';
 
 export type Plugin = IntegrationInfo;
 
-export const pluginsKey = ['integrations'] as const;
-
 /** The catalog's groups, in order. */
 export const CATEGORIES: readonly PluginCategory[] = ['dev', 'documents', 'chat', 'media', 'general'];
 

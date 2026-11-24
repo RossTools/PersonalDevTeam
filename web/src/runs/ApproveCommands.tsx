@@ -3,6 +3,7 @@ import { Alert, Badge, Button, CodeCard, SectionLabel, Skeleton, type ConfirmOpt
 import { api, ApiError } from '../api/client';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
+import { POLL } from '../common/poll';
 import { invalidateCommands, runKeys } from './queries';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
@@ -87,7 +88,8 @@ function CommandRow({ command: c, waiting, approve, approving }: {
  * configuration), under their branch and ticket. */
 export function ConfigCommands({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null) });
+  // Polled: an agent's new or changed configuration shows without a reload.
+  const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null), refetchInterval: POLL.slow });
   const [approve, approving] = useAction(async (fingerprints: string[]) => {
     await api.trustCommands(projectId, fingerprints);
     await invalidateCommands(qc, projectId);

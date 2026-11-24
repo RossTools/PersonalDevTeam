@@ -6,7 +6,7 @@ import { invalidateWorkflow, workflowKeys } from '../workflows/queries';
 import type { NotificationList } from '../api/gen/NotificationList';
 import type { NotificationRulesView } from '../api/gen/NotificationRulesView';
 import { streamPoll } from '../common/poll';
-import { inboxKey } from '../inbox/useInbox';
+import { inboxKeys } from '../inbox/queries';
 
 /** Every query of notifications (the Updates, the rules). */
 export const NOTIFICATIONS = ['notifications'] as const;
@@ -24,7 +24,7 @@ function useRefreshNotifications() {
   const qc = useQueryClient();
   return () => Promise.all([
     qc.invalidateQueries({ queryKey: NOTIFICATIONS }),
-    qc.invalidateQueries({ queryKey: inboxKey }),
+    qc.invalidateQueries({ queryKey: inboxKeys.all }),
   ]);
 }
 

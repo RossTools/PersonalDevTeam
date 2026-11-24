@@ -8,7 +8,12 @@ export const connectionsKey = ['connections'] as const;
 /** Every connection (`GET /api/connections`); read only while `enabled`. */
 export const useConnections = (enabled = true) => useQuery({ queryKey: connectionsKey, queryFn: api.listConnections, enabled });
 
+/** The kinds of connection PDT's integrations offer. */
+export const connectionKindsKey = ['connection-kinds'] as const;
+
 const statusKey = (id: string) => ['connection-status', id] as const;
+/** An MCP server connection's tools. */
+export const toolsKey = (id: string) => ['connection-tools', id] as const;
 
 /** How a connection is doing beyond OK or Failing, as its plugin tells it. */
 export const useConnectionStatus = (id: string) =>

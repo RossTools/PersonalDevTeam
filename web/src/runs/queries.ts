@@ -2,6 +2,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { POLL } from '../common/poll';
+import { inboxKeys } from '../inbox/queries';
 import { RECENT_ENDED } from '../sessions/queries';
 
 export const runKeys = {
@@ -26,7 +27,13 @@ export function invalidateRuns(qc: QueryClient, projectId?: string) {
   return qc.invalidateQueries({ queryKey: projectId ? runKeys.project(projectId) : runKeys.all });
 }
 
-/** After the user approves commands: the project's list of them (Settings shows which wait on approval). */
+/**
+ * After the user approves commands: the project's list of them (Settings shows which wait on approval), and the Inbox
+ * (its item for commands waiting on approval).
+ */
 export function invalidateCommands(qc: QueryClient, projectId: string) {
-  return qc.invalidateQueries({ queryKey: runKeys.commands(projectId) });
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: runKeys.commands(projectId) }),
+    qc.invalidateQueries({ queryKey: inboxKeys.all }),
+  ]);
 }

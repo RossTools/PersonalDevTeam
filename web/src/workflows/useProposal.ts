@@ -5,7 +5,7 @@ import { useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { WorkflowDetail } from '../api/gen/WorkflowDetail';
 import { savedWorkflow } from './queries';
-import { inboxKey } from '../inbox/useInbox';
+import { inboxKeys } from '../inbox/queries';
 
 /**
  * `dirty`: the editor has unsaved changes, which Accept (and Restore) replace, so they ask first. `onChanged` runs
@@ -16,7 +16,7 @@ export function useProposal(w: WorkflowDetail, dirty: boolean, onChanged: (d: Wo
   const confirm = useConfirm();
   const done = (d: WorkflowDetail) => {
     savedWorkflow(qc, d);
-    void qc.invalidateQueries({ queryKey: inboxKey });
+    void qc.invalidateQueries({ queryKey: inboxKeys.all });
     onChanged(d);
   };
   /** Whether to go on and replace the editor's draft (it asks only when there are unsaved changes). */

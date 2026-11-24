@@ -1,6 +1,6 @@
 // The phone's tab overview (PDT-114): every tab of the workspace as a card with a live snippet. ⧉ in the tab strip
 // opens it; Back closes it.
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { FileDiff, Ticket } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { ChoiceCard, ContextMenu, DiffStat } from '@ui';
@@ -20,6 +20,9 @@ import { itemOf } from './model';
 import type { ItemInfo, WorkspacesApi } from './useWorkspaces';
 import { sessionKeys } from '../sessions/queries';
 import { POLL } from '../common/poll';
+
+/** Conversations' newest events, by session id. */
+type LastEvents = Record<string, ConversationEvent[]>;
 
 /** How many of a conversation's newest events are read for its card. */
 const LAST_EVENTS = 20;
@@ -48,16 +51,9 @@ export function sessionSnippet(events: ConversationEvent[], inbox: InboxItem[]):
   return null;
 }
 
-function SessionSnippet({ info, inbox }: { info: ItemInfo; inbox: InboxItem[] }) {
+function SessionSnippet({ info, inbox, events }: { info: ItemInfo; inbox: InboxItem[]; events: LastEvents | undefined }) {
   const s = info.session!;
-  const conversation = s.mode === 'conversation';
-  const events = useQuery({
-    queryKey: sessionKeys.lastEvents(s.id),
-    queryFn: () => api.lastSessionEvents(s.id, LAST_EVENTS),
-    enabled: conversation,
-    refetchInterval: POLL.steady,
-  });
-  const snippet = sessionSnippet(events.data ?? [], inbox.filter((i) => i.sessionId === s.id));
+  const snippet = sessionSnippet(events?.[s.id] ?? [], inbox.filter((i) => i.sessionId === s.id));
   if (!snippet) return null;
   return <p className={cn('line-clamp-2 text-meta', snippet.question ? 'text-foreground' : 'text-muted-foreground')}>{snippet.question ? `? ${snippet.text}` : snippet.text}</p>;
 }
@@ -67,12 +63,14 @@ function Size({ worktreeId }: { worktreeId: string }) {
   return size && size.files > 0 ? <DiffStat added={size.added} removed={size.removed} className="text-meta" /> : null;
 }
 
-function Card({ ws, tab, info, current, inbox, onOpen, onRename }: {
+function Card({ ws, tab, info, current, inbox, events, onOpen, onRename }: {
   ws: WorkspacesApi;
   tab: Tab;
   info: ItemInfo | null;
   current: boolean;
   inbox: InboxItem[];
+  /** The workspace's conversations' newest events, by session id. */
+  events: LastEvents | undefined;
   onOpen: () => void;
   onRename: () => void;
 }) {
@@ -94,7 +92,7 @@ function Card({ ws, tab, info, current, inbox, onOpen, onRename }: {
           {info?.ticket && <span>{STAGE_LABEL[info.ticket.stage]}</span>}
           {info?.worktreeId && (tab.worktreeId || info.session) && <Size worktreeId={info.worktreeId} />}
         </span>
-        {info?.session && <SessionSnippet info={info} inbox={inbox} />}
+        {info?.session && <SessionSnippet info={info} inbox={inbox} events={events} />}
       </ChoiceCard>
     </ContextMenu>
   );
@@ -114,16 +112,27 @@ export function TabOverview({ ws, onClose, onRename }: {
   useBackCloses(true, onClose);
   const inbox = useInbox().data?.items ?? [];
   const w = ws.workspace;
+  const infos = (w?.tabs ?? []).map((t) => ws.info(itemOf(t)));
+  // Every conversation's last events in one poll, not one per card.
+  const ids = [...new Set(infos.flatMap((i) => (i?.session?.mode === 'conversation' ? [i.session.id] : [])))];
+  const events = useQuery({
+    queryKey: sessionKeys.lastEvents(ids),
+    queryFn: () => api.lastEventsOf(ids, LAST_EVENTS),
+    enabled: ids.length > 0,
+    refetchInterval: POLL.steady,
+    placeholderData: keepPreviousData,
+  });
   return (
     <section aria-label="Tab overview" className="flex-1 overflow-auto p-2">
       {w && w.tabs.length > 0 ? (
         <div className="grid grid-cols-2 gap-2">
-          {w.tabs.map((t) => (
+          {w.tabs.map((t, n) => (
             <Card
               key={t.id}
               ws={ws}
               tab={t}
-              info={ws.info(itemOf(t))}
+              info={infos[n]}
+              events={events.data}
               current={t.id === ws.tab?.id}
               inbox={inbox}
               onOpen={() => { ws.selectTab(t); onClose(); }}
