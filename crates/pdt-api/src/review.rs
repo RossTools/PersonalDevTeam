@@ -1003,7 +1003,7 @@ async fn ci_gate(
         CiGate::Passed | CiGate::NoCi if let Some(label) = waiting_for => CiGate::Pending(format!(
             "{label} hasn't reported on {} at {} yet",
             pr.name(),
-            pr.head_sha.get(..7).unwrap_or(&pr.head_sha)
+            pdt_core::ci_retry::short_sha(&pr.head_sha)
         )),
         gate => gate,
     })

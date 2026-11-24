@@ -192,5 +192,5 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, Str
 }
 
 fn new_fence() -> Fence {
-    Fence::new(uuid::Uuid::new_v4().simple().to_string())
+    Fence::random()
 }

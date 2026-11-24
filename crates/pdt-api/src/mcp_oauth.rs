@@ -466,6 +466,15 @@ fn page(ok: bool, text: &str) -> Response {
     (status, Html(body)).into_response()
 }
 
+/// A service's reason, at most a line long.
+fn capped(why: &str) -> String {
+    const MAX: usize = 200;
+    match why.char_indices().nth(MAX) {
+        Some((i, _)) => format!("{}…", &why[..i]),
+        None => why.to_string(),
+    }
+}
+
 /// Who signed in, when the token response or its id token says.
 fn account_of(raw: &Value) -> Option<String> {
     use base64::Engine;
@@ -484,23 +493,18 @@ fn account_of(raw: &Value) -> Option<String> {
 
 /// `GET /api/mcp-oauth/callback`: the browser back from the service; PDT trades the code for tokens.
 pub(crate) async fn callback(State(st): State<AppState>, ApiQuery(q): ApiQuery<CallbackQuery>) -> Response {
+    // The state first: only the service PDT sent the browser to, for a sign-in under way, has its words shown on
+    // PDT's page; any other link's `error_description` would read as PDT's own (PDT-650).
+    let pending = q.state.and_then(|s| st.mcp.oauth.pending.lock().unwrap_or_else(|e| e.into_inner()).remove(&s));
+    let Some(p) = pending.filter(|p| now_ms() - p.at < PENDING_MS) else {
+        return page(false, "This sign-in is unknown or too old. Sign in again from Settings → MCP servers.");
+    };
     if let Some(e) = q.error {
-        let why = q.error_description.unwrap_or(e);
+        let why = capped(&q.error_description.unwrap_or(e));
         return page(false, &format!("The service didn't sign PDT in: {why}. Try again from Settings → MCP servers."));
     }
-    let (Some(code), Some(state)) = (q.code, q.state) else {
-        return page(false, "This page needs the service's code and state. Sign in from Settings → MCP servers.");
-    };
-    let Some(p) = st
-        .mcp
-        .oauth
-        .pending
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&state)
-        .filter(|p| now_ms() - p.at < PENDING_MS)
-    else {
-        return page(false, "This sign-in is unknown or too old. Sign in again from Settings → MCP servers.");
+    let Some(code) = q.code else {
+        return page(false, "The service sent no code back. Sign in again from Settings → MCP servers.");
     };
     let Ok(Some(conn)) = st.store.get_connection(&p.connection_id).await else {
         return page(false, "The MCP server is gone.");

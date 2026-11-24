@@ -215,7 +215,7 @@ pub(crate) fn feedback_events(
     let mut out = vec![];
     // A bot's text is outside text (PDT-415), whatever its role on the repository: it can relay what an outsider wrote,
     // so its notice fences it.
-    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+    let fence = pdt_core::fence::Fence::random();
     let relayed = |bot: bool| bot.then_some(&fence);
     for c in comments {
         let floor = if c.in_review { seen.review_comment } else { seen.comment };
@@ -435,6 +435,12 @@ pub async fn refresh_prs(st: &AppState) {
     let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
     watch(st).forget_unseen_jobs();
     watch(st).errors.retain(|k, _| k.strip_prefix("feedback:").is_none_or(|a| active_ids.contains(a)));
+    {
+        // A held merge belongs to an active attempt; an ended one's is over.
+        let mut w = watch(st);
+        w.held.retain(|a| active_ids.contains(a));
+        w.held_tried.retain(|a, _| active_ids.contains(a));
+    }
     let open: Vec<String> = watch(st)
         .by_attempt
         .iter()

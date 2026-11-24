@@ -253,6 +253,12 @@ pub(crate) async fn server_for(st: &AppState, s: &Session) -> Option<pdt_agents:
     Some(m)
 }
 
+/// Forgets what pdt-mcp keeps in memory for a removed session: its launch's ask rules and its tools' fingerprints.
+pub(crate) fn forget(st: &AppState, id: &str) {
+    st.claude_ask_rules.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    listen::forget(st, id);
+}
+
 const INSTRUCTIONS: &str = "PDT's tools for this agent session: read the ticket you work on, finish a workflow step \
 with an outcome, ask the user, and comment. They know which session you are.";
 

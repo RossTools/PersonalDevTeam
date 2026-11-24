@@ -158,10 +158,9 @@ pub fn body(report: &Report, diagnostics: Option<&str>, version: &str, os: Optio
         out.push_str(&format!("### {label}\n\n{text}\n\n"));
     }
     if let Some(d) = diagnostics {
-        let fence = "`".repeat(longest_backtick_run(d).max(2) + 1);
         out.push_str(&format!(
-            "<details><summary>Diagnostics</summary>\n\n{fence}text\n{}\n{fence}\n\n</details>\n\n",
-            d.trim_end()
+            "<details><summary>Diagnostics</summary>\n\n{}\n\n</details>\n\n",
+            crate::text::code_block("text", d.trim_end())
         ));
     }
     out.push_str(&format!("{}{version}._\n", footer_start()));
@@ -189,10 +188,6 @@ pub fn issue_labels(labels: &[String], body: &str) -> Vec<String> {
         out.push(from_pdt.to_string());
     }
     out
-}
-
-fn longest_backtick_run(s: &str) -> usize {
-    s.split(|c| c != '`').map(str::len).max().unwrap_or(0)
 }
 
 /// What [`redact`] takes out besides what looks like a secret anywhere.
