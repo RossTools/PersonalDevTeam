@@ -322,7 +322,8 @@ later cancel, or a re-run that fails, gets `ci.stalled`: a gate in the `stalled`
 at the head every minute and leaves by `moved_on` once it moved on, which closes the item. A gate in the `stalled`
 group shows its ticket as stalled (`scheduler::ticket_agents`, named by the item's `who`). An agent retries chosen jobs of its own
 attempt's head with `ci_jobs` / `ci_retry` (`integrations/ci_jobs.rs`, through `CiProvider::retry_jobs`, which falls
-back to `retry` for providers without `CiCapabilities::retry_jobs`); pdt-core `ci_retry.rs` holds the guards (only the
+back to `retry` for providers without `CiCapabilities::retry_jobs`: then every failed job of the run is capped and
+recorded, not only those named); pdt-core `ci_retry.rs` holds the guards (only the
 head's newest runs, `RETRY_CAP` per job and head, counted from the ticket's `ci_retry` events).
 
 **Conflicts at merge time.** A conflict is fixed once, when the ticket is next to merge. PR notices' first step on a
