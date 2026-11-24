@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Bot, Cog, User } from 'lucide-react';
 import { cn } from './lib/utils';
-import { absoluteTime, relativeTime, shortAge } from './lib/time';
+import { absoluteTime, relativeTime, shortAge, useNow } from './lib/time';
 
 export interface TimelineItem {
   id: string;
@@ -21,22 +21,12 @@ export interface TimelineItem {
 
 const MINUTE = 60_000;
 
-/** The current time, refreshed every minute, so relative times stay right on a page left open. */
-function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), MINUTE);
-    return () => clearInterval(t);
-  }, []);
-  return now;
-}
-
 /**
  * A time shown relatively ("2h ago", or with `short` a list row's "2h") with the absolute time in its tooltip. It
  * ticks every minute, so use it in render rather than `relativeTime()`.
  */
 export function RelativeTime({ time, now, short = false, className }: { time: number; now?: number; short?: boolean; className?: string }) {
-  const live = useNow();
+  const live = useNow(MINUTE);
   return (
     <time dateTime={new Date(time).toISOString()} title={absoluteTime(time)} className={cn('tabular-nums', className)}>
       {(short ? shortAge : relativeTime)(time, now ?? live)}

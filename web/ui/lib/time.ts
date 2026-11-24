@@ -1,6 +1,8 @@
 // Times, dates and durations for people. One home for each format, so the same thing reads the same everywhere.
 // In render, show a relative time with `<RelativeTime>` (it ticks), not `relativeTime()` (its text goes stale).
 
+import { useEffect, useState } from 'react';
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -52,4 +54,15 @@ export function formatDuration(ms: number): string {
   if (m < 60) return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
   const h = Math.floor(m / 60);
   return m % 60 ? `${h} h ${m % 60} min` : `${h} h`;
+}
+
+/** The current time, refreshed every `intervalMs` (a minute for relative times, a second for a running clock). */
+export function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
 }

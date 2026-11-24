@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Download, File, FilePlus, FileQuestion, Folder, FolderOpen } from 'lucide-react';
 import {
   Alert, Banner, Button, Chip, Dialog, EmptyState, IconButton, List, ListRow, MenuButton, Skeleton, toast, TreeView,
-  useConfirm, useMenuAt, ViewHeader, type MenuEntry, type TreeChildren, type TreeNode,
+  download, useConfirm, useMenuAt, ViewHeader, type MenuEntry, type TreeChildren, type TreeNode,
 } from '@ui';
 import { cn } from '@ui/lib/utils';
 import { api, ApiError } from '../api/client';
@@ -12,7 +12,6 @@ import type { FileContent } from '../api/gen/FileContent';
 import type { FileEntry } from '../api/gen/FileEntry';
 import type { Session } from '../api/gen/Session';
 import { copyToClipboard } from '../common/clipboard';
-import { download } from '../common/download';
 import { useRememberedScroll, useViewState } from '../common/viewState';
 import { PreviewEdit, type PreviewEditMode } from '../common/PreviewEdit';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';

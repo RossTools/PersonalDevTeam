@@ -1,5 +1,6 @@
 import { Download, ImageOff, X } from 'lucide-react';
 import { cn } from './lib/utils';
+import { IconButton } from './IconButton';
 import { Spinner } from './Spinner';
 
 export interface ImageThumbProps {
@@ -53,15 +54,17 @@ export function ImageThumb({ src, alt, onRemove, pending = false, error, href, d
         </span>
       )}
       {downloadHref && (
-        <a
+        <IconButton
           href={downloadHref}
           download
-          aria-label={`Download ${alt}`}
-          title={`Download ${alt}`}
-          className="absolute right-0.5 bottom-0.5 flex size-5 items-center justify-center rounded-full bg-card text-foreground opacity-0 shadow-card outline-none group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7 pointer-coarse:opacity-100"
+          label={`Download ${alt}`}
+          compact
+          size="sm"
+          variant="secondary"
+          className="absolute right-0.5 bottom-0.5 rounded-full border-transparent shadow-card opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
         >
           <Download aria-hidden className="size-3" />
-        </a>
+        </IconButton>
       )}
       {onRemove && (
         <button

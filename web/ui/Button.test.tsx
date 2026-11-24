@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
+import { X } from 'lucide-react';
 import { Button } from './Button';
+import { IconButton } from './IconButton';
 
 describe('Button', () => {
   it('maps variants onto token classes', () => {
@@ -144,5 +146,22 @@ describe('Button compact', () => {
     const b = screen.getByRole('button', { name: 'Dismiss' });
     expect(b.className).toContain('h-control-sm');
     expect(b.className).not.toContain('pointer-coarse:h-control-touch');
+  });
+
+  it('xs is 24px with small text, and touch-sized on a touch screen', () => {
+    render(<Button size="xs">Undo</Button>);
+    const b = screen.getByRole('button', { name: 'Undo' });
+    expect(b.className).toContain('h-control-sm');
+    expect(b.className).toContain('text-2xs');
+    expect(b.className).toContain('pointer-coarse:h-control-touch');
+  });
+
+  it('with href is a link that looks like the button, and download saves it', () => {
+    render(<><Button href="/a.txt" download>Download</Button><IconButton href="/b.txt" download="b.txt" label="Save b"><X /></IconButton></>);
+    const a = screen.getByRole('link', { name: 'Download' });
+    expect(a).toHaveAttribute('href', '/a.txt');
+    expect(a).toHaveAttribute('download');
+    expect(a.className).toContain('h-control-md');
+    expect(screen.getByRole('link', { name: 'Save b' })).toHaveAttribute('download', 'b.txt');
   });
 });

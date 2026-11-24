@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Folder, Link2, Maximize2, Monitor, Moon, Play, Plus, Settings, Square, Sun, Trash2, X } from 'lucide-react';
+import { Download, Folder, Link2, Maximize2, Monitor, Moon, Play, Plus, Settings, Square, Sun, Trash2, X } from 'lucide-react';
 import { Button, type ButtonVariant } from '@ui/Button';
 import { IconButton } from '@ui/IconButton';
 import { Input } from '@ui/Input';
@@ -188,6 +188,18 @@ function render() {
           <Trash2 /> Remove worktree
         </Button>
       </Row>
+      <Row label="Button · xs (24px, small text: a list's row actions)">
+        <Button size="xs" variant="ghost">Undo</Button>
+        <Button size="xs" variant="ghost">Mark all read</Button>
+        <Button size="xs">Unsnooze</Button>
+      </Row>
+      <Row label="Button / IconButton with href (a link that looks like a button; download saves it)">
+        <Button href="#gallery">Open the gallery</Button>
+        <Button href="data:text/plain,hello" download="hello.txt" size="sm"><Download /> Download</Button>
+        <IconButton href="data:text/plain,hello" download="hello.txt" label="Download hello.txt" size="sm">
+          <Download />
+        </IconButton>
+      </Row>
       <Row label="Button · lg (48px on every pointer: a phone screen's main actions)">
         <div className="flex w-full max-w-sm gap-2">
           <Button size="lg" className="min-w-0 flex-1">Comment…</Button>
@@ -270,6 +282,7 @@ function render() {
         <Link href="https://github.com/example-org/PersonalDevTeam" external>
           GitHub
         </Link>
+        <Link href="data:text/plain,hello" download="hello.txt">Download</Link>
         <span className="text-sm text-muted-foreground">
           quiet: by <Link tone="quiet" onClick={() => {}}>Coder · PDT-34</Link>
         </span>

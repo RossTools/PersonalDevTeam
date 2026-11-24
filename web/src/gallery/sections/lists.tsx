@@ -12,6 +12,9 @@ import { TreeView, type TreeChildren, type TreeNode } from '@ui/TreeView';
 import { ViewHeader } from '@ui/ViewHeader';
 import { Page, Section, SettingsRow, SettingsScreen } from '@ui/Page';
 import { SectionLabel } from '@ui/SectionLabel';
+import { SectionItem, SectionList } from '@ui/SectionList';
+import { Alert } from '@ui/Alert';
+import { Checkbox } from '@ui/Checkbox';
 
 function Demo({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -191,7 +194,7 @@ function Headers() {
 function SettingsSample() {
   const [remote, setRemote] = useState(true);
   return (
-    <div className="flex h-[36rem] flex-col rounded-md border border-border bg-background">
+    <div className="flex h-[48rem] flex-col rounded-md border border-border bg-background">
       <Page crumb="Settings" title="This host" description="Settings for the machine running pdtd.">
         <Section
           label="Updates"
@@ -214,6 +217,29 @@ function SettingsSample() {
           <SettingsRow stacked label="Host overrides" description="Stacked: label above a full-width control.">
             <Input aria-label="Host overrides" defaultValue="[[run]]" />
           </SettingsRow>
+        </Section>
+        <Section label="Remote instances" description="SectionList: a list whose items are the card's rows.">
+          <SectionList>
+            <SectionItem
+              title="win-box"
+              badges={<><Badge tone="running">online</Badge><span className="text-meta text-muted-foreground">v0.4.2</span></>}
+              actions={<><Button size="sm" variant="ghost">Open</Button><Button size="sm">Remove…</Button></>}
+              meta={<><span>Windows · 16 CPUs</span><span>120 GB free</span><span>last seen 2m ago</span></>}
+            />
+            <SectionItem
+              title="old-laptop"
+              badges={<Badge tone="failed">offline</Badge>}
+              actions={<Button size="sm">Remove…</Button>}
+              notice={<Alert tone="error">Its key was revoked; pair it again.</Alert>}
+              meta={<span>not heard from yet</span>}
+            />
+            <SectionItem
+              leading={<Checkbox checked onChange={() => {}} aria-label="Compare version 3" />}
+              title="v3"
+              badges={<Badge tone="accent">Current</Badge>}
+              meta={<><span>PM</span><span>2h ago</span></>}
+            />
+          </SectionList>
         </Section>
         <Section label="Danger zone" danger>
           <SettingsRow label="Remove this project" description="Stops its sessions and runs. Files stay on disk.">

@@ -99,7 +99,17 @@
 - **Times.** `lib/time.ts` (exported from `@ui`) is the one home for time formats: `relativeTime`, `shortAge`,
   `shortDate`, `absoluteTime` (tooltips), `clockTime` and `formatDuration`. In render, show a relative time with
   `<RelativeTime>` (it ticks every minute; `short` for a list row's "2h"), never `relativeTime()`, whose text goes stale.
+  A clock that ticks by itself (a countdown, a running timer) reads `useNow(intervalMs)`, never its own `setInterval`.
   Counts, capitals and byte sizes are in `web/src/common/text.ts` (`plural`, `capitalize`, `formatBytes`).
+- **Two-press confirm.** An action that acts outside PDT or can't be taken back arms on its first press and acts on a
+  second: `useTwoPress` (`lib/twoPress.ts`, from `@ui`) keeps which one is armed, ignores a second press inside a
+  double-click, disarms after a few seconds and reports `lapsed` (say "Not confirmed" in a live region). Tests set
+  `twoPressTiming.confirmAfterMs` to 0 (test-setup.ts).
+- **Downloads.** A link that saves a file is `<Link download>`, or a `Button`/`IconButton` with `href` and `download`,
+  never a raw `<a download>`. An action that makes the file first (a Blob, an export from a menu) calls
+  `download(urlOrBlob, name?)`.
+- **Small buttons.** A list's row actions (Undo, Unsnooze, Mark all read) are `Button size="xs"`: 24px with small text,
+  44px on touch. Nothing is shorter than `h-control-sm`.
 - **Dates.** `Calendar` (a month to pick a day from: Monday first, ‹ › to page, arrows move, Enter picks) takes and
   gives plain `YYYY-MM-DD` strings; `min` makes earlier days unpickable (except the chosen one), today is amber with a
   dot, the chosen day `bg-primary`. Its primitive (`primitives/calendar.tsx`) is written by hand on React Aria's
@@ -126,6 +136,9 @@ so a page reads the same everywhere and nothing destructive sits next to somethi
   (Open Plugins), never a bare card or a search over nothing.
 - **Section cards → rows.** A `Section` is a heading (and description) over a bordered card; each child of the card
   is a row, divided from the next. Group by what the user is configuring, not by API field.
+- **Lists of things in a card.** A list whose items are the card's rows (worktrees, remote instances, versions) is a
+  `SectionList` of `SectionItem`s: `title` (a string, or a chip that names it), `leading` (a checkbox that picks it),
+  `badges`, `actions` on the right, a `notice` (an `Alert`), a muted `meta` line, and anything more as children.
 - **One setting per row.** `SettingsRow`: label (and a one-line description) on the left, the control on the right.
   `stacked` for wide controls (text areas, file views, folder fields). State goes in a `Badge`/`StatusDot` in the
   row (Active, Stored, Expired, Found, `env`), not in prose.

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pencil, Plus, X } from 'lucide-react';
-import { Button, Dialog, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
+import { Button, Dialog, download, EmptyState, IconButton, Link, MenuButton, RelativeTime, SectionLabel, Select, Skeleton, useConfirm, type MenuEntry } from '@ui';
 import { api } from '../api/client';
 import type { Document } from '../api/gen/Document';
 import { ProjectKey } from '../common/BranchChip';
@@ -22,7 +22,6 @@ import { DocumentComments, headingsOf } from './DocumentComments';
 import { KIND_LABEL, documentKeys, invalidateDocuments, providerLabel, useDocument, useDocumentContent, useDocumentProviders } from './queries';
 import { useProjects } from '../projects/queries';
 import { LoadError } from '../common/QueryStatus';
-import { download } from '../common/download';
 
 /** The ids of the tickets a document is linked to (their conversations are where it can open beside). */
 const linkedTickets = (d: Document | null | undefined) => d?.tickets.map((t) => t.id) ?? [];

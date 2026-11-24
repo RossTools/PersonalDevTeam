@@ -8,6 +8,7 @@ import { Kbd } from './Kbd';
 import { PreviewBox } from './PreviewBox';
 import { NO_ANSWER, QuestionCard, type QuestionAnswer } from './QuestionCard';
 import { SectionLabel } from './SectionLabel';
+import { useTwoPress } from './lib/twoPress';
 
 /** The answer the card gives (the same shape as the API's `Answer`). */
 export type ApprovalAnswer =
@@ -77,9 +78,6 @@ export function requestAnswers(questions: ApprovalQuestion[], at: (n: number) =>
   );
 }
 
-/** How soon a confirming press counts after the first (ms): never the second click of a double-click. Tests set 0. */
-export const approvalTiming = { confirmAfterMs: 500 };
-
 /** Keys typed into a field, or with an overlay or menu open, are not ours. */
 function isForeign(e: KeyboardEvent): boolean {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return true;
@@ -117,10 +115,11 @@ export function ApprovalCard({
   const [pending, setPending] = useState<string | null>(null);
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState('');
-  // Always allow asks for a second press (PDT-623): when it was first pressed.
-  const [alwaysArmed, setAlwaysArmed] = useState<number | null>(null);
+  // Always allow asks for a second press (PDT-623).
+  const twoPress = useTwoPress<'always'>();
+  const alwaysArmed = twoPress.armed === 'always';
   // What a screen reader hears of it (PDT-667): armed, and lapsed when the second press didn't come.
-  const [alwaysSaid, setAlwaysSaid] = useState('');
+  const alwaysSaid = alwaysArmed ? 'Press again to always allow in this session.' : twoPress.lapsed ? 'Not confirmed: always allow is off again.' : '';
   // An answer in flight, set before React re-renders: the second click of a double-click finds it.
   const inFlight = useRef(false);
   // Each question's answer, by its text: the choices picked and the user's own words.
@@ -142,21 +141,7 @@ export function ApprovalCard({
       setPending(null);
     }
   };
-  const always = () => {
-    if (alwaysArmed === null) {
-      setAlwaysSaid('Press again to always allow in this session.');
-      return setAlwaysArmed(Date.now());
-    }
-    if (Date.now() - alwaysArmed < approvalTiming.confirmAfterMs) return;
-    setAlwaysArmed(null);
-    setAlwaysSaid('');
-    void answer('always', { type: 'approve', always: true });
-  };
-  useEffect(() => {
-    if (alwaysArmed === null) return;
-    const t = setTimeout(() => { setAlwaysArmed(null); setAlwaysSaid('Not confirmed: always allow is off again.'); }, 4000);
-    return () => clearTimeout(t);
-  }, [alwaysArmed]);
+  const always = () => twoPress.press('always', () => void answer('always', { type: 'approve', always: true }));
   const approve = () => {
     if (kind === 'approval' && approveDisabled) return;
     void answer('approve', kind === 'plan' ? { type: 'plan', approve: true } : { type: 'approve', always: false });
@@ -316,8 +301,8 @@ export function ApprovalCard({
                 {kind === 'plan' ? (planAcceptEdits ? 'Approve, ask before edits' : 'Approve plan') : approveLabel}{hint('y')}
               </Button>
               {canAlways && kind === 'approval' && (
-                <Button variant={alwaysArmed === null ? 'secondary' : 'danger'} pending={pending === 'always'} disabled={busy} onClick={always} className="max-md:order-3 max-md:col-span-2">
-                  {alwaysArmed === null ? 'Always allow in this session' : 'Confirm always allow in this session'}
+                <Button variant={alwaysArmed ? 'danger' : 'secondary'} pending={pending === 'always'} disabled={busy} onClick={always} className="max-md:order-3 max-md:col-span-2">
+                  {alwaysArmed ? 'Confirm always allow in this session' : 'Always allow in this session'}
                 </Button>
               )}
               <Button variant={kind === 'plan' ? 'secondary' : 'danger'} disabled={busy} onClick={() => setDenying(true)} className={cn('max-md:order-1 md:ml-auto', kind === 'plan' && 'max-md:col-span-2')}>

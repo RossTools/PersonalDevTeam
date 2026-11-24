@@ -74,15 +74,15 @@ afterEach(async () => {
 // Answers go out at once in tests, with no cool-down between them or wait for a confirming press (PDT-623); the tests
 // of the guard, Undo and confirm steps set the real timings. Nothing is held from one test to the next.
 if (typeof window !== 'undefined') {
-  const [{ answerTiming, resetAnswerGuard }, { holdTiming, resetHeldAnswers }, { approvalTiming }] = await Promise.all([
+  const [{ answerTiming, resetAnswerGuard }, { holdTiming, resetHeldAnswers }, { twoPressTiming }] = await Promise.all([
     import('./common/answerGuard'),
     import('./inbox/held'),
-    import('@ui/ApprovalCard'),
+    import('@ui/lib/twoPress'),
   ]);
   beforeEach(() => {
     answerTiming.cooldownMs = 0;
     holdTiming.undoMs = 0;
-    approvalTiming.confirmAfterMs = 0;
+    twoPressTiming.confirmAfterMs = 0;
   });
   afterEach(() => {
     resetAnswerGuard();

@@ -56,6 +56,3 @@ export function useRowContext(): (i: InboxItem) => RowContext {
 export function RowTitle({ children }: { children: string }) {
   return <span className="line-clamp-2 whitespace-normal break-words">{children}</span>;
 }
-
-/** The small buttons in a list (Unsnooze, Undo, Mark all read): touch-sized on a touch screen. */
-export const ROW_ACTION = 'h-5 px-1.5 text-2xs pointer-coarse:h-auto pointer-coarse:min-h-control-touch';

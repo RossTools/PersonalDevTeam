@@ -7,7 +7,7 @@ import { TicketKey } from '../common/TicketKey';
 import { grouped, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
 import { RecentlyAnswered } from './RecentlyAnswered';
-import { context, ROW_ACTION, RowTitle, useRowContext } from './rows';
+import { context, RowTitle, useRowContext } from './rows';
 import { Snoozed } from './snooze';
 
 /** Rows a Needs-you section shows before its Show all. */
@@ -177,9 +177,9 @@ export function InboxList({ items, updates = [], selectedId, onSelect, onReadAll
       <section aria-label="Updates">
         <div className="flex items-center gap-1 pt-1 pr-2">
           <ListHeading className="flex-1">Updates</ListHeading>
-          {onReadAll && unread && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onReadAll}>Mark all read</Button>}
-          {onClearAll && updates.length > 0 && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onClearAll}>Clear all</Button>}
-          {onSettings && <Button size="sm" variant="ghost" className={ROW_ACTION} onClick={onSettings}>Settings</Button>}
+          {onReadAll && unread && <Button size="xs" variant="ghost" onClick={onReadAll}>Mark all read</Button>}
+          {onClearAll && updates.length > 0 && <Button size="xs" variant="ghost" onClick={onClearAll}>Clear all</Button>}
+          {onSettings && <Button size="xs" variant="ghost" onClick={onSettings}>Settings</Button>}
         </div>
         <UpdatesList updates={updates} selectedId={selectedId} onSelect={onSelect} onClear={onClear} loading={loading} failed={updatesFailed} />
       </section>

@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Copy, Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
+import { Alert, Badge, Button, EmptyState, IconButton, Input, Section, SectionItem, SectionList, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
 import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
@@ -67,16 +67,12 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
     await qc.invalidateQueries({ queryKey: projectKeys.remoteInstances(project.id) });
   });
   return (
-    <li className="flex flex-col gap-1 px-4 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium">{i.name}</span>
-        <Badge tone={state.tone}>{state.label}</Badge>
-        <span className="text-meta text-muted-foreground">v{i.version}</span>
-        <span className="flex-1" />
-        <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Remove…</Button>
-      </div>
-      {i.problem && <Alert tone="error">{i.problem}</Alert>}
-      <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
+    <SectionItem
+      title={i.name}
+      badges={<><Badge tone={state.tone}>{state.label}</Badge><span className="text-meta text-muted-foreground">v{i.version}</span></>}
+      actions={<Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Remove…</Button>}
+      notice={i.problem && <Alert tone="error">{i.problem}</Alert>}
+      meta={<>
         {f && <span>{OS[f.os] ?? f.os} · {f.cpus} CPUs</span>}
         {f?.diskFreeBytes != null && <span>{formatBytes(f.diskFreeBytes)} free</span>}
         {f && (
@@ -89,7 +85,8 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
         {!!f?.tools.length && <span>{f.tools.map((t) => t.name).join(', ')}</span>}
         <span>{i.lastSeenAt ? `last seen ${ago(i.lastSeenAt)}` : 'not heard from yet'}</span>
         {i.lastError && i.state === 'offline' && <span>{i.lastError}</span>}
-      </span>
+      </>}
+    >
       <span className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
         At most
         <AutoSaveText
@@ -105,7 +102,7 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
         />
         tickets in flight on it at once{i.remoteCap != null && ` (${i.name}'s own cap: ${i.remoteCap})`}. Now {i.poolCap}.
       </span>
-    </li>
+    </SectionItem>
   );
 }
 
@@ -219,9 +216,9 @@ export function RemoteInstances({ project }: { project: Project }) {
       <LoadError what="Remote instances" error={q.error} />
       {v && v.instances.length === 0 && !pairing && <EmptyState>No remote instances yet.</EmptyState>}
       {v && v.instances.length > 0 && (
-        <ul data-flush className="flex flex-col divide-y divide-border">
+        <SectionList>
           {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} />)}
-        </ul>
+        </SectionList>
       )}
       {v && v.instances.length > 0 && <PlacementRules project={project} instances={v.instances} />}
       {pairing && address && (

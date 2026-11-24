@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
-import { Badge, Button, EmptyState, Link, Section, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
+import { Badge, Button, EmptyState, Link, Section, SectionItem, SectionList, Select, SettingsRow, Skeleton, useConfirm } from '@ui';
 import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { api } from '../api/client';
 import type { Project } from '../api/gen/Project';
@@ -103,18 +103,21 @@ function WorktreeRow({ project, wt, storage }: { project: Project; wt: Worktree;
   });
   const [remove, removing] = useRemoveWorktree(wt, size);
   return (
-    <li className="flex flex-col gap-1 px-4 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
+    <SectionItem
+      title={
         <BranchChip
           branch={wt.branch}
           forge={wt.missing ? null : project.forge ?? null}
           base={project.baseBranch}
           {...(wt.missing ? {} : { onReview: () => openChanges({ id: wt.id, projectId: project.id }) })}
         />
+      }
+      badges={<>
         {storage?.ticket && <TicketKey ticketKey={storage.ticket.key} title={storage.ticket.title} />}
         {storage?.ticket && <StageBadge stage={storage.ticket.stage} />}
         {wt.missing && <Badge tone="waiting">folder missing</Badge>}
-        <span className="flex-1" />
+      </>}
+      actions={<>
         {!wt.missing && <Button size="sm" variant="ghost" onClick={() => openChanges({ id: wt.id, projectId: project.id })}>Review changes</Button>}
         {!wt.missing && <CleanButton id={wt.id} label="Clean" />}
         {wt.missing ? (
@@ -122,12 +125,12 @@ function WorktreeRow({ project, wt, storage }: { project: Project; wt: Worktree;
         ) : (
           <Button size="sm" pending={removing} onClick={() => void remove()}><Trash2 aria-hidden /> Remove…</Button>
         )}
-      </div>
-      <span className="flex flex-wrap gap-x-3 text-meta text-muted-foreground">
+      </>}
+      meta={<>
         <span className="min-w-0 truncate font-mono" title={wt.path}>{wt.path}</span>
         {!wt.missing && <span>{sizeText(size)}</span>}
-      </span>
-    </li>
+      </>}
+    />
   );
 }
 
@@ -187,9 +190,9 @@ function Worktrees({ project }: { project: Project }) {
       <LoadError what="Worktrees" error={list.error} />
       {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
-        <ul data-flush className="flex flex-col divide-y divide-border">
+        <SectionList>
           {list.data.map((w) => <WorktreeRow key={w.id} project={project} wt={w} storage={byId.get(w.id) ?? null} />)}
-        </ul>
+        </SectionList>
       )}
       {mine && <Cleanup project={project} settings={mine.settings} />}
     </Section>

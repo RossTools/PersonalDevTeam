@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { Alert, Button, Dialog } from '@ui';
+import { Alert, Button, Dialog, Link } from '@ui';
 import { downloadUrl } from './download';
 import { ticketKeys } from '../tickets/queries';
 
@@ -32,8 +32,8 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
           size="full"
           headerActions={
             <span className="ml-auto flex gap-3 text-xs">
-              <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
-              <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open in a new tab</a>
+              <Link href={downloadUrl(src)} download>Download</Link>
+              <Link href={src} external>Open in a new tab</Link>
             </span>
           }
         >
@@ -86,8 +86,8 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
           footer={
             <>
               <span className="mr-auto flex gap-3 self-center text-xs">
-                <a href={downloadUrl(src)} download className="text-link hover:underline">Download</a>
-                <a href={src} target="_blank" rel="noreferrer" className="text-link hover:underline">Open raw</a>
+                <Link href={downloadUrl(src)} download>Download</Link>
+                <Link href={src} external>Open raw</Link>
               </span>
               <Button onClick={() => setOpen(false)}>Close</Button>
             </>

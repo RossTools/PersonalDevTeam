@@ -6,6 +6,8 @@ import { cn } from '@ui/lib/utils';
 export interface LinkProps extends AriaAttributes {
   children: ReactNode;
   href?: string;
+  /** Saves `href` rather than opening it (a string names the file). */
+  download?: boolean | string;
   /** Opens in a new tab (target=_blank, rel=noreferrer) and shows the external-link icon. */
   external?: boolean;
   /** Called on press; with no `href` the link is an in-app action. */
@@ -18,11 +20,12 @@ export interface LinkProps extends AriaAttributes {
 }
 
 /** Text link: internal (href or onClick) or `external`. Anything that navigates (opens a page, a ticket, a session) is one. */
-export function Link({ children, href, external = false, onClick, tone = 'link', className, ...rest }: LinkProps) {
+export function Link({ children, href, download, external = false, onClick, tone = 'link', className, ...rest }: LinkProps) {
   return (
     <LinkPrimitive
       {...rest}
       href={href}
+      download={download}
       onPress={onClick}
       {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
       className={cn(
