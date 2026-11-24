@@ -377,7 +377,7 @@ async fn a_start_without_a_session_makes_the_worktree_attempt_and_workspace() {
 }
 
 #[tokio::test]
-async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
+async fn a_missing_agent_is_refused_before_the_branch_and_worktree() {
     let tmp = tempfile::tempdir().unwrap();
     let mut env = setup(tmp.path()).await;
     let good = env.state.platform.claude_program.clone();
@@ -385,30 +385,32 @@ async fn a_failed_session_rolls_the_start_back_and_keeps_the_worktree() {
     env.app = router(env.state.clone(), None);
     let id = ticket(&env, json!({"title": "Retry me", "stage": "ready"})).await;
     let (st, v) = start(&env, &id, json!({"agent": "claude"})).await;
-    assert_eq!((st, s(&v["code"])), (StatusCode::BAD_REQUEST, "program_not_found"), "{v}");
+    assert_eq!((st, s(&v["code"])), (StatusCode::CONFLICT, "agent_not_found"), "{v}");
+    assert!(s(&v["message"]).starts_with("Claude isn't installed"), "{v}");
     let t = get_ticket(&env, &id).await;
     assert_eq!(t["stage"], "ready");
     assert_eq!(t["attempts"], json!([]));
     assert_eq!(event_kinds(&env, &id).await, ["created"]);
-    let wt = env.repo.join(".worktrees").join("pdt-PDT-1-retry-me");
-    assert!(wt.is_dir(), "the worktree is kept");
-    // No workflow ever saw it: an `attempt.started` for an attempt that is gone fails the Pipeline's Coder step.
+    assert!(!env.repo.join(".worktrees").join("pdt-PDT-1-retry-me").exists(), "no worktree");
+    let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
+    assert_eq!(wts, json!([]));
+    let branches =
+        std::process::Command::new("git").args(["branch", "--list", "pdt-*"]).current_dir(&env.repo).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&branches.stdout).trim(), "", "no branch");
+    // No workflow ever saw it.
     assert!(!logged(&env, &id).await.contains(&"attempt.started".to_string()), "{:?}", logged(&env, &id).await);
     pdt_api::run_workflows(&env.state).await;
     let (_, runs) = call(&env.app, "GET", &format!("/api/workflow-runs?ticket={id}"), None).await;
     assert_eq!(runs, json!([]));
+    // Without a session the agent isn't needed.
+    let (st, v) = start(&env, &id, json!({"agent": "claude", "noSession": true})).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
 
     env.state.platform.claude_program = good;
     env.app = router(env.state.clone(), None);
+    let id = ticket(&env, json!({"title": "Now", "stage": "ready"})).await;
     let r = started(&env, &id, json!({"agent": "claude"})).await;
     assert_eq!(r["attempt"]["state"], "active");
-    let (_, wts) = call(&env.app, "GET", &format!("/api/projects/{}/worktrees", env.pid), None).await;
-    assert_eq!(wts.as_array().unwrap().len(), 1, "the kept worktree is reused: {wts}");
-    assert_eq!(
-        logged(&env, &id).await,
-        ["ticket.created", "ticket.stage_changed", "attempt.started"],
-        "logged once it started"
-    );
     env.state.ptys.shutdown().await;
 }
 

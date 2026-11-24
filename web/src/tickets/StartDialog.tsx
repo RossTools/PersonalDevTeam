@@ -16,6 +16,7 @@ import { PermissionModeSelect } from '../conversation/ConversationComposer';
 import { useAgentAvailability } from '../common/useAgentAvailability';
 import { isAcp, useAgents } from '../common/agents';
 import { LoginHint } from '../common/LoginHint';
+import { NoAgentNotice } from '../common/NoAgentNotice';
 import { hostKeys } from '../host/queries';
 import { useAgentDefaults } from '../common/useAgentDefaults';
 import { INITIAL_SIZE } from '../sessions/status';
@@ -61,8 +62,9 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const chosenAgent = pickedAgent ?? defaults.agent;
   const availability = useAgentAvailability();
   const agents = useAgents();
-  // A host with none of them still lists them all (starting one then says what is missing).
-  const offeredAgents = agents.all.some(availability.offered) ? agents.all.filter(availability.offered) : agents.all;
+  // A host with none of them still lists them all, under a notice that none is installed (PDT-718).
+  const noAgent = !agents.all.some(availability.offered);
+  const offeredAgents = noAgent ? agents.all : agents.all.filter(availability.offered);
   // The chosen agent unless this host lacks it (then the first it has); every agent until the checks load.
   const agent: AgentKind = offeredAgents.includes(chosenAgent) ? chosenAgent : offeredAgents[0] ?? chosenAgent;
   // Said under the agent when it isn't the chosen one (PDT-561): the user sees which agent will run before Start.
@@ -87,6 +89,8 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const [newWorkspace, setNewWorkspace] = useState(true);
   // The server answered start_blocked: its message, and Start becomes Start anyway.
   const [serverBlocked, setServerBlocked] = useState<string | null>(null);
+  // The server refused the agent (missing or switched off, PDT-718): its message, said with Open Get started.
+  const [agentRefused, setAgentRefused] = useState<string | null>(null);
   // Wait, Stop waiting and Start share one pending state and one error line.
   const act = useFormAction((work: () => Promise<unknown>) => work());
   const { pending, error } = act;
@@ -102,6 +106,8 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
   const active = t?.attempt?.state === 'active';
   const closed = t ? isClosed(t.stage) : false;
   const startable = !!t && !active && !closed;
+  // With no agent here only No session can start: Start would be refused before it made anything.
+  const agentMissing = !noSession && noAgent;
   // The agent is installed but logged out (PDT-556): its session would stop at once, so say so and how to log in.
   const loggedOut = !noSession && availability.of(agent) === 'logged_out';
   const [checkAgain, checking] = useAction(async () => {
@@ -140,11 +146,16 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
       mode,
       ...INITIAL_SIZE,
     };
+    setAgentRefused(null);
     const ok = await act.run(async () => {
       try {
         onStarted(await api.startTicket(t.id, body));
         onClose();
       } catch (e) {
+        if (e instanceof ApiError && (e.code === 'agent_not_found' || e.code === 'agent_off')) {
+          setAgentRefused(e.message);
+          return true;
+        }
         if (!(e instanceof ApiError && e.code === 'start_blocked')) throw e;
         setServerBlocked(e.message);
       }
@@ -164,7 +175,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           {force ? (
             <>
-              <Button variant={conflict ? 'danger' : 'secondary'} pending={pending && !offerWait} disabled={!startable} onClick={() => void submit()}>
+              <Button variant={conflict ? 'danger' : 'secondary'} pending={pending && !offerWait} disabled={!startable || agentMissing} onClick={() => void submit()}>
                 Start anyway
               </Button>
               {offerWait && (
@@ -172,7 +183,7 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               )}
             </>
           ) : (
-            <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable}>{loggedOut ? 'Start anyway' : 'Start'}</Button>
+            <Button type="submit" form="start-ticket" variant="primary" pending={pending} disabled={!startable || agentMissing}>{loggedOut ? 'Start anyway' : 'Start'}</Button>
           )}
         </>
       }
@@ -248,11 +259,12 @@ export function StartDialog({ ticketId, placement, onClose, onStarted }: StartDi
               <Select<AgentKind>
                 options={offeredAgents.map((a) => ({ value: a, label: availability.hint(a) ? `${agents.label(a)} · ${availability.hint(a)}` : agents.label(a) }))}
                 value={agent}
-                onChange={setAgent}
+                onChange={(a) => { setAgent(a); setAgentRefused(null); }}
                 className="w-64"
               />
             </Field>
           )}
+          {agentMissing ? <NoAgentNotice /> : agentRefused && !noSession && <NoAgentNotice message={agentRefused} />}
           {loggedOut && !isAcp(agent) && (
             <Alert
               tone="warning"

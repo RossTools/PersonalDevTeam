@@ -384,6 +384,8 @@ async fn new_session(
 ) -> Result<Session, ApiError> {
     let project = host_project(st).await?;
     let p = persona(st).await?;
+    // Said by name before anything is made, not as the program's path once the agent fails to start (PDT-718).
+    crate::agent_installed::ensure(st, p.setup.agent).await?;
     let mode = p.setup.permission_mode.unwrap_or(PermissionMode::Ask);
     let req = crate::sessions::CreateSession {
         valid: ValidSession {
