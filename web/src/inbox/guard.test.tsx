@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ApprovalCard, approvalTiming, toast } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -40,6 +40,13 @@ function Inbox({ items }: { items: InboxItem[] }) {
   const held = useHeldIds();
   return <InboxView items={items.filter((i) => !held.has(i.id))} selectedId={selected} onSelect={setSelected} />;
 }
+
+// Sonner removes a dismissed toast 200 ms later, on a timer that outlives the test: let the last ones run while the page
+// is still here, or React reads `window` after the file's environment is gone.
+afterAll(async () => {
+  toast.dismiss();
+  await new Promise((r) => setTimeout(r, 300));
+});
 
 const answers = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'));
 
