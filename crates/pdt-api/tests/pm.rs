@@ -14,6 +14,17 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 #[tokio::test]
+async fn a_pm_whose_agent_is_missing_says_so_by_name_and_starts_nothing() {
+    let env = setup_with(|st| st.platform.claude_program = "pdt-no-such-claude-xyz".into()).await;
+    let (s, v) = call(&env.app, "POST", "/api/pm/sessions", Some(json!({"text": "who"}))).await;
+    assert_eq!((s, v["code"].as_str().unwrap()), (StatusCode::CONFLICT, "agent_not_found"), "{v}");
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.starts_with("Claude isn't installed") && !msg.contains("pdt-no-such-claude-xyz"), "{msg}");
+    let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
+    assert_eq!(pm, json!({"current": null, "sessions": []}));
+}
+
+#[tokio::test]
 async fn the_pm_answers_from_pdt_and_creates_tickets_after_a_yes() {
     let env = setup().await;
     let (_, pm) = call(&env.app, "GET", "/api/pm", None).await;
