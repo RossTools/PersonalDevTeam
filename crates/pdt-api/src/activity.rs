@@ -266,8 +266,10 @@ pub(crate) async fn track_remote(st: &AppState, s: &Session) {
     }
 }
 
-/// A remote agent terminal ended: no more activity.
-pub(crate) async fn untrack_remote(st: &AppState, id: &str) {
+/// An agent terminal ended (a remote one, or the TUI handed back to its conversation): no more activity from it. A
+/// local tracker's own end, whenever its exit arrives, then leaves the row alone: the conversation's activity may
+/// already be written there (PDT-734).
+pub(crate) async fn untrack(st: &AppState, id: &str) {
     let order = order_lock(st, id);
     let _in_order = order.lock().await;
     if st.activity.lock().unwrap_or_else(|e| e.into_inner()).remove(id).is_some() {
