@@ -147,6 +147,86 @@ async fn a_wrong_code_is_refused() {
 }
 
 #[tokio::test]
+async fn a_refused_pairing_leaves_the_code_usable() {
+    let owner = instance("studio").await;
+    let remote = instance("win-box").await;
+    let p = project(&owner, "valley", "Valley", ORIGIN).await;
+    let c = code(&owner, &p).await;
+    let (s, v) = join(&owner, &owner, &c).await;
+    assert_ne!(s, StatusCode::CREATED, "{v}");
+    assert!(v["message"].as_str().unwrap().contains("studio is this instance"), "{v}");
+    let (s, v) = join(&remote, &owner, &c).await;
+    assert_eq!(s, StatusCode::CREATED, "the same code still pairs another instance: {v}");
+}
+
+/// `i` served on another loopback port as well, which its remote access then says is its address: the address it
+/// moved to.
+async fn moved(i: &Instance) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let served = i.app.clone();
+    tokio::spawn(async move { axum::serve(listener, served).await });
+    *i.state.remote.lock().unwrap() =
+        pdt_api::RemoteStatus { enabled: true, active: true, url: Some(url.clone()), ..Default::default() };
+    url
+}
+
+async fn eventually(what: &str, mut f: impl AsyncFnMut() -> bool) {
+    for _ in 0..200 {
+        if f().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test]
+async fn the_owners_new_name_and_address_reach_the_remote_instance() {
+    let (owner, remote, _p, _rp) = paired().await;
+    let (s, v) = call(&owner.app, "PUT", "/api/host/settings", Some(json!({"instanceName": "mac-studio"}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let url = moved(&owner).await;
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    assert_eq!(remote_projects(&remote).await[0]["link"]["ownerName"], "mac-studio");
+    let open = format!("{url}/tickets?view=board");
+    eventually("the owner's new address", async || remote_projects(&remote).await[0]["openUrl"] == open).await;
+}
+
+#[tokio::test]
+async fn a_remote_instances_new_address_is_kept_once_it_answers_there() {
+    let (owner, remote, p, _rp) = paired().await;
+    let url = moved(&remote).await;
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let i = &instances(&owner, &p).await["instances"][0];
+    assert_eq!((&i["url"], &i["state"]), (&json!(url), &json!("connected")), "{i}");
+}
+
+#[tokio::test]
+async fn an_address_that_does_not_answer_is_not_kept() {
+    let (owner, remote, p, _rp) = paired().await;
+    let before = instances(&owner, &p).await["instances"][0]["url"].clone();
+    *remote.state.remote.lock().unwrap() = pdt_api::RemoteStatus {
+        enabled: true,
+        active: true,
+        url: Some("http://127.0.0.1:1".into()),
+        ..Default::default()
+    };
+    pdt_api::link::heartbeat_all(&owner.state).await;
+    let i = &instances(&owner, &p).await["instances"][0];
+    assert_eq!((&i["url"], &i["state"]), (&before, &json!("connected")), "{i}");
+}
+
+#[tokio::test]
+async fn a_remote_instance_the_owner_cant_reach_gives_its_new_address_when_it_asks() {
+    let (owner, remote, p, rp) = paired().await;
+    let url = moved(&remote).await;
+    gone_quiet(&remote, &rp).await;
+    pdt_api::link::check_owners(&remote.state).await;
+    eventually("the new address", async || instances(&owner, &p).await["instances"][0]["url"] == json!(url)).await;
+}
+
+#[tokio::test]
 async fn another_protocol_is_refused_with_which_instance_to_update() {
     let owner = instance("studio").await;
     let remote = instance("win-box").await;
@@ -363,7 +443,12 @@ async fn removing_at_either_end_revokes_the_link_at_both() {
 async fn gone_quiet(remote: &Instance, rp: &str) -> String {
     let (_, l) =
         remote.state.store.list_remote_projects().await.unwrap().into_iter().find(|(p, _)| p.id == rp).unwrap();
-    remote.state.store.owner_contact(&l.link_id, now_ms() - pdt_core::link::OFFLINE_AFTER_MS - 1, None).await.unwrap();
+    remote
+        .state
+        .store
+        .owner_contact(&l.link_id, now_ms() - pdt_core::link::OFFLINE_AFTER_MS - 1, Default::default())
+        .await
+        .unwrap();
     l.link_id
 }
 

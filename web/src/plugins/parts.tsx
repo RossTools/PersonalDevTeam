@@ -29,7 +29,9 @@ export function PluginIcon({ p, size = 'md' }: { p: Plugin; size?: 'xs' | 'sm' |
   );
 }
 
+/** The status, but for On and Off: the plugin's switch (or "Built in") already says those (PDT-695). */
 export function PluginStatusBadge({ p }: { p: Plugin }) {
+  if (p.status === 'on' || p.status === 'off') return null;
   return <Badge tone={STATUS_TONE[p.status]} className={cn(p.status === 'not_built' && 'border border-dashed border-border bg-transparent')}>{STATUS_LABEL[p.status]}</Badge>;
 }
 

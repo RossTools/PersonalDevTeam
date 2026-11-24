@@ -512,7 +512,7 @@ pub(crate) async fn events_route(
     body: Bytes,
 ) -> Result<Json<Batch>, ApiError> {
     let (link, req): (OwnerLink, PollReq) = checked(&st, &method, &uri, &headers, &body).await?;
-    st.store.owner_contact(&link.link_id, now_ms(), None).await?;
+    st.store.owner_contact(&link.link_id, now_ms(), Default::default()).await?;
     let side = &st.exec.remote;
     let same_boot = req.boot.as_deref() == Some(side.boot.as_str());
     let after = if same_boot { req.after } else { 0 };

@@ -67,6 +67,12 @@ pdt-host ──starts, watches, updates──▶ pdtd ◀──HTTP + WebSocket�
   links. An end that can't be reached is ended here anyway (the reply says `told: false`); a request on a link an end
   no longer has is refused with `link_revoked`. A remote instance asks owners it hasn't heard from for 90 s whether they
   still have its link (`/link/status`, the same loop), and marks one refused that way removed (`removed_at`).
+  Names and addresses can change after pairing: the remote instance takes the owner's name from each heartbeat; each
+  end sends its own remote-access address (`own_url`) in what it sends (the heartbeat's body and reply, the status
+  body), and the other end switches to a new one only once a call there gets through (`follow_owner`,
+  `follow_remote`; a failed address is tried again after `MOVE_RETRY_MS`), so an address the user typed that works
+  is never swapped for one that doesn't. Pairing checks everything it can refuse before taking the code, and puts the
+  code back if joining fails after.
   `link::PROTOCOL` is the link's version: ends that differ refuse each other with a message naming the one to update, except `/link/update`
   (`link::from_owner_any_protocol`), so the owner can always fix a mismatch.
 

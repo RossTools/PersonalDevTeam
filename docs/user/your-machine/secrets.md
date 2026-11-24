@@ -19,7 +19,7 @@ only where it's needed.
 6. **Save**.
 
 The value is never shown again, to you or anyone. **Edit** changes the description and who may use it, or replaces the
-value (leave **Value** empty to keep it). **Delete** removes the secret and its value from the keychain.
+value (leave **Value** empty to keep it). **Delete** removes the secret and its value from your machine.
 
 ## When an agent asks for one
 
@@ -96,11 +96,13 @@ of yours of the same name, and never leaves it; **On remote instances** lists th
 - **Windows**: Credential Manager.
 - **Linux**: the Secret Service (GNOME Keyring or KWallet) when there is one. On a machine without one (a server with
   no desktop session, usually), PDT keeps values in a file in its data folder that only you can read. The top of
-  **Settings › Secrets** says which: **Secrets: system keyring** or **Secrets: file in the data folder**, with its
-  path. PDT keeps to the one it chose the first time.
+  **Settings › Secrets** says which, with the file's path. PDT keeps to the one it chose the first time.
 
 PDT's GitHub login and its update token are kept the same way. None of them is in PDT's database, so a copy of its
 data folder holds no secrets (except the Linux file above).
+
+When PDT keeps values in memory only (no keychain is available), **Settings › Secrets** warns that they're lost when
+PDT stops.
 
 What else on your machine can read them:
 

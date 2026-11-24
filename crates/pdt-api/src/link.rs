@@ -42,6 +42,9 @@ const REFRESH_WAIT: Duration = Duration::from_secs(6);
 /// How long after pairing the owner sends its first heartbeat.
 const FIRST_HEARTBEAT_AFTER: Duration = Duration::from_secs(2);
 
+/// How long before an address the other end gave, which didn't answer, is tried again.
+const MOVE_RETRY_MS: i64 = 10 * 60 * 1000;
+
 /// The link paths, under `/api`.
 pub const PAIR_PATH: &str = "/api/link/pair";
 pub const HEARTBEAT_PATH: &str = "/api/link/heartbeat";
@@ -78,6 +81,8 @@ pub struct LinkRuntime {
     /// Skips the heartbeat sent soon after an instance joins (tests that heartbeat themselves, so a late one can't
     /// undo what they set up).
     no_join_heartbeat: std::sync::atomic::AtomicBool,
+    /// By link id: the last new address the other end gave that this instance tried, and when.
+    moves: Mutex<HashMap<String, (String, i64)>>,
     client: reqwest::Client,
 }
 
@@ -101,6 +106,7 @@ impl Default for LinkRuntime {
             latency_ms: AtomicU64::new(0),
             calls: Default::default(),
             no_join_heartbeat: Default::default(),
+            moves: Default::default(),
             client,
         }
     }
@@ -159,16 +165,14 @@ impl LinkRuntime {
         self.pairing.lock().unwrap_or_else(|e| e.into_inner()).remove(project_id);
     }
 
-    /// Takes the code `code` (once): the project it is for. A wrong one counts against every code on show.
-    fn take_code(&self, code: &str, now: i64) -> Option<String> {
+    /// Takes the code `code` (once): the project it is for, and the code, which a pairing that fails after taking it
+    /// puts back ([`Self::put_back`]). A wrong one counts against every code on show.
+    fn take_pending(&self, code: &str, now: i64) -> Option<(String, Pending)> {
         let mut p = self.pairing.lock().unwrap_or_else(|e| e.into_inner());
         p.retain(|_, c| c.expires_at > now);
         let found = p.iter().find(|(_, c)| c.code == code).map(|(id, _)| id.clone());
         match found {
-            Some(id) => {
-                p.remove(&id);
-                Some(id)
-            }
+            Some(id) => p.remove(&id).map(|c| (id, c)),
             None => {
                 if self.failures.fetch_add(1, Ordering::SeqCst) + 1 >= link::PAIRING_MAX_FAILURES {
                     p.clear();
@@ -176,6 +180,21 @@ impl LinkRuntime {
                 None
             }
         }
+    }
+
+    /// Shows `code` for `project_id` again (a pairing that took it failed), unless the project has a newer one.
+    fn put_back(&self, project_id: &str, code: Pending) {
+        self.pairing.lock().unwrap_or_else(|e| e.into_inner()).entry(project_id.to_string()).or_insert(code);
+    }
+
+    /// Whether to try `url`, the new address the other end of `link_id` gave: not when it was tried lately.
+    fn try_move(&self, link_id: &str, url: &str, now: i64) -> bool {
+        let mut m = self.moves.lock().unwrap_or_else(|e| e.into_inner());
+        if m.get(link_id).is_some_and(|(u, at)| u == url && now - at < MOVE_RETRY_MS) {
+            return false;
+        }
+        m.insert(link_id.to_string(), (url.to_string(), now));
+        true
     }
 
     /// Records `nonce`; false when it was seen already.
@@ -631,8 +650,7 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     let wrong =
         || ApiError::forbidden(codes::PAIRING_CODE, "that pairing code is wrong or has expired: show a new one");
     let code = link::normalize_code(&req.code).ok_or_else(wrong)?;
-    let project_id = st.link.take_code(&code, now_ms()).ok_or_else(wrong)?;
-    let project = st.project(&project_id).await?;
+    // Everything that can refuse the pairing is checked before the code is taken: a refused one leaves it usable.
     if req.instance.instance_id == me.instance_id {
         return Err(ApiError::conflict(
             codes::REMOTE_PROJECT,
@@ -645,16 +663,33 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
     if !link::valid_version(&req.instance.version) {
         return Err(ApiError::invalid("the remote instance's version can't be read"));
     }
+    let (project_id, pending) = st.link.take_pending(&code, now_ms()).ok_or_else(wrong)?;
+    let joined = join(&st, &project_id, &req, name, url, me).await;
+    if joined.is_err() {
+        st.link.put_back(&project_id, pending);
+    }
+    joined.map(Json)
+}
 
+/// The pairing, once checked and its code taken: the remote instance joins `project_id`.
+async fn join(
+    st: &AppState,
+    project_id: &str,
+    req: &PairRequest,
+    name: String,
+    url: String,
+    me: InstanceHello,
+) -> Result<PairReply, ApiError> {
+    let project = st.project(project_id).await?;
     for old in st.store.list_remote_instances(Some(&project.id)).await? {
         if old.instance_id == req.instance.instance_id {
             st.store.delete_remote_instance(&old.link_id).await?;
-            delete_key(&st, &old.link_id).await;
+            delete_key(st, &old.link_id).await;
         }
     }
     let link_id = uuid::Uuid::now_v7().to_string();
     let key = new_key();
-    save_key(&st, &link_id, &key).await?;
+    save_key(st, &link_id, &key).await?;
     let instance = pdt_core::link::RemoteInstance {
         link_id: link_id.clone(),
         project_id: project.id.clone(),
@@ -674,7 +709,7 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
         created_at: now_ms(),
     };
     if let Err(e) = st.store.insert_remote_instance(&instance).await {
-        delete_key(&st, &link_id).await;
+        delete_key(st, &link_id).await;
         return Err(e.into());
     }
     let repo = std::path::PathBuf::from(&project.repo_path);
@@ -694,7 +729,7 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
             heartbeat(&bg, &joined, false).await
         });
     }
-    Ok(Json(PairReply {
+    Ok(PairReply {
         link_id,
         project: pdt_core::link::LinkedProject {
             id: project.id,
@@ -705,16 +740,32 @@ async fn pair(State(st): State<AppState>, ApiJson(req): ApiJson<PairRequest>) ->
         },
         owner: me,
         public_key: public_key(&key),
-    }))
+    })
 }
 
-/// What the owner sends with a heartbeat: itself, and whether it wants the agents checked again now (Check now).
+/// What the owner sends with a heartbeat: itself, its address now, and whether it wants the agents checked again now
+/// (Check now).
 #[derive(Debug, Default, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct HeartbeatBody {
     owner: Option<InstanceHello>,
     #[serde(default)]
     refresh: bool,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+/// What a remote instance sends when it asks its owner about the link: its address now.
+#[derive(Debug, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StatusBody {
+    #[serde(default)]
+    url: Option<String>,
+}
+
+/// `url`, an address the other end gave for itself, when it is one and not `current`.
+fn moved_to(url: Option<&str>, current: &str) -> Option<String> {
+    url.and_then(|u| link::instance_url(u).ok()).filter(|u| u != current)
 }
 
 /// A remote project's request from its owner, checked: the link it names is one of this instance's remote
@@ -788,8 +839,17 @@ async fn heartbeat_route(
 ) -> Result<Json<HeartbeatReply>, ApiError> {
     let link = from_owner(&st, &method, &uri, &headers, &body).await?;
     let sent: HeartbeatBody = crate::host_guard::optional_json(&headers, &body)?;
-    let owner_version = sent.owner.map(|o| o.version).filter(|v| link::valid_version(v));
-    st.store.owner_contact(&link.link_id, now_ms(), owner_version.as_deref()).await?;
+    let owner = sent.owner.as_ref();
+    let name = owner.and_then(|o| pdt_core::instance::valid_name(&o.name).ok());
+    let seen = pdt_store::OwnerSeen {
+        version: owner.map(|o| o.version.as_str()).filter(|v| link::valid_version(v)),
+        name: name.as_deref(),
+        url: None,
+    };
+    st.store.owner_contact(&link.link_id, now_ms(), seen).await?;
+    if let Some(url) = moved_to(sent.url.as_deref(), &link.owner_url) {
+        tokio::spawn(follow_owner(st.clone(), link.clone(), url));
+    }
     let secrets = crate::exec::own_secret_names(&st, &link.project_id).await?;
     Ok(Json(HeartbeatReply {
         instance: hello(&st).await?,
@@ -797,7 +857,51 @@ async fn heartbeat_route(
         paused: link.paused,
         secrets,
         cap: link.cap,
+        url: own_url(&st),
     }))
+}
+
+/// The owner gave a new address for itself: this instance asks it about the link there, and keeps the address once
+/// it answers (else the one it paired with stays).
+async fn follow_owner(st: AppState, l: pdt_core::link::OwnerLink, url: String) {
+    if !st.link.try_move(&l.link_id, &url, now_ms()) {
+        return;
+    }
+    let Ok(key) = load_key(&st, &l.link_id).await else { return };
+    let body = StatusBody { url: own_url(&st) };
+    let r: Result<Value, _> = post(&st, &url, STATUS_PATH, Some((&key, &l.link_id, &l.owner_project_id)), &body).await;
+    match r {
+        Ok(_) => {
+            let seen = pdt_store::OwnerSeen { url: Some(&url), ..Default::default() };
+            match st.store.owner_contact(&l.link_id, now_ms(), seen).await {
+                Ok(()) => tracing::info!(owner = %l.owner_name, %url, "the owner's address changed"),
+                Err(e) => tracing::warn!(error = %e, "could not record the owner's new address"),
+            }
+        }
+        Err(e) => {
+            tracing::warn!(owner = %l.owner_name, %url, error = %e.text(), "the owner's new address didn't answer")
+        }
+    }
+}
+
+/// A joined instance gave a new address for itself: the owner sends it a heartbeat there, and keeps the address once
+/// it answers (else the one it paired with stays).
+async fn follow_remote(st: &AppState, i: &pdt_core::link::RemoteInstance, url: String) {
+    if !st.link.try_move(&i.link_id, &url, now_ms()) {
+        return;
+    }
+    let moved = pdt_core::link::RemoteInstance { url: url.clone(), ..i.clone() };
+    match heartbeat_once(st, &moved, false).await {
+        Ok(reply) => {
+            if let Err(e) = st.store.set_remote_instance_url(&i.link_id, &url).await {
+                tracing::warn!(error = %e, "could not record a remote instance's new address");
+                return;
+            }
+            tracing::info!(instance = %i.name, %url, "a remote instance's address changed");
+            record(st, &moved, Ok(reply)).await;
+        }
+        Err((e, _)) => tracing::warn!(instance = %i.name, %url, error = %e, "its new address didn't answer"),
+    }
 }
 
 /// The owner removed this instance from the project: the remote project goes, with this end's key.
@@ -825,7 +929,12 @@ async fn status_route(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
-    from_remote(&st, &method, &uri, &headers, &body).await?;
+    let instance = from_remote(&st, &method, &uri, &headers, &body).await?;
+    let sent: StatusBody = crate::host_guard::optional_json(&headers, &body)?;
+    if let Some(url) = moved_to(sent.url.as_deref(), &instance.url) {
+        let bg = st.clone();
+        tokio::spawn(async move { follow_remote(&bg, &instance, url).await });
+    }
     Ok(Json(json!({})))
 }
 
@@ -878,8 +987,9 @@ pub async fn check_owners(st: &AppState) {
     });
     futures_util::future::join_all(quiet.map(|l| async move {
         let Ok(key) = load_key(st, &l.link_id).await else { return };
+        let body = StatusBody { url: own_url(st) };
         let r: Result<Value, _> =
-            post(st, &l.owner_url, STATUS_PATH, Some((&key, &l.link_id, &l.owner_project_id)), &json!({})).await;
+            post(st, &l.owner_url, STATUS_PATH, Some((&key, &l.link_id, &l.owner_project_id)), &body).await;
         if let Err(PeerError::Refused { code, .. }) = r
             && code == codes::LINK_REVOKED
         {
@@ -986,6 +1096,15 @@ fn agent_facts(checks: &crate::checks::HostChecks) -> Vec<pdt_core::link::AgentF
 /// (Check now) the instance checks its agents again before it answers.
 pub(crate) async fn heartbeat(st: &AppState, i: &pdt_core::link::RemoteInstance, refresh: bool) {
     let outcome = heartbeat_once(st, i, refresh).await;
+    let moved = outcome.as_ref().ok().and_then(|r| moved_to(r.url.as_deref(), &i.url));
+    record(st, i, outcome).await;
+    if let Some(url) = moved {
+        follow_remote(st, i, url).await;
+    }
+}
+
+/// What a heartbeat to `i` brought back (or why nothing did), recorded.
+async fn record(st: &AppState, i: &pdt_core::link::RemoteInstance, outcome: Result<HeartbeatReply, Failure>) {
     let write = match &outcome {
         Ok(reply) => {
             let facts = link::merge_facts(reply.facts.clone(), i.facts.as_ref());
@@ -1026,7 +1145,7 @@ async fn heartbeat_once(
     let project =
         st.store.get_project(&i.project_id).await.ok().flatten().ok_or(("no such project".to_string(), None))?;
     let me = hello(st).await.map_err(|e| (e.message().to_string(), None))?;
-    let body = HeartbeatBody { owner: Some(me.clone()), refresh };
+    let body = HeartbeatBody { owner: Some(me.clone()), refresh, url: own_url(st) };
     let us = Side { name: &me.name, protocol: me.protocol, version: &me.version };
     let reply: HeartbeatReply =
         match post(st, &i.url, HEARTBEAT_PATH, Some((&key, &i.link_id, &project.id)), &body).await {
@@ -1100,12 +1219,29 @@ pub(crate) fn router() -> axum::Router<crate::AppState> {
 mod tests {
     use super::*;
 
+    impl LinkRuntime {
+        fn take_code(&self, code: &str, now: i64) -> Option<String> {
+            self.take_pending(code, now).map(|(id, _)| id)
+        }
+    }
+
     #[test]
     fn a_code_works_once_and_wrong_ones_use_it_up() {
         let rt = LinkRuntime::default();
         let c = rt.new_code("p", 0);
         assert_eq!(rt.take_code(&c.code, 1), Some("p".into()));
         assert_eq!(rt.take_code(&c.code, 1), None, "once");
+
+        // A pairing that failed once it took the code puts it back, unless a newer one is on show.
+        let c = rt.new_code("p", 0);
+        let (id, taken) = rt.take_pending(&c.code, 1).unwrap();
+        rt.put_back(&id, taken);
+        assert_eq!(rt.take_code(&c.code, 1), Some("p".into()), "put back");
+        let (id, taken) = rt.take_pending(&rt.new_code("p", 0).code, 1).unwrap();
+        let newer = rt.new_code("p", 0);
+        rt.put_back(&id, taken);
+        assert_eq!(rt.code_for("p", 1).unwrap().code, newer.code, "the newer one stays");
+        rt.cancel_code("p");
 
         let c = rt.new_code("p", 0);
         assert_eq!(rt.take_code(&c.code, link::PAIRING_CODE_TTL_MS + 1), None, "expired");
@@ -1115,6 +1251,16 @@ mod tests {
             assert_eq!(rt.take_code("AAAA-AAAA", 1), None);
         }
         assert_eq!(rt.take_code(&c.code, 1), None, "too many wrong codes");
+    }
+
+    #[test]
+    fn a_new_address_is_tried_once_in_a_while() {
+        let rt = LinkRuntime::default();
+        assert!(rt.try_move("l", "https://a", 0));
+        assert!(!rt.try_move("l", "https://a", 1), "tried lately");
+        assert!(rt.try_move("l", "https://b", 2), "another address");
+        assert!(rt.try_move("m", "https://b", 2), "another link");
+        assert!(rt.try_move("l", "https://b", 2 + MOVE_RETRY_MS), "tried again later");
     }
 
     #[test]
