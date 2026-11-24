@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
@@ -87,6 +87,12 @@ if (typeof window !== 'undefined') {
   afterEach(() => {
     resetAnswerGuard();
     resetHeldAnswers();
+  });
+  // Sonner removes a closed toast 200 ms later on a timer unmounting doesn't clear: a file that ends inside that window
+  // has it fire after jsdom is gone ("window is not defined"). A file that showed a toast waits it out.
+  const { toast: sonner } = await import('sonner');
+  afterAll(async () => {
+    if (sonner.getHistory().length > 0) await new Promise((r) => setTimeout(r, 250));
   });
 }
 
