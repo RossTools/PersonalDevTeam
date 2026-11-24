@@ -33,6 +33,16 @@ export function groupWorkflows(list: Workflow[], projects: Project[]): { label: 
   return [...groups].map(([label, items]) => ({ label, items }));
 }
 
+/** A row's badges: a proposal waiting, one from the repo, one of the user's own. None for a built-in. */
+function badges(w: Workflow) {
+  const list = [
+    w.proposed !== null && <Badge key="proposal" tone="waiting">Proposal waiting</Badge>,
+    w.source === 'repo' && <Badge key="repo" tone="neutral">Repo</Badge>,
+    !w.builtin && w.source !== 'repo' && <Badge key="yours" tone="neutral">Yours</Badge>,
+  ].filter(Boolean);
+  return list.length ? <span className="flex gap-1">{list}</span> : undefined;
+}
+
 export function WorkflowsList({ projects, current, onOpen, onNew }: {
   projects: Project[]; current: WorkflowTarget; onOpen: (t: WorkflowTarget) => void; onNew: () => void;
 }) {
@@ -73,20 +83,21 @@ export function WorkflowsList({ projects, current, onOpen, onNew }: {
                 title={w.name}
                 textValue={w.name}
                 current={current?.kind === 'workflow' && current.id === w.id}
-                leading={<StatusDot status={w.enabled ? 'running' : 'idle'} label={w.enabled ? 'On' : 'Off'} />}
-                trailing={
-                  <span className="flex gap-1">
-                    {w.proposed !== null && <Badge tone="waiting">Proposal waiting</Badge>}
-                    {w.source === 'repo' && <Badge tone="neutral">Repo</Badge>}
-                    {w.builtin && <Badge tone="neutral">Built in</Badge>}
+                // On is a dot and Off a muted word in the same slot, so the off ones scan as a group; only the exceptions
+                // get a badge, not the built-ins every host has (PDT-680).
+                leading={
+                  <span className="flex w-6 justify-center">
+                    {w.enabled ? <StatusDot status="running" label="On" /> : <span className="text-xs text-muted-foreground">Off</span>}
                   </span>
                 }
+                trailing={badges(w)}
               />
             ))}
           </List>
         </section>
       ))}
       {workflows.isSuccess && groups.length === 0 && <EmptyState size="inline" className="px-3">No workflows yet.</EmptyState>}
+      {phone && <p className="px-3 pt-2 text-xs text-muted-foreground">Create and edit workflows on a computer.</p>}
     </nav>
   );
 }

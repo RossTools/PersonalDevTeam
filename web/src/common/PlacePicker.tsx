@@ -66,6 +66,21 @@ function Places({ projects, place, remote, onPick }: { projects: Project[]; plac
   return <CommandList label="Places" placeholder="Filter projects and branches…" items={items} onAction={(id) => onPick(placeOf(id))} />;
 }
 
+/** A place's project name and where in it: "Repository", "Repository · on <instance>" or a worktree's branch. */
+export function usePlaceName(projects: Project[], place: Place) {
+  const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId && !place.instanceId });
+  const instances = useQuery({ ...remoteInstancesQuery(place.projectId), enabled: !!place.projectId && !!place.instanceId });
+  const project = projects.find((p) => p.id === place.projectId);
+  const worktree = place.worktreeId ? worktrees.data?.find((w) => w.id === place.worktreeId) : undefined;
+  const instance = place.instanceId ? instances.data?.instances.find((r) => r.instanceId === place.instanceId) : undefined;
+  const where = place.instanceId
+    ? `${REPOSITORY} · on ${instance?.name ?? '…'}`
+    : place.worktreeId
+      ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
+      : REPOSITORY;
+  return { projectName: project?.name ?? 'No project', where };
+}
+
 /**
  * Picks a project and a place in it (the main checkout or one of its worktrees; with `remote`, also the project's
  * checkout on each joined instance): one chip "Project › place" that opens a filterable list. The trigger is named
@@ -78,17 +93,7 @@ export function PlacePicker({ projects, place, onPick, remote = false, className
   remote?: boolean;
   className?: string;
 }) {
-  const worktrees = useQuery({ ...worktreesQuery(place.projectId), enabled: !!place.projectId && !place.instanceId });
-  const instances = useQuery({ ...remoteInstancesQuery(place.projectId), enabled: !!place.projectId && !!place.instanceId });
-  const project = projects.find((p) => p.id === place.projectId);
-  const worktree = place.worktreeId ? worktrees.data?.find((w) => w.id === place.worktreeId) : undefined;
-  const instance = place.instanceId ? instances.data?.instances.find((r) => r.instanceId === place.instanceId) : undefined;
-  const where = place.instanceId
-    ? `${REPOSITORY} · on ${instance?.name ?? '…'}`
-    : place.worktreeId
-      ? worktree ? `${worktree.branch}${worktree.instance ? ` · on ${worktree.instance.name}` : ''}` : '…'
-      : REPOSITORY;
-  const projectName = project?.name ?? 'No project';
+  const { projectName, where } = usePlaceName(projects, place);
   return (
     <Popover
       label="Choose a place"

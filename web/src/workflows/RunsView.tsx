@@ -1,8 +1,9 @@
 // The runs view: every run of the workflow with its trigger and status; a run shows its path on the
 // graph of the version it ran, its steps, and Retry, Resume (an agent step that timed out or stopped), Cancel and a
 // waiting gate's choices. Runs that ended with nothing to do (a frequent schedule's) stay out of the list until
-// "Show Nothing to do runs" is on (PDT-582). View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each
-// opening to its input and output, with nothing to act on.
+// "Show Nothing to do runs" is on (PDT-582). With no runs it offers a dry run, and says to turn an off one on (PDT-680).
+// View-only (phones, PDT-120): the list is its own screen, and a run is its steps, each opening to its input and
+// output, with nothing to act on.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Alert, Badge, Button, EmptyState, List, ListRow, RelativeTime, Skeleton, Switch, formatDuration } from '@ui';
@@ -145,10 +146,14 @@ function RunDetail({ id, workflowId, catalog, viewOnly }: { id: string; workflow
   );
 }
 
-export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = false }: {
+export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = false, enabled = true, onDryRun }: {
   workflowId: string; catalog: Catalog; runId: string | null; onRunChange: (id: string | null) => void;
   /** Phones: the list, or the run picked (no graph, nothing to act on). */
   viewOnly?: boolean;
+  /** Whether the workflow is on: an off one with no runs says to turn it on. */
+  enabled?: boolean;
+  /** Opens a dry run: offered when there are no runs yet (not on a phone). */
+  onDryRun?: () => void;
 }) {
   const [showQuiet, setShowQuiet] = useState(false);
   const runs = useQuery({
@@ -159,6 +164,12 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   });
   const list = runs.data ?? [];
   const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;
+  // No runs: what to do next (a dry run, turning it on), in the list on a phone and in the run's pane otherwise.
+  const empty = runs.isSuccess && list.length === 0 && (
+    <EmptyState action={onDryRun && !viewOnly ? <Button size="sm" variant="secondary" onClick={onDryRun}>Dry run</Button> : undefined}>
+      {showQuiet ? 'Nothing has run yet.' : 'No run has done anything yet.'}{!enabled && ' Turn it on to run on its trigger.'}
+    </EmptyState>
+  );
   if (viewOnly && current) return <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly />;
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
@@ -167,9 +178,7 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
           <Switch size="sm" checked={showQuiet} onChange={setShowQuiet} className="text-xs">Show “Nothing to do” runs</Switch>
         </div>
         <LoadError what="Runs" error={runs.error} className="m-2" />
-        {runs.isSuccess && list.length === 0 && (
-          <EmptyState>{showQuiet ? 'No runs yet. Dry run it, or enable it and wait for its trigger.' : 'No runs that did something.'}</EmptyState>
-        )}
+        {viewOnly && empty}
         <List aria-label="Runs" onAction={onRunChange} className="p-1">
           {list.map((r) => {
             const s = RUN_STATUS[r.status];
@@ -189,7 +198,8 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
           })}
         </List>
       </nav>
-      {viewOnly ? null : current ? <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly={false} /> : <div className="flex-1" />}
+      {viewOnly ? null : current ? <RunDetail key={current} id={current} workflowId={workflowId} catalog={catalog} viewOnly={false} />
+        : <div className="flex flex-1 items-center justify-center">{empty}</div>}
     </div>
   );
 }

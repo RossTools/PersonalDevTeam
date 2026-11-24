@@ -499,10 +499,11 @@ export function AppShell() {
   const folder: FolderViewState = useFolderView(ws.projects, current ? { projectId: current.projectId, worktreeId: current.worktreeId } : null, {
     picked: filesProject ? { projectId: filesProject.id, worktreeId: filesRoute?.worktree ?? null, instanceId: filesRoute?.instance ?? null } : null,
     file: filesDir === null ? filesRoute?.path ?? null : null,
-    onChange: (picked, file) => {
+    dir: filesDir,
+    onChange: (picked, file, opts) => {
       // A file's path names its checkout, so a reload shows the same file even if the current tab changes.
       const at = picked ?? (file ? folder.place : null);
-      go({ view: 'files', path: file, project: at ? ws.projects.find((p) => p.id === at.projectId)?.key ?? null : null, worktree: at?.worktreeId ?? null, instance: at?.instanceId ?? null });
+      go({ view: 'files', path: file, project: at ? ws.projects.find((p) => p.id === at.projectId)?.key ?? null : null, worktree: at?.worktreeId ?? null, instance: at?.instanceId ?? null }, opts);
     },
   });
   const bottomProject = ws.projects.find((p) => p.id === (current?.projectId ?? ws.workspace?.projectId)) ?? ws.projects[0] ?? null;
