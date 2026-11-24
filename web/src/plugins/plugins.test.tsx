@@ -5,7 +5,7 @@ import { githubLogin, renderWithQuery, stubApi } from '../test-utils';
 import type { Connection } from '../api/gen/Connection';
 import { plugins as built } from '../api/gen/plugins';
 import { AllConnectionsPage } from './AllConnectionsPage';
-import { NO_FILTER, categoryCounts, enabledWith, filterPlugins, groupPlugins, loadLayout, offWith, stuckOn, type Plugin } from './model';
+import { NO_FILTER, enabledWith, filterPlugins, groupPlugins, loadLayout, offWith, stuckOn, type Plugin } from './model';
 import { PluginPage } from './PluginPage';
 import { PluginsPage } from './PluginsPage';
 
@@ -42,11 +42,8 @@ describe('plugins: the catalog’s filters', () => {
     expect(labels(filterPlugins(ps, { ...NO_FILTER, tab: 'attention' }))).toEqual(['arr', 'scryer']);
   });
 
-  it('counts each category after the search and tab, and groups in the catalog’s order', () => {
+  it('groups in the catalog’s order, leaving out empty categories', () => {
     const ps = mixed();
-    expect(categoryCounts(ps, NO_FILTER)).toEqual({ all: 12, dev: 4, documents: 1, chat: 1, media: 3, general: 3 });
-    expect(categoryCounts(ps, { ...NO_FILTER, tab: 'attention' })).toEqual({ all: 2, dev: 0, documents: 0, chat: 0, media: 2, general: 0 });
-    expect(labels(filterPlugins(ps, { ...NO_FILTER, category: 'media' }))).toEqual(['arr', 'scryer', 'plex']);
     expect(groupPlugins(filterPlugins(ps, { ...NO_FILTER, q: 'workflows' })).map(([c]) => c)).toEqual(['dev', 'chat', 'media', 'general']);
   });
 
@@ -74,8 +71,11 @@ describe('plugins: Settings → Plugins', () => {
     stubApi({ 'GET /api/integrations': mixed() });
     renderWithQuery(<PluginsPage onOpen={() => {}} />);
     const card = async (name: string) => screen.findByRole('group', { name });
-    expect(within(await card('Discord')).getByText('On')).toBeInTheDocument();
-    expect(within(await card('Jira')).getByText('Off')).toBeInTheDocument();
+    // On and Off are the switch's to say, with no badge beside it (PDT-695).
+    expect(within(await card('Discord')).getByRole('switch', { name: 'Use Discord' })).toBeChecked();
+    expect(within(await card('Discord')).queryByText('On')).toBeNull();
+    expect(within(await card('Jira')).getByRole('switch', { name: 'Use Jira' })).not.toBeChecked();
+    expect(within(await card('Jira')).queryByText('Off')).toBeNull();
     expect(within(await card('Sonarr and Radarr')).getByText('Needs setup')).toBeInTheDocument();
     expect(within(await card('Scryer')).getByText('Error')).toBeInTheDocument();
     expect(within(await card('Plex')).getByText('Not in this build')).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe('plugins: Settings → Plugins', () => {
     expect(document.body).toHaveTextContent('Later: an Available section for plugins installed from outside PDT.');
   });
 
-  it('filters by search, tab and category chip', async () => {
+  it('filters by search and tab, with no category chips over the headings', async () => {
     stubApi({ 'GET /api/integrations': mixed() });
     renderWithQuery(<PluginsPage onOpen={() => {}} />);
     await screen.findByRole('group', { name: 'Discord' });
@@ -96,12 +96,8 @@ describe('plugins: Settings → Plugins', () => {
     expect(screen.queryByRole('group', { name: 'Discord' })).toBeNull();
     expect(screen.getByRole('group', { name: 'Scryer' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'All' }));
-    const chips = screen.getByRole('group', { name: 'Categories' });
-    expect(within(chips).getByRole('button', { name: 'Chat 1' })).toBeInTheDocument();
-    await userEvent.click(within(chips).getByRole('button', { name: 'Dev 4' }));
-    expect(screen.getByRole('group', { name: 'Jira' })).toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: 'Discord' })).toBeNull();
-    await userEvent.click(within(chips).getByRole('button', { name: 'All 12' }));
+    expect(screen.queryByRole('group', { name: 'Categories' })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Discord' })).toBeInTheDocument();
     await userEvent.type(screen.getByRole('textbox', { name: 'Search plugins' }), 'nothing like this');
     expect(screen.getByText('No plugins match.')).toBeInTheDocument();
   });

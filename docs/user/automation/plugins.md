@@ -12,12 +12,12 @@ key, a webhook URL). A plugin can have several connections, say two Jira sites.
 Open **Settings › Plugins**. Each plugin shows its status:
 
 - **Built in**: always there. GitHub, incoming webhooks, HTTP services and MCP servers are built in.
-- **On** or **Off**: an optional plugin, with a switch.
+- **On** or **Off**: an optional plugin; its switch shows which.
 - **Needs setup**: on, but with no connection yet.
 - **Error**: one of its connections stopped working (a revoked token, the service down).
 
-Search by name, or filter with **All**, **On**, **Needs attention** and the categories. **Cards** and **List** change
-the layout.
+The plugins are grouped by category. Search by name, or filter with **All**, **On** and **Needs attention**. **Cards**
+and **List** change the layout.
 
 The optional plugins:
 
