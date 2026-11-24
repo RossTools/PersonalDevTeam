@@ -269,6 +269,7 @@ pub(crate) fn answer(
 /// A session's agent ended: its open requests of PDT's expire, and their calls go on without running.
 pub(crate) fn end_session(st: &AppState, session_id: &str) {
     st.conversations.held.expire(session_id, None);
+    st.grants.ended(session_id);
 }
 
 /// A session's turn ended: PDT's requests opened before its end was read (`before`, [`mark`]) expire.
