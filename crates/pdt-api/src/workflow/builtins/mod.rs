@@ -20,7 +20,7 @@ pub(crate) mod pm_daily_checkpoint;
 mod pr_feedback;
 mod pr_notices;
 pub(crate) mod stuck_agents;
-mod ticket_proposals;
+pub(crate) mod ticket_proposals;
 
 pub(crate) use cut_release::cut_release_template;
 pub(crate) use missing_release::missing_release_template;
@@ -41,77 +41,32 @@ pub struct Builtin {
     pub doc: fn() -> WorkflowDoc,
 }
 
-pub const PR_NOTICES: &str = "pr-notices";
-pub const FINISH_MERGED: &str = "finish-merged";
-pub const COMMENTS_TO_AGENT: &str = "comments-to-agent";
-pub const BASE_MOVED: &str = "base-moved";
-pub const PR_FEEDBACK: &str = "pr-feedback";
-pub const LATE_COMMITS: &str = "late-commits";
-pub const GITHUB_ISSUE_DONE: &str = "github-issue-done";
-pub const PICK_UP_TICKETS: &str = "pick-up-tickets";
-pub const PM_DAILY_CHECKPOINT: &str = "pm-daily-checkpoint";
-pub const TICKET_PROPOSALS: &str = "ticket-proposals";
-pub const CLOSE_PARENTS: &str = "close-parents";
-pub const STUCK_AGENTS: &str = "stuck-agents";
-pub const CI_CANCELLED: &str = "ci-cancelled";
-pub const NOTIFICATION_RULES: &str = "notification-rules";
-pub const INSTALL_UPDATES: &str = "install-updates";
-pub const CLEAN_UP_STORAGE: &str = "clean-up-storage";
 /// The Cut a release template (without `builtin:`); a built-in workflow until PDT-301 ([`RETIRED`]).
 pub const CUT_RELEASE: &str = "cut-release";
 
-/// PDT's built-ins, one module each (its document and prompts), in install order: one line per built-in.
+/// PDT's built-ins, one module each (its `ID`, `BUILTIN`, document and prompts), in install order: one line per
+/// built-in.
 pub const BUILTINS: &[Builtin] = &[
-    Builtin { id: PICK_UP_TICKETS, enabled: true, category: Category::Tickets, doc: pick_up_tickets::pick_up_tickets },
-    Builtin { id: PR_NOTICES, enabled: true, category: Category::CiPr, doc: pr_notices::pr_notices },
-    Builtin { id: FINISH_MERGED, enabled: true, category: Category::Tickets, doc: finish_merged::finish_merged },
-    Builtin { id: LATE_COMMITS, enabled: true, category: Category::CiPr, doc: late_commits::late_commits },
-    Builtin {
-        id: COMMENTS_TO_AGENT,
-        enabled: true,
-        category: Category::Tickets,
-        doc: comments_to_agent::comments_to_agent,
-    },
-    Builtin { id: BASE_MOVED, enabled: false, category: Category::CiPr, doc: base_moved::base_moved },
-    Builtin { id: PR_FEEDBACK, enabled: false, category: Category::CiPr, doc: pr_feedback::pr_feedback },
-    Builtin {
-        id: PM_DAILY_CHECKPOINT,
-        enabled: true,
-        category: Category::Pm,
-        doc: pm_daily_checkpoint::pm_daily_checkpoint,
-    },
-    Builtin {
-        id: TICKET_PROPOSALS,
-        enabled: true,
-        category: Category::Tickets,
-        doc: ticket_proposals::ticket_proposals,
-    },
-    Builtin { id: CLOSE_PARENTS, enabled: true, category: Category::Tickets, doc: close_parents::close_parents },
-    Builtin { id: STUCK_AGENTS, enabled: true, category: Category::Tickets, doc: stuck_agents::stuck_agents },
-    Builtin { id: CI_CANCELLED, enabled: true, category: Category::CiPr, doc: ci_cancelled::ci_cancelled },
-    Builtin {
-        id: NOTIFICATION_RULES,
-        enabled: true,
-        category: Category::Notifications,
-        doc: notification_rules::notification_rules,
-    },
-    Builtin { id: INSTALL_UPDATES, enabled: true, category: Category::Releases, doc: install_updates::install_updates },
-    Builtin {
-        id: CLEAN_UP_STORAGE,
-        enabled: true,
-        category: Category::Tickets,
-        doc: clean_up_storage::clean_up_storage,
-    },
+    pick_up_tickets::BUILTIN,
+    pr_notices::BUILTIN,
+    finish_merged::BUILTIN,
+    late_commits::BUILTIN,
+    comments_to_agent::BUILTIN,
+    base_moved::BUILTIN,
+    pr_feedback::BUILTIN,
+    pm_daily_checkpoint::BUILTIN,
+    ticket_proposals::BUILTIN,
+    close_parents::BUILTIN,
+    stuck_agents::BUILTIN,
+    ci_cancelled::BUILTIN,
+    notification_rules::BUILTIN,
+    install_updates::BUILTIN,
+    clean_up_storage::BUILTIN,
 ];
 
 /// The GitHub plugin's built-ins ([`crate::integrations::Integration::builtin_workflows`]): left out while it is off
 /// (PDT-251).
-pub const GITHUB_BUILTINS: &[Builtin] = &[Builtin {
-    id: GITHUB_ISSUE_DONE,
-    enabled: true,
-    category: Category::Issues,
-    doc: github_issue_done::github_issue_done,
-}];
+pub const GITHUB_BUILTINS: &[Builtin] = &[github_issue_done::BUILTIN];
 
 /// PDT's built-ins, then the enabled integrations' ([`crate::integrations::Integration::builtin_workflows`]).
 pub fn all(reg: &crate::integrations::Registry) -> Vec<Builtin> {
@@ -219,12 +174,12 @@ async fn install(st: &AppState, b: &Builtin) -> Result<(), pdt_store::StoreError
         None => {
             // The levels set in Settings before they were the workflow's come along (PDT-368).
             let template = match b.id {
-                NOTIFICATION_RULES => match st.store.get_host_value(crate::notifications::SETTINGS_KEY).await? {
+                notification_rules::ID => match st.store.get_host_value(crate::notifications::SETTINGS_KEY).await? {
                     Some(old) => notification_rules::migrated(&old),
                     None => template,
                 },
                 // The thresholds set in Settings before they were the workflow's come along (PDT-370).
-                CLEAN_UP_STORAGE => clean_up_storage::migrated(&st.store.get_host_settings().await?),
+                clean_up_storage::ID => clean_up_storage::migrated(&st.store.get_host_settings().await?),
                 _ => template,
             };
             let enabled = b.enabled;

@@ -9,8 +9,13 @@ use crate::workflow::templates::params;
 use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "notification-rules";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Notifications, doc: notification_rules };
+
 pub static SETTINGS: InputsBuiltin = InputsBuiltin {
-    id: NOTIFICATION_RULES,
+    id: ID,
     params: rules_params,
     template: rules_template,
     finish: Some(finish),

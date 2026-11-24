@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "late-commits";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::CiPr, doc: late_commits };
+
 const FOLLOW_UP: &str = "{{trigger.summary}}.\n\nPR #{{trigger.pr}} ({{trigger.url}}) merged {{trigger.ticketKey}} \
 into {{trigger.baseBranch}} at {{trigger.mergedHead}}, and these commits on {{trigger.branch}} came after it, so \
 they are not in {{trigger.baseBranch}}:\n\n{{trigger.list}}\n\nCherry-pick them onto this ticket's branch (`git \

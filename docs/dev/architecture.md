@@ -896,9 +896,9 @@ own file, and the central list takes at most one line, so tickets built side by 
 | --- | --- | --- |
 | An API route | The area's module (pdt-api `<area>.rs`), in its `router()` | A new module adds `.merge(crate::<area>::router())` to `routes::router` (sorted) |
 | A web API call | `web/src/api/<area>.ts`, in its `<area>Api` object | A new area adds its import and `...<area>Api` to `api` in `web/src/api/client.ts` (sorted). `client.test.ts` fails when two areas define the same call. |
-| A pdt-mcp tool | Its group's module in pdt-api `mcp/tools/` (`defs()` and `call()`); shared helpers are in `mcp/tools/mod.rs` | A new group adds itself to `defs()` and `call()` in `mod.rs`. The order of `defs()` is the `tools/list` order. |
+| A pdt-mcp tool | Its group's module in pdt-api `mcp/tools/` (`defs()` and `call()`); shared helpers are in `mcp/tools/mod.rs` | A new group adds its name to the `groups![…]` line in `mod.rs` (its order is the `tools/list` order). A group's own `call()` gates its tools (the secrets group refuses all but `list_secrets` near untrusted input). |
 | A built-in persona's prompt | pdt-core `persona/<id>.md` (read with `include_str!`) | A new persona adds an entry to `BUILTIN_PERSONAS` in `persona.rs` |
-| A built-in workflow | Its own module in pdt-api `workflow/builtins/` | Its `mod` line, its id constant and its line in `BUILTINS` (or the integration's list) in `builtins/mod.rs` |
+| A built-in workflow | Its own module in pdt-api `workflow/builtins/` | Its module exports `ID` and `BUILTIN`; its `mod` line and its `<module>::BUILTIN,` line in `BUILTINS` (or the integration's list) in `builtins/mod.rs` |
 | A background loop | pdt-api `background.rs` (`start_background`) | |
 | A lazy screen or dialog | Its feature folder | One line in `web/src/shell/screens.tsx`, and the place in `AppShell.tsx` that shows it |
 | A Settings page of its own | Its feature folder | Its kind in `web/src/shell/route.ts` and `SettingsNav`, its lazy line in `web/src/shell/screens.tsx`, and one entry in `web/src/shell/settingsPages.tsx` |

@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "finish-merged";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: true, category: Category::Tickets, doc: finish_merged };
+
 pub(super) fn finish_merged() -> WorkflowDoc {
     doc(json!({
         "name": "Finish merged tickets",

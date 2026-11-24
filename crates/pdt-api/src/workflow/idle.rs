@@ -5,7 +5,7 @@
 //! "When an agent is stuck" (`idleMinutes`; 0 turns it off), the PR poll logs `ticket.idle` once for that spell, and
 //! the built-in puts it in the Inbox as stalled (`ticket.stalled`).
 
-use super::builtins::{STUCK_AGENTS, stuck_agents};
+use super::builtins::stuck_agents;
 use crate::routes::{AppState, now_ms};
 use pdt_core::pr::{CiState, PrState};
 use pdt_core::session::SessionStatus;
@@ -93,7 +93,7 @@ pub(crate) async fn idle(st: &AppState, info: &AttemptInfo, busy: &Busy, own_run
 
 /// The Idle tickets input of the enabled "When an agent is stuck": None when it is off, or 0.
 async fn idle_minutes(st: &AppState) -> Option<u64> {
-    let w = st.store.workflow_by_builtin(STUCK_AGENTS).await.ok().flatten().filter(|w| w.enabled)?;
+    let w = st.store.workflow_by_builtin(stuck_agents::ID).await.ok().flatten().filter(|w| w.enabled)?;
     let doc = st.store.workflow_doc(&w.id, w.version).await.ok().flatten()?;
     let values = stuck_agents::SETTINGS.values_of(&doc);
     values.get("idleMinutes").and_then(serde_json::Value::as_u64).filter(|m| *m > 0)

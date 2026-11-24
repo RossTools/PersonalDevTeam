@@ -35,10 +35,6 @@ impl Project {
     pub fn is_host(&self) -> bool {
         self.kind == ProjectKind::Host
     }
-    /// A remote project: another instance owns it, and this one only executes for it.
-    pub fn is_remote(&self) -> bool {
-        self.kind == ProjectKind::Remote
-    }
 }
 
 /// The host project's key: no user key can have `_` (PDT-81).

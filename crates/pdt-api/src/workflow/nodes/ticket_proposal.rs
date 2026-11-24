@@ -126,7 +126,7 @@ impl NodeKind for TicketProposal {
 
 /// Whether tickets agents make are held as proposals now: the "Ticket proposals" built-in is on.
 pub(crate) async fn proposals_on(st: &AppState) -> bool {
-    let w = st.store.workflow_by_builtin(crate::workflow::builtins::TICKET_PROPOSALS).await;
+    let w = st.store.workflow_by_builtin(crate::workflow::builtins::ticket_proposals::ID).await;
     matches!(w, Ok(Some(w)) if w.enabled)
 }
 

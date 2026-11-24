@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "ticket-proposals";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Tickets, doc: ticket_proposals };
+
 /// A ticket an agent session makes (not the PM's, triage's or Make into parts') waits in the Inbox for the user's
 /// decision. While this is on, PDT also makes such tickets in Draft without the `agentic` label
 /// (`nodes::ticket_proposal::proposals_on`).
