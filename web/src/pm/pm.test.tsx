@@ -171,12 +171,16 @@ describe('the PM', () => {
     const onSelect = vi.fn();
     renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    expect(screen.queryByText(/PM v1/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New conversation' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Rename' }));
     const field = screen.getByRole('textbox', { name: 'Conversation name' });
     await userEvent.clear(field);
     await userEvent.type(field, 'Cutover{Enter}');
     await waitFor(() => expect(calls).toContainEqual({ method: 'PATCH', path: '/api/pm/sessions/c1', body: { title: 'Cutover' } }));
-    await userEvent.click(screen.getByRole('button', { name: 'Close…' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Close…' }));
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('writes its journal');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
@@ -251,8 +255,8 @@ describe('the PM', () => {
     renderWithQuery(<PmView selection="s1" onSelect={() => {}} onNew={onNew} />);
     expect(await screen.findByText(/This conversation ended because you closed it\./)).toBeInTheDocument();
     expect(screen.getByText(/Planned the PM/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Close…' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole('button', { name: 'New conversation' })[0]);
+    expect(screen.queryByRole('button', { name: 'Conversation actions' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     expect(onNew).toHaveBeenCalled();
   });
 
@@ -265,7 +269,8 @@ describe('the PM', () => {
     const onSelect = vi.fn();
     renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'CB cutover' })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Reset…' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Reset…' }));
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).toHaveTextContent('Starts this conversation fresh. Its journal is kept and the new one starts from it.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Reset' }));
@@ -313,7 +318,8 @@ describe('the PM', () => {
     });
     const onSelect = vi.fn();
     const view = renderWithQuery(<PmView selection="c1" onSelect={onSelect} onNew={() => {}} />);
-    await userEvent.click(await screen.findByRole('button', { name: 'Reset…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Conversation actions' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Reset…' }));
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Reset' }));
     view.rerender(<PmView selection="c2" onSelect={onSelect} onNew={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'A PDT bug' })).toBeInTheDocument();
@@ -362,6 +368,6 @@ describe('the PM', () => {
     renderWithQuery(<PmView selection="c0" onSelect={() => {}} onNew={() => {}} />);
     expect(await screen.findByText(/This conversation ended because you reset it\./)).toBeInTheDocument();
     expect(screen.queryByText(/Resetting:/)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reset…' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Conversation actions' })).not.toBeInTheDocument();
   });
 });

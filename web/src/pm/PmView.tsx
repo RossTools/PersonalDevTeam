@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BriefcaseBusiness, FileStack } from 'lucide-react';
-import { Button, EmptyState, List, ListRow, PromptBox, RelativeTime, Skeleton, ViewHeader, absoluteTime } from '@ui';
+import { Button, EmptyState, List, ListRow, MenuButton, PromptBox, RelativeTime, Skeleton, ViewHeader, absoluteTime } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { useAction } from '../common/useAction';
@@ -25,7 +25,8 @@ const PM_START_DRAFT = 'pm-start';
  * The PM view's work area (PDT-81, PDT-149): the conversation on show (an ended one read-only, with its journal), the
  * list of ended ones, or the box whose first message starts a new conversation (also shown when none is open). On a
  * phone (PDT-113) the conversation is the whole screen: the top bar has its title, and ⋯ renames, resets or closes it.
- * A reset conversation (PDT-308) links to the one it carries on from, read-only.
+ * A reset conversation (PDT-308) links to the one it carries on from, read-only. The header matches a session's
+ * (PDT-688): Watch, Open beside… and ⋯ (Rename, Reset…, Close…); the list's + starts a new conversation.
  * The notes have a view of their own (PDT-143).
  */
 export function PmView({ selection, onSelect, onNew }: {
@@ -75,7 +76,6 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
   ] : null);
   const rest = [
     ended ? `ended: ${info.reason ? REASON_LABEL[info.reason] : 'ended'}` : null,
-    s.persona ? `${s.persona.name} v${s.persona.version}` : null,
     viaLabel(info),
   ].filter(Boolean).join(' · ');
   const meta = <>Started <RelativeTime time={s.createdAt} />{rest ? ` · ${rest}` : ''}</>;
@@ -105,10 +105,18 @@ function Conversation({ info, previous, phone, onSelect, onNew, onReset }: {
             <>
               <PmWatching sessionId={s.id} title={info.title} />
               <Button variant="ghost" size="sm" onClick={besidePicker.pick}><FileStack aria-hidden /> Open beside…</Button>
-              {!ended && <Button variant="ghost" size="sm" onClick={() => setRenaming(true)}>Rename</Button>}
-              {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => reset(info)}>Reset…</Button>}
-              {!ended && <Button variant="ghost" size="sm" disabled={!canClose} onClick={() => close(info)}>Close…</Button>}
-              <Button variant="ghost" size="sm" onClick={onNew}>New conversation</Button>
+              {!ended && (
+                <MenuButton
+                  label="Conversation actions"
+                  size="sm"
+                  placement="bottom end"
+                  entries={() => [
+                    { label: 'Rename', onSelect: () => setRenaming(true) },
+                    { label: 'Reset…', onSelect: () => reset(info), disabled: !canClose },
+                    { label: 'Close…', onSelect: () => close(info), disabled: !canClose },
+                  ]}
+                />
+              )}
             </>
           )}
         />
