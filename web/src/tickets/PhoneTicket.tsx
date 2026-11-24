@@ -3,16 +3,17 @@
 // the stage's primary action, everything else is under the top bar's ⋯.
 import { useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Pencil } from 'lucide-react';
+import { Check, ChevronDown, Pencil } from 'lucide-react';
 import { Alert, Button, Disclosure, EmptyState, IconButton, Sheet, TabPanel, Textarea, useConfirm, type MenuEntry } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { Ticket } from '../api/gen/Ticket';
+import type { TicketStage } from '../api/gen/TicketStage';
 import { AgentDot } from '../common/AgentState';
 import { Markdown } from '../common/Markdown';
 import { useWatches, Watchers } from '../common/Watch';
 import { PartsStepper } from '../common/PartsStepper';
 import { PRIORITY_LABEL, PriorityIcon } from '../common/PriorityIcon';
-import { STAGE_LABEL, StageStepper } from '../common/StageStepper';
+import { STAGE_LABEL } from '../common/StageStepper';
 import { runAction, useFormAction } from '../common/useAction';
 import { MergeConfirm } from '../inbox/PhoneInbox';
 import { useAnswer } from '../inbox/useAnswer';
@@ -21,11 +22,11 @@ import { MergeDialog } from '../review/MergeDialog';
 import { useDiffSize } from '../review/queries';
 import { useTopBarActions, useTopBarEdit } from '../shell/PhoneTopBar';
 import {
-  canRefine, canStart, patchTicket, refineTicket, ticketMenu, useOpenSession, useOpenTicket, useStartTicket,
+  canRefine, canStart, moveTicket, patchTicket, refineTicket, ticketMenu, useOpenSession, useOpenTicket, useStartTicket,
 } from './actions';
 import { AttemptSection, HeldBanner, MergedBanner } from './Attempt';
 import { agentLine } from './Board';
-import { isClosed } from './model';
+import { isClosed, STAGES } from './model';
 import { canMakeParts, MakePartsDialog, ParentChip, PartsSection } from './PartsSection';
 import { prName } from './PullRequest';
 import { TicketBadges } from './TicketBadges';
@@ -150,9 +151,6 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
         )}
         {editing?.field === 'title' && error && <Alert tone="error">{error}</Alert>}
         <StateLine ticket={t} />
-        <div className="-mx-4 overflow-x-auto px-4">
-          <StageStepper stage={t.stage} className="w-max" />
-        </div>
         {t.parts && <PartsStepper parts={t.parts} showCount className="w-40" />}
       </header>
       <MergedBanner ticket={t} className="border-y" />
@@ -227,18 +225,50 @@ export function PhoneTicket({ ticket: t, onDeleted }: { ticket: Ticket; onDelete
   );
 }
 
-/** `● In progress · Medium · Coder · working`, then the badges (refining, blocked, overlap, waiting). */
+/**
+ * `[In progress ▾] ● Medium · Coder · working`, then the badges (refining, blocked, overlap, waiting). The stage is a
+ * pill that opens the stages in a bottom sheet: one tap to see them, one to move (no stepper on a phone).
+ */
 function StateLine({ ticket: t }: { ticket: Ticket }) {
   const agent = t.agent ? agentLine(t.agent) : null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+      <StagePill ticket={t} />
       {agent && <AgentDot state={agent.dot} />}
-      <span className="font-medium text-foreground">{STAGE_LABEL[t.stage]}</span>
-      <span aria-hidden>·</span>
       <PriorityIcon priority={t.priority} showLabel />
       {agent && <><span aria-hidden>·</span><span>{agent.text}</span></>}
       <TicketBadges ticket={t} className="flex-wrap" />
     </div>
+  );
+}
+
+/** The stage as a pill; its sheet lists every stage as a big row, the current one ticked. */
+function StagePill({ ticket: t }: { ticket: Ticket }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const [open, setOpen] = useState(false);
+  const pick = (stage: TicketStage) => {
+    setOpen(false);
+    if (stage !== t.stage) void runAction(() => moveTicket(qc, t, stage, confirm));
+  };
+  return (
+    <>
+      <Button size="sm" className="rounded-full font-medium" aria-haspopup="dialog" aria-label={`Stage: ${STAGE_LABEL[t.stage]}`}
+        onClick={() => setOpen(true)}>
+        {STAGE_LABEL[t.stage]} <ChevronDown aria-hidden />
+      </Button>
+      <Sheet side="bottom" title="Move to" open={open} onOpenChange={setOpen}>
+        <div role="group" aria-label="Stages" className="flex flex-col gap-1.5">
+          {STAGES.map((s) => (
+            <Button key={s} size="lg" className="w-full justify-start px-3" aria-current={s === t.stage ? 'true' : undefined}
+              onClick={() => pick(s)}>
+              <span className="flex-1 truncate text-left">{STAGE_LABEL[s]}</span>
+              {s === t.stage && <Check aria-hidden />}
+            </Button>
+          ))}
+        </div>
+      </Sheet>
+    </>
   );
 }
 
@@ -257,8 +287,14 @@ function Fold({ title, summary, children }: { title: string; summary: string; ch
   );
 }
 
+/** `Ready · Medium · Labels: auth · Areas: auth, pages`: labels and areas named, so they can't be mistaken for each other. */
 function detailsSummary(t: Ticket): string {
-  return [STAGE_LABEL[t.stage], PRIORITY_LABEL[t.priority], ...t.labels, ...t.areas].join(' · ');
+  return [
+    STAGE_LABEL[t.stage],
+    PRIORITY_LABEL[t.priority],
+    t.labels.length > 0 ? `Labels: ${t.labels.join(', ')}` : null,
+    t.areas.length > 0 ? `Areas: ${t.areas.join(', ')}` : null,
+  ].filter(Boolean).join(' · ');
 }
 
 function attemptSummary(t: Ticket): string {

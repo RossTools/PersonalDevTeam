@@ -1,4 +1,4 @@
-import type { AriaAttributes, ReactNode } from 'react';
+import type { AriaAttributes, ReactNode, Ref } from 'react';
 import { cn } from './lib/utils';
 
 export interface SectionListProps extends AriaAttributes {
@@ -32,12 +32,14 @@ export interface SectionItemProps {
   /** More under the meta line (a sub-list, a setting of its own). */
   children?: ReactNode;
   className?: string;
+  /** The row's `<li>` (to move focus on when it goes away). */
+  ref?: Ref<HTMLLIElement>;
 }
 
 /** One row of a `SectionList`: name, badges and buttons on a line, then a notice, a meta line and anything more. */
-export function SectionItem({ title, leading, badges, actions, notice, meta, children, className }: SectionItemProps) {
+export function SectionItem({ title, leading, badges, actions, notice, meta, children, className, ref }: SectionItemProps) {
   return (
-    <li className={cn('flex flex-col gap-1 px-4 py-2.5', className)}>
+    <li ref={ref} className={cn('flex flex-col gap-1 px-4 py-2.5', className)}>
       <div className="flex flex-wrap items-center gap-2">
         {leading}
         {typeof title === 'string' ? <span className="font-medium">{title}</span> : title}

@@ -5,16 +5,19 @@ import { cn } from './lib/utils';
  * A command or a tool call in a card: a header (what runs, and where, on the left; why, on the right) over the code,
  * kept as written. `children` replaces the code with something else (a diff).
  */
-export function CodeCard({ title, aside, code, children, className, 'aria-label': ariaLabel }: {
+export function CodeCard({ title, aside, code, children, className, tabIndex, 'aria-label': ariaLabel, ...data }: {
   title?: ReactNode;
   aside?: ReactNode;
   code?: string;
   children?: ReactNode;
   className?: string;
+  /** -1: it can take focus from code (a button inside it went away). */
+  tabIndex?: number;
   'aria-label'?: string;
+  [data: `data-${string}`]: string | number | boolean | undefined;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} className={cn('overflow-hidden rounded-lg border border-border bg-card', className)}>
+    <div {...data} role="group" aria-label={ariaLabel} tabIndex={tabIndex} className={cn('overflow-hidden rounded-lg border border-border bg-card outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
       {(title || aside) && (
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 border-b border-border px-3.5 py-2 text-xs text-muted-foreground">
           {title && <span className="min-w-0 break-words">{title}</span>}

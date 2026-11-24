@@ -126,6 +126,31 @@ describe('Remote instances (the owner)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Cancel code' }));
     await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/api/projects/p/remote-instances/pairing', body: undefined }));
     expect(await screen.findByText('No remote instances yet.')).toBeInTheDocument();
+    // Cancel code went with its row: focus is on Add instance (PDT-668).
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add instance' })).toHaveFocus());
+  });
+
+  it('moves focus to the next instance\'s Remove when one is removed, then to Add instance (PDT-668)', async () => {
+    let instances = [winBox, { ...winBox, linkId: 'l2', instanceId: 'i2', name: 'mac-box' }];
+    const gone = (id: string) => () => { instances = instances.filter((i) => i.linkId !== id); return { told: true }; };
+    stubApi({
+      'GET /api/projects/p/remote-instances': () => view({ instances }),
+      'DELETE /api/projects/p/remote-instances/l1': gone('l1'),
+      'DELETE /api/projects/p/remote-instances/l2': gone('l2'),
+      'GET /api/projects/p/placement': { rules: [] },
+    });
+    renderWithQuery(<RemoteInstances project={project} />);
+    const remove = async (name: string) => {
+      const row = (await screen.findAllByText(name)).map((e) => e.closest('li')).find((li) => li?.textContent?.includes('connected'))!;
+      await userEvent.click(within(row).getByRole('button', { name: /Remove/ }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    };
+    await remove('win-box');
+    await waitFor(() => expect(screen.queryAllByText('win-box')).toHaveLength(0));
+    const macRow = screen.getAllByText('mac-box').map((e) => e.closest('li')).find((li) => li?.textContent?.includes('connected'))!;
+    await waitFor(() => expect(within(macRow).getByRole('button', { name: /Remove/ })).toHaveFocus());
+    await remove('mac-box');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add instance' })).toHaveFocus());
   });
 
   it('offers no pairing while remote access is off, only a way to turn it on', async () => {
@@ -193,6 +218,21 @@ describe('Remote projects (the remote instance)', () => {
     await userEvent.click(within(hills).getByRole('button', { name: /Leave/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Leave project' }));
     await waitFor(() => expect(info).toHaveBeenCalledWith("studio couldn't be told; remove this instance from Hills there too."));
+  });
+
+  it('moves focus to the join form when the last project is left (PDT-668)', async () => {
+    let projects = [remote];
+    stubApi({
+      'GET /api/remote-projects': () => projects,
+      'DELETE /api/remote-projects/rp': () => { projects = []; return { told: true }; },
+      'GET /api/host/settings': { settings: {}, remote: { active: true } },
+      'GET /api/secrets': [],
+    });
+    renderWithQuery(<RemoteProjectsPage />);
+    const row = (await screen.findByText('Valley')).closest('li')!;
+    await userEvent.click(within(row).getByRole('button', { name: /Leave/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Leave project' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: "Owner's address" })).toHaveFocus());
   });
 
   it('lists what runs here for the owner, read-only, and moves the checkout', async () => {

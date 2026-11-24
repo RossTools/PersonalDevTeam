@@ -257,5 +257,6 @@ The top bar's title picks the project and saved filters, with **Backlog**, **Boa
 line saying which stages the backlog shows and how many tickets match: tap it to change the filters. The
 board shows one column at a time: pick it from the chips or swipe. Long-press a row or card for its menu instead of
 dragging; **＋** adds a ticket. A ticket opens full screen with **Overview**, **Conversation** and **Changes**, and its
-main action (**Start**, **Accept…**, **Open in workspace**) at the bottom. In **Comment…**, the paperclip attaches a photo or
+main action (**Start**, **Accept…**, **Open in workspace**) at the bottom. Tap the stage under its title to move it to
+another stage. In **Comment…**, the paperclip attaches a photo or
 file.

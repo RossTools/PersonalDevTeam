@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { ApprovalCard, toast, twoPressTiming } from '@ui';
 import type { InboxAnswer } from '../api/gen/InboxAnswer';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -40,6 +40,13 @@ function Inbox({ items }: { items: InboxItem[] }) {
   const held = useHeldIds();
   return <InboxView items={items.filter((i) => !held.has(i.id))} selectedId={selected} onSelect={setSelected} />;
 }
+
+// Sonner removes a dismissed toast 200 ms later, on a timer that outlives the test: let the last ones run while the page
+// is still here, or React reads `window` after the file's environment is gone.
+afterAll(async () => {
+  toast.dismiss();
+  await new Promise((r) => setTimeout(r, 300));
+});
 
 const answers = (calls: Call[]) => calls.filter((c) => c.method === 'POST' && c.path.endsWith('/answer'));
 
@@ -349,6 +356,42 @@ describe('Recently answered', () => {
     expect(await within(list).findByText('Ship · waiting to send')).toBeInTheDocument();
     await userEvent.click(within(list).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(within(list).queryByText('Ship · waiting to send')).not.toBeInTheDocument());
+  });
+
+  it('Show all moves focus to the first row it shows, and Undo to the next row (PDT-668)', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      'GET /api/events': ['a', 'b', 'c', 'd', 'e'].map((x, n) => ({ ...answered({ itemId: x, title: `Answer ${x}` }), id: `e${n}` })),
+      'GET /api/inbox': { items: [], total: 0 },
+    });
+    renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={() => {}} />);
+    const section = await screen.findByRole('region', { name: 'Recently answered' });
+    const row = (title: string) => within(section).getByText(title).closest('[role="row"]');
+    (await within(section).findByRole('button', { name: 'Show all 5' })).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(document.activeElement).toBe(row('Answer d')));
+
+    holdTiming.undoMs = 60_000;
+    act(() => holdAnswer({ itemId: 'x', title: 'Ship it?', label: 'Ship', send: async () => {} }));
+    await user.click(await within(section).findByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(within(section).queryByText('Ship it?')).not.toBeInTheDocument());
+    await waitFor(() => expect(document.activeElement).toBe(row('Answer a')));
+  });
+
+  it('Undo on the last row moves focus to the item it brings back (PDT-668)', async () => {
+    const user = userEvent.setup();
+    stubApi({ 'GET /api/events': [], 'GET /api/inbox': { items: [], total: 0 } });
+    function List() {
+      const held = useHeldIds();
+      return <InboxList items={[item('x', { title: 'Ship it?' })].filter((i) => !held.has(i.id))} selectedId={null} onSelect={() => {}} />;
+    }
+    holdTiming.undoMs = 60_000;
+    renderWithQuery(<List />);
+    act(() => holdAnswer({ itemId: 'x', title: 'Ship it?', label: 'Ship', send: async () => {} }));
+    const section = await screen.findByRole('region', { name: 'Recently answered' });
+    await user.click(within(section).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Recently answered' })).not.toBeInTheDocument());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByText('Ship it?').closest('[role="row"]')));
   });
 
   it('says when an agent answered', async () => {

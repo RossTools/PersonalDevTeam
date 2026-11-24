@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -6,6 +6,7 @@ import { Reply, renderWithQuery, stubApi } from '../test-utils';
 import { InboxList } from './InboxList';
 import { InboxView } from './InboxView';
 import { tomorrowMorning } from './snooze';
+import { useInbox } from './useInbox';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -82,4 +83,50 @@ it('says when a snoozed item holds its ticket', async () => {
   stubApi({ 'GET /api/inbox': { items: [], snoozed: [held], total: 0 } });
   renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={() => {}} />);
   expect(await screen.findByRole('region', { name: 'Snoozed' })).toHaveTextContent('PDT-7 waits on it');
+});
+
+describe('focus in Snoozed (PDT-668)', () => {
+  const away = (id: string) => item(id, { snooze: { itemId: id, until: 1e15, ticketId: null, ticketKey: null, createdAt: 1 } });
+  const row = (title: string) => screen.getByText(title).closest('[role="row"]');
+
+  /** The Inbox list on the server's items, as the app has it: an unsnoozed item comes back to Needs you. */
+  function Live() {
+    const data = useInbox().data;
+    return <InboxList items={data?.items ?? []} selectedId={null} onSelect={() => {}} />;
+  }
+
+  it('Show all moves focus to the first row it shows', async () => {
+    const user = userEvent.setup();
+    stubApi({ 'GET /api/inbox': { items: [], snoozed: ['a', 'b', 'c', 'd', 'e'].map(away), total: 0 } });
+    renderWithQuery(<InboxList items={[]} selectedId={null} onSelect={() => {}} />);
+    const section = await screen.findByRole('region', { name: 'Snoozed' });
+    within(section).getByRole('button', { name: 'Show all 5' }).focus();
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(document.activeElement).toBe(row('Item d')));
+    expect(within(section).queryByRole('button', { name: /^Show all/ })).not.toBeInTheDocument();
+  });
+
+  it('Unsnooze moves focus to the next row, and from the last to the item back in Needs you', async () => {
+    const user = userEvent.setup();
+    let snoozed = [away('a'), away('b')];
+    let items: InboxItem[] = [];
+    const back = (id: string) => () => {
+      items = [...items, ...snoozed.filter((i) => i.id === id).map((i) => ({ ...i, snooze: undefined }))];
+      snoozed = snoozed.filter((i) => i.id !== id);
+      return undefined;
+    };
+    stubApi({
+      'GET /api/inbox': () => ({ items, snoozed, total: items.length }),
+      'DELETE /api/inbox/a/snooze': back('a'),
+      'DELETE /api/inbox/b/snooze': back('b'),
+    });
+    renderWithQuery(<Live />);
+    const section = await screen.findByRole('region', { name: 'Snoozed' });
+    await user.click(within(row('Item a') as HTMLElement).getByRole('button', { name: 'Unsnooze' }));
+    await waitFor(() => expect(document.activeElement).toBe(row('Item b')));
+    await user.click(within(section).getByRole('button', { name: 'Unsnooze' }));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Snoozed' })).not.toBeInTheDocument());
+    await waitFor(() => expect(document.activeElement).toBe(row('Item b')));
+    expect(screen.getByRole('region', { name: 'Ready to accept' })).toContainElement(document.activeElement as HTMLElement);
+  });
 });

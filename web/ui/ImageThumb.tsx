@@ -11,7 +11,7 @@ export interface ImageThumbProps {
   onRemove?: () => void;
   /** Still uploading. */
   pending?: boolean;
-  /** It could not be attached: why (shown on hover, with an error border). */
+  /** It could not be attached: why (on hover, in the remove button's name, with an error border). */
   error?: string;
   /** Opens the full image in a new tab. */
   href?: string;
@@ -69,7 +69,7 @@ export function ImageThumb({ src, alt, onRemove, pending = false, error, href, d
       {onRemove && (
         <button
           type="button"
-          aria-label={`Remove ${alt}`}
+          aria-label={error ? `Remove ${alt} (${error})` : `Remove ${alt}`}
           onClick={onRemove}
           className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-card text-foreground shadow-card outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
         >

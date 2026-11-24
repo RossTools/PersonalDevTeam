@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink, Pause, Play, Trash2 } from 'lucide-react';
 import { Alert, Badge, Button, EmptyState, Input, Page, RelativeTime, Section, SectionItem, SectionList, Skeleton, Switch, toast, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
 import type { Secret } from '../api/gen/Secret';
+import { itemInPlaceOf, useKeepFocus } from '../common/focusLost';
 import { openExternal } from '../common/open';
 import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
@@ -55,13 +56,16 @@ function ProjectSecrets({ r }: { r: RemoteProjectView }) {
   const [value, setValue] = useState('');
   const mine = (all.data ?? []).filter((s) => s.projects.includes(r.project.id));
   const refresh = () => qc.invalidateQueries({ queryKey: secretKeys.all });
+  // Remove takes its own row away: focus goes on to the next secret's Remove, or the new secret's name (PDT-668).
+  const keep = useKeepFocus();
+  const nameField = useRef<HTMLInputElement>(null);
   const [add, adding] = useAction(async () => {
     await api.createSecret({ name: name.trim(), description: `For ${r.project.name}`, projects: [r.project.id], value });
     setName('');
     setValue('');
     await refresh();
   });
-  const [remove, removing] = useAction(async (s: Secret) => {
+  const [remove, removing] = useAction(async (s: Secret, from: Element) => {
     const others = s.projects.filter((p) => p !== r.project.id);
     const { ok } = await confirm({
       title: `Remove ${s.name} from ${r.project.name}?`,
@@ -72,6 +76,7 @@ function ProjectSecrets({ r }: { r: RemoteProjectView }) {
       danger: true,
     });
     if (!ok) return;
+    keep(from.closest('li'), itemInPlaceOf(from.closest('li'), () => nameField.current));
     if (others.length) await api.patchSecret(s.id, { projects: others });
     else await api.deleteSecret(s.id);
     await refresh();
@@ -88,13 +93,13 @@ function ProjectSecrets({ r }: { r: RemoteProjectView }) {
             <li key={s.id} className="flex flex-wrap items-center gap-2">
               <code>{s.name}</code>
               <span className="text-muted-foreground">{s.lastUsedAt !== null ? <>used <RelativeTime time={s.lastUsedAt} /></> : 'not used yet'}</span>
-              <Button size="sm" pending={removing} onClick={() => void remove(s)}>Remove…</Button>
+              <Button size="sm" pending={removing} onClick={(e) => void remove(s, e.target)}>Remove…</Button>
             </li>
           ))}
         </ul>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Input mono size="sm" aria-label={`New secret's name for ${r.project.name}`} placeholder="NAME" className="w-48" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input ref={nameField} mono size="sm" aria-label={`New secret's name for ${r.project.name}`} placeholder="NAME" className="w-48" value={name} onChange={(e) => setName(e.target.value)} />
         <Input size="sm" type="password" autoComplete="off" aria-label={`New secret's value for ${r.project.name}`} placeholder="Value" className="min-w-48 flex-1" value={value} onChange={(e) => setValue(e.target.value)} />
         <Button size="sm" disabled={!ok} pending={adding} onClick={() => void add()}>Add secret</Button>
       </div>
@@ -144,12 +149,13 @@ function OwnUpdateChannel({ r }: { r: RemoteProjectView }) {
   );
 }
 
-function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
+function RemoteProjectRow({ r, onGone }: { r: RemoteProjectView; onGone: (row: Element | null) => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const owner = r.link.ownerName;
   const state = LINK_STATE[r.state];
   const refresh = () => qc.invalidateQueries({ queryKey: projectKeys.remote });
+  const row = useRef<HTMLLIElement>(null);
   const [pause, pausing] = useAction(async () => {
     await api.patchRemoteProject(r.project.id, { paused: !r.link.paused });
     await refresh();
@@ -162,12 +168,14 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
       danger: true,
     });
     if (!ok) return;
+    onGone(row.current);
     const { told } = await api.leaveRemoteProject(r.project.id);
     if (!told) toast.info(`${owner} couldn't be told; remove this instance from ${r.project.name} there too.`);
     await refresh();
   });
   return (
     <SectionItem
+      ref={row}
       title={r.project.name}
       badges={<><span className="text-muted-foreground">· remote project of {owner}</span><Badge tone={state.tone}>{state.label}</Badge></>}
       actions={<>
@@ -214,6 +222,9 @@ function RemoteProjectRow({ r }: { r: RemoteProjectView }) {
  */
 export function RemoteProjectsPage() {
   const q = useRemoteProjects();
+  // Leave takes its own row away: focus goes on to the next project, or the join form (PDT-668).
+  const keep = useKeepFocus();
+  const join = () => document.querySelector<HTMLElement>('form[aria-label="Join a remote project"] input');
   return (
     <Page crumb="Settings" title="Remote projects" description="Projects another instance owns, which this one works on for it. Their board, tickets and PM are on the owner.">
       <Section label="Joined">
@@ -222,7 +233,9 @@ export function RemoteProjectsPage() {
         {q.data?.length === 0 && <EmptyState size="inline">No remote projects. Join one below.</EmptyState>}
         {!!q.data?.length && (
           <SectionList>
-            {q.data.map((r) => <RemoteProjectRow key={r.project.id} r={r} />)}
+            {q.data.map((r) => (
+              <RemoteProjectRow key={r.project.id} r={r} onGone={(row) => keep(row, itemInPlaceOf(row, join))} />
+            ))}
           </SectionList>
         )}
       </Section>
