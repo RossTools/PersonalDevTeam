@@ -146,7 +146,7 @@ struct Outside(Fence, std::sync::atomic::AtomicBool);
 
 impl Outside {
     fn new() -> Self {
-        Self(Fence::new(uuid::Uuid::new_v4().simple().to_string()), Default::default())
+        Self(Fence::random(), Default::default())
     }
 
     fn wrap(&self, text: &str) -> String {

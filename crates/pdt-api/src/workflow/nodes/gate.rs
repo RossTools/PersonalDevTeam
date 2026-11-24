@@ -206,7 +206,7 @@ impl NodeKind for Gate {
             // Plain text on one line (`#12: …` is no heading).
             let given = c.title.as_deref().map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "));
             let title = match given.filter(|t| !t.is_empty()) {
-                Some(t) => pdt_core::inbox::cut(&t, pdt_core::inbox::TITLE_CHARS),
+                Some(t) => pdt_core::text::clip_words(&t, pdt_core::inbox::TITLE_CHARS),
                 None => pdt_core::inbox::gate_title(&cx.node.title, &c.question),
             };
             let recommended = c.recommend.as_ref().and_then(|r| r.of(&c.choices));

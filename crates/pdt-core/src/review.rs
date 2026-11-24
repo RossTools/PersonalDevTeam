@@ -365,13 +365,9 @@ const REPLY_QUOTE_CHARS: usize = 80;
 /// The whole message's limit.
 pub const MAX_FEEDBACK_BYTES: usize = 32 * 1024;
 
+/// `s` on one line, cut to `chars` characters with "…".
 fn cut(s: &str, chars: usize) -> String {
-    let one_line = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one_line.chars().count() <= chars {
-        one_line
-    } else {
-        format!("{}…", one_line.chars().take(chars).collect::<String>().trim_end())
-    }
+    crate::text::clip(&s.split_whitespace().collect::<Vec<_>>().join(" "), chars)
 }
 
 fn indent(text: &str) -> String {
@@ -425,12 +421,6 @@ pub fn feedback_message(branch: &str, items: &[FeedbackItem]) -> String {
     out.trim_end().to_string()
 }
 
-/// A code fence for `text`: longer than any run of backticks in it.
-fn fence(text: &str) -> String {
-    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    "`".repeat(longest.max(2) + 1)
-}
-
 /// What the ticket timeline keeps of sent comments (the `feedback` event's Markdown body; the comments themselves go
 /// with the worktree): each comment in the message's order, its place, the lines it is about and its text. Over
 /// [`MAX_FEEDBACK_BYTES`], the last ones are counted instead.
@@ -454,8 +444,7 @@ pub fn feedback_record(items: &[FeedbackItem]) -> String {
                 if lines.len() > QUOTE_LINES {
                     quoted.push_str("\n…");
                 }
-                let f = fence(&quoted);
-                format!("**`{range}`**{removed}\n\n{f}\n{quoted}\n{f}\n\n")
+                format!("**`{range}`**{removed}\n\n{}\n\n", crate::text::code_block("", &quoted))
             }
         };
         part.push_str(item.body.trim());

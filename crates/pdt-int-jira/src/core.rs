@@ -345,7 +345,7 @@ pub fn adf_to_text(v: &Value) -> String {
                 "codeBlock" => {
                     let mut s = String::new();
                     children(b, &mut s);
-                    out.push(format!("{prefix}```\n{s}\n```"));
+                    out.push(format!("{prefix}{}", pdt_core::text::code_block("", &s)));
                 }
                 "rule" => out.push("---".into()),
                 _ => {
@@ -618,5 +618,8 @@ mod tests {
             {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "b"}]}]}]},
             {"type": "codeBlock", "content": [{"type": "text", "text": "x = 1"}]}]});
         assert_eq!(adf_to_text(&ordered), "1. a\n2. b\n\n```\nx = 1\n```");
+        let fenced = json!({"type": "doc", "content": [
+            {"type": "codeBlock", "content": [{"type": "text", "text": "```md\nhi\n```"}]}]});
+        assert_eq!(adf_to_text(&fenced), "````\n```md\nhi\n```\n````", "a fence inside stays inside");
     }
 }

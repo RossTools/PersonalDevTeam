@@ -426,12 +426,7 @@ pub fn document_notice(title: &str, notes: &[WatchNote], diff: Option<&str>, end
 
 /// The first line of `text`, cut to `max` characters with "…".
 fn clip(text: &str, max: usize) -> String {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    if line.chars().count() <= max {
-        return line.to_string();
-    }
-    let cut: String = line.chars().take(max - 1).collect();
-    format!("{}…", cut.trim_end())
+    crate::text::clip(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(""), max)
 }
 
 #[cfg(test)]

@@ -712,7 +712,7 @@ pub fn gate_title(step_title: &str, question: &str) -> String {
     let line = plain_line(question);
     let one_line = question.trim().lines().count() <= 1;
     let step = step_title.trim();
-    let t = if one_line || step.is_empty() { cut(&line, TITLE_CHARS) } else { step.to_string() };
+    let t = if one_line || step.is_empty() { crate::text::clip_words(&line, TITLE_CHARS) } else { step.to_string() };
     if t.is_empty() { "Your choice".to_string() } else { t }
 }
 
@@ -734,19 +734,6 @@ pub fn plain_line(text: &str) -> String {
     out.push_str(rest);
     let out: String = out.replace("**", "").replace("__", "").chars().filter(|c| !matches!(c, '`' | '*')).collect();
     out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// `text` cut to `max` characters at a word, with "…".
-pub fn cut(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let cut: String = text.chars().take(max - 1).collect();
-    let cut = match cut.rfind(char::is_whitespace) {
-        Some(i) if i > max / 2 => cut[..i].trim_end().to_string(),
-        _ => cut,
-    };
-    format!("{cut}…")
 }
 
 /// `GET /api/inbox`.

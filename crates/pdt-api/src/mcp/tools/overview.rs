@@ -307,12 +307,6 @@ async fn session_state(cx: &Cx<'_>, id: &str, messages: usize) -> Result<Value, 
 /// A message, shortened for a tool result.
 fn clip(t: &str) -> String {
     const MAX: usize = 2000;
-    if t.len() <= MAX {
-        return t.to_string();
-    }
-    let mut end = MAX;
-    while !t.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}…", &t[..end])
+    let head = pdt_core::text::head_bytes(t, MAX);
+    if head.len() == t.len() { t.to_string() } else { format!("{head}…") }
 }

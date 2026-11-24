@@ -250,7 +250,7 @@ impl Action for ChangeRequestView {
             )
             .unwrap_or(u32::MAX);
             // A bot's text is outside text (PDT-415), whatever its role: it can relay what an outsider wrote.
-            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            let fence = pdt_core::fence::Fence::random();
             let fenced = |bot: bool, body: String| if bot { fence.wrap(&body) } else { body };
             let comments: Vec<CommentOut> = comments
                 .into_iter()
@@ -396,7 +396,7 @@ impl Action for ChangeRequestDiff {
             let files = h.call(move |f, r| f.change_request_files(r, n)).await?;
             let (diff, truncated) = diff_text(&files, MAX_DIFF);
             // A pull request from outside is outside input (PDT-202): what its author wrote is fenced.
-            let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string());
+            let fence = pdt_core::fence::Fence::random();
             Ok(DiffOutput {
                 outside_text: fence.note(),
                 number: pr.number,

@@ -28,6 +28,7 @@ use axum::extract::State;
 use axum::http::header;
 use axum::response::IntoResponse;
 use pdt_core::brand::SHORT_NAME;
+use pdt_core::ci_retry::short_sha;
 use pdt_core::forge::ForgeNotes;
 use pdt_core::inbox::{InboxGroup, InboxKind};
 use pdt_core::link::RemoteInstance;
@@ -443,7 +444,7 @@ impl LocalForge {
             Ok(pdt_git::MergeOutcome::Merged { .. }) => format!(
                 "`{base}` on the remote `{remote}` had moved on (to {}), so {SHORT_NAME} merged it into the branch; CI \
                  runs again before change request #{} merges.",
-                short(&tip),
+                short_sha(&tip),
                 change.number
             ),
             Ok(pdt_git::MergeOutcome::Nothing) => return Ok(()),
@@ -451,7 +452,7 @@ impl LocalForge {
             Ok(pdt_git::MergeOutcome::Conflict { .. }) => format!(
                 "`{base}` on the remote `{remote}` had moved on (to {}) and conflicts with the branch: merge `{base}` \
                  in and resolve it; change request #{} then merges once CI passes.",
-                short(&tip),
+                short_sha(&tip),
                 change.number
             ),
             Ok(pdt_git::MergeOutcome::BaseDirty { checkout }) => {
@@ -582,10 +583,6 @@ impl LocalForge {
         }
         Ok(Some(CiState::Running))
     }
-}
-
-fn short(sha: &str) -> &str {
-    sha.get(..8).unwrap_or(sha)
 }
 
 /// Fetches `remote`'s `base` and fast-forwards the local `base` to it; the remote's tip. Err when they diverged (the
