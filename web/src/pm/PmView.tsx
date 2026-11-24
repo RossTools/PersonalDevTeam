@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BriefcaseBusiness, FileStack } from 'lucide-react';
 import { Button, EmptyState, List, ListRow, PromptBox, RelativeTime, Skeleton, ViewHeader, absoluteTime } from '@ui';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import { useAction } from '../common/useAction';
 import { PHONE_QUERY, useMediaQuery } from '../common/useMediaQuery';
@@ -13,6 +13,7 @@ import { useViewTracking } from '../sessions/useViewTracking';
 import type { PmSessionInfo } from '../api/gen/PmSessionInfo';
 import type { RotateReason } from '../api/gen/RotateReason';
 import { InlineRename } from '../common/InlineRename';
+import { NoAgentNotice, useNoAgent } from '../common/NoAgentNotice';
 import { useTopBarActions } from '../shell/PhoneTopBar';
 import { PmWatching, useSessionWatches } from './PmWatching';
 import { earlier, firstLine, REASON_LABEL, resetting, shownConversation, usePm, usePmActions, useRefreshPm, useShownRef, useViaLabel, type PmSelection } from './usePm';
@@ -227,23 +228,36 @@ const PM_PLACEHOLDER = 'Ask the PM…';
 
 /**
  * A new conversation, beside the open ones (PDT-149): the first message starts it and names it (its briefing is made then). Unsent text is kept. A phone doesn't
- * focus the box (the keyboard would cover the text) and follows the composer's Enter rule.
+ * focus the box (the keyboard would cover the text) and follows the composer's Enter rule. With no agent here, or when
+ * the server refuses the PM's agent, the box says so with Open Get started instead of a toast (PDT-718).
  */
 function PmStart({ onStarted, phone }: { onStarted: (s: Session) => void; phone: boolean }) {
   const [text, setText] = useState(() => loadDraft(PM_START_DRAFT));
   useEffect(() => saveDraft(PM_START_DRAFT, text), [text]);
   const refresh = useRefreshPm();
+  const noAgent = useNoAgent();
+  const [refused, setRefused] = useState<string | null>(null);
   const [start, starting] = useAction(async () => {
-    const s = await api.startPm(text.trim());
+    setRefused(null);
+    let s: Session;
+    try {
+      s = await api.startPm(text.trim());
+    } catch (e) {
+      if (!(e instanceof ApiError && (e.code === 'agent_not_found' || e.code === 'agent_off'))) throw e;
+      setRefused(e.message);
+      return;
+    }
     setText('');
     await refresh();
     onStarted(s);
   });
+  const canStart = !!text.trim() && !starting && !noAgent;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {!phone && <ViewHeader title="New conversation" leading={<BriefcaseBusiness aria-hidden className="size-4 text-muted-foreground" />} />}
       <PmIntro />
-      <div className="mt-auto px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="mt-auto flex flex-col gap-2 px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        {(noAgent || refused) && <NoAgentNotice message={noAgent ? undefined : refused ?? undefined} />}
         <PromptBox
           layout={phone ? 'phone' : 'default'}
           label="Ask the PM"
@@ -251,10 +265,10 @@ function PmStart({ onStarted, phone }: { onStarted: (s: Session) => void; phone:
           value={text}
           onChange={setText}
           pending={starting}
-          canSend={!!text.trim() && !starting}
+          canSend={canStart}
           onSend={() => void start()}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !enterAddsLine(phone) && text.trim()) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !enterAddsLine(phone) && canStart) {
               e.preventDefault();
               void start();
             }

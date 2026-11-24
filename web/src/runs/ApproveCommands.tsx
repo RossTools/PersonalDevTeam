@@ -6,6 +6,7 @@ import { useKeepFocus } from '../common/focusLost';
 import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
+import { POLL } from '../common/poll';
 import { invalidateCommands, runKeys } from './queries';
 
 type Confirm = (o: ConfirmOptions) => Promise<ConfirmResult>;
@@ -92,7 +93,8 @@ function CommandRow({ command: c, waiting, approve, approving }: {
  * configuration), under their branch and ticket. */
 export function ConfigCommands({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null) });
+  // Polled: an agent's new or changed configuration shows without a reload.
+  const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null), refetchInterval: POLL.slow });
   // Approve goes away once it lands, and the command moves down the list: focus goes to the next Approve, or the
   // command's card (PDT-668).
   const keep = useKeepFocus();

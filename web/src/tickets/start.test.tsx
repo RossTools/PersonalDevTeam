@@ -109,6 +109,40 @@ describe('Start dialog', () => {
     await waitFor(() => expect(starts(calls)[0]).toMatchObject({ agent: 'claude', mode: 'check' }));
   });
 
+  it('says no agent is installed before Start, which waits for one or No session', async () => {
+    const tool = (found: boolean) => ({ found, ok: found, detail: '' });
+    const calls = stubApi({
+      'GET /api/tickets/t1': ready,
+      'GET /api/projects': [project],
+      'GET /api/host/checks': { claude: tool(false), codex: tool(false), devin: tool(false), git: tool(true), gitIdentity: tool(true), tailscale: tool(true), checkedAt: 1 },
+      'GET /api/host/settings': hostDefaults('claude', 'conversation'),
+      'POST /api/tickets/t1/start': () => ({ ...started(ready), session: null }),
+    });
+    open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    const notice = await within(dialog).findByRole('status');
+    expect(notice).toHaveTextContent('No agent is installed yet');
+    expect(within(notice).getByRole('button', { name: 'Open Get started' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Start' })).toBeDisabled();
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'No session' }));
+    expect(within(dialog).queryByText('No agent is installed yet')).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    await waitFor(() => expect(starts(calls)[0]).toMatchObject({ noSession: true }));
+  });
+
+  it("says the server's refusal of a missing agent with Open Get started", async () => {
+    const message = "Codex isn't installed on this machine: install it, or set its path, under Agents on this machine in Get started";
+    stub(ready, () => new Reply(409, { code: 'agent_not_found', message }));
+    const { onClose } = open();
+    const dialog = await screen.findByRole('dialog', { name: 'Start ALP-1' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start' }));
+    const notice = await within(dialog).findByText(message);
+    expect(within(dialog).getByText("That agent isn't available")).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Open Get started' })).toBeInTheDocument();
+    expect(notice).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('checks a logged-out agent again from its warning, which goes once it is logged in', async () => {
     const tool = (found: boolean, ok: boolean) => ({ found, ok, detail: '' });
     const checks = (claude: boolean) => ({ claude: tool(true, claude), codex: tool(true, true), devin: tool(false, false), git: tool(true, true), tailscale: tool(true, true), checkedAt: 1 });

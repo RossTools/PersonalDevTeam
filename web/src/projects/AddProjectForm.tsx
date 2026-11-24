@@ -79,7 +79,7 @@ export function AddProjectForm({ onAdded, onJoined, onLeave, autoFocus = false, 
   const opt = (v: string) => (v.trim() ? v.trim() : undefined);
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (mode === 'path') add.mutate({ name, repoPath, ...(opt(key) ? { key: opt(key) } : {}) });
+    if (mode === 'path') add.mutate({ name: opt(name) ?? folderName(repoPath), repoPath, ...(opt(key) ? { key: opt(key) } : {}) });
     else if (mode === 'personal') add.mutate({ name, repoPath: '', kind: 'personal', ...(opt(key) ? { key: opt(key) } : {}) });
     else clone.mutate({ url, ...(opt(name) ? { name: opt(name) } : {}), ...(opt(key) ? { key: opt(key) } : {}), ...(opt(parentDir) ? { parentDir: opt(parentDir) } : {}) });
   };
@@ -98,7 +98,7 @@ export function AddProjectForm({ onAdded, onJoined, onLeave, autoFocus = false, 
       {choose}
       {mode === 'path' ? (
         <>
-          {/* The folder first: picking it fills the name in. */}
+          {/* The folder first: picking it fills the name in, and a typed one names it unless Name says otherwise. */}
           <Field label="Repository path">
             <FolderField
               required
@@ -111,7 +111,7 @@ export function AddProjectForm({ onAdded, onJoined, onLeave, autoFocus = false, 
             />
           </Field>
           <Field label="Name">
-            <Input required value={name} onChange={(e) => setName(e.target.value)} />
+            <Input placeholder={folderName(repoPath) || "the folder's name"} value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
         </>
       ) : mode === 'personal' ? (
@@ -149,6 +149,11 @@ export function AddProjectForm({ onAdded, onJoined, onLeave, autoFocus = false, 
       </Button>
     </form>
   );
+}
+
+/** The last folder of a typed path (`/a/b/`, `C:\\a\\b`, `~/b`): `b`. */
+export function folderName(path: string): string {
+  return path.trim().split(/[\\/]+/).filter(Boolean).pop() ?? '';
 }
 
 /** A clone under way: where it goes, git's latest progress, and Cancel (which removes what it cloned so far). */

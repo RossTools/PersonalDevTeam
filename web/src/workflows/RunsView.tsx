@@ -154,7 +154,8 @@ export function RunsView({ workflowId, catalog, runId, onRunChange, viewOnly = f
   const runs = useQuery({
     queryKey: workflowKeys.runList(workflowId, showQuiet),
     queryFn: () => api.listWorkflowRuns({ workflow: workflowId, quiet: showQuiet ? undefined : false, limit: 100 }),
-    refetchInterval: POLL.live,
+    // 100 runs: every 2 s only while one of them runs or waits.
+    refetchInterval: (q) => (q.state.data?.some((r) => r.status === 'running' || r.status === 'waiting') ? POLL.live : POLL.steady),
   });
   const list = runs.data ?? [];
   const current = viewOnly ? runId : runId ?? list[0]?.id ?? null;

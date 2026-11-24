@@ -1,4 +1,4 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { Copy, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { Alert, Badge, Button, clockTime, EmptyState, IconButton, Input, RelativeTime, Section, SectionItem, SectionList, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import type { LinkState } from '../api/gen/LinkState';
 import type { Project } from '../api/gen/Project';
 import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
+import type { RemoteInstancesView } from '../api/gen/RemoteInstancesView';
 import { AutoSaveText } from '../common/AutoSave';
 import { copyToClipboard } from '../common/clipboard';
 import { LoadError } from '../common/QueryStatus';
@@ -36,6 +37,16 @@ export function capOf(text: string): number {
 /** "9 min" left until `at` (ms), at least 1 while it lasts. */
 export function minutesLeft(at: number, now = Date.now()): string {
   return `${Math.max(1, Math.ceil((at - now) / 60_000))} min`;
+}
+
+/**
+ * Puts a write's answer in the cache. A poll already in flight is cancelled first, so its older answer (without the
+ * new pairing code, say) can't land over this one.
+ */
+async function setInstances(qc: QueryClient, projectId: string, next: RemoteInstancesView) {
+  const queryKey = projectKeys.remoteInstances(projectId);
+  await qc.cancelQueries({ queryKey });
+  qc.setQueryData(queryKey, next);
 }
 
 function InstanceRow({ project, i, onGone }: { project: Project; i: RemoteInstanceView; onGone: (row: Element | null) => void }) {
@@ -90,7 +101,7 @@ function InstanceRow({ project, i, onGone }: { project: Project; i: RemoteInstan
           placeholder={String(i.poolCap)}
           value={i.cap == null ? '' : String(i.cap)}
           onSave={async (t) => {
-            qc.setQueryData(projectKeys.remoteInstances(project.id), await api.patchRemoteInstance(project.id, i.linkId, { cap: capOf(t) }));
+            await setInstances(qc, project.id, await api.patchRemoteInstance(project.id, i.linkId, { cap: capOf(t) }));
           }}
         />
         tickets in flight on it at once{i.remoteCap != null && ` (${i.name}'s own cap: ${i.remoteCap})`}. Now {i.poolCap}.
@@ -182,9 +193,8 @@ export function RemoteInstances({ project }: { project: Project }) {
   const qc = useQueryClient();
   const q = useRemoteInstances(project.id);
   const v = q.data;
-  const set = (next: typeof v) => qc.setQueryData(projectKeys.remoteInstances(project.id), next);
-  const [add, adding] = useAction(async () => set(await api.newPairingCode(project.id)));
-  const [check, checking] = useAction(async () => set(await api.checkRemoteInstances(project.id)));
+  const [add, adding] = useAction(async () => setInstances(qc, project.id, await api.newPairingCode(project.id)));
+  const [check, checking] = useAction(async () => setInstances(qc, project.id, await api.checkRemoteInstances(project.id)));
   // Remove and Cancel code take their own row away: focus goes on to the next instance's Remove, or Add instance
   // (PDT-668).
   const keep = useKeepFocus();

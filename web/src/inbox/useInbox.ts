@@ -3,15 +3,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { POLL } from '../common/poll';
 import { useHeldIds } from './held';
+import { inboxKeys } from './queries';
 
-export const inboxKey = ['inbox'] as const;
 
 /**
  * The Inbox, polled with the rest of the UI. The rail's count reads the same query. Items whose answers wait out
  * their Undo window (PDT-623) are left out, as if answered.
  */
 export function useInbox() {
-  const q = useQuery({ queryKey: inboxKey, queryFn: () => api.inbox(), refetchInterval: POLL.live });
+  const q = useQuery({ queryKey: inboxKeys.list, queryFn: () => api.inbox(), refetchInterval: POLL.live });
   const held = useHeldIds();
   const { data } = q;
   const shown = useMemo(() => {
@@ -24,5 +24,5 @@ export function useInbox() {
 
 export function useRefreshInbox() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: inboxKey });
+  return () => qc.invalidateQueries({ queryKey: inboxKeys.all });
 }

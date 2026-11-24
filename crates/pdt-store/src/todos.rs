@@ -198,6 +198,18 @@ impl Store {
         tx.commit().await?;
         Ok(true)
     }
+
+    /// Deletes these todos in one transaction, all or none (Clear completed): those already gone are skipped, and an
+    /// open repeating one makes no next one. How many it deleted.
+    pub async fn delete_todos(&self, ids: &[String]) -> Result<u64, StoreError> {
+        let mut tx = self.write_tx().await?;
+        let mut deleted = 0;
+        for id in ids {
+            deleted += sqlx::query("DELETE FROM todos WHERE id = ?").bind(id).execute(&mut *tx).await?.rows_affected();
+        }
+        tx.commit().await?;
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +305,11 @@ mod tests {
         assert!(store.dated_open_todos().await.unwrap().is_empty());
         assert!(!store.delete_todo("b").await.unwrap());
         assert_eq!(store.get_todo("b").await.unwrap(), None);
+
+        // Many at once, skipping those already gone.
+        let gone = ["c".to_string(), "b".to_string(), "d".to_string()];
+        assert_eq!(store.delete_todos(&gone).await.unwrap(), 2);
+        assert_eq!(ids(store.list_todos(&TodoFilter::default()).await.unwrap()), ["a"]);
     }
 
     #[tokio::test]

@@ -2,7 +2,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { POLL } from '../common/poll';
-import { pluginsKey } from './model';
+
+export const pluginsKey = ['integrations'] as const;
 
 /** Every plugin (`GET /api/integrations`). */
 export const usePlugins = ({ enabled = true }: { enabled?: boolean } = {}) => useQuery({ queryKey: pluginsKey, queryFn: api.listIntegrations, enabled });

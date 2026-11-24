@@ -78,6 +78,34 @@ pub(crate) async fn events(
     }
 }
 
+#[derive(serde::Deserialize)]
+pub(crate) struct LastEventsQuery {
+    /// Session ids, comma-separated.
+    ids: String,
+    #[serde(default)]
+    last: Option<i64>,
+}
+
+/// How many sessions one `GET /api/sessions/last-events` reads at most.
+const LAST_EVENTS_SESSIONS: usize = 100;
+
+/// `GET /api/sessions/last-events?ids=a,b&last=n`: each session's newest `last` stored events (oldest first), by id,
+/// in one request (the phone's tab overview has a card per conversation). Sessions without events are left out.
+pub(crate) async fn last_events(
+    State(st): State<AppState>,
+    ApiQuery(q): ApiQuery<LastEventsQuery>,
+) -> Result<Json<std::collections::BTreeMap<String, Vec<pdt_core::conversation::ConversationEvent>>>, ApiError> {
+    let last = q.last.unwrap_or(TAIL).clamp(1, PAGE);
+    let mut out = std::collections::BTreeMap::new();
+    for id in q.ids.split(',').map(str::trim).filter(|i| !i.is_empty()).take(LAST_EVENTS_SESSIONS) {
+        let events = st.store.recent_session_events(id, last).await?;
+        if !events.is_empty() {
+            out.insert(id.to_string(), events);
+        }
+    }
+    Ok(Json(out))
+}
+
 /// A tool call whose output is sent as a preview.
 fn long_output(e: &AgentEvent) -> bool {
     matches!(e, AgentEvent::ToolCall { output: Some(o), .. } if o.len() > OUTPUT_PREVIEW)
@@ -410,6 +438,7 @@ pub(crate) async fn capabilities(
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     use axum::routing::{get, post};
     axum::Router::new()
+        .route("/sessions/last-events", get(last_events))
         .route("/sessions/{id}/events", get(events))
         .route("/sessions/{id}/messages", post(post_message))
         .route("/sessions/{id}/requests/{request_id}", post(post_answer))

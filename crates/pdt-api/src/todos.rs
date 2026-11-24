@@ -1,4 +1,4 @@
-//! The user's todo list (PDT-125): `GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`. The PM reads it with the
+//! The user's todo list (PDT-125): `GET/POST /api/todos`, `PATCH/DELETE /api/todos/{id}`, `POST /api/todos/delete`. The PM reads it with the
 //! `list_todos` tool. Checking off a repeating todo (PDT-141) makes the next one.
 
 use crate::error::{ApiError, OrNotFound};
@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pdt_core::todo::{self, NewTodo, Todo, TodoPatch};
+use pdt_core::todo::{self, NewTodo, Todo, TodoPatch, TodosDelete};
 use pdt_store::TodoFilter;
 use serde::Deserialize;
 
@@ -229,10 +229,30 @@ pub(crate) async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The most `POST /api/todos/delete` takes at once.
+const DELETE_MAX: usize = 1000;
+
+/// `POST /api/todos/delete`: deletes the todos in `ids` in one transaction (PDT-715), so Clear completed can't leave
+/// some deleted and some not. Ids already gone are skipped; an open repeating todo makes no next one.
+pub(crate) async fn delete_many(
+    State(st): State<AppState>,
+    payload: Result<Json<TodosDelete>, JsonRejection>,
+) -> Result<StatusCode, ApiError> {
+    let Json(input) = payload?;
+    if input.ids.len() > DELETE_MAX {
+        return Err(ApiError::invalid(format!("at most {DELETE_MAX} todos at once")));
+    }
+    if st.store.delete_todos(&input.ids).await? > 0 {
+        crate::notifications::kick(&st);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// This module's API routes; `routes::router` merges them under `/api`.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
-    use axum::routing::{get, patch};
+    use axum::routing::{get, patch, post};
     axum::Router::new()
         .route("/todos", get(list).post(create))
+        .route("/todos/delete", post(delete_many))
         .route("/todos/{id}", patch(self::patch).delete(self::delete))
 }

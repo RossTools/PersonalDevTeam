@@ -7,7 +7,8 @@ export const sessionKeys = {
   all: ['sessions'] as const,
   project: (projectId: string) => ['sessions', projectId] as const,
   one: (id: string) => ['session', id] as const,
-  lastEvents: (id: string) => ['session-last-events', id] as const,
+  /** Several conversations' newest events, in one request (the tab overview's cards). */
+  lastEvents: (ids: string[]) => ['session-last-events', ids] as const,
   file: (id: string, path: string) => ['session-file', id, path] as const,
 };
 

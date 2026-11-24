@@ -58,7 +58,8 @@ the **Network** screen.
 
 ## An agent isn't found
 
-**Settings › This host › Checks**, or **Agents on this machine** in **Get started**, says **not found** or **Missing**:
+**Settings › This host › Checks**, or **Agents on this machine** in **Get started**, says **not found** or **Missing**,
+or **Start** on a ticket and the PM say **No agent is installed yet** (with **Open Get started**):
 
 1. Check the agent runs in a terminal: `claude --version`, `codex --version` or `devin --version`.
 2. If it does, PDT may not see your terminal's `PATH` (it starts at login, before your shell profile runs). Find the
