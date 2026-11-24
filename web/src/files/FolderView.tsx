@@ -229,7 +229,7 @@ function FolderEntries({ state, place, dir }: { state: FolderViewState; place: P
   return (
     <>
       <List aria-label={dir ? `Files in ${dir}` : 'Files'} onAction={(path) => state.setFile(dirs.has(path) ? `${path}/` : path)}
-        renderEmpty={() => <p className="px-2 py-1 text-xs text-muted-foreground">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</p>}>
+        renderEmpty={() => <EmptyState size="inline" className="px-2 py-1">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</EmptyState>}>
         {q.data.map((e) => (
           <ListRow key={e.path} id={e.path} title={e.name} textValue={e.name}
             className={e.status === 'D' ? 'line-through text-muted-foreground' : undefined}

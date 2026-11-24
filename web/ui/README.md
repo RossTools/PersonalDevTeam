@@ -100,7 +100,9 @@
   `shortDate`, `absoluteTime` (tooltips), `clockTime` and `formatDuration`. In render, show a relative time with
   `<RelativeTime>` (it ticks every minute; `short` for a list row's "2h"), never `relativeTime()`, whose text goes stale.
   A clock that ticks by itself (a countdown, a running timer) reads `useNow(intervalMs)`, never its own `setInterval`.
-  Counts, capitals and byte sizes are in `web/src/common/text.ts` (`plural`, `capitalize`, `formatBytes`).
+  Counts, capitals and byte sizes are in `web/src/common/text.ts` (`plural`, `capitalize`, `formatBytes`). `src/lint.test.ts`
+  fails on a feature's own `toLocaleDateString`/`toLocaleTimeString`, `Intl.DateTimeFormat` or hand-capitalized
+  string; a raw `<a>` (outside Markdown) is a `Link`, and a download goes through `download` (`lib/download.ts`).
 - **Two-press confirm.** An action that acts outside PDT or can't be taken back arms on its first press and acts on a
   second: `useTwoPress` (`lib/twoPress.ts`, from `@ui`) keeps which one is armed, ignores a second press inside a
   double-click, disarms after a few seconds and reports `lapsed` (say "Not confirmed" in a live region). Tests set

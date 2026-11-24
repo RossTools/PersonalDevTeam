@@ -21,6 +21,7 @@ import { PriorityIcon } from '../common/PriorityIcon';
 import { TicketKey } from '../common/TicketKey';
 import { TicketWatchMark } from '../common/Watch';
 import { agentLine } from '../common/ticketAgent';
+import { LoadError } from '../common/QueryStatus';
 import { runAction } from '../common/useAction';
 import { canStart, moveTicket, startNextPart, ticketMenu, useOpenTicket, useStartTicket } from './actions';
 import { buildLanes, laneIds, readCollapsed, writeCollapsed, type Lane } from './BoardLanes';
@@ -375,9 +376,9 @@ function ColumnStatus({ col, title, stage, showEmpty, doneDays }: { col: ColumnD
       {pages.isPending ? (
         <Skeleton lines={3} label={`Loading ${title}`} className="p-1" />
       ) : pages.isError && !pages.data ? (
-        <p className="p-2 text-xs text-destructive">{pages.error.message}</p>
+        <LoadError what={title} error={pages.error} onRetry={() => void pages.refetch()} className="m-1" />
       ) : showEmpty && items.length === 0 ? (
-        <p className="p-2 text-xs text-muted-foreground">{stage === 'done' ? `Nothing done in the ${doneWindowLabel(doneDays).toLowerCase()}.` : 'No tickets.'}</p>
+        <EmptyState size="inline" className="p-2">{stage === 'done' ? `Nothing done in the ${doneWindowLabel(doneDays).toLowerCase()}.` : 'No tickets.'}</EmptyState>
       ) : null}
       {pages.hasNextPage && (
         <Button variant="ghost" size="sm" className="mt-2 w-full" pending={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()}>
@@ -686,7 +687,7 @@ export function Board({ projectId, filters = NO_FILTERS, onPeek, phone }: {
                     {!shut && (cards(lane.items[c.stage], c).length > 0 ? (
                       <Cell label={`${lane.parent!.key} · ${c.title}`} stage={c.stage} items={cards(lane.items[c.stage], c)} lane={laneIds(lane)} env={env} height="auto" />
                     ) : (
-                      <p className="px-3 pb-1 text-xs text-muted-foreground">{laneEmpty(lane) ? 'No parts on the board yet.' : `No parts in ${c.title}.`}</p>
+                      <EmptyState size="inline" className="px-3 pb-1">{laneEmpty(lane) ? 'No parts on the board yet.' : `No parts in ${c.title}.`}</EmptyState>
                     ))}
                   </div>
                 );

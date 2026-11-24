@@ -1,8 +1,9 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useRef, useState, type FormEvent } from 'react';
 import { Alert, Button, Field, Input } from '@ui';
 import { api } from '../api/client';
 import type { RemoteProjectView } from '../api/gen/RemoteProjectView';
+import { useFormAction } from '../common/useAction';
 import { useHostSettings } from '../host/queries';
 import { projectKeys } from './queries';
 import { RemoteAccessOff } from './RemoteAccessOff';
@@ -18,39 +19,34 @@ export function JoinRemoteProjectForm({ onJoined, onLeave, autoFocus = false }: 
   autoFocus?: boolean;
 }) {
   const qc = useQueryClient();
-  const errorId = useId();
+  const errorRef = useRef<HTMLDivElement>(null);
   const host = useHostSettings();
   const [owner, setOwner] = useState('');
   const [code, setCode] = useState('');
-  const join = useMutation({
-    meta: { errorShown: true },
-    mutationFn: api.joinRemoteProject,
-    onSuccess: (v) => {
-      setOwner('');
-      setCode('');
-      void qc.invalidateQueries({ queryKey: projectKeys.remote });
-      onJoined?.(v);
-    },
+  const join = useFormAction(async () => {
+    const v = await api.joinRemoteProject({ ownerAddress: owner, code });
+    setOwner('');
+    setCode('');
+    void qc.invalidateQueries({ queryKey: projectKeys.remote });
+    onJoined?.(v);
+    return v;
   });
-  useEffect(() => {
-    if (join.isError) document.getElementById(errorId)?.focus();
-  }, [join.isError, join.error, errorId]);
   const remote = host.data?.remote;
   if (remote && !remote.active) return <RemoteAccessOff onLeave={onLeave} />;
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    join.mutate({ ownerAddress: owner, code });
+    if (!(await join.run())) requestAnimationFrame(() => errorRef.current?.focus());
   };
   return (
-    <form onSubmit={submit} aria-label="Join a remote project" className="flex flex-col gap-3">
+    <form onSubmit={(e) => void submit(e)} aria-label="Join a remote project" className="flex flex-col gap-3">
       <Field label="Owner's address" hint="The other instance's tailnet name, e.g. studio.example.ts.net.">
         <Input required mono autoFocus={autoFocus} placeholder="studio.example.ts.net" value={owner} onChange={(e) => setOwner(e.target.value)} />
       </Field>
       <Field label="Pairing code" hint="Shown on the owner under the project's settings → Remote instances → Add instance.">
         <Input required mono className="uppercase placeholder:normal-case" maxLength={9} placeholder="ABCD-EFGH" value={code} onChange={(e) => setCode(e.target.value)} />
       </Field>
-      {join.isError && <Alert id={errorId} tabIndex={-1} tone="error">{join.error.message}</Alert>}
-      <Button variant="primary" type="submit" disabled={host.isPending} pending={join.isPending}>{join.isPending ? 'Pairing…' : 'Join project'}</Button>
+      {join.error && <div ref={errorRef} tabIndex={-1} className="outline-none"><Alert tone="error">{join.error}</Alert></div>}
+      <Button variant="primary" type="submit" disabled={host.isPending} pending={join.pending}>{join.pending ? 'Pairing…' : 'Join project'}</Button>
     </form>
   );
 }

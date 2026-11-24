@@ -6,14 +6,14 @@ import { api } from '../api/client';
 import type { Connection } from '../api/gen/Connection';
 import { hookUrl, summaryText, useConnectionKinds, type ConnectionKind } from './kinds';
 import { POLL } from '../common/poll';
-import { useConnectionStatus } from './queries';
+import { connectionToolsKey, useConnectionStatus } from './queries';
 
 /** An MCP server's tools: how many (their names on hover), or why listing them failed; List again asks it now. */
 function McpToolsLine({ c }: { c: Connection }) {
   const qc = useQueryClient();
-  const key = ['connection-tools', c.id];
+  const key = connectionToolsKey(c.id);
   const tools = useQuery({ queryKey: key, queryFn: () => api.connectionTools(c.id), refetchInterval: POLL.slow });
-  const relist = useMutation({ meta: { errorShown: true }, mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
+  const relist = useMutation({ mutationFn: () => api.refreshConnectionTools(c.id), onSuccess: (t) => qc.setQueryData(key, t) });
   const t = tools.data;
   return (
     <div className="flex w-full flex-wrap items-center gap-2 pl-2 text-xs text-muted-foreground">
@@ -22,7 +22,6 @@ function McpToolsLine({ c }: { c: Connection }) {
         <span title={t.tools.map((x) => x.name).join(', ')}>{t.tools.length === 1 ? '1 tool' : `${t.tools.length} tools`}: {t.tools.slice(0, 6).map((x) => x.name).join(', ')}{t.tools.length > 6 ? ', …' : ''}</span>
       )}
       {t?.error && <span className="text-destructive">{t.error}</span>}
-      {relist.isError && <span role="alert" className="text-destructive">{relist.error.message}</span>}
       <Button size="sm" variant="ghost" pending={relist.isPending} onClick={() => relist.mutate()}>List again</Button>
     </div>
   );

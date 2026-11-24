@@ -188,7 +188,7 @@ function Worktrees({ project }: { project: Project }) {
     <Section label="Worktrees" description={description}>
       {list.isPending && <Skeleton lines={3} label="Loading worktrees" />}
       <LoadError what="Worktrees" error={list.error} />
-      {list.data?.length === 0 && <EmptyState>No worktrees. Running a branch makes one.</EmptyState>}
+      {list.data?.length === 0 && <EmptyState size="inline">No worktrees. Running a branch makes one.</EmptyState>}
       {!!list.data?.length && (
         <SectionList>
           {list.data.map((w) => <WorktreeRow key={w.id} project={project} wt={w} storage={byId.get(w.id) ?? null} />)}

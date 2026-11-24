@@ -2,7 +2,7 @@
 // nothing, and shows the path and what each step would do.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Alert, Badge, Button, Dialog, Field, SegmentedControl, Select, Textarea } from '@ui';
+import { absoluteTime, Alert, Badge, Button, Dialog, Field, SegmentedControl, Select, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { DryRunResult } from '../api/gen/DryRunResult';
 import type { WorkflowDoc } from '../api/gen/WorkflowDoc';
@@ -99,7 +99,7 @@ export function DryRunDialog({ open, onOpenChange, doc, workflowId, catalog }: {
             <Select
               className="w-full"
               placeholder={events.isLoading ? 'Loading…' : 'Choose an event'}
-              options={recent.map((e) => ({ value: e.id, label: `${e.type} · ${new Date(e.createdAt).toLocaleString()}${e.ticketId ? ` · ${String((e.payload as { ticketKey?: string })?.ticketKey ?? '')}` : ''}` }))}
+              options={recent.map((e) => ({ value: e.id, label: `${e.type} · ${absoluteTime(e.createdAt)}${e.ticketId ? ` · ${String((e.payload as { ticketKey?: string })?.ticketKey ?? '')}` : ''}` }))}
               value={eventId}
               onChange={setEventId}
             />

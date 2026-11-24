@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Badge, Banner, Button, Link, Popover, useConfirm } from '@ui';
+import { Badge, Banner, Button, EmptyState, Link, Popover, useConfirm } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { ReleaseChanges } from '../api/gen/ReleaseChanges';
 import type { ReleaseNotes } from '../api/gen/ReleaseNotes';
@@ -124,7 +124,7 @@ function ReleaseList({ releases, since }: { releases: ReleaseNotes[]; since: str
           <h3 className="flex items-center gap-2 font-medium">v{r.version} {r.nightly && <Badge>Nightly</Badge>}</h3>
           {r.notes.trim()
             ? <Markdown className="text-xs">{r.notes}</Markdown>
-            : <p className="text-muted-foreground">No notes.</p>}
+            : <EmptyState size="inline">No notes.</EmptyState>}
         </section>
       ))}
     </div>

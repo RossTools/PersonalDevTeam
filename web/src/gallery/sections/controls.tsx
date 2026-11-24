@@ -17,6 +17,7 @@ import { Spinner } from '@ui/Spinner';
 import { Skeleton } from '@ui/Skeleton';
 import { Tooltip } from '@ui/Tooltip';
 import { SectionLabel } from '@ui/SectionLabel';
+import { capitalize } from '../../common/text';
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -165,7 +166,7 @@ function render() {
       <Row label="Button · md (28px)">
         {variants.map((v) => (
           <Button key={v} variant={v}>
-            {v[0].toUpperCase() + v.slice(1)}
+            {capitalize(v)}
           </Button>
         ))}
         <Button variant="primary">
@@ -178,7 +179,7 @@ function render() {
       <Row label="Button · sm (24px)">
         {variants.map((v) => (
           <Button key={v} variant={v} size="sm">
-            {v[0].toUpperCase() + v.slice(1)}
+            {capitalize(v)}
           </Button>
         ))}
         <Button size="sm" variant="ghost">

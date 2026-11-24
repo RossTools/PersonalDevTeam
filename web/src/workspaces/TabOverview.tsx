@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { FileDiff, Ticket } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
-import { ChoiceCard, ContextMenu, DiffStat } from '@ui';
+import { ChoiceCard, ContextMenu, DiffStat, EmptyState } from '@ui';
 import { api } from '../api/client';
 import type { ConversationEvent } from '../api/gen/ConversationEvent';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -132,7 +132,7 @@ export function TabOverview({ ws, onClose, onRename }: {
           ))}
         </div>
       ) : (
-        <p className="p-4 text-center text-sm text-muted-foreground">No tabs here.</p>
+        <EmptyState size="inline" className="justify-center p-4">No tabs here.</EmptyState>
       )}
     </section>
   );

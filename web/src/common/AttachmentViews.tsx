@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
-import { Alert, Button, Dialog, Link } from '@ui';
+import { Alert, Button, Dialog, Link, Skeleton } from '@ui';
 import { downloadUrl } from './download';
 import { ticketKeys } from '../tickets/queries';
 
@@ -26,8 +26,7 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
       </button>
       {open && (
         <Dialog
-          open
-          onOpenChange={setOpen}
+          onClose={() => setOpen(false)}
           title={alt || 'Image'}
           size="full"
           headerActions={
@@ -55,7 +54,7 @@ function TextViewer({ src }: { src: string }) {
     },
     staleTime: Infinity,
   });
-  if (q.isPending) return <p className="text-xs text-muted-foreground">Loading…</p>;
+  if (q.isPending) return <Skeleton lines={4} label="Loading the file" />;
   if (q.isError) return <Alert tone="error">{q.error.message}</Alert>;
   return (
     <pre className="overflow-auto rounded-md border border-border bg-surface-2 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground">
@@ -79,8 +78,7 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
       </button>
       {open && (
         <Dialog
-          open
-          onOpenChange={setOpen}
+          onClose={() => setOpen(false)}
           title={name}
           size="xl"
           footer={
