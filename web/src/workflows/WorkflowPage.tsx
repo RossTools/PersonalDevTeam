@@ -296,7 +296,7 @@ function Loaded({ w, catalog, projects, onOpen, view, projectInView }: { w: Work
         {tab === 'graph' && <GraphView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} remember={`workflow:${w.id}:graph`} />}
         {tab === 'outline' && <OutlineView doc={draft.doc} onChange={edit} catalog={catalog} check={check} selected={selected || null} onSelect={setSelected} readOnly={readOnly} />}
         {tab === 'text' && <TextView doc={draft.doc} onChange={edit} readOnly={readOnly} />}
-        {tab === 'runs' && <RunsView workflowId={w.id} catalog={catalog} runId={runId} onRunChange={setRunId} viewOnly={phone} />}
+        {tab === 'runs' && <RunsView workflowId={w.id} catalog={catalog} runId={runId} onRunChange={setRunId} viewOnly={phone} enabled={w.enabled} onDryRun={() => setDryRun(true)} />}
         {tab === 'versions' && <VersionsView w={w} dirty={draft.dirty} readOnly={readOnly} onChanged={() => draft.discard()} />}
         {builder && !phone && <aside aria-label="Panel" className="w-80 shrink-0 overflow-auto border-l border-border">{panel}</aside>}
       </div>
