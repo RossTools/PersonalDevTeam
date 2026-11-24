@@ -211,6 +211,20 @@ describe('TerminalView', () => {
     expect(screen.getByText('Session ended.')).toBeInTheDocument();
   });
 
+  it('explains an ended session whose terminal kept nothing, and not one that shows its last screen', () => {
+    const st = (s: string) => act(() => (h.sock!.handlers.onStatus as (s: string) => void)(s));
+    const { unmount } = render(<TerminalView sessionId="s1" dimmed emptyEnded={<p>Nothing was kept.</p>} />);
+    act(() => h.sock!.handlers.onReset());
+    st('ended');
+    expect(screen.getByText('Nothing was kept.')).toBeInTheDocument();
+    unmount();
+    render(<TerminalView sessionId="s1" dimmed emptyEnded={<p>Nothing was kept.</p>} />);
+    act(() => h.sock!.handlers.onReset());
+    act(() => h.sock!.handlers.onData(new TextEncoder().encode('$ ls'), false));
+    st('ended');
+    expect(screen.queryByText('Nothing was kept.')).not.toBeInTheDocument();
+  });
+
   it('sends raw key sequences from the on-screen key bar', () => {
     render(<TerminalView sessionId="s1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Escape' }));

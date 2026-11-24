@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
+import { Button, EmptyState, MenuButton, SegmentedControl, toast, useConfirm, ViewHeader, type MenuEntry } from '@ui';
 import { api, ApiError } from '../api/client';
 import type { Session } from '../api/gen/Session';
 import type { SessionMode } from '../api/gen/SessionMode';
@@ -394,9 +394,6 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
                   />
               </span>
             )}
-            {ended && !conversation && (
-              <Button variant="primary" size="sm" disabled={busy} pending={restarting} onClick={() => void restart()}>{restartLabel}</Button>
-            )}
             <MenuButton label="Session actions" size="sm" placement="bottom end" entries={() => entries()} />
           </>
         }
@@ -430,11 +427,14 @@ function SessionBody({ session, onRemoved, branchLink, branch, forge, baseBranch
             composing={composing && running}
             onComposeClose={() => setComposing(false)}
             dimmed={ended}
+            emptyEnded={<EmptyState>This session ended. Nothing was kept from its terminal.</EmptyState>}
           />
           {ended && (
             <EndedBar
               status={session.status === 'interrupted' ? 'interrupted' : 'finished'}
               agent={isAgent}
+              endedAt={session.endedAt}
+              exitCode={session.exitCode}
               onRestart={() => void restart()}
               onRemove={() => void askRemove()}
               restarting={restarting}
