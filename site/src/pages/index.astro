@@ -18,7 +18,7 @@ const links = siteLinks(import.meta.env.BASE_URL);
 const base = links.home;
 const stats = repoStats();
 // The local-first diagram, for screen readers: the boxes say the same.
-const whereLabel = `What runs where. On your computer: PDT on 127.0.0.1:${STABLE_PORT} runs Claude Code, Codex and ACP agents with your own logins, over your repositories, with secrets in the keychain that agents never see. Outside it, each agent talks to its own provider, and GitHub has the pull requests, CI and PDT's updates.`;
+const whereLabel = `What runs where. On your computer: PDT on 127.0.0.1:${STABLE_PORT} runs Claude Code, Codex, Devin and ACP agents with your own logins, over your repositories, with secrets in the keychain that agents never see. Outside it, each agent talks to its own provider, and GitHub has the pull requests, CI and PDT's updates.`;
 // The hero's carousel: the board first.
 const shots = [
 	{
@@ -173,7 +173,7 @@ const shots = [
 				<div class="where-row three">
 					<div class="where-node"><b><i class="where-mark claude">C</i>Claude Code</b><code class="where-login">● your login</code></div>
 					<div class="where-node"><b><i class="where-mark codex">O</i>Codex</b><code class="where-login">● your login</code></div>
-					<div class="where-node"><b><i class="where-mark acp">+</i>ACP agents</b><code class="where-login">● your login</code></div>
+					<div class="where-node"><b><i class="where-mark acp">+</i>Devin, ACP agents</b><code class="where-login">● your login</code></div>
 				</div>
 				<svg class="where-wires" viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M16.7 0C16.7 8 25 8 25 16M50 0C50 8 25 8 25 16M50 0C50 8 75 8 75 16M83.3 0C83.3 8 75 8 75 16" /></svg>
 				<div class="where-row two">
@@ -207,8 +207,9 @@ const shots = [
 		<div class="cta" data-download-row>
 			<a class="btn primary" href={downloadUrl('mac')} data-os="mac">Download for macOS</a>
 			<a class="btn ghost" href={downloadUrl('windows')} data-os="windows">Download for Windows</a>
-			<a class="btn ghost" href={downloadUrl('linux')} data-os="linux">Download for Linux</a>
+			<a class="btn ghost" href={downloadUrl('linux')} data-os="linux">Download for Linux (x86_64)</a>
 		</div>
+		<p class="more">Linux on ARM: <a href={downloadUrl('linux', 'aarch64')}>the aarch64 AppImage</a> · <a href={links.releases}>every download</a></p>
 	</div>
 </section>
 

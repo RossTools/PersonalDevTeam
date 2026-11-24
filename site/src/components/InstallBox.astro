@@ -43,7 +43,11 @@ const commands = OSES.map((os) => {
 				<code>{commands[i].head}<span class="install-pipe">{commands[i].pipe}</span></code>
 				<button type="button" class="install-copy" hidden aria-label={`Copy the ${os.label} command`}>Copy</button>
 			</div>
-			<p class="install-note">{os.note} Or <a href={downloadUrl(os.id)}>download it</a>.</p>
+			{os.id === 'linux' ? (
+				<p class="install-note">{os.note} It has no tray icon: for one, download the AppImage for <a href={downloadUrl('linux', 'x86_64')}>x86_64</a> or <a href={downloadUrl('linux', 'aarch64')}>aarch64</a>.</p>
+			) : (
+				<p class="install-note">{os.note} Or <a href={downloadUrl(os.id)}>download it</a>.</p>
+			)}
 		</div>
 	))}
 </div>
