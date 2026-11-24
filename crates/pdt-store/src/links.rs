@@ -96,6 +96,15 @@ pub enum Heard<'a> {
     },
 }
 
+/// What the owner said of itself when it reached a remote instance, each checked; None keeps what was known.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OwnerSeen<'a> {
+    pub name: Option<&'a str>,
+    pub version: Option<&'a str>,
+    /// Its address now: replaces the one this instance paired with.
+    pub url: Option<&'a str>,
+}
+
 impl Store {
     /// Adds a remote project (kind `remote`) and its link to the owner, in one transaction. A remote project has no
     /// workspace: nothing runs in it from this instance's own UI.
@@ -186,14 +195,16 @@ impl Store {
         row.as_ref().map(to_owner_link).transpose()
     }
 
-    /// The owner reached this instance on `link_id` at `at`, as `owner_version`.
-    pub async fn owner_contact(&self, link_id: &str, at: i64, owner_version: Option<&str>) -> Result<(), StoreError> {
+    /// The owner reached this instance on `link_id` at `at`, saying `seen` of itself.
+    pub async fn owner_contact(&self, link_id: &str, at: i64, seen: OwnerSeen<'_>) -> Result<(), StoreError> {
         sqlx::query(
-            "UPDATE remote_projects SET last_contact_at = ?, owner_version = COALESCE(?, owner_version) \
-             WHERE link_id = ?",
+            "UPDATE remote_projects SET last_contact_at = ?, owner_version = COALESCE(?, owner_version), \
+             owner_name = COALESCE(?, owner_name), owner_url = COALESCE(?, owner_url) WHERE link_id = ?",
         )
         .bind(at)
-        .bind(owner_version)
+        .bind(seen.version)
+        .bind(seen.name)
+        .bind(seen.url)
         .bind(link_id)
         .execute(&self.pool)
         .await?;
@@ -405,6 +416,17 @@ impl Store {
         Ok(r.rows_affected() > 0)
     }
 
+    /// A joined instance's address is `url` now (it said so, and answered there): the owner reaches it there from then
+    /// on.
+    pub async fn set_remote_instance_url(&self, link_id: &str, url: &str) -> Result<(), StoreError> {
+        sqlx::query("UPDATE remote_instances SET url = ? WHERE link_id = ?")
+            .bind(url)
+            .bind(link_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Removes a joined instance. False when there was none.
     pub async fn delete_remote_instance(&self, link_id: &str) -> Result<bool, StoreError> {
         let r = sqlx::query("DELETE FROM remote_instances WHERE link_id = ?").bind(link_id).execute(&self.pool).await?;
@@ -463,7 +485,7 @@ pub(crate) mod tests {
         assert_eq!(listed, vec![(p.clone(), link.clone())]);
         assert_eq!(store.owner_link_by_id("l-r").await.unwrap(), Some(link.clone()));
 
-        store.owner_contact("l-r", 50, Some("1.1.0")).await.unwrap();
+        store.owner_contact("l-r", 50, OwnerSeen { version: Some("1.1.0"), ..Default::default() }).await.unwrap();
         assert!(store.set_remote_project_paused("r", true).await.unwrap());
         assert!(store.set_remote_project_own_channel("r", true).await.unwrap());
         let got = store.get_owner_link("r").await.unwrap().unwrap();
@@ -473,6 +495,17 @@ pub(crate) mod tests {
         let got = store.get_owner_link("r").await.unwrap().unwrap();
         assert_eq!((got.last_contact_at, got.owner_version.as_str(), got.paused), (Some(50), "1.1.0", true));
         assert_eq!(got.cap, Some(2));
+
+        // The owner renamed itself, and moved.
+        let moved =
+            OwnerSeen { name: Some("mac-studio"), url: Some("https://mac-studio.example.ts.net"), version: None };
+        store.owner_contact("l-r", 60, moved).await.unwrap();
+        let got = store.get_owner_link("r").await.unwrap().unwrap();
+        assert_eq!(
+            (got.owner_name.as_str(), got.owner_url.as_str()),
+            ("mac-studio", "https://mac-studio.example.ts.net")
+        );
+        assert_eq!((got.last_contact_at, got.owner_version.as_str()), (Some(60), "1.1.0"), "the version kept");
 
         // The same owner's project can't be joined twice.
         let (mut again, mut link2) = remote("r2");
@@ -540,6 +573,9 @@ pub(crate) mod tests {
         assert_eq!(got.secrets, secrets);
         assert_eq!((got.cap, got.remote_cap, got.pool_cap()), (Some(2), Some(3), 2));
         assert_eq!((got.facts, got.last_seen_at), (Some(facts), Some(9)));
+
+        store.set_remote_instance_url("l", "https://win-3.example.ts.net").await.unwrap();
+        assert_eq!(store.get_remote_instance("l").await.unwrap().unwrap().url, "https://win-3.example.ts.net");
 
         store.record_heartbeat("l", Heard::Failed { error: "offline", protocol: Some((2, "2.0.0")) }).await.unwrap();
         let got = store.get_remote_instance("l").await.unwrap().unwrap();
