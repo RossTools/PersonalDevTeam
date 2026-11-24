@@ -176,28 +176,63 @@ pub(crate) fn restart_host_dependent_runs(st: &AppState) {
     }
 }
 
-/// How many times the run was asked to stop so far, and whether it is still being driven and not stopping. Read
-/// under `run_stops`, which `stop` holds while it counts and flags a stop, so a stop is either counted after this or
-/// already flagged.
-fn stops_and_running(st: &AppState, id: &str) -> (u64, bool) {
-    let stops = st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
-    let running = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|c| !c.stopping());
-    (stops.get(id).copied().unwrap_or(0), running)
+/// A run restarts in place are waiting on: how many restarts wait, and the stops counted since the first began.
+#[derive(Default)]
+pub(crate) struct StopCount {
+    watchers: usize,
+    stops: u64,
+}
+
+/// A restart's watch on its run's stops, from before its own stop until it starts the run again or gives up. Its
+/// `run_stops` entry goes with the last watch, so the map holds only runs being restarted.
+struct StopWatch<'a> {
+    st: &'a AppState,
+    id: &'a str,
+    since: u64,
+}
+
+impl<'a> StopWatch<'a> {
+    /// Watches the run's stops when it is still being driven and not stopping (else None). Taken under `run_stops`,
+    /// which `stop` holds while it counts and flags a stop, so a stop is either counted after this or already flagged.
+    fn start(st: &'a AppState, id: &'a str) -> Option<Self> {
+        let mut stops = st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
+        let running = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).is_some_and(|c| !c.stopping());
+        if !running {
+            return None;
+        }
+        let c = stops.entry(id.to_string()).or_default();
+        c.watchers += 1;
+        Some(StopWatch { st, id, since: c.stops })
+    }
+
+    /// Whether the run was asked to stop since the watch began.
+    fn stopped_since(&self) -> bool {
+        let stops = self.st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
+        stops.get(self.id).is_some_and(|c| c.stops != self.since)
+    }
+}
+
+impl Drop for StopWatch<'_> {
+    fn drop(&mut self) {
+        let mut stops = self.st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = stops.get_mut(self.id) {
+            c.watchers -= 1;
+            if c.watchers == 0 {
+                stops.remove(self.id);
+            }
+        }
+    }
 }
 
 /// Stops an active run and starts it again (no run-limit check: it replaces itself). Any other stop of the run
 /// before it starts again (the user's Stop, a gone branch) cancels the restart. Ok when there was nothing to do; Err
 /// says why it could not start again (the run has stopped).
 async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
-    let (stops, running) = stops_and_running(st, id);
-    if !running {
-        return Ok(());
-    }
+    let Some(watch) = StopWatch::start(st, id) else { return Ok(()) };
     if !stop_inner(st, id, None, false).await {
         tracing::warn!(run = %id, "the run did not stop in time; it is not restarted");
         return Ok(());
     }
-    let stopped_since = || stops_and_running(st, id).0 != stops;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
     let def = match crate::runs::definition_for(st, &run).await {
         Ok(d) => approved(st, &run, d).await,
@@ -210,7 +245,7 @@ async fn restart_in_place(st: &AppState, id: &str) -> Result<(), String> {
     }
     let _start = st.run_start_lock.lock().await;
     let Some(run) = st.store.get_run(id).await.map_err(|e| e.to_string())? else { return Ok(()) };
-    if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) || stopped_since() {
+    if run.state.is_active() || st.shutting_down.load(Ordering::SeqCst) || watch.stopped_since() {
         return Ok(());
     }
     relaunch(st, run, def?).await.map(|_| ()).map_err(|e| e.message().to_string())
@@ -637,8 +672,8 @@ pub(crate) async fn stop(st: &AppState, id: &str, reason: Option<String>) -> boo
 async fn stop_inner(st: &AppState, id: &str, reason: Option<String>, counted: bool) -> bool {
     let ctl = {
         let mut stops = st.run_stops.lock().unwrap_or_else(|e| e.into_inner());
-        if counted {
-            *stops.entry(id.to_string()).or_default() += 1;
+        if counted && let Some(c) = stops.get_mut(id) {
+            c.stops += 1;
         }
         let ctl = st.run_controls.lock().unwrap_or_else(|e| e.into_inner()).get(id).cloned();
         if let Some(ctl) = &ctl {

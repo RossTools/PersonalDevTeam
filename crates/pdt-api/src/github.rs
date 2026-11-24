@@ -435,6 +435,12 @@ pub async fn refresh_prs(st: &AppState) {
     let active_ids: HashSet<String> = active.iter().map(|i| i.attempt.id.clone()).collect();
     watch(st).forget_unseen_jobs();
     watch(st).errors.retain(|k, _| k.strip_prefix("feedback:").is_none_or(|a| active_ids.contains(a)));
+    {
+        // A held merge belongs to an active attempt; an ended one's is over.
+        let mut w = watch(st);
+        w.held.retain(|a| active_ids.contains(a));
+        w.held_tried.retain(|a, _| active_ids.contains(a));
+    }
     let open: Vec<String> = watch(st)
         .by_attempt
         .iter()

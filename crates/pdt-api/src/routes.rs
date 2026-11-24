@@ -143,9 +143,10 @@ pub struct AppState {
     pub(crate) run_controls: std::sync::Arc<
         std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<crate::run_manager::RunControl>>>,
     >,
-    /// How many times each run was asked to stop in this daemon run; a restart PDT makes on its own is cancelled
-    /// when the count moves while it waits (the user's Stop wins).
-    pub(crate) run_stops: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    /// The runs a restart PDT makes on its own is waiting on, with how many times each was asked to stop meanwhile;
+    /// the restart is cancelled when the count moves (the user's Stop wins). Kept only while a restart waits.
+    pub(crate) run_stops:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, crate::run_manager::StopCount>>>,
     /// Serializes run starts (limit check, port choice, worktree and row creation), so concurrent starts can neither
     /// exceed the run limit nor pick the same port.
     pub(crate) run_start_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
