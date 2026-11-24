@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
 import { renderWithQuery, stubApi } from '../test-utils';
+import { inboxKeys } from '../inbox/queries';
 import { ConfigCommands, withApproval } from './ApproveCommands';
 import { runKeys } from './queries';
 
@@ -72,7 +73,9 @@ describe('ConfigCommands', () => {
         trusted = [...trusted, ...c.body.fingerprints];
       },
     });
-    renderWithQuery(<ConfigCommands projectId="p" />);
+    const { qc } = renderWithQuery(<ConfigCommands projectId="p" />);
+    // The Inbox's untrusted-commands item goes with the approval, not at its next poll.
+    qc.setQueryData(inboxKeys.list, { items: [], total: 0 });
     await screen.findByRole('group', { name: 'Command for run "a"' });
     const names = () => screen.getAllByRole('group').map((g) => g.getAttribute('aria-label'));
     expect(names()).toEqual(['Command for run "b"', 'Command for run "c"', 'Command for run "a"']);
@@ -82,6 +85,7 @@ describe('ConfigCommands', () => {
     await userEvent.click(within(b).getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(screen.getByRole('group', { name: 'Command for run "b"' })).not.toHaveTextContent('Not approved'));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ fingerprints: ['b'] });
+    expect(qc.getQueryState(inboxKeys.list)?.isInvalidated).toBe(true);
     const c = screen.getByRole('group', { name: 'Command for run "c"' });
     expect(c).toHaveTextContent('Not approved');
     // Approve went away: focus is on the next one, then on the last one's card (PDT-668).

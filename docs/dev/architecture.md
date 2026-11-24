@@ -894,7 +894,7 @@ own file, and the central list takes at most one line, so tickets built side by 
 `useHostSettings`, `workflowKeys`, `ticketKeys`, `documentKeys`, `pmKeys` (the PM and its notes), `fileKeys`,
 `secretKeys`, …; worktrees in `common/worktrees.ts`, watches in `common/Watch.tsx`). Screens use those hooks and keys
 rather than a literal key and an inline `useQuery`, so every copy of a query shares one key and one set of options;
-`web/src/lint.test.ts` fails on an array-literal `queryKey:` or `setQueryData([…])` outside a `queries.ts`. A write calls the area's `invalidate…` helper, which also marks stale what depends on it
+`web/src/lint.test.ts` fails on an array-literal `queryKey:`, `setQueryData([…])` or `const …Key = [` outside a `queries.ts`. Keys that share a prefix for invalidation (the Inbox's list and Recently answered under `inboxKeys.all`) each get a key of their own below it, so a `setQueriesData` on one never writes into the other. A write calls the area's `invalidate…` helper, which also marks stale what depends on it
 (`invalidateProjects` the workspaces, `invalidateWorktrees` the sessions and workspaces, `savedWorkflow` the list,
 the versions and the Settings sections that show a built-in). Poll intervals are the tiers in `common/poll.ts`
 (`POLL.live` 2 s for what's on screen, `steady`, `slow`, `paged`, `idle`); what the notification stream pushes polls

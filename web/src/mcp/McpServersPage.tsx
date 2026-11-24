@@ -19,8 +19,8 @@ import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
 import { connectionsKey } from '../connections/queries';
 import { useSecrets } from '../secrets/queries';
+import { mcpServersKey } from './queries';
 
-const mcpServersKey = ['mcp-servers'] as const;
 
 const MODES: { value: ToolMode; label: string }[] = [
   { value: 'allow', label: 'Allow' },

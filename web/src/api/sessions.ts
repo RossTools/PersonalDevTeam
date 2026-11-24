@@ -51,9 +51,9 @@ export const sessionsApi = {
   /** One item's stored event, whole (`[]` when there is none). */
   sessionEventOfItem: (id: string, item: string) =>
     request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ item })}`),
-  /** A conversation's newest `last` stored events, oldest first. */
-  lastSessionEvents: (id: string, last: number) =>
-    request<ConversationEvent[]>(`/api/sessions/${enc(id)}/events${queryString({ last })}`),
+  /** Several conversations' newest `last` stored events, oldest first, by session id (those with none left out). */
+  lastEventsOf: (ids: string[], last: number) =>
+    request<Record<string, ConversationEvent[]>>(`/api/sessions/last-events${queryString({ ids: ids.join(','), last })}`),
   /** Sends a message to a conversation (reopening it when parked or ended); it is pending until the agent takes it. */
   sendMessage: (id: string, m: SendMessage) =>
     request<PendingMessage>(`/api/sessions/${enc(id)}/messages`, { method: 'POST', body: JSON.stringify(m) }),

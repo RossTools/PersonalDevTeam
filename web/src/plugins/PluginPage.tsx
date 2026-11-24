@@ -12,9 +12,9 @@ import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { AccountSignIn } from './AccountSignIn';
 import { ForgeLogin } from './ForgeLogin';
-import { CATEGORY_LABEL, connectionsOf, pluginsKey, stuckOn, type Plugin } from './model';
+import { CATEGORY_LABEL, connectionsOf, stuckOn, type Plugin } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
-import { usePlugins } from './queries';
+import { pluginsKey, usePlugins } from './queries';
 
 function Tags({ items, empty = 'None' }: { items: string[]; empty?: string }) {
   if (!items.length) return <span className="text-xs text-muted-foreground">{empty}</span>;

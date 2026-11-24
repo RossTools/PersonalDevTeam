@@ -181,16 +181,11 @@ describe('query rules', () => {
     // still keep their own and wait to move theirs into their area's queries.ts.
     const built = /\b(const|let) \w*([kK]ey|KEY)\w*\s*=\s*(\[\s*(['"]|\.\.\.\w*([kK]ey|KEY))|\([^)]*\)\s*=>\s*\[)/;
     expectOnly(offenders(built, (p) => p.startsWith('src/') && !p.endsWith('/queries.ts')), [
-      'src/connections/kinds.ts',
       'src/host/InstallUpdates.tsx',
       'src/host/StartAtLogin.tsx',
       'src/host/StorageSettings.tsx',
       'src/host/StuckAgents.tsx',
-      'src/inbox/RecentlyAnswered.tsx',
-      'src/inbox/useInbox.ts',
-      'src/mcp/McpServersPage.tsx',
       'src/plugins/AccountSignIn.tsx',
-      'src/plugins/model.ts',
       'src/pm/PmCheckpointSettings.tsx',
       'src/tickets/BoardViewMenu.tsx',
       'src/todos/useTodos.ts',

@@ -12,15 +12,12 @@ import { POLL } from '../common/poll';
 import { TicketKey } from '../common/TicketKey';
 import { type HeldAnswer, undoAnswer, useHeldAnswers } from './held';
 import { CollapsibleListSection } from './ListSection';
+import { inboxKeys } from './queries';
 import { keepFocusOnReturn } from './snooze';
-import { inboxKey } from './useInbox';
 
 /** How many answers the list keeps, and shows before Show all. */
 const KEPT = 10;
 const SHOWN = 3;
-
-/** Under the Inbox's key, so answering refreshes it with the list. */
-const answeredKey = [...inboxKey, 'answered'] as const;
 
 /** A choice as the list says it: `allow_always` → "Always allow", `outcome:approved` → "Approved". */
 function choiceText(choice: string | null): string {
@@ -48,9 +45,10 @@ type Row = { held: HeldAnswer } | { id: string; at: number; a: InboxAnswered };
 export function RecentlyAnswered() {
   const held = useHeldAnswers();
   const events = useQuery({
-    queryKey: answeredKey,
+    // Under the Inbox's key, so answering (and the notification stream) refreshes it with the list.
+    queryKey: inboxKeys.answered,
     queryFn: () => api.listLogEvents({ type: 'inbox.answered', limit: KEPT }),
-    refetchInterval: POLL.live,
+    refetchInterval: POLL.steady,
   });
   const openTicket = useOpenTicket();
   // Undo takes its row away (the section, with the last): focus goes on to the next row, or the item's row back in

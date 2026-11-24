@@ -7,10 +7,9 @@ import type { ConfigField } from '../api/gen/ConfigField';
 import type { ConnectionKind } from '../api/gen/ConnectionKind';
 import type { ConnectionLink } from '../api/gen/ConnectionLink';
 import type { FieldWhen } from '../api/gen/FieldWhen';
+import { connectionKindsKey } from './queries';
 
 export type { ConnectionKind, ConfigField };
-
-const connectionKindsKey = ['connection-kinds'] as const;
 
 /** Every kind of connection, from PDT's integrations (`GET /api/connections/kinds`); they change only with PDT. */
 export function useConnectionKinds() {

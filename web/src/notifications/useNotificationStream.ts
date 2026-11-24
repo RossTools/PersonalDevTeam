@@ -6,7 +6,7 @@ import type { Notification } from '../api/gen/Notification';
 import type { NotificationTarget } from '../api/gen/NotificationTarget';
 import { desktopNotificationsOn, holdLeadership, showDesktop } from './desktop';
 import { presentation, shownKey } from './model';
-import { inboxKey } from '../inbox/useInbox';
+import { inboxKeys } from '../inbox/queries';
 import { setStreamOpen } from '../common/poll';
 import { NOTIFICATIONS } from './queries';
 
@@ -48,7 +48,7 @@ export function useNotificationStream(open: (t: NotificationTarget) => void, onS
     const desktop = new Map<string, globalThis.Notification>();
     const source = new EventSource(STREAM_PATH);
     const refresh = () => {
-      void qc.invalidateQueries({ queryKey: inboxKey });
+      void qc.invalidateQueries({ queryKey: inboxKeys.all });
       void qc.invalidateQueries({ queryKey: NOTIFICATIONS });
     };
     // While it is connected the stream brings every change, so the Updates poll slows down (`streamPoll`); when it
