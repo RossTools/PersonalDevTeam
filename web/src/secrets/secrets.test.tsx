@@ -28,7 +28,7 @@ describe('secrets', () => {
     });
     renderWithQuery(<SecretsPage />);
     expect(await screen.findByText('NPM_TOKEN')).toBeInTheDocument();
-    expect(await screen.findByText('Secrets: system keyring')).toBeInTheDocument();
+    expect(await screen.findByText(/Values are kept in this machine's keychain/)).toBeInTheDocument();
     expect(await screen.findByText('Shop · every agent')).toBeInTheDocument();
     expect(screen.getByText('Every project · every agent')).toBeInTheDocument();
     expect(screen.getByText(fullText(/^Used 1m ago by Coder · PDT-9$/))).toBeInTheDocument();
@@ -73,6 +73,35 @@ describe('secrets', () => {
     renderWithQuery(<SecretsPage />);
     expect(await screen.findByText(/Secrets: file in the data folder/)).toBeInTheDocument();
     expect(screen.getByText('/home/me/.local/share/pdt/secrets.json')).toBeInTheDocument();
+    expect(screen.getByText(/Values are kept in a file in the data folder/)).toBeInTheDocument();
+  });
+
+  it('warns that secrets kept in memory are lost when PDT stops, and the description agrees', async () => {
+    stubApi({
+      'GET /api/secrets': [],
+      'GET /api/projects': [],
+      'GET /api/personas': [],
+      'GET /api/secrets/store': { backend: 'memory', path: null, problem: null },
+    });
+    renderWithQuery(<SecretsPage />);
+    expect(await screen.findByText("Secrets aren't saved: no keychain is available, so they're lost when PDT stops.")).toBeInTheDocument();
+    expect(screen.getByText(/Values are kept in memory only/)).toBeInTheDocument();
+    expect(screen.queryByText(/keychain and replaced/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the agents\' tool names in a "How agents use secrets" disclosure', async () => {
+    stubApi({
+      'GET /api/secrets': [],
+      'GET /api/projects': [],
+      'GET /api/personas': [],
+      'GET /api/secrets/store': { backend: 'keychain', path: null, problem: null },
+    });
+    renderWithQuery(<SecretsPage />);
+    const how = await screen.findByRole('button', { name: 'How agents use secrets' });
+    expect(screen.queryByText('run_with_secrets')).not.toBeInTheDocument();
+    await userEvent.click(how);
+    expect(await screen.findByText('run_with_secrets')).toBeInTheDocument();
+    expect(screen.getByText('{{secret.NAME}}')).toBeInTheDocument();
   });
 
   it('says when the keyring this machine uses does not answer', async () => {
@@ -83,7 +112,7 @@ describe('secrets', () => {
       'GET /api/secrets/store': { backend: 'keychain', path: null, problem: 'The Secret Service did not answer at startup.' },
     });
     renderWithQuery(<SecretsPage />);
-    expect(await screen.findByText('Secrets: system keyring')).toBeInTheDocument();
+    expect(await screen.findByText(/Values are kept in this machine's keychain/)).toBeInTheDocument();
     expect(screen.getByText('The Secret Service did not answer at startup.')).toBeInTheDocument();
   });
 

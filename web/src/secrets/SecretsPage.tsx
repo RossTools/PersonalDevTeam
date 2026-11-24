@@ -1,13 +1,14 @@
 // Settings → Secrets (PDT-158): secrets agents and workflows use by name, never pasted into the chat. A value goes to this machine's
 // keychain and is never shown again; the list shows each secret's name, who may use it and its last use, and each
-// secret's uses on request. It also says where values are kept: the system keyring, or (Linux without a Secret
-// Service, PDT-197) a file in the data folder. On a project's owner it lists, by name only, the secrets its remote
+// secret's uses on request. Its description says where values are kept, warning when it's (Linux without a Secret
+// Service, PDT-197) a file in the data folder or memory only (PDT-694). On a project's owner it lists, by name only, the secrets its remote
 // instances keep for its projects (PDT-637); on a remote instance, a remote project's own show under its name.
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, Badge, Button, CheckboxPicks, Dialog, DialogActions, EmptyState, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea } from '@ui';
+import { Alert, Badge, Button, CheckboxPicks, Dialog, Disclosure, DialogActions, EmptyState, Field, Input, Page, RelativeTime, Section, Skeleton, Textarea } from '@ui';
 import { api } from '../api/client';
 import type { Secret } from '../api/gen/Secret';
+import type { SecretStoreInfo } from '../api/gen/SecretStoreInfo';
 import { QueryStatus } from '../common/QueryStatus';
 import { useConfirmDelete } from '../common/useConfirmDelete';
 import { useScopeOptions } from '../common/useScopeOptions';
@@ -43,7 +44,7 @@ function SecretDialog({ secret, onClose }: { secret?: Secret; onClose: () => voi
       onClose={onClose}
       dismissable={false}
       title={secret ? `Edit ${secret.name}` : 'New secret'}
-      description="Agents and workflows use it by name; its value is kept in this machine's keychain and never shown in the chat, or to you, again."
+      description="Agents and workflows use it by name; its value is kept on this machine and never shown in the chat, or to you, again."
       footer={<DialogActions onCancel={onClose} action="Save" disabled={!nameOk || !valueOk} pending={save.isPending} onAction={() => save.mutate()} />}
     >
       <div className="flex flex-col gap-3">
@@ -113,26 +114,31 @@ function Row({ s, names, onEdit, onDelete }: {
   );
 }
 
-/** Where this machine keeps secret values. */
-function StoreNote() {
-  const store = useQuery({ queryKey: secretKeys.store, queryFn: api.secretStore });
-  if (!store.data) return null;
-  if (store.data.backend === 'file') {
+/** Where the page says values are kept: the store in use, once it's known (PDT-694). */
+function storePlace(store: SecretStoreInfo | undefined): string {
+  switch (store?.backend) {
+    case 'keychain': return "Values are kept in this machine's keychain";
+    case 'file': return 'Values are kept in a file in the data folder';
+    case 'memory': return 'Values are kept in memory only';
+    default: return 'Values are kept on this machine';
+  }
+}
+
+/** Warnings about where this machine keeps secret values: a file, memory only, or a keychain that didn't answer. */
+function StoreNote({ store }: { store: SecretStoreInfo | undefined }) {
+  if (!store) return null;
+  if (store.backend === 'file') {
     return (
       <Alert tone="warning">
         Secrets: file in the data folder. No system keyring (Secret Service) is reachable on this machine, so values are kept in
-        {' '}<code>{store.data.path}</code>, which only your user can read.
+        {' '}<code>{store.path}</code>, which only your user can read.
       </Alert>
     );
   }
-  return (
-    <>
-      <p className="text-sm text-muted-foreground">
-        Secrets: {store.data.backend === 'keychain' ? 'system keyring' : 'in memory (gone when PDT stops)'}
-      </p>
-      {store.data.problem && <Alert tone="warning">{store.data.problem}</Alert>}
-    </>
-  );
+  if (store.backend === 'memory') {
+    return <Alert tone="warning">Secrets aren't saved: no keychain is available, so they're lost when PDT stops.</Alert>;
+  }
+  return store.problem ? <Alert tone="warning">{store.problem}</Alert> : null;
 }
 
 /** On a project's owner: what its remote instances keep for its projects, by name ("on win-box (VAL)"). */
@@ -167,13 +173,14 @@ export function SecretsPage() {
   const list = useSecrets();
   const { projects, personas } = useScopeOptions();
   const remote = useRemoteProjects();
+  const store = useQuery({ queryKey: secretKeys.store, queryFn: api.secretStore });
   const [editing, setEditing] = useState<{ secret?: Secret } | null>(null);
   const remove = useConfirmDelete({
     remove: (s: Secret) => api.deleteSecret(s.id),
     invalidate: [secretKeys.all],
     confirm: (s) => ({
       title: `Delete ${s.name}?`,
-      body: 'Agents and workflows that use it fail until you add one with the same name. Its value is removed from the keychain, and its uses are forgotten.',
+      body: 'Agents and workflows that use it fail until you add one with the same name. Its value is removed from this machine, and its uses are forgotten.',
       action: 'Delete secret',
     }),
   });
@@ -186,15 +193,20 @@ export function SecretsPage() {
     <Page
       crumb="Settings"
       title="Secrets"
-      description="API keys, tokens and passwords agents and workflows use by name, never pasted into the chat. Values are kept in this machine's keychain and replaced by [secret:NAME] wherever PDT stores, shows or logs them."
+      description={`API keys, tokens and passwords agents and workflows use by name, never pasted into the chat. ${storePlace(store.data)} and replaced by [secret:NAME] wherever PDT stores, shows or logs them.`}
     >
-      <StoreNote />
+      <StoreNote store={store.data} />
       <QueryStatus query={list} what="Secrets" skeleton="h-24">{(items) => (
         <Section
           label="Secrets"
-          description="Agents use them with run_with_secrets and write_secret_file, workflows with {{secret.NAME}}; an agent that needs one asks for it in your Inbox."
+          description="An agent that needs one you haven't added asks for it in your Inbox."
           actions={<Button size="sm" onClick={() => setEditing({})}>Add secret</Button>}
         >
+          <Disclosure title="How agents use secrets" panelClassName="mt-1 text-xs text-muted-foreground">
+            Agents run a command with secrets in its environment (<code>run_with_secrets</code>) or write a file with them filled
+            in (<code>write_secret_file</code>); PDT asks you first. Workflow steps write <code>{'{{secret.NAME}}'}</code> where the
+            value goes.
+          </Disclosure>
           {items.length
             ? items.map((s) => <Row key={s.id} s={s} names={names} onEdit={() => setEditing({ secret: s })} onDelete={() => void remove.ask(s)} />)
             : <EmptyState size="inline">None yet.</EmptyState>}
