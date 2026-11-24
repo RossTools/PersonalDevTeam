@@ -13,9 +13,13 @@ use axum::response::{IntoResponse, Response};
 use cap_std::fs::Dir;
 use serde::Deserialize;
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The most a folder's files may add up to in one `.zip`.
 pub const MAX_ZIP_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The most files one `.zip` may hold.
+pub const MAX_ZIP_FILES: usize = 200_000;
 /// How much is read or zipped before it is handed to the response.
 const CHUNK: usize = 64 * 1024;
 
@@ -162,24 +166,83 @@ fn not_found(e: std::io::Error) -> ApiError {
     }
 }
 
-/// The files a folder's `.zip` holds, with their sizes: what git lists (`.gitignore` honoured), or with `all` (and in
-/// a plain folder) everything in it but `.git` folders. Files a link leads out to are left out, as are linked
-/// folders. Blocking.
-fn zip_files(checkout: &std::path::Path, dir: &Dir, rel: &str, all: bool) -> Result<Vec<(String, u64)>, ApiError> {
-    let paths = if all { walk(dir, rel) } else { pdt_git::list_files(checkout, rel)? };
-    Ok(paths
-        .into_iter()
-        .filter(|p| !p.split('/').any(is_git_name))
-        // Git lists a deleted file until it is staged; a link out fails to open through the handle.
-        .filter_map(|p| dir.metadata(&p).ok().filter(|m| m.is_file()).map(|m| (p, m.len())))
-        .collect())
+/// How much one `.zip` may hold.
+#[derive(Debug, Clone, Copy)]
+struct Caps {
+    bytes: u64,
+    files: usize,
 }
 
-/// Every file under `rel`, not following linked folders (a loop) and skipping `.git`. Blocking.
-fn walk(dir: &Dir, rel: &str) -> Vec<String> {
-    let mut out = Vec::new();
+const CAPS: Caps = Caps { bytes: MAX_ZIP_BYTES, files: MAX_ZIP_FILES };
+
+/// Why listing a folder's files stopped early.
+#[derive(Debug, PartialEq)]
+enum Stopped {
+    /// Its files add up to more than [`Caps::bytes`].
+    TooBig,
+    /// It holds more than [`Caps::files`] files.
+    TooMany,
+    /// The client went away.
+    Gone,
+}
+
+/// The files a folder's `.zip` holds, with their sizes: what git lists (`.gitignore` honoured), or with `all` (and in
+/// a plain folder) everything in it but `.git` folders. Files a link leads out to are left out, as are linked
+/// folders. Stops as soon as the files pass a cap or `gone` is set, so a huge folder (`node_modules`, `target`) is
+/// never listed to the end only to be refused. Blocking.
+fn zip_files(
+    checkout: &std::path::Path,
+    dir: &Dir,
+    rel: &str,
+    all: bool,
+    caps: Caps,
+    gone: &AtomicBool,
+) -> Result<Result<Vec<(String, u64)>, Stopped>, ApiError> {
+    let mut files = Vec::new();
+    let mut total = 0u64;
+    let mut add = |p: String| -> Result<(), Stopped> {
+        if gone.load(Ordering::Relaxed) {
+            return Err(Stopped::Gone);
+        }
+        if p.split('/').any(is_git_name) {
+            return Ok(());
+        }
+        // Git lists a deleted file until it is staged; a link out fails to open through the handle.
+        let Some(m) = dir.metadata(&p).ok().filter(|m| m.is_file()) else { return Ok(()) };
+        total += m.len();
+        if total > caps.bytes {
+            return Err(Stopped::TooBig);
+        }
+        if files.len() >= caps.files {
+            return Err(Stopped::TooMany);
+        }
+        files.push((p, m.len()));
+        Ok(())
+    };
+    let listed = if all {
+        walk(dir, rel, gone, &mut add)
+    } else {
+        pdt_git::list_files(checkout, rel)?.into_iter().try_for_each(&mut add)
+    };
+    Ok(listed.map(|()| {
+        files.sort();
+        files
+    }))
+}
+
+/// Hands `add` every file under `rel`, not following linked folders (a loop) and skipping `.git`; stops at the first
+/// error `add` returns, or once `gone` is set. Blocking.
+fn walk(
+    dir: &Dir,
+    rel: &str,
+    gone: &AtomicBool,
+    add: &mut impl FnMut(String) -> Result<(), Stopped>,
+) -> Result<(), Stopped> {
     let mut todo = vec![rel.to_string()];
     while let Some(d) = todo.pop() {
+        if gone.load(Ordering::Relaxed) {
+            return Err(Stopped::Gone);
+        }
         let Ok(read) = dir.read_dir(at(&d)) else { continue };
         for e in read.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -189,17 +252,26 @@ fn walk(dir: &Dir, rel: &str) -> Vec<String> {
             let path = if d.is_empty() { name } else { format!("{d}/{name}") };
             match e.file_type() {
                 Ok(t) if t.is_dir() => todo.push(path),
-                Ok(_) => out.push(path),
+                Ok(_) => add(path)?,
                 Err(_) => {}
             }
         }
     }
-    out.sort();
-    out
+    Ok(())
+}
+
+/// Sets its flag when dropped: the request's future is dropped when the client goes away, which stops the listing
+/// on the blocking pool.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 /// A folder as a `.zip`, zipped on the blocking pool while the response streams it. Refused up front when its files
-/// add up to more than [`MAX_ZIP_BYTES`].
+/// add up to more than [`MAX_ZIP_BYTES`] or number more than [`MAX_ZIP_FILES`].
 async fn folder(
     checkout: std::path::PathBuf,
     rel: String,
@@ -209,29 +281,35 @@ async fn folder(
 ) -> Result<Response, ApiError> {
     let name = name_of(&checkout, &rel);
     let prefix = if rel.is_empty() { String::new() } else { format!("{rel}/") };
+    let gone = Arc::new(AtomicBool::new(false));
+    let stop = SetOnDrop(gone.clone());
     let (dir, files) = tokio::task::spawn_blocking(move || -> Result<(Dir, Vec<(String, u64)>), ApiError> {
         contained(&checkout, &rel)?;
         let dir = checkout_dir(&checkout)?;
         if !dir.metadata(at(&rel)).map_err(not_found)?.is_dir() {
             return Err(ApiError::invalid("that is a file: download it as it is"));
         }
-        let files = zip_files(&checkout, &dir, &rel, ignored || personal)?;
-        let total: u64 = files.iter().map(|(_, n)| n).sum();
-        if total > MAX_ZIP_BYTES {
-            let hint = if ignored { ", or leave out ignored files" } else { "" };
-            return Err(ApiError::new(
+        let hint = if ignored { ", or leave out ignored files" } else { "" };
+        let too_large = |what: String| {
+            ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 codes::TOO_LARGE,
-                format!(
-                    "this folder holds {} of files; a download is at most 2 GB. Download a smaller folder{hint}",
-                    gb(total)
-                ),
-            ));
+                format!("this folder holds more than {what}. Download a smaller folder{hint}"),
+            )
+        };
+        match zip_files(&checkout, &dir, &rel, ignored || personal, CAPS, &gone)? {
+            Ok(files) => Ok((dir, files)),
+            Err(Stopped::TooBig) => Err(too_large("2 GB of files; a download is at most 2 GB".into())),
+            Err(Stopped::TooMany) => {
+                Err(too_large(format!("{MAX_ZIP_FILES} files; a download holds at most {MAX_ZIP_FILES}")))
+            }
+            // Nobody is left to read it.
+            Err(Stopped::Gone) => Err(ApiError::invalid("the download was stopped")),
         }
-        Ok((dir, files))
     })
     .await
     .map_err(ApiError::internal)??;
+    drop(stop);
     if check {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -324,10 +402,6 @@ impl Write for Sender {
     }
 }
 
-fn gb(n: u64) -> String {
-    format!("{:.1} GB", n as f64 / (1024.0 * 1024.0 * 1024.0))
-}
-
 /// This module's API routes; `routes::router` merges them under `/api`.
 pub(crate) fn router() -> axum::Router<crate::AppState> {
     axum::Router::new().route("/projects/{id}/files/download", axum::routing::get(self::get))
@@ -345,5 +419,30 @@ mod tests {
             "attachment; filename=\"R_sum_ _v2__x.txt\"; filename*=UTF-8''R%C3%A9sum%C3%A9%20%22v2%22%5Cx.txt"
         );
         assert_eq!(disposition("inline", "a.png"), "inline; filename=\"a.png\"; filename*=UTF-8''a.png");
+    }
+
+    fn folder_of(n: usize) -> (std::path::PathBuf, Dir) {
+        let root = std::env::temp_dir().join(format!("pdt-zip-files-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("a").join("b")).unwrap();
+        for i in 0..n {
+            std::fs::write(root.join("a").join("b").join(format!("{i}.txt")), "12345").unwrap();
+        }
+        let dir = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+        (root, dir)
+    }
+
+    #[test]
+    fn listing_a_folder_stops_at_a_cap_or_once_the_client_has_gone() {
+        let (root, dir) = folder_of(10);
+        let list = |caps, gone: bool| zip_files(&root, &dir, "", true, caps, &AtomicBool::new(gone)).unwrap();
+        let all = list(Caps { bytes: 50, files: 10 }, false).unwrap();
+        assert_eq!(all.len(), 10);
+        assert_eq!(all[0], ("a/b/0.txt".to_string(), 5), "sorted, with sizes");
+        assert_eq!(list(Caps { bytes: 49, files: 10 }, false), Err(Stopped::TooBig));
+        assert_eq!(list(Caps { bytes: 50, files: 9 }, false), Err(Stopped::TooMany));
+        assert_eq!(list(CAPS, true), Err(Stopped::Gone));
+        drop(dir);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
