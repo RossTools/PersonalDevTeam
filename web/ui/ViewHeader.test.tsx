@@ -45,4 +45,11 @@ describe('ViewHeader', () => {
     expect(header.className).toContain('px-gutter');
     expect(header.className).not.toContain('px-3');
   });
+
+  it('keeps a title shown elsewhere for screen readers only, so meta and actions share a line', () => {
+    render(<ViewHeader title="notes.txt" titleHidden meta={<span>3 bytes</span>} actions={<button type="button">Download</button>} />);
+    const heading = within(screen.getByRole('banner')).getByRole('heading', { name: 'notes.txt' });
+    expect(heading).toHaveClass('sr-only');
+    expect(heading.parentElement?.className).not.toContain('12rem');
+  });
 });

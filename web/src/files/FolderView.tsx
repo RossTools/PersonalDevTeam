@@ -17,7 +17,7 @@ import { PreviewEdit, type PreviewEditMode } from '../common/PreviewEdit';
 import { MarkdownEditor } from '../common/LazyMarkdownEditor';
 import { Markdown } from '../common/LazyMarkdown';
 import { isMarkdownPath } from '../common/markdownPath';
-import { PlacePicker, placeKey, type Place } from '../common/PlacePicker';
+import { PlacePicker, placeKey, usePlaceName, type Place } from '../common/PlacePicker';
 import { GIT_STATUS_TONE } from '../common/gitStatus';
 import { EmptyPane } from '../common/EmptyPane';
 import { useNavigationGuard } from '../shell/router';
@@ -104,6 +104,8 @@ function NewFileButton({ state, place }: { state: FolderViewState; place: Place 
 
 /** The downloads being checked (by place, path and options), shared by every list of the files. */
 const preparing = new Set<string>();
+
+const isMissing = (e: unknown) => e instanceof ApiError && e.status === 404;
 
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
@@ -273,9 +275,33 @@ export function FileViewer({ state, readOnly = false }: { state: FolderViewState
     queryKey: fileKeys.content(place?.projectId ?? '', place ?? { worktreeId: null }, state.file),
     queryFn: () => api.fileContent(place!.projectId, place!, state.file!),
     enabled: !!place && !!state.file,
+    retry: (n, e) => !isMissing(e) && n < 3,
   });
+  // Not there: a link to a folder that left out its `/` (typed, pasted or an agent's), or a file gone since. Its
+  // folder's entries tell which.
+  const missing = isMissing(q.error);
+  const parent = parentOf(state.file ?? '');
+  const siblings = useQuery({
+    queryKey: fileKeys.folder(place?.projectId ?? '', place ?? { worktreeId: null }, parent),
+    queryFn: () => api.listFiles(place!.projectId, place!, parent),
+    enabled: !!place && missing,
+  });
+  const isFolder = missing && !!siblings.data?.some((e) => e.dir && e.path === state.file);
+  const { openFolder } = state;
+  useEffect(() => {
+    if (isFolder && state.file) openFolder(state.file);
+  }, [isFolder, state.file]);
+  const placeName = usePlaceName(state.projects, place ?? { projectId: '', worktreeId: null });
   if (!state.file || !place) return <EmptyPane icon={<File />}>{readOnly ? 'Pick a file to view it.' : 'Pick a file to view or edit it.'}</EmptyPane>;
-  if (q.isPending) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
+  if (q.isPending || isFolder || (missing && siblings.isPending)) return <Skeleton lines={8} label="Loading the file" className="p-4" />;
+  if (missing) {
+    return (
+      <EmptyState icon={<FileQuestion />} className="mt-16 border-0"
+        action={<Button size="sm" variant="secondary" onClick={() => (parent ? openFolder(parent) : state.setFile(null))}>Back to the folder</Button>}>
+        This file isn’t in {placeName.projectName} › {placeName.where} any more.
+      </EmptyState>
+    );
+  }
   if (q.isError) return <div className="p-4"><Alert tone="error">{q.error.message}</Alert></div>;
   return <OpenFile key={`${placeKey(place)}:${q.data.path}`} state={state} place={place} file={q.data} readOnly={readOnly} />;
 }
@@ -434,6 +460,8 @@ function OpenFile({ state, place, file: f, readOnly }: { state: FolderViewState;
           <span className="block truncate font-mono [direction:rtl]"><bdi>{f.path}</bdi></span>
         }
         titleTooltip={f.path}
+        // A phone's top bar names the file.
+        titleHidden={readOnly}
         meta={
           <>
             {f.status && <Chip title={`git: ${f.status}`} className={statusTone(f.status)}>{statusLetter(f.status)}</Chip>}

@@ -14,8 +14,14 @@ import type { CodeTarget } from './CodeViewer';
 export interface FolderSelection {
   picked: Place | null;
   file: string | null;
-  onChange: (picked: Place | null, file: string | null) => void;
+  /** The folder the path names instead of a file (it ends in `/`): it opens in the tree. */
+  dir?: string | null;
+  /** `replace`: in place of the current history entry (a link to a folder that left out its `/`). */
+  onChange: (picked: Place | null, file: string | null, opts?: { replace?: boolean }) => void;
 }
+
+/** `a/b/c` → `a`, `a/b`, `a/b/c`. */
+const withParents = (path: string) => path.split('/').map((_, i, all) => all.slice(0, i + 1).join('/'));
 
 export function useFolderView(projects: Project[], initial: Place | null, held?: FolderSelection) {
   const [ownPicked, setOwnPicked] = useState<Place | null>(null);
@@ -23,8 +29,8 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
   const picked = held ? held.picked : ownPicked;
   const file = held ? held.file : ownFile;
   // Held: the app's navigation asks about unsaved edits; here, the same guard does.
-  const change = (p: Place | null, f: string | null) => {
-    if (held) held.onChange(p, f);
+  const change = (p: Place | null, f: string | null, opts?: { replace?: boolean }) => {
+    if (held) held.onChange(p, f, opts);
     else whenAllowed(() => { setOwnPicked(p); setOwnFile(f); });
   };
   const place = picked ?? initial ?? (projects[0] ? { projectId: projects[0].id, worktreeId: null } : null);
@@ -44,10 +50,15 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
   }, [placeKey]);
   // A file shown from a link or a reload: its folders open, so it is in the tree.
   useEffect(() => {
-    const parents = file?.split('/').slice(0, -1).map((_, i, all) => all.slice(0, i + 1).join('/')) ?? [];
+    const parents = file?.includes('/') ? withParents(file.slice(0, file.lastIndexOf('/'))) : [];
     if (parents.some((p) => !open.has(p))) setOpen((s) => new Set([...s, ...parents]));
     // Only when the file changes: folders closed by hand stay closed.
   }, [file]);
+  // A folder shown from a link: it and its parents open.
+  const dir = held?.dir || null;
+  useEffect(() => {
+    if (dir && withParents(dir).some((p) => !open.has(p))) setOpen((s) => new Set([...s, ...withParents(dir)]));
+  }, [dir]);
   return {
     projects,
     place,
@@ -57,6 +68,14 @@ export function useFolderView(projects: Project[], initial: Place | null, held?:
     toggle: (path: string) => setOpen((s) => { const n = new Set(s); if (n.has(path)) n.delete(path); else n.add(path); return n; }),
     file,
     setFile: (f: string | null) => change(picked, f),
+    /** Shows the folder `path` (a link named it as a file): opened in the tree, and on a phone as its own screen. */
+    openFolder: (path: string) => {
+      if (held) change(picked, `${path}/`, { replace: true });
+      else {
+        setOpen((s) => new Set([...s, ...withParents(path)]));
+        change(picked, null);
+      }
+    },
     at,
     /** Opens `path` at `line`, the match `[from, to)` in it marked (UTF-16 units). */
     openAt: (path: string, line: number, from: number, to: number) => {

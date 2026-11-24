@@ -93,6 +93,12 @@ async function open() {
 }
 
 describe('SheetEditor live updates', () => {
+  it('names the filter button plainly while the selected cell is empty (PDT-681)', async () => {
+    await open();
+    expect(screen.getByRole('button', { name: 'Filter by this cell' })).toBeDisabled();
+    expect(screen.queryByText(/Only rows with/)).not.toBeInTheDocument();
+  });
+
   it("applies the next change in order and redraws; skips one it already has (its own, sent back)", async () => {
     await open();
     const mounts = fake.mounts;
