@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "pick-up-tickets";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Tickets, doc: pick_up_tickets };
+
 /// Auto-start as a workflow (PDT-327): when a ticket can start, room frees up, or every minute, the candidates of the
 /// project (every project, for the sweep) are filtered and ordered, choose keeps to the caps and the start delay, and
 /// Start takes the first of each project still free. Every field it leaves out is the project's auto-start setting

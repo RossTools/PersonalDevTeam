@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "base-moved";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: false, category: Category::CiPr, doc: base_moved };
+
 pub(super) fn base_moved() -> WorkflowDoc {
     doc(json!({
         "name": "Base moved while a PR waits",

@@ -80,7 +80,7 @@ impl WatchTarget {
         [WatchTarget::Ticket, WatchTarget::Run, WatchTarget::Document].into_iter().find(|t| t.as_str() == s)
     }
     /// What a watch of it tells about when none are named.
-    pub fn default_events(self) -> &'static [WatchEvent] {
+    fn default_events(self) -> &'static [WatchEvent] {
         match self {
             WatchTarget::Document => &DOCUMENT_EVENTS,
             _ => &DEFAULT_EVENTS,

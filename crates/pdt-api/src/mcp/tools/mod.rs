@@ -88,60 +88,26 @@ async fn checked_areas(
     pdt_core::ticket::agent_areas(&areas, &configured).map(Some)
 }
 
-/// PDT's own tools, in `tools/list` order ([`crate::integrations::core`]): one line per group.
-pub(crate) fn defs() -> Vec<Tool> {
-    [
-        step::defs(),
-        secrets::defs(),
-        update_ticket::defs(),
-        workflows::defs(),
-        overview::defs(),
-        notes::defs(),
-        watches::defs(),
-        tickets::defs(),
-        issue_links::defs(),
-        sessions::defs(),
-        inbox::defs(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect()
+/// PDT's own tool groups, in `tools/list` order ([`crate::integrations::core`]): one line per group. Each module has
+/// `defs` (its tools) and `call` (runs one of them); [`defs`] lists them all and [`call`] runs a tool in the group that
+/// lists it.
+macro_rules! groups {
+    ($($group:ident),* $(,)?) => {
+        pub(crate) fn defs() -> Vec<Tool> {
+            [$($group::defs()),*].into_iter().flatten().collect()
+        }
+
+        /// Runs one of PDT's own tools, in the group that lists it. Err is a message for the agent.
+        pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
+            $(if $group::defs().iter().any(|t| t.decl.name == name) {
+                return $group::call(cx, name, a).await;
+            })*
+            Err(format!("no tool is called {name}"))
+        }
+    };
 }
 
-/// Runs one of PDT's own tools, in the group that lists it. Err is a message for the agent.
-pub(crate) async fn call(cx: &Cx<'_>, name: &str, a: Value) -> Result<Value, String> {
-    let st = cx.st;
-    // No secrets near untrusted input (PDT-201).
-    if matches!(name, "request_secret" | "run_with_secrets" | "write_secret_file") {
-        crate::untrusted::refuse_secrets(st, cx.session).await?;
-    }
-    let listed = |defs: fn() -> Vec<Tool>| defs().iter().any(|t| t.decl.name == name);
-    if listed(step::defs) {
-        step::call(cx, name, a).await
-    } else if listed(secrets::defs) {
-        secrets::call(cx, name, a).await
-    } else if listed(update_ticket::defs) {
-        update_ticket::call(cx, name, a).await
-    } else if listed(workflows::defs) {
-        workflows::call(cx, name, a).await
-    } else if listed(overview::defs) {
-        overview::call(cx, name, a).await
-    } else if listed(notes::defs) {
-        notes::call(cx, name, a).await
-    } else if listed(watches::defs) {
-        watches::call(cx, name, a).await
-    } else if listed(tickets::defs) {
-        tickets::call(cx, name, a).await
-    } else if listed(issue_links::defs) {
-        issue_links::call(cx, name, a).await
-    } else if listed(sessions::defs) {
-        sessions::call(cx, name, a).await
-    } else if listed(inbox::defs) {
-        inbox::call(cx, name, a).await
-    } else {
-        Err(format!("no tool is called {name}"))
-    }
-}
+groups![step, secrets, update_ticket, workflows, overview, notes, watches, tickets, issue_links, sessions, inbox];
 
 /// Whether the session's running Claude process was launched with an ask rule for `tool` (`mcp::server_for`).
 fn has_ask_rule(st: &crate::AppState, session_id: &str, tool: &str) -> bool {

@@ -20,6 +20,7 @@ mod core;
 mod forge;
 mod github;
 mod http;
+mod issues;
 mod mcp;
 mod webhook;
 

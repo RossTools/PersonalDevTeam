@@ -9,8 +9,13 @@ use crate::workflow::templates::params;
 use pdt_core::workflow::template::TemplateParam;
 use serde_json::{Map, Value};
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "install-updates";
+pub(super) const BUILTIN: Builtin =
+    Builtin { id: ID, enabled: true, category: Category::Releases, doc: install_updates };
+
 pub static SETTINGS: InputsBuiltin = InputsBuiltin {
-    id: INSTALL_UPDATES,
+    id: ID,
     params: install_params,
     template: install_template,
     finish: Some(finish),

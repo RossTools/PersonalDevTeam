@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Its built-in id (`builtin:` workflows).
+pub const ID: &str = "pr-feedback";
+pub(super) const BUILTIN: Builtin = Builtin { id: ID, enabled: false, category: Category::CiPr, doc: pr_feedback };
+
 pub(super) fn pr_feedback() -> WorkflowDoc {
     // Outsiders' comments are never sent to an agent (PDT-202; `session.send` refuses them too): the ticket's
     // timeline shows them.
