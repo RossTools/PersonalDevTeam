@@ -214,6 +214,64 @@ describe('routes (PDT-111)', () => {
     expect(await screen.findByRole('grid', { name: 'Files in src' })).toBeInTheDocument();
   });
 
+  it('opens a folder linked without its trailing slash as the folder, on a phone (PDT-682)', async () => {
+    stubPhone();
+    const p = `/api/projects/${project.id}`;
+    stubWorkspaces({
+      [`GET ${p}/files?path=`]: [{ name: '.pdt', path: '.pdt', dir: true, status: null }],
+      [`GET ${p}/files?path=.pdt`]: [{ name: 'project.toml', path: '.pdt/project.toml', dir: false, status: null }],
+    });
+    at('/files/.pdt?project=ALP');
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/files/.pdt/?project=ALP'));
+    expect(await within(await screen.findByRole('grid', { name: 'Files in .pdt' })).findByRole('row', { name: /project\.toml/ })).toBeInTheDocument();
+    expect(screen.queryByText(/not found/)).not.toBeInTheDocument();
+  });
+
+  it("names the file once on a phone, in the top bar", async () => {
+    stubPhone();
+    const p = `/api/projects/${project.id}`;
+    stubWorkspaces({
+      [`GET ${p}/files?path=`]: [{ name: 'notes.txt', path: 'notes.txt', dir: false, status: null }],
+      [`GET ${p}/files/content?path=notes.txt`]: { path: 'notes.txt', size: 3, status: null, text: 'hi\n', binary: false, tooLarge: false },
+    });
+    at('/files/notes.txt?project=ALP');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByText('3 bytes')).toBeInTheDocument();
+    expect(within(screen.getByRole('banner', { name: 'Top bar' })).getByRole('heading', { name: 'notes.txt' })).toBeInTheDocument();
+    // The file's own header keeps its name for screen readers only.
+    expect(screen.getByRole('heading', { name: 'notes.txt', level: 2 })).toHaveClass('sr-only');
+  });
+
+  it('opens a folder linked without its trailing slash in the tree (PDT-682)', async () => {
+    const p = `/api/projects/${project.id}`;
+    stubWorkspaces({
+      [`GET ${p}/files?path=`]: [{ name: 'docs', path: 'docs', dir: true, status: null }],
+      [`GET ${p}/files?path=docs`]: [{ name: 'notes.txt', path: 'docs/notes.txt', dir: false, status: null }],
+    });
+    at('/files/docs?project=ALP');
+    renderWithQuery(<AppShell />);
+    await waitFor(() => expect(here()).toBe('/files/docs/?project=ALP'));
+    expect(await screen.findByRole('row', { name: /docs/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByRole('row', { name: /notes\.txt/ })).toBeInTheDocument();
+    expect(screen.getByText(/Pick a file/)).toBeInTheDocument();
+  });
+
+  it("says a missing file isn't there any more, with a way back to its folder (PDT-682)", async () => {
+    const p = `/api/projects/${project.id}`;
+    stubWorkspaces({
+      [`GET ${p}/files?path=`]: [{ name: 'docs', path: 'docs', dir: true, status: null }],
+      [`GET ${p}/files?path=docs`]: [{ name: 'notes.txt', path: 'docs/notes.txt', dir: false, status: null }],
+    });
+    at('/files/docs/gone.txt?project=ALP');
+    renderWithQuery(<AppShell />);
+    expect(await screen.findByText(/This file isn’t in Alpha › Repository any more\./)).toBeInTheDocument();
+    expect(screen.queryByText(/not found/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Back to the folder' }));
+    await waitFor(() => expect(here()).toBe('/files/docs/?project=ALP'));
+    expect(await screen.findByText(/Pick a file/)).toBeInTheDocument();
+  });
+
   it('opens a ticket key linked in a conversation', async () => {
     stubWorkspaces(ticketRoutes);
     at('/tickets');
