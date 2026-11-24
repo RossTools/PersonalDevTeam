@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Button, Checkbox, Dialog, DialogActions, Skeleton, Textarea } from '@ui';
 import type { Workflow } from '../api/gen/Workflow';
 import { copyToClipboard } from '../common/clipboard';
-import { downloadText, exportFileName, exportText, fetchExport } from './transfer';
+import { downloadText } from '../common/download';
+import { exportFileName, exportText, fetchExport } from './transfer';
 import { workflowKeys } from './queries';
 
 function ExportText({ ids }: { ids: string[] }) {

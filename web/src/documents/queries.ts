@@ -26,6 +26,8 @@ export const documentKeys = {
   besides: ['documents', 'beside'] as const,
   /** The documents open beside a session. */
   beside: (sessionId: string) => ['documents', 'beside', sessionId] as const,
+  /** A project's provider and documents folder. */
+  projectSettings: (projectId: string) => ['documents', 'project-settings', projectId] as const,
 };
 
 export const KIND_LABEL: Record<DocumentKind, string> = { doc: 'Doc', sheet: 'Sheet' };

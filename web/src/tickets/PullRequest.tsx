@@ -3,6 +3,7 @@
 import { GitPullRequest, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import { Badge, Link, RelativeTime, relativeTime, type BadgeTone } from '@ui';
+import { capitalize } from '../common/text';
 import type { CiState } from '../api/gen/CiState';
 import type { CiStatus } from '../api/gen/CiStatus';
 import type { MergeUpdateStatus } from '../api/gen/MergeUpdateStatus';
@@ -107,7 +108,7 @@ export function PrBadge({ pr, attemptMerged = false, mergeUpdate = null }: {
 export function PrDetails({ pr, attemptMerged = false, queueName = 'merge queue', mergeUpdate = null, className }: {
   pr: PullRequestStatus; attemptMerged?: boolean; queueName?: string; mergeUpdate?: MergeUpdateStatus | null; className?: string;
 }) {
-  const Queue = queueName.charAt(0).toUpperCase() + queueName.slice(1);
+  const Queue = capitalize(queueName);
   const jobs = failedJobs(pr.ci);
   const queueJobs = failedJobs(pr.queueCi);
   const merged = isMerged(pr, attemptMerged);

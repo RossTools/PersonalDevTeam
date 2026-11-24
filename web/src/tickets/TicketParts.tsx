@@ -4,7 +4,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { ArrowRight, CircleCheck, Clock, GitPullRequest, Link2, ListTree, MessageSquare, Pencil, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { cn } from '@ui/lib/utils';
 import {
-  Alert, Badge, Button, Dialog, Disclosure, EmptyState, IconButton, Link, MenuButton, SectionLabel, SegmentedControl, Select, Textarea, Timeline, toast, useConfirm, type TimelineItem,
+  Alert, Badge, Button, Dialog, Disclosure, EmptyState, IconButton, Link, MenuButton, SectionLabel, SegmentedControl, Select, Skeleton, Textarea, Timeline, toast, useConfirm, type TimelineItem,
 } from '@ui';
 import { api } from '../api/client';
 import type { AgentBy } from '../api/gen/AgentBy';
@@ -589,7 +589,7 @@ export function TicketTimeline({ ticketId, recent, composer = false }: { ticketI
           Show earlier
         </Button>
       )}
-      {loading ? <p className="text-xs text-muted-foreground">Loading…</p> : <Timeline items={items} aria-label="Activity" />}
+      {loading ? <Skeleton lines={3} label="Loading the activity" /> : <Timeline items={items} aria-label="Activity" />}
       {composer && (
         <CommentComposer ticketId={ticketId} />
       )}

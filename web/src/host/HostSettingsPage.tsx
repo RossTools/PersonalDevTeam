@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Alert, Badge, Button, Disclosure, EmptyState, Input, Link, Page, Section, Select, SettingsRow, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
+import { absoluteTime, Alert, Badge, Button, clockTime, Disclosure, EmptyState, Input, Link, Page, Section, Select, SettingsRow, shortDate, Skeleton, StatusDot, Switch, useConfirm, useThemePref, type BadgeTone, type Status, type ThemePref } from '@ui';
 import { api } from '../api/client';
 import type { AgentKind } from '../api/gen/AgentKind';
 import type { BugReportSetting } from '../api/gen/BugReportSetting';
@@ -18,6 +18,7 @@ import { AutoSaveText, SaveStatus, useSaveState } from '../common/AutoSave';
 import { FolderField } from '../common/FolderField';
 import { HOST_SECTIONS } from '../common/settingsSections';
 import { SettingsScreens } from '../common/SettingsScreens';
+import { capitalize } from '../common/text';
 import { useAction } from '../common/useAction';
 import { DEFAULT_MODEL, modelChoices, PermissionModeSelect } from '../conversation/ConversationComposer';
 import { navigate } from '../shell/router';
@@ -42,7 +43,7 @@ function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeT
   if (!present || t?.state === 'missing') return { tone: 'neutral', text: 'None' };
   if (t?.state === 'expired') return { tone: 'failed', text: 'Rejected, ignored' };
   if (t && 'expiresAt' in t && t.expiresAt !== null) {
-    const when = new Date(t.expiresAt).toLocaleDateString();
+    const when = shortDate(t.expiresAt);
     return t.state === 'expires_soon' ? { tone: 'waiting', text: `Expires soon (${when})` } : { tone: 'running', text: `Stored · expires ${when}` };
   }
   return { tone: 'running', text: 'Stored' };
@@ -50,7 +51,7 @@ function tokenBadge(present: boolean, t: TokenState | undefined): { tone: BadgeT
 
 /** When GitHub's rate limit resets, as "after 14:05" (empty when GitHub didn't say). */
 function resetNote(retryAt: number | null | undefined): string {
-  return retryAt ? ` (after ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : '';
+  return retryAt ? ` (after ${clockTime(retryAt)})` : '';
 }
 
 /** What a check the user asked for found, said in the Version row; `fixToken` points at the token field. */
@@ -70,7 +71,7 @@ function CheckNotice({ notice, retryAt, fixToken }: { notice: UpdateNotice; retr
   if (notice.kind === 'rateLimited') return <>GitHub's limit on checks is used up for now; PDT checks again once it resets{resetNote(retryAt)}.</>;
   return (
     <span className="text-waiting">
-      {notice.message[0].toUpperCase() + notice.message.slice(1)}. <Link onClick={fixToken}>Replace the token</Link>
+      {capitalize(notice.message)}. <Link onClick={fixToken}>Replace the token</Link>
     </span>
   );
 }
@@ -255,7 +256,7 @@ function Updates({ v }: { v: HostSettingsView }) {
   };
   const updatesOff = u?.state === 'disabled';
   const badge = tokenBadge(v.tokenPresent, u?.token);
-  const checked = u?.lastCheckedAt ? `Last checked ${new Date(u.lastCheckedAt).toLocaleString()}.` : null;
+  const checked = u?.lastCheckedAt ? `Last checked ${absoluteTime(u.lastCheckedAt)}.` : null;
   const where = u?.releaseRepo;
   const fromEnv = where?.overriddenBy === 'environment';
   const repoNote = fromEnv ? `Set by PDT_RELEASE_REPO: ${where.repo}.`
