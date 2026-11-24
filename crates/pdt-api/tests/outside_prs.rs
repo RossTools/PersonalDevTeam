@@ -1546,3 +1546,108 @@ async fn the_forge_down_at_the_update_asks_the_user() {
     assert_eq!(update["port"], "error", "{update}");
     untouched(&env.gh);
 }
+
+// ---- PDT-737: the forge down at CI's reads, the merge and the watch, and CI pending too long ----
+
+/// A Dependabot patch on the template, waiting for its CI.
+async fn waiting_patch(env: &Env, n: u32) -> (String, RepoChangeRequest) {
+    let branch = format!("dependabot/cargo/serde-{n}");
+    let bump = outside(n, "dependabot[bot]", "Bump serde from 1.0.1 to 1.0.2", &branch, 1);
+    look(env, vec![bump.clone()]).await;
+    let id = newest_run(env).await;
+    assert_eq!(waiting(env, &id).await.0, "wait_ci");
+    (id, bump)
+}
+
+/// The run asks "Didn't merge" (once `why` gives up too, GitHub still down), with `node` left by `error`.
+async fn asks_didnt_merge(env: &Env, id: &str, node: &str) {
+    let mut at = retries_run_out(env, id, node).await;
+    if at == "why" {
+        at = retries_run_out(env, id, "why").await;
+    }
+    assert_eq!(at, "blocked");
+    let gate = gates(env).await.into_iter().next().expect("asked");
+    assert_eq!(gate["title"], "Didn't merge: ask me", "{gate}");
+    let r = run(env, id).await;
+    let step = r["steps"].as_array().unwrap().iter().rfind(|s| s["nodeId"] == node).cloned().unwrap();
+    assert_eq!(step["port"], "error", "{step}");
+    assert_ne!(r["status"], "failed", "{r}");
+}
+
+/// GitHub down while CI is waited for: asked "Didn't merge", not a failed run.
+#[tokio::test]
+async fn the_forge_down_while_ci_is_waited_for_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let (id, _) = waiting_patch(&env, 60).await;
+    *env.gh.error.lock().unwrap() = Some("GitHub is down".into());
+    time_passes(&env, &id).await;
+    asks_didnt_merge(&env, &id, "check_ci").await;
+    untouched(&env.gh);
+}
+
+/// CI still pending once the wait's loop limit is reached asks "Didn't merge". (The limit is cut to two polls here.)
+#[tokio::test]
+async fn ci_pending_past_the_wait_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let (_, w) = call(&env.app, "GET", &format!("/api/workflows/{}", env.wf), None).await;
+    let mut doc = w["doc"].clone();
+    for n in doc["nodes"].as_array_mut().unwrap().iter_mut().filter(|n| n["id"] == "wait_ci") {
+        n["maxVisits"] = json!(2);
+    }
+    let (s, v) = call(&env.app, "PUT", &format!("/api/workflows/{}", env.wf), Some(json!({"doc": doc}))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+    let (id, bump) = waiting_patch(&env, 61).await;
+    env.gh.set_runs(&bump.head_branch, vec![ci(&bump.head_branch, "sha-61", CiState::Running)]);
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "wait_ci", "its second poll");
+    time_passes(&env, &id).await;
+    assert_eq!(waiting(&env, &id).await.0, "blocked", "CI pending too long");
+    let r = run(&env, &id).await;
+    let step = r["steps"].as_array().unwrap().iter().rfind(|s| s["nodeId"] == "wait_ci").cloned().unwrap();
+    assert_eq!(step["port"], "error", "{step}");
+    untouched(&env.gh);
+}
+
+/// GitHub failing the merge step's read of the pull request (CI green): asked "Didn't merge", nothing merged.
+#[tokio::test]
+async fn the_forge_down_at_the_merge_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let (id, bump) = waiting_patch(&env, 62).await;
+    env.gh.set_runs(&bump.head_branch, vec![ci(&bump.head_branch, "sha-62", CiState::Passed)]);
+    *env.gh.number_error.lock().unwrap() = Some("GitHub is down".into());
+    time_passes(&env, &id).await;
+    asks_didnt_merge(&env, &id, "merge").await;
+    untouched(&env.gh);
+}
+
+/// GitHub down while a merge is watched: asked "Didn't merge", not a failed run.
+#[tokio::test]
+async fn the_forge_down_while_a_merge_is_watched_asks_the_user() {
+    let env = setup_with(Some(None)).await;
+    let (id, bump) = queued_patch(&env, 63).await;
+    set_to_merge(&env, &bump, true);
+    *env.gh.error.lock().unwrap() = Some("GitHub is down".into());
+    time_passes(&env, &id).await;
+    asks_didnt_merge(&env, &id, "watch").await;
+}
+
+/// GitHub down just before the question after a review: it is asked all the same, its CI line saying why.
+#[tokio::test]
+async fn the_forge_down_after_a_review_still_asks() {
+    let env = setup_with(Some(None)).await;
+    let mut seen = HashSet::new();
+    look(&env, vec![outside(64, "al", "Fix the board", "patch-64", 1)]).await;
+    let session = reviewer(&env, &mut seen).await;
+    first_prompt(&env, &session).await;
+    *env.gh.error.lock().unwrap() = Some("GitHub is down".into());
+    let args = json!({"outcome": "merge", "summary": "Suggests merge.", "data": {"feedback": ""}});
+    let said = say(&env, &session, &format!("mcp: submit_outcome {args}")).await;
+    assert!(said.starts_with("mcp submit_outcome:"), "{said}");
+    let id = newest_run(&env).await;
+    assert_eq!(retries_run_out(&env, &id, "ci_now").await, "decide");
+    let gate = gates(&env).await.into_iter().next().expect("asked");
+    let q = gate["body"]["question"].as_str().unwrap();
+    assert!(q.contains("CI on its head: ") && q.contains("GitHub is down"), "{q}");
+    assert!(q.contains("Suggests merge."), "{q}");
+    untouched(&env.gh);
+}
