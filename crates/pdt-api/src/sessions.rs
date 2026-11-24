@@ -396,6 +396,8 @@ pub(crate) async fn wait_for_fresh_codex_slot(st: &AppState, cwd: &str) -> i64 {
             match last.get(&key) {
                 Some(&l) if now < l.saturating_add(gap) => l.saturating_add(gap) - now,
                 _ => {
+                    // Folders whose spacing has passed hold nobody back: dropped, so the map holds only recent launches.
+                    last.retain(|_, l| now < l.saturating_add(gap));
                     last.insert(key, now);
                     return now;
                 }
@@ -1004,7 +1006,7 @@ pub(crate) async fn discard(st: &AppState, id: &str) {
         tracing::warn!(session = %id, error = %e, "could not delete the session row");
     }
     remove_data_dir(st, id).await;
-    crate::activity::forget(st, id);
+    forget_runtime(st, id);
     drop(_guard);
     st.forget_session_lock(id);
 }
@@ -1031,9 +1033,17 @@ async fn remove_locked(st: &AppState, id: &str) -> Result<(), ApiError> {
     st.store.delete_session(id).await?;
     // Best-effort: the session's hook settings.
     remove_data_dir(st, id).await;
-    crate::activity::forget(st, id);
+    forget_runtime(st, id);
     st.forget_session_lock(id);
     Ok(())
+}
+
+/// Forgets what pdtd keeps in memory per session (its activity, pdt-mcp's records, the user's pending yeses) once the
+/// session is deleted.
+fn forget_runtime(st: &AppState, id: &str) {
+    crate::activity::forget(st, id);
+    crate::mcp::forget(st, id);
+    st.grants.forget(id);
 }
 
 /// How long closing a tab waits for its session's process to exit after the kill.

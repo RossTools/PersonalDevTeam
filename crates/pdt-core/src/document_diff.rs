@@ -4,6 +4,7 @@
 //! Pure; pdt-api's documents sensor keeps the previous read to diff against.
 
 use crate::document::{Cell, DocumentContent, Sheet};
+use crate::text::clip;
 use std::fmt::Write as _;
 
 /// The most bytes a diff takes before the rest is counted, not shown.
@@ -112,15 +113,6 @@ fn hunks<'a>(a: &'a [String], b: &'a [String]) -> Vec<Hunk<'a>> {
         (i, j) = (ni + 1, nj + 1);
     }
     out
-}
-
-/// `text` cut to `max` characters with "…".
-fn clip(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    let cut: String = text.chars().take(max - 1).collect();
-    format!("{}…", cut.trim_end())
 }
 
 fn marked(out: &mut String, mark: char, block: &str) {

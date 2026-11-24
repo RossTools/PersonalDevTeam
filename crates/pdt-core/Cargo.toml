@@ -18,4 +18,5 @@ schemars = "1.2.3"
 sha2 = "0.11.1"
 croner = { version = "5.0.0", default-features = false, features = ["std", "jiff"] }
 jiff.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 

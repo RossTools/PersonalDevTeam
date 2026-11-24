@@ -63,6 +63,7 @@ pub mod session;
 pub mod setup;
 pub mod start;
 pub mod storage;
+pub mod text;
 pub mod ticket;
 pub mod ticket_attachment;
 pub mod ticket_proposal;

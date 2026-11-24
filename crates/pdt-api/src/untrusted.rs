@@ -57,6 +57,17 @@ impl Grants {
         g.push((session_id.into(), tool.into(), input.clone(), Instant::now()));
     }
 
+    /// A session's agent ended: its held requests can't be answered any more.
+    pub(crate) fn ended(&self, session_id: &str) {
+        self.pending.lock().unwrap_or_else(|e| e.into_inner()).retain(|(s, _), _| s != session_id);
+    }
+
+    /// A session was removed: its held requests and the yeses it was given go with it.
+    pub(crate) fn forget(&self, session_id: &str) {
+        self.ended(session_id);
+        self.granted.lock().unwrap_or_else(|e| e.into_inner()).retain(|x| x.0 != session_id);
+    }
+
     /// Takes the user's yes to this call, if they gave one.
     pub(crate) fn take(&self, session_id: &str, tool: &str, input: &Value) -> bool {
         let mut g = self.granted.lock().unwrap_or_else(|e| e.into_inner());
@@ -503,10 +514,7 @@ pub(crate) struct Outside {
 
 impl Outside {
     pub(crate) fn new() -> Self {
-        Self {
-            fence: pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string()),
-            used: std::sync::atomic::AtomicBool::new(false),
-        }
+        Self { fence: pdt_core::fence::Fence::random(), used: std::sync::atomic::AtomicBool::new(false) }
     }
 
     /// `text` in a block.
@@ -584,6 +592,23 @@ mod tests {
         g.answered("s", "r2", false);
         g.answered("s", "r3", true);
         assert!(!g.take("s", "edit_ticket", &input));
+    }
+
+    #[test]
+    fn a_gone_session_leaves_nothing_held() {
+        let g = Grants::default();
+        let input = json!({"ticket": "P-1"});
+        g.hold("s", "r1", "edit_ticket", &input);
+        g.hold("t", "r1", "edit_ticket", &input);
+        g.ended("s");
+        g.answered("s", "r1", true);
+        assert!(!g.take("s", "edit_ticket", &input), "its agent ended before the answer");
+        g.allow("s", "edit_ticket", &input);
+        g.forget("s");
+        assert!(!g.take("s", "edit_ticket", &input), "removed with the session");
+        g.answered("t", "r1", true);
+        assert!(g.take("t", "edit_ticket", &input), "another session's stays");
+        assert!(g.pending.lock().unwrap().is_empty() && g.granted.lock().unwrap().is_empty());
     }
 
     #[test]

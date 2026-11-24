@@ -81,6 +81,12 @@ async fn last_listed(st: &AppState, id: &str) -> Option<String> {
     cache.entry(id.to_string()).or_insert(read).clone()
 }
 
+/// Forgets a removed session's fingerprints.
+pub(super) fn forget(st: &AppState, id: &str) {
+    st.mcp_tools.listed.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    st.mcp_tools.notified.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+}
+
 /// Whether a session should be told its tools changed: it listed them, they differ now, and it wasn't told of this
 /// list already.
 pub(super) async fn changed_since_listed(st: &AppState, s: &Session) -> bool {

@@ -547,8 +547,7 @@ async fn tell(st: &AppState, w: &Watch, how: Told<'_>) -> Result<(), ApiError> {
             let text = match w.target {
                 WatchTarget::Document => {
                     let title = st.store.get_document(&w.target_id).await?.map(|d| d.title);
-                    let fence = pdt_core::fence::Fence::new(uuid::Uuid::new_v4().simple().to_string())
-                        .with_budget(pdt_core::fence::BUDGET, None);
+                    let fence = pdt_core::fence::Fence::random().with_budget(pdt_core::fence::BUDGET, None);
                     watch::document_message(
                         &w.target_id,
                         title.as_deref().unwrap_or("(gone)"),
