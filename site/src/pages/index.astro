@@ -9,6 +9,7 @@ import boardShot from '../assets/screens/board.webp';
 import workspacesShot from '../assets/screens/workspaces.webp';
 import backlogShot from '../assets/screens/backlog.webp';
 import workflowsShot from '../assets/screens/workflows.webp';
+import phoneShot from '../assets/screens/phone.webp';
 import pmChatShot from '../assets/screens/pm-chat.webp';
 import { downloadUrl, siteLinks, STABLE_PORT } from '../links.mjs';
 import { repoStats } from '../stats.mjs';
@@ -19,13 +20,15 @@ const base = links.home;
 const stats = repoStats();
 // The local-first diagram, for screen readers: the boxes say the same.
 const whereLabel = `What runs where. On your computer: PDT on 127.0.0.1:${STABLE_PORT} runs Claude Code, Codex, Devin and ACP agents with your own logins, over your repositories, with secrets in the keychain that agents never see. Outside it, each agent talks to its own provider, and GitHub has the pull requests, CI and PDT's updates.`;
-// The hero's carousel: the board first.
+// The hero's carousel: the board first, or on phones the phone's own capture. `detail` is the part of a desktop shot a
+// phone's taller frame shows.
 const shots = [
 	{
 		src: boardShot,
 		title: 'A board that shows who has what',
 		text: 'Tickets move from To do through Code, Review and QA to your Accept and the merge, each card with its pull request and CI.',
 		alt: 'PDT\'s board for a sample shop project: tickets in To do, Code, Review, QA, Accept, Merge and Done, with pull request and CI badges, one waiting for your Accept.',
+		detail: '35% top',
 	},
 	{
 		src: workspacesShot,
@@ -38,12 +41,20 @@ const shots = [
 		title: 'A backlog that knows what is in flight',
 		text: 'Rank, group and filter tickets. Blocked tickets and changes that overlap work in progress are flagged before an agent starts.',
 		alt: 'The ticket backlog grouped into Draft and Ready, with labels, priorities, a Blocked badge and an overlap warning.',
+		detail: '30% top',
 	},
 	{
 		src: workflowsShot,
 		title: 'Workflows for the rest',
 		text: 'Workflows react to events and schedules: file a ticket, start an agent, ask you in the Inbox. Build them as a graph.',
 		alt: 'A workflow graph: every night at 3:00, list outdated packages; if any, file a ticket for the Coder and tell me, else nothing to do.',
+	},
+	{
+		src: phoneShot,
+		phone: true,
+		title: 'Your team, from your phone',
+		text: 'PDT\'s page fits a phone. Reach it over Tailscale and answer what waits for you between other things.',
+		alt: 'The Inbox on a phone: questions, sessions waiting, notices and a ticket ready to accept, with a Review all button.',
 	},
 ];
 ---

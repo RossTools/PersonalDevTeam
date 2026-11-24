@@ -81,6 +81,16 @@ h1 em { font-style: normal; color: var(--accent-hi); }
 .carousel-dots { display: flex; gap: 10px; }
 .carousel-dot { width: 10px; height: 10px; padding: 0; border-radius: 50%; border: 0; background: var(--border); cursor: pointer; }
 .carousel-dot[aria-current] { background: var(--accent-hi); }
+/* The phone's capture, whole in the wide frame. */
+.carousel-slide.phone .carousel-frame img { object-fit: contain; }
+/* Phones: taller frames, each shot filling its frame at a readable size (a desktop shot at its slide's detail), and
+   the phone's slide first. */
+@media (max-width: 640px) {
+  .carousel { margin-top: 48px; }
+  .carousel-frame { aspect-ratio: 4 / 5; }
+  .carousel-frame img, .carousel-slide.phone .carousel-frame img { object-fit: cover; object-position: var(--detail, top left); }
+  .carousel-slide.phone, .carousel-dot.phone { order: -1; }
+}
 @media (prefers-reduced-motion: reduce) { .carousel-track { scroll-behavior: auto; } }
 
 /* Sections */
@@ -173,6 +183,8 @@ footer { border-top: 1px solid var(--border); padding: 40px 0; font-size: 14px; 
 footer .wrap { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
 footer .links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 20px; }
 footer a:hover { color: var(--fg); }
+/* Links on their own are tap targets of at least 24 px (WCAG 2.2's minimum). */
+footer .links a, .docs-links a:not(.btn), .more a { display: inline-flex; align-items: center; min-height: 24px; }
 
 
 /* Inline styles of the mockup, as classes. */
