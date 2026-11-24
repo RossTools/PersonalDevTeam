@@ -61,8 +61,14 @@ export const documentsApi = {
       method: 'POST',
       body: JSON.stringify({ edits, ...(baseVersion ? { baseVersion } : {}) }),
     }),
-  /** The changes agents made to it without asking, newest first. */
-  documentChanges: (id: string) => request<DocumentChange[]>(`/api/documents/${enc(id)}/changes`),
+  /** A page of the changes agents made to it without asking, newest first: `limit` (20) of them, those before the change `before`. */
+  documentChanges: (id: string, page: { limit?: number; before?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (page.limit) q.set('limit', String(page.limit));
+    if (page.before) q.set('before', page.before);
+    const qs = q.toString();
+    return request<DocumentChange[]>(`/api/documents/${enc(id)}/changes${qs ? `?${qs}` : ''}`);
+  },
   /** Puts a local document back as it was before an agent's change (every change since goes too). */
   restoreDocumentChange: (id: string, change: string) =>
     request<EditResult>(`/api/documents/${enc(id)}/changes/${enc(change)}/restore`, { method: 'POST' }),

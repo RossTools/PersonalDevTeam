@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Disclosure, RelativeTime, SectionLabel, useConfirm } from '@ui';
 import { api } from '../api/client';
 import type { DocumentChange } from '../api/gen/DocumentChange';
@@ -7,6 +7,9 @@ import { TicketKey } from '../common/TicketKey';
 import { POLL } from '../common/poll';
 import { useAction } from '../common/useAction';
 import { documentKeys } from './queries';
+
+/** How many changes a page shows. */
+const PAGE = 20;
 
 /** A diff as a Markdown code block, fenced longer than any run of backticks in it. */
 function diffBlock(diff: string): string {
@@ -67,8 +70,14 @@ function ChangeRow({ c }: { c: DocumentChange }) {
  * Nothing when there are none.
  */
 export function AgentChanges({ id }: { id: string }) {
-  const changes = useQuery({ queryKey: documentKeys.changes(id), queryFn: () => api.documentChanges(id), refetchInterval: POLL.paged });
-  const list = changes.data ?? [];
+  const changes = useInfiniteQuery({
+    queryKey: documentKeys.changes(id),
+    queryFn: ({ pageParam }) => api.documentChanges(id, { limit: PAGE, before: pageParam || undefined }),
+    initialPageParam: '' as string,
+    getNextPageParam: (last) => (last.length < PAGE ? undefined : last[last.length - 1]?.id),
+    refetchInterval: POLL.paged,
+  });
+  const list = changes.data?.pages.flat() ?? [];
   if (list.length === 0) return null;
   return (
     <section aria-label="Changes agents made without asking" className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
@@ -76,6 +85,11 @@ export function AgentChanges({ id }: { id: string }) {
       <ul className="flex flex-col gap-2">
         {list.map((c) => <ChangeRow key={c.id} c={c} />)}
       </ul>
+      {changes.hasNextPage && (
+        <Button size="sm" variant="ghost" className="self-start" disabled={changes.isFetchingNextPage} onClick={() => void changes.fetchNextPage()}>
+          Show older changes
+        </Button>
+      )}
     </section>
   );
 }
