@@ -385,7 +385,7 @@ export default function SheetEditor({ id, onReady }: SheetEditorProps) {
           <ArrowUpZA aria-hidden /> Z→A
         </Button>
         <Button variant="ghost" size="sm" compact disabled={!value} onClick={() => edit([{ op: 'filter', sheet: sel.sheet, range: sortRange, column: col, when: { type: 'equal_to', value } }])}>
-          <Filter aria-hidden /> Only rows with “{value.length > 16 ? `${value.slice(0, 16)}…` : value}” in {col}
+          <Filter aria-hidden /> {value ? <>Only rows with “{value.length > 16 ? `${value.slice(0, 16)}…` : value}” in {col}</> : 'Filter by this cell'}
         </Button>
         <Button variant="ghost" size="sm" compact onClick={() => edit([{ op: 'clear_filter', sheet: sel.sheet }])}>
           <FilterX aria-hidden /> Show all rows
