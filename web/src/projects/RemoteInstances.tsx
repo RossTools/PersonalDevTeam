@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Copy, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { Alert, Badge, Button, clockTime, EmptyState, IconButton, Input, RelativeTime, Section, Select, SettingsRow, Skeleton, toast, useConfirm, type BadgeTone } from '@ui';
 import { api } from '../api/client';
@@ -9,6 +9,7 @@ import type { RemoteInstanceView } from '../api/gen/RemoteInstanceView';
 import { AutoSaveText } from '../common/AutoSave';
 import { copyToClipboard } from '../common/clipboard';
 import { LoadError } from '../common/QueryStatus';
+import { itemInPlaceOf, useKeepFocus } from '../common/focusLost';
 import { formatBytes } from '../common/text';
 import { useAction } from '../common/useAction';
 import type { PlacementSettings } from '../api/gen/PlacementSettings';
@@ -37,12 +38,13 @@ export function minutesLeft(at: number, now = Date.now()): string {
   return `${Math.max(1, Math.ceil((at - now) / 60_000))} min`;
 }
 
-function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }) {
+function InstanceRow({ project, i, onGone }: { project: Project; i: RemoteInstanceView; onGone: (row: Element | null) => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const state = LINK_STATE[i.state];
   const f = i.facts;
   const agents = (f?.agents ?? []).filter((a) => a.installed);
+  const row = useRef<HTMLLIElement>(null);
   const [remove, removing] = useAction(async () => {
     const { ok } = await confirm({
       title: `Remove ${i.name}?`,
@@ -51,12 +53,13 @@ function InstanceRow({ project, i }: { project: Project; i: RemoteInstanceView }
       danger: true,
     });
     if (!ok) return;
+    onGone(row.current);
     const { told } = await api.removeRemoteInstance(project.id, i.linkId);
     if (!told) toast.info(`${i.name} couldn't be told; leave ${project.name} there too.`, { description: `It shows the project as removed once it can reach this instance.` });
     await qc.invalidateQueries({ queryKey: projectKeys.remoteInstances(project.id) });
   });
   return (
-    <li className="flex flex-col gap-1 px-4 py-2.5">
+    <li ref={row} className="flex flex-col gap-1 px-4 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">{i.name}</span>
         <Badge tone={state.tone}>{state.label}</Badge>
@@ -184,7 +187,12 @@ export function RemoteInstances({ project }: { project: Project }) {
   const set = (next: typeof v) => qc.setQueryData(projectKeys.remoteInstances(project.id), next);
   const [add, adding] = useAction(async () => set(await api.newPairingCode(project.id)));
   const [check, checking] = useAction(async () => set(await api.checkRemoteInstances(project.id)));
-  const [cancel, cancelling] = useAction(async () => {
+  // Remove and Cancel code take their own row away: focus goes on to the next instance's Remove, or Add instance
+  // (PDT-668).
+  const keep = useKeepFocus();
+  const addButton = useRef<HTMLButtonElement>(null);
+  const [cancel, cancelling] = useAction(async (from: Element) => {
+    keep(from, () => addButton.current);
     await api.cancelPairingCode(project.id);
     await qc.invalidateQueries({ queryKey: projectKeys.remoteInstances(project.id) });
   });
@@ -199,7 +207,7 @@ export function RemoteInstances({ project }: { project: Project }) {
           {v.instances.length > 0 && (
             <Button size="sm" pending={checking} onClick={() => void check()}><RefreshCw aria-hidden /> Check now</Button>
           )}
-          {address && <Button size="sm" pending={adding} onClick={() => void add()}><Plus aria-hidden /> {pairing ? 'New code' : 'Add instance'}</Button>}
+          {address && <Button ref={addButton} size="sm" pending={adding} onClick={() => void add()}><Plus aria-hidden /> {pairing ? 'New code' : 'Add instance'}</Button>}
         </>
       )}
       notice={v && !address && <RemoteAccessOff />}
@@ -209,7 +217,7 @@ export function RemoteInstances({ project }: { project: Project }) {
       {v && v.instances.length === 0 && !pairing && <EmptyState size="inline">No remote instances yet.</EmptyState>}
       {v && v.instances.length > 0 && (
         <ul data-flush className="flex flex-col divide-y divide-border">
-          {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} />)}
+          {v.instances.map((i) => <InstanceRow key={i.linkId} project={project} i={i} onGone={(row) => keep(row, itemInPlaceOf(row, () => addButton.current))} />)}
         </ul>
       )}
       {v && v.instances.length > 0 && <PlacementRules project={project} instances={v.instances} />}
@@ -226,7 +234,7 @@ export function RemoteInstances({ project }: { project: Project }) {
           <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
             <span title={clockTime(pairing.expiresAt)}>Expires in {minutesLeft(pairing.expiresAt)}</span>
             <span className="flex-1" />
-            <Button size="sm" pending={cancelling} onClick={() => void cancel()}>Cancel code</Button>
+            <Button size="sm" pending={cancelling} onClick={(e) => void cancel(e.target)}>Cancel code</Button>
           </div>
         </SettingsRow>
       )}

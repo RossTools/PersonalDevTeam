@@ -82,7 +82,12 @@ describe('ConfigCommands', () => {
     await userEvent.click(within(b).getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(screen.getByRole('group', { name: 'Command for run "b"' })).not.toHaveTextContent('Not approved'));
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ fingerprints: ['b'] });
-    expect(screen.getByRole('group', { name: 'Command for run "c"' })).toHaveTextContent('Not approved');
+    const c = screen.getByRole('group', { name: 'Command for run "c"' });
+    expect(c).toHaveTextContent('Not approved');
+    // Approve went away: focus is on the next one, then on the last one's card (PDT-668).
+    await waitFor(() => expect(within(c).getByRole('button', { name: 'Approve' })).toHaveFocus());
+    await userEvent.click(within(c).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Command for run "c"' })).toHaveFocus());
   });
 
   it('says when the configuration names no commands, and shows nothing when it is invalid', async () => {

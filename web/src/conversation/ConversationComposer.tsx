@@ -345,6 +345,13 @@ export function ConversationComposer({
         </Alert>
       )}
       {error && <Alert tone="error">{error}</Alert>}
+      {broken && (
+        // Send waits on it: say why where everyone sees it, not only on the image's hover (PDT-668).
+        <Alert tone="error">
+          {drafts.filter((d) => d.error).map((d) => `${d.name} couldn't be attached: ${d.error!.replace(/\.?$/, '.')}`).join(' ')}
+          {drafts.filter((d) => d.error).length > 1 ? ' Remove them to send.' : ' Remove it to send.'}
+        </Alert>
+      )}
       {limit && (
         <p role="status" className={cn('mx-auto w-full max-w-3xl px-1 text-meta', limit.reached ? 'text-destructive' : 'text-waiting')}>
           {limit.text}
