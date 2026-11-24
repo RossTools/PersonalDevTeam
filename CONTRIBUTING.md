@@ -13,7 +13,7 @@ in [docs/SDLC.md](docs/SDLC.md), how the code works in the [developer guide](doc
 
 - **Rust through [rustup](https://rustup.rs)**. `rust-toolchain.toml` pins the version, and rustup installs it (with
   rustfmt and clippy) on the first build; a distribution's packaged `cargo` won't.
-- **Node 24** (the version CI uses) and **pnpm 12**. `package.json` names the exact pnpm, so `corepack enable` is the
+- **Node 24** (the version CI uses, in `.nvmrc`) and **pnpm 12**. `package.json` names the exact pnpm, so `corepack enable` is the
   easy way to get it. On older Node, `scripts/check.sh` skips the website build with a one-line notice.
 - **git**.
 - **Linux**: **zsh** (pdtd's terminal tests start it). Only to build the desktop tray app (`desktop/`), the Tauri
@@ -63,7 +63,7 @@ label ([docs/SDLC.md "Labels"](docs/SDLC.md#labels)).
 
 ## CI on your pull request
 
-GitHub holds the CI run of a first-time contributor's pull request until a maintainer approves it. CI then runs the
+GitHub holds the CI run of every outside contributor's pull request until a maintainer approves it. CI then runs the
 checks that fit what you changed (Linux lint, tests, web and website; macOS and Windows when labelled), the secret
 scan and the changelog check ([docs/SDLC.md "CI"](docs/SDLC.md#ci)). Once a maintainer approves the PR, the merge
 queue runs the full set and squash-merges it.
