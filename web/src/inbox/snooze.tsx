@@ -1,16 +1,17 @@
 // Snooze (PDT-641): any item can be put out of sight until tomorrow morning, for a week, or until a ticket is done.
 // It comes back by itself; Snoozed lists the ones away, with Unsnooze. A snoozed item opens read-only (PDT-686).
-import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AlarmClock, AlarmClockOff } from 'lucide-react';
-import { Button, List, ListHeading, ListRow, MenuButton, clockTime, toast } from '@ui';
+import { Button, ListRow, MenuButton, clockTime, toast } from '@ui';
 import { api } from '../api/client';
 import type { InboxItem } from '../api/gen/InboxItem';
 import type { InboxSnooze } from '../api/gen/InboxSnooze';
 import type { SnoozeRequest } from '../api/gen/SnoozeRequest';
+import { listRows, useKeepFocus } from '../common/focusLost';
 import { TicketKey } from '../common/TicketKey';
 import { actionError } from '../common/useAction';
 import { KindIcon } from './kinds';
+import { CollapsibleListSection, rowInPlaceOf } from './ListSection';
 import { ROW_ACTION, RowTitle } from './rows';
 import { useInbox, useRefreshInbox } from './useInbox';
 
@@ -94,6 +95,12 @@ export function snoozedLine(i: InboxItem): string {
 /** Rows Snoozed shows before Show all. */
 const SHOWN = 3;
 
+/** Where focus goes when a row that brought its item back goes: the next row, else the item's row in Needs you. */
+export function keepFocusOnReturn(keep: ReturnType<typeof useKeepFocus>, from: Element, itemId: string) {
+  const nav = from.closest('nav');
+  keep(from, rowInPlaceOf(from, () => listRows(nav).find((r) => r.dataset.key === itemId)));
+}
+
 /**
  * The Inbox list's Snoozed section: what is away and until when, with Unsnooze. A row opens its item (read-only) with
  * `onSelect`.
@@ -101,41 +108,39 @@ const SHOWN = 3;
 export function Snoozed({ selectedId = null, onSelect }: { selectedId?: string | null; onSelect?: (id: string) => void }) {
   const items = useInbox().data?.snoozed ?? [];
   const unsnooze = useUnsnooze();
-  const [all, setAll] = useState(false);
+  // Unsnooze takes its row away (the section, with the last): focus goes on to the next row, or the item's row back
+  // in Needs you (PDT-668).
+  const keep = useKeepFocus();
   if (items.length === 0) return null;
-  const shown = all ? items : items.slice(0, SHOWN);
   return (
-    <section aria-label="Snoozed">
-      <ListHeading as="h3">Snoozed</ListHeading>
-      <List aria-label="Snoozed" onAction={onSelect}>
-        {shown.map((i) => (
-          <ListRow
-            key={i.id}
-            id={i.id}
-            title={<RowTitle>{i.title}</RowTitle>}
-            textValue={i.title}
-            current={i.id === selectedId}
-            className="items-start py-1.5"
-            leading={<KindIcon item={i} className="mt-0.5" />}
-            secondary={
-              <span className="flex min-w-0 items-center gap-1.5">
-                {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                <span className="truncate">
-                  {snoozedLine(i)}
-                  {i.ticketWaits && ` · ${i.ticketKey ?? 'its ticket'} waits on it`}
-                </span>
+    <CollapsibleListSection label="Snoozed" items={items} rowId={(i) => i.id} limit={SHOWN} onAction={onSelect}>
+      {(i) => (
+        <ListRow
+          key={i.id}
+          id={i.id}
+          title={<RowTitle>{i.title}</RowTitle>}
+          textValue={i.title}
+          current={i.id === selectedId}
+          className="items-start py-1.5"
+          leading={<KindIcon item={i} className="mt-0.5" />}
+          secondary={
+            <span className="flex min-w-0 items-center gap-1.5">
+              {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
+              <span className="truncate">
+                {snoozedLine(i)}
+                {i.ticketWaits && ` · ${i.ticketKey ?? 'its ticket'} waits on it`}
               </span>
-            }
-            trailing={
-              <Button size="sm" variant="ghost" className={ROW_ACTION} pending={unsnooze.isPending && unsnooze.variables === i.id}
-                onClick={() => unsnooze.mutate(i.id)}>Unsnooze</Button>
-            }
-          />
-        ))}
-      </List>
-      {!all && shown.length < items.length && (
-        <Button variant="ghost" size="sm" className="mx-2 mt-1" onClick={() => setAll(true)}>Show all {items.length}</Button>
+            </span>
+          }
+          trailing={
+            <Button size="sm" variant="ghost" className={ROW_ACTION} pending={unsnooze.isPending && unsnooze.variables === i.id}
+              onClick={(e) => {
+                keepFocusOnReturn(keep, e.target, i.id);
+                unsnooze.mutate(i.id);
+              }}>Unsnooze</Button>
+          }
+        />
       )}
-    </section>
+    </CollapsibleListSection>
   );
 }

@@ -1,6 +1,8 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { Badge, Button, CodeCard, EmptyState, SectionLabel, Skeleton, type ConfirmOptions, type ConfirmResult } from '@ui';
 import { api, ApiError } from '../api/client';
+import { useRef } from 'react';
+import { useKeepFocus } from '../common/focusLost';
 import { LoadError } from '../common/QueryStatus';
 import { useAction } from '../common/useAction';
 import type { ConfigCommand } from '../api/gen/ConfigCommand';
@@ -66,17 +68,19 @@ export async function withApproval<T>(confirm: Confirm, qc: QueryClient, attempt
 function CommandRow({ command: c, waiting, approve, approving }: {
   command: ConfigCommand;
   waiting: boolean;
-  approve: (fingerprints: string[]) => void;
+  approve: (fingerprints: string[], from: Element) => void;
   approving: boolean;
 }) {
   return (
     <CodeCard
       aria-label={`Command for ${c.uses.join(', ')}`}
+      tabIndex={-1}
+      data-fingerprint={c.fingerprint}
       title={c.uses.join(', ')}
       aside={waiting ? (
         <span className="flex items-center gap-2">
           <Badge tone="waiting">Not approved</Badge>
-          <Button type="button" size="sm" pending={approving} onClick={() => approve([c.fingerprint])}>Approve</Button>
+          <Button type="button" size="sm" data-approve pending={approving} onClick={(e) => approve([c.fingerprint], e.target)}>Approve</Button>
         </span>
       ) : 'Approved'}
       code={commandText(c)}
@@ -91,7 +95,13 @@ export function ConfigCommands({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
   // Polled: an agent's new or changed configuration shows without a reload.
   const list = useQuery({ queryKey: runKeys.commands(projectId), queryFn: () => api.projectCommands(projectId, null), refetchInterval: POLL.slow });
-  const [approve, approving] = useAction(async (fingerprints: string[]) => {
+  // Approve goes away once it lands, and the command moves down the list: focus goes to the next Approve, or the
+  // command's card (PDT-668).
+  const keep = useKeepFocus();
+  const box = useRef<HTMLDivElement>(null);
+  const [approve, approving] = useAction(async (fingerprints: string[], from: Element) => {
+    keep(from, () => box.current?.querySelector<HTMLElement>('[data-approve]')
+      ?? box.current?.querySelector<HTMLElement>(`[data-fingerprint="${CSS.escape(fingerprints[0])}"]`));
     await api.trustCommands(projectId, fingerprints);
     await invalidateCommands(qc, projectId);
   }, { success: 'Approved' });
@@ -103,17 +113,17 @@ export function ConfigCommands({ projectId }: { projectId: string }) {
   const main = list.data.error ? null : ordered.length === 0
     ? <EmptyState size="inline">The run configuration names no commands.</EmptyState>
     : ordered.map((c) => (
-      <CommandRow key={c.fingerprint} command={c} waiting={waiting.has(c.fingerprint)} approve={(f) => void approve(f)} approving={approving} />
+      <CommandRow key={c.fingerprint} command={c} waiting={waiting.has(c.fingerprint)} approve={(f, from) => void approve(f, from)} approving={approving} />
     ));
   if (!main && worktrees.length === 0) return null;
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={box} className="flex flex-col gap-2">
       {main}
       {worktrees.map((w) => (
         <section key={w.worktreeId} aria-label={`Waiting in ${w.branch}`} className="flex flex-col gap-2">
           <SectionLabel as="h4" className="pt-2">{w.ticketKey ? `${w.ticketKey} · ` : ''}Waiting in {w.branch}</SectionLabel>
           {w.commands.map((c) => (
-            <CommandRow key={c.fingerprint} command={c} waiting approve={(f) => void approve(f)} approving={approving} />
+            <CommandRow key={c.fingerprint} command={c} waiting approve={(f, from) => void approve(f, from)} approving={approving} />
           ))}
         </section>
       ))}

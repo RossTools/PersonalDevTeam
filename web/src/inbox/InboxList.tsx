@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { Badge, Button, EmptyState, IconButton, List, ListHeading, ListRow, RelativeTime } from '@ui';
 import type { InboxItem } from '../api/gen/InboxItem';
@@ -6,6 +5,7 @@ import type { Notification } from '../api/gen/Notification';
 import { TicketKey } from '../common/TicketKey';
 import { grouped, selectedUpdate, updateSelection } from './model';
 import { KindIcon } from './kinds';
+import { CollapsibleListSection } from './ListSection';
 import { RecentlyAnswered } from './RecentlyAnswered';
 import { context, ROW_ACTION, RowTitle, useRowContext } from './rows';
 import { Snoozed } from './snooze';
@@ -36,73 +36,41 @@ export function NeedsYouGroups({ items, selectedId, onSelect, loading, failed }:
 }) {
   const groups = grouped(items);
   const rowContext = useRowContext();
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  // Show all goes away when pressed: focus moves to the first row it showed (PDT-547). The list renders its new rows a
-  // pass after this one, so it looks for a few frames.
-  const reveal = useRef<{ section: Element; id: string } | null>(null);
-  useEffect(() => {
-    const r = reveal.current;
-    if (!r) return;
-    reveal.current = null;
-    let frame = 0;
-    let tries = 10;
-    const look = () => {
-      const row = [...r.section.querySelectorAll<HTMLElement>('[role="row"][data-key]')].find((el) => el.dataset.key === r.id);
-      if (row) row.focus();
-      else if (--tries > 0) frame = requestAnimationFrame(look);
-    };
-    look();
-    return () => cancelAnimationFrame(frame);
-  }, [expanded]);
   return (
     <>
       {groups.length === 0 && (failed || !loading) && <EmptyLine failed={failed} what="the Inbox">Nothing waits on you.</EmptyLine>}
-      {groups.map((g) => {
+      {groups.map((g) => (
         // A long section shows its first rows (and the selected one's, wherever it is) until Show all.
-        const all = expanded.has(g.id) || g.items.slice(GROUP_ROWS).some((i) => i.id === selectedId);
-        const rows = all ? g.items : g.items.slice(0, GROUP_ROWS);
-        return (
-          <section key={g.id} aria-label={g.title}>
-            <ListHeading as="h3">
-              {g.title} <Badge count={g.items.length} size="sm" />
-            </ListHeading>
-            <List aria-label={g.title} onAction={onSelect}>
-              {rows.map((i) => (
-                <ListRow
-                  key={i.id}
-                  id={i.id}
-                  title={<RowTitle>{i.title}</RowTitle>}
-                  textValue={i.title}
-                  current={i.id === selectedId}
-                  className="items-start py-1.5"
-                  leading={<KindIcon item={i} className="mt-0.5" />}
-                  trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
-                  secondary={
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
-                      <span className="truncate">{context(i, rowContext(i))}</span>
-                    </span>
-                  }
-                />
-              ))}
-            </List>
-            {rows.length < g.items.length && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="mx-2 mt-1"
-                onClick={(e) => {
-                  const section = e.target.closest('section');
-                  if (section) reveal.current = { section, id: g.items[rows.length].id };
-                  setExpanded((s) => new Set(s).add(g.id));
-                }}
-              >
-                Show all {g.items.length}
-              </Button>
-            )}
-          </section>
-        );
-      })}
+        <CollapsibleListSection
+          key={g.id}
+          label={g.title}
+          heading={<>{g.title} <Badge count={g.items.length} size="sm" /></>}
+          items={g.items}
+          rowId={(i) => i.id}
+          limit={GROUP_ROWS}
+          open={g.items.slice(GROUP_ROWS).some((i) => i.id === selectedId)}
+          onAction={onSelect}
+        >
+          {(i) => (
+            <ListRow
+              key={i.id}
+              id={i.id}
+              title={<RowTitle>{i.title}</RowTitle>}
+              textValue={i.title}
+              current={i.id === selectedId}
+              className="items-start py-1.5"
+              leading={<KindIcon item={i} className="mt-0.5" />}
+              trailing={<RelativeTime short time={i.createdAt} className="text-meta text-muted-foreground" />}
+              secondary={
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {i.ticketKey && <TicketKey ticketKey={i.ticketKey} />}
+                  <span className="truncate">{context(i, rowContext(i))}</span>
+                </span>
+              }
+            />
+          )}
+        </CollapsibleListSection>
+      ))}
     </>
   );
 }
