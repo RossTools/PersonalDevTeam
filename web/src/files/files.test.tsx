@@ -120,6 +120,12 @@ describe('folder view', () => {
     expect(await screen.findByText(/at most 2 GB/)).toBeInTheDocument();
     expect(saved).toHaveLength(3);
     expect(calls.filter((c) => c.path.includes('/download')).length).toBe(4);
+    // A folder's row has its own Download button, which doesn't open the folder.
+    const build = screen.getByRole('row', { name: /build/ });
+    await userEvent.click(within(build).getByRole('button', { name: 'Download build as .zip' }));
+    await waitFor(() => expect(saved).toHaveLength(4));
+    expect(saved.at(-1)).toBe('/api/projects/p/files/download?path=build&zip=1');
+    expect(build).toHaveAttribute('aria-expanded', 'false');
     vi.restoreAllMocks();
   });
 
@@ -180,6 +186,26 @@ describe('folder list (phones)', () => {
     await waitFor(() => expect(screen.getByTestId('code')).toHaveTextContent('fn main() {}'));
     // View-only on phones.
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+
+  it('downloads a folder as a .zip from the top of its screen', async () => {
+    const saved: string[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { saved.push(this.getAttribute('href')!); });
+    stubApi({
+      'GET /api/projects/p/worktrees': [],
+      'GET /api/projects/p/files?path=': [entry('src', true)],
+      'GET /api/projects/p/files?path=src': [entry('src/main.rs')],
+      'GET /api/projects/p/files/download?path=src&zip=1&check=1': undefined,
+    });
+    renderWithQuery(<PhoneHarness />);
+    await screen.findByRole('grid', { name: 'Files' });
+    // Not for the whole checkout.
+    expect(screen.queryByRole('button', { name: 'Download as .zip' })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole('grid', { name: 'Files' })).getByRole('row', { name: /src/ }));
+    await screen.findByRole('grid', { name: 'Files in src' });
+    await userEvent.click(screen.getByRole('button', { name: 'Download as .zip' }));
+    await waitFor(() => expect(saved).toEqual(['/api/projects/p/files/download?path=src&zip=1']));
+    vi.restoreAllMocks();
   });
 });
 

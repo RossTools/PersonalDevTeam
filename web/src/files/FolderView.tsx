@@ -65,12 +65,21 @@ function Files({ state, place }: { state: FolderViewState; place: Place }) {
   const root = useFolder(place, '');
   const ops = useFileOps(state, place);
   const { openMenu, menu } = useMenuAt();
+  // A folder's row has a Download (as .zip) button; the one including ignored files stays in its menu.
+  const node = (e: FileEntry): FileNode => ({
+    ...toNode(e),
+    actions: e.dir ? (
+      <IconButton label={`Download ${e.name} as .zip`} size="xs" className="text-muted-foreground" onClick={() => void ops.save(e.path, { zip: true })}>
+        <Download aria-hidden />
+      </IconButton>
+    ) : undefined,
+  });
   // Called by TreeView from the open folder's own component, so it may use a hook.
-  const useChildren = (node: FileNode): TreeChildren<FileNode> => {
-    const q = useFolder(place, node.id);
+  const useChildren = (n: FileNode): TreeChildren<FileNode> => {
+    const q = useFolder(place, n.id);
     if (q.isPending) return { status: 'loading' };
     if (q.isError) return { status: 'error', message: q.error.message };
-    return { status: 'ready', items: q.data.map(toNode) };
+    return { status: 'ready', items: q.data.map(node) };
   };
   if (root.isPending) return <Skeleton lines={6} label="Loading files" className="px-2" />;
   if (root.isError) return <div className="px-1"><Alert tone="error">{root.error.message}</Alert></div>;
@@ -78,7 +87,7 @@ function Files({ state, place }: { state: FolderViewState; place: Place }) {
     <>
       <TreeView<FileNode>
         aria-label="Files"
-        items={root.data.map(toNode)}
+        items={root.data.map(node)}
         useChildren={useChildren}
         expandedKeys={state.open}
         onExpandedChange={state.setOpen}
@@ -218,7 +227,8 @@ export function FolderTree({ state }: { state: FolderViewState }) {
 
 /**
  * One folder of the checkout as its own screen (phones, PDT-120): its entries as rows, a folder opening its own screen
- * (its path ends in `/`) and a file its viewer. The top one (`dir` empty) has the checkout picker.
+ * (its path ends in `/`) and a file its viewer. The top one (`dir` empty) has the checkout picker; the others a Download
+ * as .zip.
  */
 export function FolderList({ state, dir }: { state: FolderViewState; dir: string }) {
   if (!state.place) return <EmptyState icon={<FolderOpen />}>Add a project to browse its files.</EmptyState>;
@@ -245,6 +255,11 @@ function FolderEntries({ state, place, dir }: { state: FolderViewState; place: P
   const dirs = new Set(q.data.filter((e) => e.dir).map((e) => e.path));
   return (
     <>
+      {dir && (
+        <div className="flex justify-end px-1">
+          <Button size="sm" variant="secondary" onClick={() => void ops.save(dir, { zip: true })}><Download aria-hidden /> Download as .zip</Button>
+        </div>
+      )}
       <List aria-label={dir ? `Files in ${dir}` : 'Files'} onAction={(path) => state.setFile(dirs.has(path) ? `${path}/` : path)}
         renderEmpty={() => <EmptyState size="inline" className="px-2 py-1">{dir ? 'This folder is empty.' : 'This checkout has no files.'}</EmptyState>}>
         {q.data.map((e) => (
