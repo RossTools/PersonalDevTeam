@@ -23,4 +23,11 @@ describe('EndedBar', () => {
     rerender(<EndedBar status="interrupted" onRestart={() => {}} />);
     expect(screen.queryByText(/resumes its last conversation/)).not.toBeInTheDocument();
   });
+
+  it('says when it ended and with what exit code', () => {
+    const { rerender } = render(<EndedBar status="finished" endedAt={Date.now() - 2 * 3_600_000} exitCode={0} onRestart={() => {}} />);
+    expect(screen.getByRole('group', { name: 'Session ended' })).toHaveTextContent('Ended 2h ago· exit 0');
+    rerender(<EndedBar status="finished" endedAt={Date.now() - 2 * 3_600_000} exitCode={null} onRestart={() => {}} />);
+    expect(screen.queryByText(/exit/)).not.toBeInTheDocument();
+  });
 });
