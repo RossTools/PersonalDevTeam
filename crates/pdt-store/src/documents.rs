@@ -596,13 +596,25 @@ impl Store {
         Ok(Some(DocumentBackup { bytes, charts }))
     }
 
-    /// The changes agents made to a document without asking, newest first.
-    pub async fn document_changes(&self, document_id: &str) -> Result<Vec<DocumentChange>, StoreError> {
+    /// Up to `limit` of the changes agents made to a document without asking, newest first: those before the change
+    /// `before` when given (none when that is not one of the document's).
+    pub async fn document_changes(
+        &self,
+        document_id: &str,
+        before: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<DocumentChange>, StoreError> {
         let rows = sqlx::query(
             "SELECT id, document_id, at, tool, summary, version, diff, agent, backup IS NOT NULL AS restorable \
-             FROM document_changes WHERE document_id = ? ORDER BY at DESC, rowid DESC",
+             FROM document_changes WHERE document_id = ? \
+               AND (? IS NULL OR (at, rowid) < (SELECT at, rowid FROM document_changes WHERE id = ? AND document_id = ?)) \
+             ORDER BY at DESC, rowid DESC LIMIT ?",
         )
         .bind(document_id)
+        .bind(before)
+        .bind(before)
+        .bind(document_id)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
@@ -842,11 +854,18 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let got = store.document_changes("d1").await.unwrap();
-        assert_eq!(got.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["c2", "c1"]);
-        assert_eq!(got[1], change("c1", 5));
+        assert!(store.add_document_change(&change("c4", 6), None).await.unwrap());
+        let ids = |v: Vec<DocumentChange>| v.into_iter().map(|c| c.id).collect::<Vec<_>>();
+        let got = store.document_changes("d1", None, 10).await.unwrap();
+        assert_eq!(got[2], change("c1", 5));
+        assert_eq!(ids(got), ["c4", "c2", "c1"], "newest first, the later of two at the same time first");
+        assert_eq!(ids(store.document_changes("d1", None, 2).await.unwrap()), ["c4", "c2"]);
+        assert_eq!(ids(store.document_changes("d1", Some("c4"), 1).await.unwrap()), ["c2"], "a page before c4");
+        assert_eq!(ids(store.document_changes("d1", Some("c2"), 5).await.unwrap()), ["c1"]);
+        assert!(store.document_changes("d1", Some("c1"), 5).await.unwrap().is_empty());
+        assert!(store.document_changes("d1", Some("nope"), 5).await.unwrap().is_empty(), "not one of its changes");
         store.delete_document("d1").await.unwrap();
-        assert!(store.document_changes("d1").await.unwrap().is_empty());
+        assert!(store.document_changes("d1", None, 10).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -879,7 +898,7 @@ mod tests {
             store.add_document_change(&change(n), Some(&backup(n))).await.unwrap();
         }
         store.add_document_change(&change(100), None).await.unwrap();
-        let got = store.document_changes("d1").await.unwrap();
+        let got = store.document_changes("d1", None, 100).await.unwrap();
         let kept: Vec<&str> = got.iter().filter(|c| c.restorable).map(|c| c.id.as_str()).collect();
         assert_eq!(kept.len() as i64, KEPT_BACKUPS);
         assert!(!kept.contains(&"c1") && !kept.contains(&"c2") && !kept.contains(&"c100"));

@@ -322,7 +322,8 @@ later cancel, or a re-run that fails, gets `ci.stalled`: a gate in the `stalled`
 at the head every minute and leaves by `moved_on` once it moved on, which closes the item. A gate in the `stalled`
 group shows its ticket as stalled (`scheduler::ticket_agents`, named by the item's `who`). An agent retries chosen jobs of its own
 attempt's head with `ci_jobs` / `ci_retry` (`integrations/ci_jobs.rs`, through `CiProvider::retry_jobs`, which falls
-back to `retry` for providers without `CiCapabilities::retry_jobs`); pdt-core `ci_retry.rs` holds the guards (only the
+back to `retry` for providers without `CiCapabilities::retry_jobs`: then every failed job of the run is capped and
+recorded, not only those named); pdt-core `ci_retry.rs` holds the guards (only the
 head's newest runs, `RETRY_CAP` per job and head, counted from the ticket's `ci_retry` events).
 
 **Conflicts at merge time.** A conflict is fixed once, when the ticket is next to merge. PR notices' first step on a
@@ -773,7 +774,8 @@ the document is linked to lets the PM act) or the project or ticket they name. T
 from the resolved ids, and pdt-api `documents/access.rs` resolves the call (always asking for a session that reads
 outside input, `untrusted::triaging`), answers both Claude's permission prompt
 (`pm::request_opened`) and PDT's own ask (`mcp::tools::confirmable`), and records each such change in
-`document_changes` (`GET /api/documents/{id}/changes`) and as a `document` event on the agent's ticket. Before an
+`document_changes` (`GET /api/documents/{id}/changes?limit=&before=`, newest first, 20 a page, at most 100) and as a
+`document` event on the agent's ticket, both with the diff cut to `CHANGE_DIFF_MAX` (16 KB, `document::cap_diff`). Before an
 unasked `doc_edit` or `sheet_edit` of a local document, `access::backup` keeps its bytes (a sheet's from the live model,
 up to 10 MB) and its charts in the change's `backup` columns; the store clears all but the newest `KEPT_BACKUPS` per
 document, and `POST /api/documents/{id}/changes/{change}/restore` writes one back (`LocalProvider::restore`: open

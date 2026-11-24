@@ -125,6 +125,33 @@ pub struct DocumentChange {
     pub restorable: bool,
 }
 
+/// The most bytes of an unasked change's diff PDT keeps (16 KB; PDT-710): the rest is counted, and the version or the
+/// kept copy has the whole document.
+pub const CHANGE_DIFF_MAX: usize = 16 * 1024;
+/// How many changes one page of a document's unasked changes holds, unless asked for another number.
+pub const CHANGES_PAGE: u32 = 20;
+/// The most changes one page holds.
+pub const CHANGES_PAGE_MAX: u32 = 100;
+
+/// `diff` cut to at most `max` bytes, at the end of a line where there is one, with a last line that says how much
+/// more there was. A diff within `max` stays whole.
+pub fn cap_diff(diff: &str, max: usize) -> String {
+    if diff.len() <= max {
+        return diff.to_string();
+    }
+    let mut end = max;
+    while !diff.is_char_boundary(end) {
+        end -= 1;
+    }
+    if let Some(nl) = diff[..end].rfind('\n') {
+        end = nl + 1;
+    }
+    let kb = (diff.len() - end).div_ceil(1024);
+    let kept = &diff[..end];
+    let sep = if kept.is_empty() || kept.ends_with('\n') { "" } else { "\n" };
+    format!("{kept}{sep}… {kb} KB more of the diff not kept\n")
+}
+
 /// A local document as it was before an agent's unasked change (PDT-709): the file's bytes and, for a sheet, its
 /// charts (PDT keeps those, not the file). Kept with the change for the newest few changes of each document.
 #[derive(Debug, Clone, PartialEq)]
@@ -1027,6 +1054,18 @@ mod anchor_tests {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn a_change_diff_is_cut_at_a_line_with_a_note() {
+        assert_eq!(cap_diff("-a\n+b\n", 100), "-a\n+b\n", "within the cap it stays whole");
+        let long = format!("-a\n{}\n", "+".repeat(3000));
+        assert_eq!(cap_diff(&long, 1024), "-a\n… 3 KB more of the diff not kept\n");
+        let one = "+".repeat(3000);
+        let cut = cap_diff(&one, 1024);
+        assert!(cut.starts_with(&"+".repeat(1024)) && cut.ends_with("\n… 2 KB more of the diff not kept\n"), "{cut}");
+        let wide = "é".repeat(1000);
+        assert!(cap_diff(&wide, 1001).starts_with(&"é".repeat(500)), "cut on a character's boundary");
+    }
 
     #[test]
     fn titles_are_trimmed_and_cleaned() {
