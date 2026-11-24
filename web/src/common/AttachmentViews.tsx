@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 import { Alert, Button, Dialog, Link, Skeleton } from '@ui';
-import { download, downloadUrl } from './download';
+import { downloadUrl } from './download';
 import { ticketKeys } from '../tickets/queries';
 
 /** A ticket attachment's URL (`/api/tickets/<ticket>/attachments/<id>`), as Markdown links to it: its ids, or null. */
@@ -31,7 +31,7 @@ export function AttachmentImage({ src, alt }: { src: string; alt: string }) {
           size="full"
           headerActions={
             <span className="ml-auto flex gap-3 text-xs">
-              <Link onClick={() => download(downloadUrl(src))}>Download</Link>
+              <Link href={downloadUrl(src)} download>Download</Link>
               <Link href={src} external>Open in a new tab</Link>
             </span>
           }
@@ -84,7 +84,7 @@ export function AttachmentLink({ src, name, children }: { src: string; name: str
           footer={
             <>
               <span className="mr-auto flex gap-3 self-center text-xs">
-                <Link onClick={() => download(downloadUrl(src))}>Download</Link>
+                <Link href={downloadUrl(src)} download>Download</Link>
                 <Link href={src} external>Open raw</Link>
               </span>
               <Button onClick={() => setOpen(false)}>Close</Button>

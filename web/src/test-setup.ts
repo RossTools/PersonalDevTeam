@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, configure } from '@testing-library/react';
-import { afterEach, beforeEach, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 
 // Vitest globals are off, so RTL's automatic cleanup does not register itself.
 afterEach(() => cleanup());
@@ -74,19 +74,25 @@ afterEach(async () => {
 // Answers go out at once in tests, with no cool-down between them or wait for a confirming press (PDT-623); the tests
 // of the guard, Undo and confirm steps set the real timings. Nothing is held from one test to the next.
 if (typeof window !== 'undefined') {
-  const [{ answerTiming, resetAnswerGuard }, { holdTiming, resetHeldAnswers }, { approvalTiming }] = await Promise.all([
+  const [{ answerTiming, resetAnswerGuard }, { holdTiming, resetHeldAnswers }, { twoPressTiming }] = await Promise.all([
     import('./common/answerGuard'),
     import('./inbox/held'),
-    import('@ui/ApprovalCard'),
+    import('@ui/lib/twoPress'),
   ]);
   beforeEach(() => {
     answerTiming.cooldownMs = 0;
     holdTiming.undoMs = 0;
-    approvalTiming.confirmAfterMs = 0;
+    twoPressTiming.confirmAfterMs = 0;
   });
   afterEach(() => {
     resetAnswerGuard();
     resetHeldAnswers();
+  });
+  // Sonner removes a closed toast 200 ms later on a timer unmounting doesn't clear: a file that ends inside that window
+  // has it fire after jsdom is gone ("window is not defined"). A file that showed a toast waits it out.
+  const { toast: sonner } = await import('sonner');
+  afterAll(async () => {
+    if (sonner.getHistory().length > 0) await new Promise((r) => setTimeout(r, 250));
   });
 }
 

@@ -2,10 +2,9 @@
 // asks which workflows go in (all of them, to start with).
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Alert, Button, Checkbox, Dialog, DialogActions, Skeleton, Textarea } from '@ui';
+import { Alert, Button, Checkbox, Dialog, DialogActions, download, Skeleton, Textarea } from '@ui';
 import type { Workflow } from '../api/gen/Workflow';
 import { copyToClipboard } from '../common/clipboard';
-import { downloadText } from '../common/download';
 import { exportFileName, exportText, fetchExport } from './transfer';
 import { workflowKeys } from './queries';
 
@@ -20,7 +19,7 @@ function ExportText({ ids }: { ids: string[] }) {
       <Textarea mono readOnly rows={14} aria-label="Export" value={text} className="max-h-[50vh] text-xs"
         onFocus={(ev) => ev.target.select()} />
       <div className="flex justify-end gap-2">
-        <Button variant="secondary" onClick={() => downloadText(exportFileName(data), text)}>Download</Button>
+        <Button variant="secondary" onClick={() => download(new Blob([text], { type: 'application/json' }), exportFileName(data))}>Download</Button>
         <Button variant="primary" onClick={() => void copyToClipboard(text, 'Copied')}>Copy</Button>
       </div>
     </div>

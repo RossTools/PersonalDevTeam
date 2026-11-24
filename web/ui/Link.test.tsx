@@ -41,4 +41,12 @@ describe('Link', () => {
     expect(a.className).toContain('hover:text-link');
     expect(a.className).not.toMatch(/(^| )text-link/);
   });
+
+  it('download saves its href, with the focus ring and hit area of any link', () => {
+    render(<Link href="/a.log?download=1" download>Download</Link>);
+    const a = screen.getByRole('link', { name: 'Download' });
+    expect(a).toHaveAttribute('download');
+    expect(a.className).toContain('focus-visible:ring-2');
+    expect(a.className).toContain('touch-hit');
+  });
 });

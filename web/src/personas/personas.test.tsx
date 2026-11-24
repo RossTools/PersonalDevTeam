@@ -240,9 +240,9 @@ describe('PersonaPage', () => {
     const versions = await screen.findByRole('list', { name: 'Versions' });
     const rows = within(versions).getAllByRole('listitem');
     expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringContaining('v3CurrentAn agentstricter'),
-      expect.stringContaining('v2YouNo note'),
-      expect.stringContaining('v1PDT (built in)'),
+      expect.stringContaining('v3CurrentstricterAn agent'),
+      expect.stringContaining('v2No noteYou'),
+      expect.stringContaining('v1No notePDT (built in)'),
     ]);
     const diff = await screen.findByRole('region', { name: 'Changes from version 2 to 3' });
     expect(await within(diff).findByText('permissionMode')).toBeInTheDocument();
