@@ -405,7 +405,9 @@ change near it can keep it. The map of the code is in [architecture.md](architec
   on the checkout (`files::checkout_dir`, cap-std), never by plain path, so a folder swapped for a symlink after
   the check still can't lead out. The review diff reads the same way. Downloads (`files_download`) too: a `.zip`
   never holds a `.git` folder's files or follows a linked folder, and both stream (a file through a reader, a zip
-  written on the blocking pool into a bounded channel), so neither ever sits whole in memory.
+  written on the blocking pool into a bounded channel), so neither ever sits whole in memory. Listing a folder for its
+  `.zip` stops as soon as it passes `MAX_ZIP_BYTES` or `MAX_ZIP_FILES`, or the request is dropped (`SetOnDrop`), so a
+  huge folder or a closed tab never keeps a blocking thread walking it.
 - **A worktree never lands outside its repository.** A cloned repository can commit `.worktrees` (or a worktree's
   folder) as a symlink, so `pdt_git::add_worktree` and `add_worktree_for_branch` check the path first and again once
   its folder is made (`check_worktree_path`: no symlink or file on the way, and it resolves inside the repository),
