@@ -4,6 +4,7 @@
 //! once the agent is logged in they all go on and the item closes.
 
 use crate::common;
+use common::conversation;
 
 use axum::http::StatusCode;
 use common::wait::wait_until;
@@ -255,4 +256,51 @@ async fn a_step_waiting_with_no_item_goes_on() {
         (r["status"] == "succeeded").then_some(r)
     })
     .await;
+}
+
+/// A user's own conversation (no step) whose first turn fails with `text`.
+async fn failed_turn(env: &Env, text: &str) -> String {
+    let body = json!({"projectId": env.project, "kind": "agent_tui", "agent": "claude", "cols": 80, "rows": 24,
+                      "initialPrompt": format!("fail: {text}")});
+    let (s, v) = call(&env.app, "POST", "/api/sessions", Some(body)).await;
+    assert_eq!(s, StatusCode::CREATED, "{v}");
+    let id = v["id"].as_str().unwrap().to_string();
+    conversation::wait_turns(&env.app, &id, 1).await;
+    id
+}
+
+fn login_notices(all: &[Value]) -> usize {
+    all.iter()
+        .filter(|e| {
+            e["event"]["kind"] == "notice"
+                && e["event"]["text"].as_str().unwrap_or_default().contains("isn't logged in")
+        })
+        .count()
+}
+
+/// PDT-714: words that only might mean a refused login ("failed to authenticate", from an MCP server here) while the
+/// agent's login check says it is logged in: the turn's error stands, the conversation needs you, no login hint.
+#[tokio::test]
+async fn a_weak_login_phrase_the_check_rejects_is_an_error() {
+    let env = setup().await;
+    std::fs::remove_file(&env.marker).unwrap();
+    let id = failed_turn(&env, "The GitHub MCP server failed to authenticate.").await;
+    conversation::wait_session(&env.app, &id, "activity", "needs_you").await;
+    // Another turn after it: the check that rejected it has long finished.
+    let (s, v) = call(&env.app, "POST", &format!("/api/sessions/{id}/messages"), Some(json!({"text": "hi"}))).await;
+    assert_eq!(s, StatusCode::ACCEPTED, "{v}");
+    let all = conversation::wait_turns(&env.app, &id, 2).await;
+    assert_eq!(login_notices(&all), 0, "{all:#?}");
+    assert!(all.iter().any(|e| e["event"]["kind"] == "error"), "{all:#?}");
+    assert!(!inbox(&env).await.iter().any(|i| i["kind"] == "agent_login"), "no login item");
+}
+
+/// The same words while the login check says logged out: how to log in shows under the error, and the conversation
+/// doesn't need you for it.
+#[tokio::test]
+async fn a_weak_login_phrase_the_check_confirms_shows_how_to_log_in() {
+    let env = setup().await;
+    let id = failed_turn(&env, "Not logged in · Please run /login").await;
+    conversation::wait_events(&env.app, &id, "the login notice", |all| login_notices(all) == 1).await;
+    conversation::wait_session(&env.app, &id, "activity", "idle").await;
 }

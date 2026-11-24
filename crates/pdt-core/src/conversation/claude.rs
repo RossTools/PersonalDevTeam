@@ -940,8 +940,16 @@ impl ClaudeMapper {
             ),
         };
         if status == TurnStatus::Failed {
-            let text = reason.clone().unwrap_or_default();
-            let rate_limited = v.get("api_error_status").and_then(Value::as_i64) == Some(429);
+            let mut text = reason.clone().unwrap_or_default();
+            let status = v.get("api_error_status").and_then(Value::as_i64);
+            // The API's 401 is surer than any words in the text (PDT-714): it says so where `agent_login` reads it.
+            if status == Some(401)
+                && crate::agent_login::login_failure(crate::session::AgentKind::Claude, &text)
+                    != Some(crate::agent_login::Strength::Sure)
+            {
+                text = format!("{text} (API Error: 401)");
+            }
+            let rate_limited = status == Some(429);
             if rate_limited {
                 let text = "Claude is rate limited. Nothing is sent to it until you send again.".to_string();
                 out.push(self.event(None, AgentEvent::Notice { level: NoticeLevel::Warning, text, until: None }));
@@ -1394,6 +1402,33 @@ mod tests {
             ev.iter().any(|(_, e)| matches!(e, AgentEvent::Error { text, .. } if text == "API Error: rate limited"))
         );
         assert!(matches!(ev.last().unwrap().1, AgentEvent::Turn { status: Some(TurnStatus::Failed), .. }));
+    }
+
+    /// A 401 is a refused login whatever the text says (PDT-714): the error carries it for `agent_login`.
+    #[test]
+    fn a_401_says_so_in_the_error() {
+        let error = |line: &str| {
+            let mut m = ClaudeMapper::new();
+            let ev = events(&m.on_line(line));
+            ev.into_iter()
+                .find_map(|(_, e)| match e {
+                    AgentEvent::Error { text, .. } => Some(text),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let weak = error(
+            r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Invalid API key · Please run /login"}"#,
+        );
+        assert_eq!(weak, "Invalid API key · Please run /login (API Error: 401)");
+        let sure = error(
+            r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":401,"result":"Failed to authenticate. API Error: 401"}"#,
+        );
+        assert_eq!(sure, "Failed to authenticate. API Error: 401", "already sure: unchanged");
+        let other = error(
+            r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":500,"result":"An MCP server failed to authenticate"}"#,
+        );
+        assert_eq!(other, "An MCP server failed to authenticate");
     }
 
     #[test]
