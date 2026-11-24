@@ -133,7 +133,7 @@ pub(crate) async fn write(st: &AppState, id: &str, bytes: &[u8]) -> Result<(), p
 /// A remote terminal ended (or its instance no longer runs it: `code` None): the session ends as a local terminal's
 /// does.
 pub(super) async fn exited(st: &AppState, id: &str, code: Option<i32>) {
-    crate::activity::untrack_remote(st, id).await;
+    crate::activity::untrack(st, id).await;
     let Ok(Some(s)) = st.store.get_session(id).await else { return };
     if s.status != SessionStatus::Running {
         return;

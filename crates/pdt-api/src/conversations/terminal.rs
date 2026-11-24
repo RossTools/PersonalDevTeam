@@ -262,6 +262,9 @@ async fn to_conversation(st: &AppState, session: &Session) -> Result<(), ApiErro
     }
     crate::sessions::settle_exit(st, id).await;
     st.remove_pty(id).await;
+    // The terminal's tracker sees the exit on its own time (late on Windows) and would clear the activity the
+    // conversation writes below.
+    crate::activity::untrack(st, id).await;
     if session.agent == Some(AgentKind::Devin) {
         return devin_to_conversation(st, id).await;
     }
