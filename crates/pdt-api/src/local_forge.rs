@@ -942,17 +942,6 @@ impl LocalCi {
     }
 }
 
-/// The last `lines` lines of `text`.
-fn tail(text: &str, lines: usize) -> String {
-    let all: Vec<&str> = text.lines().collect();
-    let skipped = all.len().saturating_sub(lines);
-    let mut out: String = all[skipped..].iter().map(|l| format!("{l}\n")).collect();
-    if skipped > 0 {
-        out = format!("… ({skipped} earlier lines)\n{out}");
-    }
-    out
-}
-
 impl CiProvider for LocalCi {
     fn id(&self) -> &str {
         LOCAL_CI
@@ -1016,7 +1005,7 @@ impl CiProvider for LocalCi {
     fn job_log_tail(&self, _repo: &str, _run: &CiRun, job: &CiJob, lines: usize) -> Result<String, ForgeError> {
         let id = job.id.parse::<i64>().map_err(|_| ForgeError::Failed(format!("{} is not a local CI run", job.id)))?;
         match std::fs::read(log_path(&self.logs, id)) {
-            Ok(b) => Ok(tail(&String::from_utf8_lossy(&b), lines)),
+            Ok(b) => Ok(pdt_forge::ci::log_tail(&String::from_utf8_lossy(&b), lines, |l| l)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
             Err(e) => Err(failed(e)),
         }
