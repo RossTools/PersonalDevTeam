@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ClipboardAddon, type ClipboardSelectionType, type IClipboardProvider } from '@xterm/addon-clipboard';
@@ -74,7 +74,7 @@ const clipboard: IClipboardProvider = {
  * `sessionStatus` is the daemon's view of the session (from the polled list). When it turns `running` while this
  * view is detached from a finished process, the view reattaches by itself (e.g. after Restart or an auto-resume).
  */
-export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose, dimmed = false, readOnly = false, handle }: {
+export function TerminalView({ sessionId, url, sessionStatus, polledAt, composing = false, onComposeClose, dimmed = false, emptyEnded, readOnly = false, handle }: {
   sessionId: string;
   /** WebSocket URL; defaults to the session's PTY URL. */
   url?: string;
@@ -86,6 +86,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   onComposeClose?: () => void;
   /** The session has ended: the last screen stays, dimmed, and the parent shows what happened (no "Session ended."). */
   dimmed?: boolean;
+  /** Shown instead of a blank screen when the session has ended and its terminal has nothing to show (no scrollback). */
+  emptyEnded?: ReactNode;
   /** Output only (a detached run's log): no typing, no cursor, no key bar. */
   readOnly?: boolean;
   handle?: Ref<TerminalHandle>;
@@ -96,6 +98,8 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
   const [status, setStatus] = useState<PtyStatus>('connecting');
   // Input was typed while the socket was not connected and so never reached the PTY; shown until it reconnects.
   const [dropped, setDropped] = useState(false);
+  // Nothing has been written since the screen was last cleared (each connect clears it before the replay).
+  const [blank, setBlank] = useState(true);
   const fontSize = useTerminalFontSize();
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
@@ -165,6 +169,7 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
     const replaying = () => !replay.ready || replay.pending > 0;
     const sock = new PtySocket(url ?? ptyUrl(sessionId), {
       onData: (bytes, isReplay) => {
+        if (bytes.length > 0) setBlank(false);
         if (!isReplay) {
           term.write(bytes);
           return;
@@ -175,13 +180,17 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
       },
       onReset: () => {
         term.reset();
+        setBlank(true);
         replay = { ready: false, pending: 0 };
       },
       onReady: () => {
         replay.ready = true;
       },
       // A negative code is unknown (a detached run's processes outlived the one PDT started).
-      onExit: (code) => term.write(`\r\n\x1b[2m[process exited${code >= 0 ? ` with code ${code}` : ''}]\x1b[0m\r\n`),
+      onExit: (code) => {
+        setBlank(false);
+        term.write(`\r\n\x1b[2m[process exited${code >= 0 ? ` with code ${code}` : ''}]\x1b[0m\r\n`);
+      },
       onStatus: (s) => {
         setStatus(s);
         if (s === 'open') setDropped(false);
@@ -398,6 +407,9 @@ export function TerminalView({ sessionId, url, sessionStatus, polledAt, composin
           <p role="status" className="absolute right-2 top-1 text-xs text-failed">Not connected: input not sent</p>
         ) : (
           status === 'reconnecting' && <p className="absolute right-2 top-1 text-xs text-waiting">Reconnecting…</p>
+        )}
+        {status === 'ended' && blank && emptyEnded && (
+          <div className="absolute inset-0 flex items-center justify-center">{emptyEnded}</div>
         )}
         {status === 'ended' && !dimmed && <p className="absolute right-2 top-1 text-xs text-muted-foreground">Session ended.</p>}
         {touchSelection && (

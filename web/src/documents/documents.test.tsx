@@ -62,10 +62,16 @@ describe('documents', () => {
     const list = await screen.findByRole('grid', { name: 'Documents' });
     expect(within(list).getByText('Plan')).toBeInTheDocument();
     expect(within(list).getByText('Budget')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /Kind/ }));
-    await userEvent.click(await screen.findByRole('option', { name: 'Sheets' }));
+    // One Filter menu (PDT-681); the filter in force shows as a chip that clears it.
+    await userEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Kind' }));
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Kind' })).getByRole('menuitem', { name: 'Sheets' }));
     await waitFor(() => expect(within(list).queryByText('Plan')).not.toBeInTheDocument());
     expect(calls.some((c) => c.path.includes('kind=sheet'))).toBe(true);
+    expect(screen.getByRole('button', { name: 'Filter · 1' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Clear the filter Sheets' }));
+    expect(await within(list).findByText('Plan')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Filter' })).toBeInTheDocument();
     await userEvent.type(screen.getByRole('searchbox', { name: 'Search documents' }), 'zzz');
     expect(await screen.findByText('No document matches.')).toBeInTheDocument();
   });
@@ -145,9 +151,15 @@ describe('documents', () => {
     renderWithQuery(<DocumentPage id="d1" phone={false} onGone={gone} />);
     expect(await screen.findByRole('heading', { name: 'Plan', level: 1 })).toBeInTheDocument();
     expect(await screen.findByText('Ship it.')).toBeInTheDocument();
-    expect(screen.getByText('PDT-1')).toBeInTheDocument();
+    // Its links are chips on the meta line (PDT-681), with + Project and + Ticket.
+    const links = screen.getByRole('group', { name: 'Links' });
+    expect(within(links).getByText('PDT-1')).toBeInTheDocument();
+    expect(within(links).getByRole('button', { name: 'Link a project' })).toBeInTheDocument();
+    expect(within(links).getByRole('button', { name: 'Link a ticket' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument();
     const contentReads = calls.filter((c) => c.path === '/api/documents/d1/content').length;
-    await userEvent.click(screen.getByRole('button', { name: 'Rename' }));
+    // A click on the title renames it.
+    await userEvent.click(screen.getByRole('button', { name: 'Plan' }));
     const field = screen.getByRole('textbox', { name: 'Document title' });
     await userEvent.clear(field);
     await userEvent.type(field, 'Q4 plan{Enter}');

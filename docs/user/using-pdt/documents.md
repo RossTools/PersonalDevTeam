@@ -9,8 +9,9 @@ as Google Docs and Sheets. PDT keeps the document's record and links.
 
 ## Browse and find
 
-Open **Documents** in the rail. The list shows every document, most recently changed first. Narrow it by project,
-**Docs** or **Sheets**, provider or ticket (**Ticket…**), and search by title.
+Open **Documents** in the rail. The list shows every document, most recently changed first. Search by title, or
+narrow it with **Filter**: by project, **Docs** or **Sheets**, provider or ticket (**Ticket…**). Each filter in force
+shows as a chip under the search; its **×** clears it.
 
 Pick a document to see its links, content and comments. A sheet from a plugin's provider shows as a table; hover a
 cell for its formula. **Open in …** opens it in the provider's own app, when it has one.
@@ -32,7 +33,7 @@ rows and several sheets (the tabs at the bottom). Every change is saved as you m
 - **Sort A→Z by …** and **Z→A** sort by the selected cell's column: the selected range, or with none every row below
   the first (the header row).
 - **Only rows with “…” in …** hides rows whose cell in that column shows something else; **Show all rows** brings
-  them back.
+  them back. With an empty cell selected it reads **Filter by this cell** and is off.
 - **Chart the selection** charts the selected cells, headers included: the first column labels it, each other column
   is a series named by its header. Pick **Column**, **Bar**, **Line**, **Area**, **Pie** or **Scatter** and a title.
   The chart floats beside the cells and redraws when they change; its **⋯** menu changes its kind or removes it.
@@ -68,7 +69,8 @@ answer and resolve comments too.
 
 ## Link documents to projects and tickets
 
-On a document's page, **Link a project** and **Link a ticket** add links; the **×** on a link removes it. A document
+On a document's page, its links show as chips on the line under the title: **+ Project** and **+ Ticket** add
+links; the **×** on a link removes it. A document
 can belong to any number of projects and tickets.
 
 A ticket's **Documents** section lists its documents: **Add** links an existing one, makes a new one or imports one,
@@ -155,7 +157,7 @@ Under the title, after who added it, **Watched by** lists who watches it: you, a
 
 ## Rename or remove
 
-**Rename** (the pencil beside the title, or the **⋯** menu) renames it, at the provider too when it can (a local
+**Rename** (click the title, or the **⋯** menu) renames it, at the provider too when it can (a local
 document keeps its file name). In the **⋯** menu, **Remove from PDT…** forgets the document and its links but leaves
 the file; **Delete document…** deletes the file too, where the provider allows it (a local doc's pictures go with it).
 

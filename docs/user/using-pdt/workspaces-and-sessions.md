@@ -51,6 +51,9 @@ A **workspace** is a row of tabs; each tab shows an agent session, a shell, a ru
 top, open folders in the tree, and click a file to view it. Text files have **Edit**; **⌘S** (**Ctrl+S**) saves. A Markdown file has
 **Preview**, **Edit** and **Source** (its text, read-only) in one control.
 
+A link to a file opens it; a link that names a folder opens the folder. When the file isn't in the checkout any more,
+PDT says so, with **Back to the folder**.
+
 ### Download files
 
 - **A file**: the download button at the top of an open file, or **Download** in its menu (right-click it in the

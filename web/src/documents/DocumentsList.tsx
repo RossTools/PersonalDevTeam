@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { FileDown, Search, X } from 'lucide-react';
-import { Button, Dialog, EmptyState, IconButton, Input, List, ListRow, RelativeTime, Select, Skeleton } from '@ui';
+import { FileDown, ListFilter, Search, X } from 'lucide-react';
+import { Button, Dialog, EmptyState, IconButton, Input, List, ListRow, MenuButton, RelativeTime, Skeleton, type MenuEntry } from '@ui';
 import type { Document } from '../api/gen/Document';
 import type { DocumentFilter } from '../api/gen/DocumentFilter';
 import type { DocumentKind } from '../api/gen/DocumentKind';
@@ -17,9 +17,7 @@ import { ListColumnHeader } from '../common/ListColumnHeader';
 const ANY = '';
 /** Documents loaded at a time; Show more loads the next ones. */
 const PAGE = 100;
-/** "Any" in a filter's Select (an empty value would read as none chosen). */
-const ALL = 'all';
-const fromSelect = <V extends string>(v: V | typeof ALL): V | typeof ANY => (v === ALL ? ANY : (v as V));
+const KINDS: { value: DocumentKind; label: string }[] = [{ value: 'doc', label: 'Docs' }, { value: 'sheet', label: 'Sheets' }];
 
 /** The list's choices, kept by the shell so the list and New agree: project, ticket, kind, provider and the search. */
 export interface DocumentsFilters {
@@ -79,8 +77,8 @@ function DocumentItem({ doc, provider, current }: { doc: Document; provider: str
 }
 
 /**
- * The Documents view's list column (PDT-314): New and Import, a search by title, filters (project, kind, provider;
- * a ticket's when opened from one), then the documents, the most recently changed first. On a phone it is the view's
+ * The Documents view's list column (PDT-314): New and Import, a search by title and one Filter menu (project, kind,
+ * provider, ticket) with the filters in force as removable chips beside it (PDT-681), then the documents, the most recently changed first. On a phone it is the view's
  * screen.
  */
 export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: {
@@ -99,6 +97,39 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
   const filtered = Object.keys(filter).length > 0;
   const none = providers.isSuccess && providers.data.providers.length === 0;
   const [pickingTicket, setPickingTicket] = useState(false);
+  const providerList = providers.data?.providers ?? [];
+  const projectName = (pid: string) => projects.data?.find((p) => p.id === pid)?.name ?? pid;
+  // The filters in force, as chips that clear them.
+  const active: { key: string; label: string; clear: () => void }[] = [
+    ...(filters.project ? [{ key: 'project', label: projectName(filters.project), clear: () => filters.setProject(ANY) }] : []),
+    ...(filters.kind ? [{ key: 'kind', label: KINDS.find((k) => k.value === filters.kind)?.label ?? filters.kind, clear: () => filters.setKind(ANY) }] : []),
+    ...(filters.provider ? [{ key: 'provider', label: providerLabel(providerList, filters.provider), clear: () => filters.setProvider(ANY) }] : []),
+    ...(filters.ticket ? [{ key: 'ticket', label: filters.ticket, clear: () => filters.setTicket(ANY) }] : []),
+  ];
+  const filterEntries = (): MenuEntry[] => [
+    {
+      submenu: 'Project',
+      entries: [
+        { label: 'All projects', checked: !filters.project, onSelect: () => filters.setProject(ANY) },
+        ...(projects.data ?? []).map((p) => ({ label: p.name, checked: filters.project === p.id, onSelect: () => filters.setProject(p.id) })),
+      ],
+    },
+    {
+      submenu: 'Kind',
+      entries: [
+        { label: 'Docs and sheets', checked: !filters.kind, onSelect: () => filters.setKind(ANY) },
+        ...KINDS.map((k) => ({ label: k.label, checked: filters.kind === k.value, onSelect: () => filters.setKind(k.value) })),
+      ],
+    },
+    ...(providerList.length > 1 ? [{
+      submenu: 'Provider',
+      entries: [
+        { label: 'Any provider', checked: !filters.provider, onSelect: () => filters.setProvider(ANY) },
+        ...providerList.map((p) => ({ label: p.label, checked: filters.provider === p.id, onSelect: () => filters.setProvider(p.id) })),
+      ],
+    }] : []),
+    { label: 'Ticket…', detail: filters.ticket || undefined, onSelect: () => setPickingTicket(true) },
+  ];
   return (
     <div className="flex flex-col pb-2">
       <ListColumnHeader
@@ -124,42 +155,17 @@ export function DocumentsList({ filters, selectedId, onOpen, onNew, onImport }: 
         />
       </div>
       <div className="mx-2 mt-2 flex flex-wrap items-center gap-1.5">
-        <Select
-          aria-label="Project"
-          size="sm"
-          quiet
-          className="w-auto max-w-32"
-          options={[{ value: ALL, label: 'All projects' }, ...(projects.data ?? []).map((p) => ({ value: p.id, label: p.name }))]}
-          value={filters.project || ALL}
-          onChange={(v) => filters.setProject(fromSelect(v))}
-        />
-        <Select<DocumentKind | typeof ALL>
-          aria-label="Kind"
-          size="sm"
-          quiet
-          className="w-auto"
-          options={[{ value: ALL, label: 'Docs and sheets' }, { value: 'doc', label: 'Docs' }, { value: 'sheet', label: 'Sheets' }]}
-          value={filters.kind || ALL}
-          onChange={(v) => filters.setKind(fromSelect(v))}
-        />
-        {(providers.data?.providers.length ?? 0) > 1 && (
-          <Select
-            aria-label="Provider"
-            size="sm"
-            quiet
-            className="w-auto"
-            options={[{ value: ALL, label: 'Any provider' }, ...(providers.data?.providers ?? []).map((p) => ({ value: p.id, label: p.label }))]}
-            value={filters.provider || ALL}
-            onChange={(v) => filters.setProvider(fromSelect(v))}
-          />
-        )}
-        {filters.ticket ? (
-          <Button variant="secondary" size="sm" compact aria-label={`Linked to ${filters.ticket}; show documents of every ticket`} onClick={() => filters.setTicket(ANY)}>
-            <span className="font-mono">{filters.ticket}</span> <X aria-hidden />
+        <MenuButton label="Filter documents" entries={filterEntries}>
+          <Button variant="ghost" size="sm" compact className="text-muted-foreground">
+            <ListFilter aria-hidden /> Filter{active.length > 0 ? ` · ${active.length}` : ''}
           </Button>
-        ) : (
-          <Button variant="ghost" size="sm" compact className="text-muted-foreground" onClick={() => setPickingTicket(true)}>Ticket…</Button>
-        )}
+        </MenuButton>
+        {active.map((c) => (
+          <span key={c.key} className="inline-flex max-w-full min-w-0 items-center gap-1 rounded-sm bg-accent py-0.5 pr-0.5 pl-1.5 text-xs">
+            <span className="min-w-0 truncate">{c.label}</span>
+            <IconButton label={`Clear the filter ${c.label}`} size="sm" variant="ghost" className="size-5" onClick={c.clear}><X aria-hidden /></IconButton>
+          </span>
+        ))}
       </div>
       {pickingTicket && (
         <Dialog onClose={() => setPickingTicket(false)} title="Documents linked to a ticket" size="md">
