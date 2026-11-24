@@ -324,14 +324,18 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         ),
         end("merged", 2880, 20, "Merged", false),
         // An approval holds for a later head with the same own diff (only the base changed, PDT-641).
-        node(
-            "approval",
-            "github.pr.approval",
-            800,
-            -60,
-            "Approved before?",
-            with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "check"})),
-        ),
+        {
+            let mut n = node(
+                "approval",
+                "github.pr.approval",
+                800,
+                -60,
+                "Approved before?",
+                with_pr(json!({"headSha": "{{trigger.headSha}}", "action": "check"})),
+            );
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
+            n
+        },
         // Each Approve & merge starts the loop limits over: CI is waited for, and the merge watched, as long as the
         // first time (PDT-708).
         {
@@ -431,6 +435,7 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
                                "key": "{{steps.base_now.sha}}"})),
             );
             n["maxVisits"] = json!(10);
+            n["retry"] = json!({"max": 5, "backoffMs": 60_000});
             n
         },
         {
@@ -649,15 +654,24 @@ pub fn doc_with(trigger: Value, tickets: bool) -> WorkflowDoc {
         json!({"from": "update", "port": "moved", "to": "superseded"}),
         json!({"from": "update", "port": "gone", "to": "gone"}),
         json!({"from": "update", "port": "refused", "to": "why"}),
+        // The forge or CI still down once their retries run out (PDT-700): ask, never fail the run.
+        json!({"from": "base", "port": "error", "to": "why"}),
+        json!({"from": "base_now", "port": "error", "to": "why"}),
+        json!({"from": "update", "port": "error", "to": "why"}),
         // The update's push hands the pull request to the push's run, which keeps an approval of the same diff.
         json!({"from": "wait_update", "port": "event", "to": "superseded"}),
         json!({"from": "wait_update", "port": "timeout", "to": "wait_ci"}),
         json!({"from": "approval", "port": "kept", "to": "wait_ci"}),
         json!({"from": "approval", "port": "changed", "to": "dependabot"}),
         json!({"from": "approval", "port": "none", "to": "dependabot"}),
+        // Unreadable: no approval to keep, so it is reviewed (or Dependabot's rule applies) as if there were none.
+        json!({"from": "approval", "port": "error", "to": "dependabot"}),
         json!({"from": "approved", "port": "out", "to": "wait_ci"}),
         // Pushed between the answer and the record: the push's run asks about its head.
         json!({"from": "approved", "port": "moved", "to": "superseded"}),
+        // Not recorded (the forge down): the user's Approve & merge still stands for this head; only a later head
+        // won't keep it.
+        json!({"from": "approved", "port": "error", "to": "wait_ci"}),
         json!({"from": "check_ci", "port": "merged", "to": "gone"}),
         json!({"from": "check_ci", "port": "closed", "to": "gone"}),
         json!({"from": "check_ci", "port": "none", "to": "gone"}),
@@ -952,6 +966,16 @@ mod tests {
             let resets: Vec<_> = d.nodes.iter().filter(|n| n.resets_visits).map(|n| n.id.as_str()).collect();
             assert_eq!(resets, ["approved"]);
             assert_eq!(next("blocked", "approve_merge"), ["approved"]);
+            // PDT-700: the forge or CI down past the retries asks the user, or merges without recording the
+            // approval; it never fails the run.
+            assert_eq!(next("approved", "error"), ["wait_ci"]);
+            assert_eq!(next("approval", "error"), ["dependabot"]);
+            for n in ["base", "base_now", "update"] {
+                assert_eq!(next(n, "error"), ["why"], "{n}");
+            }
+            for n in ["approval", "approved", "base", "base_now", "update"] {
+                assert!(d.node(n).unwrap().retry.is_some(), "{n} retries first");
+            }
             for from in ["check_ci", "moved"] {
                 assert!(!d.edges.iter().any(|e| e.from == from && e.to == "blocked"), "asked after a fresh read");
             }
