@@ -19,7 +19,7 @@ const { label, slides } = Astro.props;
 <div class="carousel" role="region" aria-roledescription="carousel" aria-label={label}>
 	<div class="carousel-track" tabindex="0" aria-live="off">
 		{slides.map((slide, i) => (
-			<figure class:list={['carousel-slide', { phone: slide.phone }]} role="group" aria-roledescription="slide" aria-label={`${i + 1} of ${slides.length}: ${slide.title}`}>
+			<figure class:list={['carousel-slide', { phone: slide.phone }]} role="group" aria-roledescription="slide" data-title={slide.title} aria-label={`${i + 1} of ${slides.length}: ${slide.title}`}>
 				<div class="shot carousel-frame" style={slide.detail && `--detail: ${slide.detail}`}>
 					<Image
 						src={slide.src}
@@ -49,10 +49,11 @@ const { label, slides } = Astro.props;
 		const track = root.querySelector<HTMLElement>('.carousel-track')!;
 		const all = [...track.querySelectorAll<HTMLElement>('.carousel-slide')];
 		const dots = [...root.querySelectorAll<HTMLButtonElement>('.carousel-dot')];
-		// The slides in their order on screen: phones put the phone's first.
+		// The slides in their order on screen (phones put the phone's first), numbered in that order for screen readers.
 		let slides = all;
 		const order = () => {
 			slides = [...all].sort((a, b) => a.offsetLeft - b.offsetLeft);
+			slides.forEach((s, i) => s.setAttribute('aria-label', `${i + 1} of ${slides.length}: ${s.dataset.title}`));
 		};
 		const [prev, next] = root.querySelectorAll<HTMLButtonElement>('.carousel-btn');
 		const nav = root.querySelector<HTMLElement>('.carousel-nav')!;
@@ -80,8 +81,11 @@ const { label, slides } = Astro.props;
 			else return;
 			e.preventDefault();
 		});
-		// A swipe or a scroll snaps to a slide: follow it.
+		// A swipe or a scroll snaps to a slide: follow it. A scroll from a resize (the track's width changed) is left to
+		// the resize below, which keeps the slide that was in view.
+		let width = track.clientWidth;
 		track.addEventListener('scroll', () => {
+			if (track.clientWidth !== width) return;
 			const i = Math.round(track.scrollLeft / track.clientWidth);
 			if (i !== current && i >= 0 && i < slides.length) {
 				current = i;
@@ -89,14 +93,16 @@ const { label, slides } = Astro.props;
 			}
 		}, { passive: true });
 
-		// Crossing the phone breakpoint reorders the slides: keep the one in view.
-		matchMedia('(max-width: 640px)').addEventListener('change', () => {
+		// A resize moves the slides, and crossing the phone breakpoint reorders them: keep the one in view.
+		new ResizeObserver(() => {
+			if (track.clientWidth === width) return;
+			width = track.clientWidth;
 			const shown = slides[current];
 			order();
 			current = slides.indexOf(shown);
 			track.scrollTo({ left: shown.offsetLeft - track.offsetLeft });
 			mark();
-		});
+		}).observe(track);
 
 		nav.hidden = false;
 		root.classList.add('ready');
