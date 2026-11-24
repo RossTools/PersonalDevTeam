@@ -617,3 +617,35 @@ async fn another_providers_unasked_change_keeps_no_copy() {
     assert_eq!(c[0]["restorable"], false, "{c:?}");
     call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
 }
+
+/// PDT-710: a large unasked change keeps a diff cut to 16 KB, on the document and on the ticket, and the document's
+/// changes come a page at a time.
+#[tokio::test]
+async fn a_large_unasked_change_keeps_a_capped_diff_and_changes_come_in_pages() {
+    let (env, _) = setup_docs().await;
+    let id = start_ticket_agent(&env).await;
+    agent_documents(&env, "own_ticket").await;
+    let made = tool(&env, &id, "document_create", json!({"title": "Notes", "kind": "doc", "markdown": "Old.\n"})).await;
+    let notes = made["id"].as_str().unwrap().to_string();
+    let big = "A long line of the design.\n".repeat(1700);
+    let edits = json!({"document": notes, "edits": [{"op": "append_text", "markdown": big}]});
+    tool(&env, &id, "doc_edit", edits).await;
+    let c = changes(&env, &notes).await;
+    let diff = c[0]["diff"].as_str().unwrap();
+    assert!(diff.len() <= 16 * 1024 + 64 && diff.ends_with("KB more of the diff not kept\n"), "{}", diff.len());
+    let edit = ticket_changes(&env).await.into_iter().find(|e| e["data"]["tool"] == "doc_edit").unwrap();
+    let body = edit["body"].as_str().unwrap();
+    assert!(body.len() <= 16 * 1024 + 64 && body.contains("KB more of the diff not kept"), "{}", body.len());
+
+    let url = format!("/api/documents/{notes}/changes");
+    let (_, first) = call(&env.app, "GET", &format!("{url}?limit=1"), None).await;
+    assert_eq!(first.as_array().unwrap().len(), 1);
+    assert_eq!(first[0]["tool"], "doc_edit");
+    let before = first[0]["id"].as_str().unwrap();
+    let (_, rest) = call(&env.app, "GET", &format!("{url}?limit=1&before={before}"), None).await;
+    assert_eq!(rest.as_array().unwrap().len(), 1, "{rest}");
+    assert_eq!(rest[0]["tool"], "document_create");
+    let (_, none) = call(&env.app, "GET", &format!("{url}?before={}", rest[0]["id"].as_str().unwrap()), None).await;
+    assert_eq!(none, json!([]));
+    call(&env.app, "POST", &format!("/api/sessions/{id}/kill"), None).await;
+}

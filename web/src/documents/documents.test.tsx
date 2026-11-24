@@ -184,6 +184,27 @@ describe('documents', () => {
     expect(within(changes).queryByRole('button', { name: 'Restore' })).toBeNull();
   });
 
+  it('shows a document’s changes a page at a time, older ones on asking (PDT-710)', async () => {
+    const agent = { sessionId: 's1', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-7', fromTicketId: 't7' };
+    const change = (n: number) => ({ id: `c${n}`, documentId: 'd7', at: Date.now(), tool: 'doc_edit', summary: `Edit ${n}`, version: null, diff: null, agent, restorable: false });
+    const calls = stubApi({
+      'GET /api/documents/d7': doc('d7', 'Spec'),
+      'GET /api/documents/d7/content': { content: { kind: 'doc', version: '3', markdown: '# Spec\n' }, embedUrl: null },
+      'GET /api/documents/d7/changes?limit=20': Array.from({ length: 20 }, (_, i) => change(30 - i)),
+      'GET /api/documents/d7/changes?limit=20&before=c11': [change(10)],
+      'GET /api/documents/providers': providers,
+      'GET /api/projects': [project],
+    });
+    renderWithQuery(<DocumentPage id="d7" phone={false} onGone={() => {}} />);
+    const changes = await screen.findByRole('region', { name: 'Changes agents made without asking' });
+    expect(within(changes).getAllByRole('listitem')).toHaveLength(20);
+    await userEvent.click(within(changes).getByRole('button', { name: 'Show older changes' }));
+    expect(await within(changes).findByText('Edit 10')).toBeInTheDocument();
+    expect(within(changes).getAllByRole('listitem')).toHaveLength(21);
+    expect(within(changes).queryByRole('button', { name: 'Show older changes' })).toBeNull();
+    expect(calls.some((c) => c.path === '/api/documents/d7/changes?limit=20&before=c11')).toBe(true);
+  });
+
   it('restores a local sheet as it was before an agent’s change, once confirmed (PDT-709)', async () => {
     const agent = { sessionId: 's1', projectId: 'p1', persona: 'Coder', fromTicket: 'PDT-7', fromTicketId: 't7' };
     const calls = stubApi({
