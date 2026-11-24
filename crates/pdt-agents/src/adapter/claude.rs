@@ -4,6 +4,7 @@
 #[cfg(test)]
 use super::SessionInstructions;
 use super::lines::{CappedLines, MAX_LINE};
+use super::stderr::{STDERR_TAIL, stderr_tail};
 use super::{
     AdapterError, AdapterOutput, AgentAdapter, AgentInfo, EventSink, LiveConversation, OpenSpec, Outgoing,
     SessionChange,
@@ -16,11 +17,8 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, watch};
-
-/// How much of the agent's error output is kept to explain a crash.
-const STDERR_TAIL: usize = 4096;
 
 /// The `claude -p` arguments for a session. Never `--bare` (it would stop using the plan login), never PDT's hook
 /// settings (activity comes from the protocol): its `--settings` file holds only the ask rules for PDT's asking tools.
@@ -370,28 +368,7 @@ impl ClaudeLive {
             }
         });
 
-        let tail = Arc::new(Mutex::new(String::new()));
-        let err_task = {
-            let tail = tail.clone();
-            tokio::spawn(async move {
-                let mut stderr = stderr;
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = stderr.read(&mut buf).await {
-                    if n == 0 {
-                        break;
-                    }
-                    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
-                    t.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if t.len() > STDERR_TAIL {
-                        let mut cut = t.len() - STDERR_TAIL;
-                        while !t.is_char_boundary(cut) {
-                            cut += 1;
-                        }
-                        t.drain(..cut);
-                    }
-                }
-            })
-        };
+        let (tail, err_task) = stderr_tail(stderr, STDERR_TAIL);
 
         let (exit_tx, exit_rx) = watch::channel(false);
         {

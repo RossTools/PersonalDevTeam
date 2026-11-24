@@ -24,9 +24,6 @@ pub const CI_FILES: &[&str] = &[".gitlab-ci.yml"];
 /// How many recent pipelines are read per branch (and of merge requests' pipelines per project).
 const RUN_LIMIT: u32 = 30;
 
-/// The most lines of a failed job's log kept, and of characters.
-pub const LOG_CHARS: usize = 30_000;
-
 pub struct GitlabCi {
     api: Arc<GitlabApi>,
 }
@@ -88,41 +85,16 @@ pub fn parse_job(v: &Value) -> Option<CiJob> {
     })
 }
 
-/// The end of a job's log: its last `keep` lines (at most [`LOG_CHARS`] characters), without GitLab's section markers
-/// (`section_start:…\r\x1b[0K`), overwritten progress and terminal colours.
+/// The end of a job's log: its last `keep` lines ([`pdt_forge::ci::log_tail`]), without GitLab's section markers
+/// (`section_start:…\r\x1b[0K`) and overwritten progress.
 pub fn log_tail(raw: &str, keep: usize) -> String {
-    let lines: Vec<String> = raw.lines().map(clean_line).collect();
-    let skipped = lines.len().saturating_sub(keep);
-    let mut out: String = lines[skipped..].iter().map(|l| format!("{l}\n")).collect();
-    let chars = out.chars().count();
-    if chars > LOG_CHARS {
-        out = out.chars().skip(chars - LOG_CHARS).collect();
-    }
-    if skipped > 0 {
-        out = format!("… ({skipped} earlier lines)\n{out}");
-    }
-    out
+    pdt_forge::ci::log_tail(raw, keep, clean_line)
 }
 
-fn clean_line(l: &str) -> String {
+fn clean_line(l: &str) -> &str {
     // A `\r` overwrites the line: what follows the last one shows.
     let l = l.trim_end_matches('\r');
-    let l = l.rsplit('\r').next().unwrap_or(l);
-    let mut out = String::with_capacity(l.len());
-    let mut chars = l.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            for c in chars.by_ref() {
-                if c.is_ascii_alphabetic() {
-                    break;
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    l.rsplit('\r').next().unwrap_or(l)
 }
 
 impl GitlabCi {

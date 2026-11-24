@@ -8,6 +8,7 @@ pub mod codex;
 pub mod devin;
 pub mod lines;
 pub mod sink;
+pub mod stderr;
 
 pub use sink::{EVENT_QUEUE, EventSink, EventStream, event_channel};
 
