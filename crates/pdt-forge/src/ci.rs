@@ -136,6 +136,64 @@ pub fn failed_job_names(p: &dyn CiProvider, repo: &str, run: &CiRun) -> Result<V
 /// How many lines of a failed job's log `ci_failed_logs` gives.
 pub const LOG_LINES: usize = 200;
 
+/// The most characters of a job's log [`log_tail`] keeps: a minified line can be megabytes.
+pub const LOG_CHARS: usize = 30_000;
+
+/// The end of a job's log, as every provider's [`CiProvider::job_log_tail`] gives it: its last `keep` lines, each
+/// through the provider's `clean_line` (its timestamps, overwritten progress) and without terminal escapes, at most
+/// [`LOG_CHARS`] characters of them.
+pub fn log_tail(raw: &str, keep: usize, clean_line: fn(&str) -> &str) -> String {
+    let lines: Vec<&str> = raw.lines().collect();
+    let skipped = lines.len().saturating_sub(keep);
+    let mut out = String::new();
+    for l in &lines[skipped..] {
+        strip_escapes(clean_line(l), &mut out);
+        out.push('\n');
+    }
+    let chars = out.chars().count();
+    if chars > LOG_CHARS {
+        out = out.chars().skip(chars - LOG_CHARS).collect();
+    }
+    if skipped > 0 {
+        out = format!("… ({skipped} earlier lines)\n{out}");
+    }
+    out
+}
+
+/// Pushes `l` without its terminal escapes: colours (`ESC [ … m`) and other CSI sequences, and OSC/APC strings
+/// (`ESC ] …` links, Buildkite's `ESC _ bk;t=… BEL` timestamps) up to their BEL or `ESC \`.
+fn strip_escapes(l: &str, out: &mut String) {
+    let mut chars = l.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() || c == '~' || c == '@' {
+                        break;
+                    }
+                }
+            }
+            Some(']' | '_' | 'P' | '^') => {
+                while let Some(c) = chars.next() {
+                    if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            // A character set (`ESC ( B`).
+            Some('(' | ')') => {
+                chars.next();
+            }
+            // A two-character escape (`ESC =`) or a lone ESC at the end.
+            _ => {}
+        }
+    }
+}
+
 pub mod testing {
     use super::*;
     use pdt_core::pr::CiState;
@@ -410,6 +468,27 @@ mod tests {
     use super::testing::FakeCi;
     use super::*;
     use pdt_core::pr::CiState;
+
+    fn same(l: &str) -> &str {
+        l
+    }
+
+    #[test]
+    fn a_log_tail_keeps_the_last_lines_without_escapes() {
+        let raw = "one\n\u{1b}[31mtwo\u{1b}[0m\n\u{1b}_bk;t=1700000000000\u{7}three\n\u{1b}]8;;https://x\u{1b}\\four\u{1b}(B\n";
+        assert_eq!(log_tail(raw, 10, same), "one\ntwo\nthree\nfour\n");
+        assert_eq!(log_tail(raw, 2, same), "… (2 earlier lines)\nthree\nfour\n");
+        assert_eq!(log_tail("a\n", 10, |l| l.trim_start_matches('a')), "\n", "the provider's cleaner runs first");
+        assert_eq!(log_tail("cut \u{1b}", 10, same), "cut \n", "a lone ESC at the end");
+    }
+
+    #[test]
+    fn a_log_tail_keeps_at_most_its_characters() {
+        let raw = format!("{}\nend\n", "é".repeat(LOG_CHARS * 2));
+        let tail = log_tail(&raw, 10, same);
+        assert_eq!(tail.chars().count(), LOG_CHARS);
+        assert!(tail.ends_with("é\nend\n"));
+    }
 
     #[test]
     fn a_provider_without_a_capability_refuses_its_calls() {
