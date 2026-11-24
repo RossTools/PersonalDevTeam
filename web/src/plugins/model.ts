@@ -1,4 +1,4 @@
-// Settings → Plugins (PDT-228): the catalog's filters (search, tabs, categories), the statuses and the Cards/List
+// Settings → Plugins (PDT-228): the catalog's filters (search and tabs), the statuses and the Cards/List
 // choice. Pure, apart from the stored choice. A plugin is an integration (crates/pdt-api/src/integrations/); the UI
 // calls them plugins.
 import type { BadgeTone } from '@ui';
@@ -10,7 +10,7 @@ import type { PluginStatus } from '../api/gen/PluginStatus';
 export type Plugin = IntegrationInfo;
 
 /** The catalog's groups, in order. */
-export const CATEGORIES: readonly PluginCategory[] = ['dev', 'documents', 'chat', 'media', 'general'];
+const CATEGORIES: readonly PluginCategory[] = ['dev', 'documents', 'chat', 'media', 'general'];
 
 export const CATEGORY_LABEL: Record<PluginCategory, string> = { dev: 'Dev', documents: 'Documents', chat: 'Chat', media: 'Media', general: 'General' };
 
@@ -27,11 +27,9 @@ export type PluginTab = 'all' | 'on' | 'attention';
 export interface PluginFilter {
   q: string;
   tab: PluginTab;
-  /** null: every category. */
-  category: PluginCategory | null;
 }
 
-export const NO_FILTER: PluginFilter = { q: '', tab: 'all', category: null };
+export const NO_FILTER: PluginFilter = { q: '', tab: 'all' };
 
 /** On, whether or not it works yet. */
 const isOn = (p: Plugin) => p.status === 'on' || p.status === 'needs_setup' || p.status === 'error';
@@ -39,7 +37,9 @@ const isOn = (p: Plugin) => p.status === 'on' || p.status === 'needs_setup' || p
 /** Needs the user: on without a connection, or one failing. */
 export const needsAttention = (p: Plugin) => p.status === 'needs_setup' || p.status === 'error';
 
-/** Whether a plugin passes the search and the tab (not the category: the chips count what these leave). */
+/** The plugins a filter shows: the search, then the tab. */
+export const filterPlugins = (ps: Plugin[], f: PluginFilter) => ps.filter((p) => passes(p, f));
+
 function passes(p: Plugin, f: PluginFilter): boolean {
   const q = f.q.trim().toLowerCase();
   if (q && !`${p.label} ${p.description}`.toLowerCase().includes(q)) return false;
@@ -48,20 +48,9 @@ function passes(p: Plugin, f: PluginFilter): boolean {
   return true;
 }
 
-/** The plugins a filter shows. */
-export const filterPlugins = (ps: Plugin[], f: PluginFilter) => ps.filter((p) => passes(p, f) && (f.category === null || p.category === f.category));
-
 /** The shown plugins by category, in the catalog's order, leaving out empty groups. */
 export function groupPlugins(ps: Plugin[]): [PluginCategory, Plugin[]][] {
   return CATEGORIES.map((c) => [c, ps.filter((p) => p.category === c)] as [PluginCategory, Plugin[]]).filter(([, g]) => g.length > 0);
-}
-
-/** How many plugins each category chip would show (and `all`), given the search and tab. */
-export function categoryCounts(ps: Plugin[], f: PluginFilter): Record<PluginCategory | 'all', number> {
-  const shown = ps.filter((p) => passes(p, f));
-  const out = { all: shown.length } as Record<PluginCategory | 'all', number>;
-  for (const c of CATEGORIES) out[c] = shown.filter((p) => p.category === c).length;
-  return out;
 }
 
 /** The plugin a connection belongs to (by its kind). */

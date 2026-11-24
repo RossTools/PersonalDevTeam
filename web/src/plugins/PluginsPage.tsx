@@ -1,13 +1,14 @@
-// Settings → Plugins (PDT-228): the catalog of what this PDT works with. Search, All · On · Needs attention, a chip
-// per category, and cards or a list (remembered on this device; a phone always lists). A card opens the plugin's page;
+// Settings → Plugins (PDT-228): the catalog of what this PDT works with. Search, All · On · Needs attention, and cards
+// or a list (remembered on this device; a phone always lists), grouped under category headings (PDT-695: no category
+// chips, which repeated the headings). A card opens the plugin's page;
 // its switch turns it on or off. A turned-off plugin adds nothing (no connection kinds, workflow steps, PM tools or
 // checks); its connections, project settings and workflows are kept for when it is on again.
 import { useState } from 'react';
 import { LayoutGrid, List as ListIcon } from 'lucide-react';
-import { Alert, Badge, Button, EmptyState, Input, Link, Page, SectionLabel, SegmentedControl, Skeleton } from '@ui';
+import { Alert, EmptyState, Input, Link, Page, SectionLabel, SegmentedControl, Skeleton } from '@ui';
 import { cn } from '@ui/lib/utils';
 import {
-  CATEGORIES, CATEGORY_LABEL, NO_FILTER, categoryCounts, filterPlugins, groupPlugins, loadLayout, needsAttention, storeLayout,
+  CATEGORY_LABEL, NO_FILTER, filterPlugins, groupPlugins, loadLayout, needsAttention, storeLayout,
   type Plugin, type PluginFilter, type PluginLayout, type PluginTab,
 } from './model';
 import { PluginIcon, PluginStatusBadge, PluginSwitch, usePluginSwitch } from './parts';
@@ -70,7 +71,6 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
   const [filter, setFilter] = useState<PluginFilter>(NO_FILTER);
   const [layout, setLayout] = useState<PluginLayout>(loadLayout);
   const shown = filterPlugins(all, filter);
-  const counts = categoryCounts(all, filter);
   const attention = all.filter(needsAttention).length;
   const set = (f: Partial<PluginFilter>) => setFilter((x) => ({ ...x, ...f }));
   const pickLayout = (l: PluginLayout) => { setLayout(l); storeLayout(l); };
@@ -113,15 +113,6 @@ export function PluginsPage({ onOpen, phone = false }: PluginsPageProps) {
                 ]}
               />
             )}
-          </div>
-          <div role="group" aria-label="Categories" className="flex flex-wrap gap-1.5">
-            {([null, ...CATEGORIES] as const).map((c) => (
-              <Button key={c ?? 'all'} size="sm" variant={filter.category === c ? 'primary' : 'secondary'} aria-pressed={filter.category === c}
-                onClick={() => set({ category: c })}>
-                {c ? CATEGORY_LABEL[c] : 'All'}{' '}
-                <Badge count={counts[c ?? 'all']} size="sm" />
-              </Button>
-            ))}
           </div>
           {shown.length === 0 && <EmptyState size="inline">No plugins match.</EmptyState>}
           {groupPlugins(shown).map(([c, ps]) => (
