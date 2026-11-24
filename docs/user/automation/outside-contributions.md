@@ -57,6 +57,9 @@ it's reviewed again; when it's merged or closed on GitHub, the question goes awa
   passes those checks, PDT brings the pull request up to date: Dependabot's gets an `@dependabot rebase` comment (once
   for each fix of the base), any other gets its base merged in, where GitHub allows it. A failure the base doesn't
   have still asks **Didn't merge** at once, as does a base that is still broken after a week.
+- **GitHub or CI is down.** PDT tries again for a few minutes. If it still can't reach them, your **Approve & merge**
+  still stands (it merges once CI passes, but isn't kept for a later update of its base), and a pull request waiting
+  on its base or being brought up to date asks **Didn't merge**.
 
 ### Approvals across updates
 
