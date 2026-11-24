@@ -4,6 +4,11 @@ import { cn } from './lib/utils';
 export interface ViewHeaderProps {
   /** The view's title (truncates; the full text goes in `titleTooltip`). */
   title: ReactNode;
+  /**
+   * The title is on screen already (a phone's top bar): read by screen readers only, so the meta and actions share
+   * one line.
+   */
+  titleHidden?: boolean;
   /** Shown on hover over the title when it may be cut off. */
   titleTooltip?: string;
   /** Before the title: the status (a dot or an agent state). */
@@ -26,7 +31,7 @@ export interface ViewHeaderProps {
  * The header of every view: [status] title · chips/meta ··· actions. One line on desktop; on a narrow screen the
  * actions wrap to a second line. A fixed minimum height keeps the content below (the terminal) from jumping.
  */
-export function ViewHeader({ title, titleTooltip, leading, meta, actions, gutter = false, className, ...rest }: ViewHeaderProps) {
+export function ViewHeader({ title, titleHidden = false, titleTooltip, leading, meta, actions, gutter = false, className, ...rest }: ViewHeaderProps) {
   return (
     <header
       {...rest}
@@ -36,9 +41,9 @@ export function ViewHeader({ title, titleTooltip, leading, meta, actions, gutter
         className,
       )}
     >
-      <div className="flex min-w-0 flex-[1_1_12rem] items-center gap-2">
+      <div className={cn('flex min-w-0 items-center gap-2', titleHidden ? 'flex-1' : 'flex-[1_1_12rem]')}>
         {leading != null && <span className="flex shrink-0 items-center">{leading}</span>}
-        <h2 className="min-w-0 max-w-[60%] shrink-0 truncate font-medium" title={titleTooltip}>{title}</h2>
+        <h2 className={titleHidden ? 'sr-only' : 'min-w-0 max-w-[60%] shrink-0 truncate font-medium'} title={titleTooltip}>{title}</h2>
         {meta != null && (
           <div className="flex min-w-0 flex-1 items-center gap-2 truncate text-xs text-muted-foreground">{meta}</div>
         )}
